@@ -39,7 +39,8 @@ use dpp_domain::{
     ports::passport_repo::PassportRepository,
     ports::registry_sync::{
         RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryRecord,
-        RegistrySyncPort, SubmissionAcknowledgement, SubmissionReport,
+        RegistrySyncPort, SubmissionAcknowledgement, SubmissionLookup, SubmissionReport,
+        TransferReport,
     },
     product_group::{ProductGroup, ProductGroupData},
     status::PassportStatus,
@@ -198,10 +199,25 @@ struct MockPort {
     polls: Arc<AtomicUsize>,
     /// What a poll reports.
     poll_outcome: Outcome,
+    /// What a lookup of a submission by what was submitted finds.
+    lookup: SubmissionLookup,
+    /// Calls to `find_submission`, and for which passport each was made, so a
+    /// test can prove the drain looked, and looked for the right row.
+    lookups: Arc<AtomicUsize>,
+    looked_for: Arc<std::sync::Mutex<Vec<PassportId>>>,
 }
 
 #[async_trait]
 impl RegistrySyncPort for MockPort {
+    async fn find_submission(
+        &self,
+        request: &RegistrationRequest,
+    ) -> Result<SubmissionLookup, DppError> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        self.looked_for.lock().unwrap().push(request.passport_id);
+        Ok(self.lookup.clone())
+    }
+
     async fn register(
         &self,
         _req: RegistrationRequest,
@@ -243,7 +259,7 @@ impl RegistrySyncPort for MockPort {
         &self,
         _record: &dpp_domain::transfer::TransferRecord,
         _registry_id: &str,
-    ) -> Result<RegistryRecord, DppError> {
+    ) -> Result<TransferReport, DppError> {
         unimplemented!("not exercised")
     }
 }
@@ -263,15 +279,45 @@ fn mock_with_poll(
     Arc<AtomicUsize>,
     Arc<AtomicUsize>,
 ) {
+    let (port, calls, polls, _) =
+        mock_with_lookup(outcome, poll_outcome, SubmissionLookup::Unsupported);
+    (port, calls, polls)
+}
+
+/// What a recovery test watches: the lookups made, and for which passports.
+struct Lookups {
+    count: Arc<AtomicUsize>,
+    looked_for: Arc<std::sync::Mutex<Vec<PassportId>>>,
+}
+
+/// A port that also answers a lookup of a submission by what was submitted — the
+/// recovery path for a handle a replayed key left us without.
+fn mock_with_lookup(
+    outcome: Outcome,
+    poll_outcome: Outcome,
+    lookup: SubmissionLookup,
+) -> (
+    Arc<dyn RegistrySyncPort>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    Lookups,
+) {
     let calls = Arc::new(AtomicUsize::new(0));
     let polls = Arc::new(AtomicUsize::new(0));
+    let lookups = Lookups {
+        count: Arc::new(AtomicUsize::new(0)),
+        looked_for: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
     let port: Arc<dyn RegistrySyncPort> = Arc::new(MockPort {
         outcome,
         calls: calls.clone(),
         polls: polls.clone(),
         poll_outcome,
+        lookup,
+        lookups: lookups.count.clone(),
+        looked_for: lookups.looked_for.clone(),
     });
-    (port, calls, polls)
+    (port, calls, polls, lookups)
 }
 
 /// Make every row due again, as the passage of the backoff would.
@@ -822,6 +868,212 @@ async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
     assert!(
         row.attempts > attempts,
         "and each pass counts as an attempt"
+    );
+}
+
+// ─── a handle a replayed key left us without ────────────────────────────────
+
+/// 🚨 The registry holds a submission and a replayed key did not say under which
+/// handle. The drain looks for it, by what the passport was submitted under, and
+/// when it is found the row takes the handle *and* the ruling in the same pass: a
+/// passport that would have waited for a person is registered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_is_recovered_and_the_ruling_applied() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, calls, polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Registered {
+                registration_id: REGISTRATION_ID.into(),
+            },
+        },
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(stats.recovered, 1);
+    assert_eq!(stats.registered, 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "submitted once");
+    assert_eq!(polls.load(Ordering::SeqCst), 0, "found, so not polled");
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        lookups.looked_for.lock().unwrap().as_slice(),
+        [id],
+        "it looked for this passport's submission, from its own frozen payload"
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Registered);
+    assert_eq!(row.registry_id.as_deref(), Some(REGISTRATION_ID));
+}
+
+/// A submission found while the registry is still checking it gives the handle
+/// and nothing else: the row keeps the handle, stays `submitted`, and the next
+/// pass polls it as it would any submission it holds the handle of.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_found_while_still_being_checked_is_polled_next() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Processing,
+        },
+    );
+    let first = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        (first.recovered, first.submitted, first.registered),
+        (1, 1, 0)
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        row.registry_id.as_deref(),
+        Some(CORRELATION_ID),
+        "the handle is recorded, whatever the ruling turns out to be"
+    );
+
+    // From here it is an ordinary submitted row: polled by its handle, and the
+    // lookup is not asked again.
+    make_due(&dal, id).await;
+    let second = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(second.registered, 1);
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Registered);
+}
+
+/// 🚨 Two submissions report the passport's identifier, so the handle is not
+/// chosen: choosing would give the passport another's registration. The row waits
+/// for a person, backed off and counted, with nothing recorded as a handle.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ambiguous_lost_handle_is_not_guessed() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, polls, _lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Ambiguous {
+            candidates: vec!["CORR-OLD".into(), "CORR-NEW".into()],
+        },
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(
+        (stats.recovered, stats.registered, stats.submitted),
+        (0, 0, 1)
+    );
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        0,
+        "no handle, so nothing to poll"
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        row.registry_id, None,
+        "no candidate is recorded as the handle"
+    );
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "backed off, so it does not sort to the head of the queue every pass"
+    );
+}
+
+/// Not finding it is not an answer, so the lookup is repeated on a later pass,
+/// each one counted as an attempt: a row that is never found reaches the stalled
+/// count that tells an operator it needs a person.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_that_is_not_found_is_looked_for_again_and_counted() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, _polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::NotFound { exhaustive: false },
+    );
+    drain_once(&outbox, &port, None, 10).await;
+    let first_attempts = outbox.pending_for(id).await.unwrap().unwrap().attempts;
+
+    let idle = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        idle.submitted, 0,
+        "backed off: not looked for on the very next pass"
+    );
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+
+    make_due(&dal, id).await;
+    let again = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!((again.submitted, again.recovered), (1, 0));
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 2, "looked for again");
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert!(row.attempts > first_attempts, "every look is an attempt");
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(row.registry_id, None);
+}
+
+/// A submitted row with no handle that was left by an earlier pass is recovered
+/// too, not only one that was just told so: the row's frozen payload is what says
+/// what to look for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handleless_row_from_an_earlier_pass_is_recovered_from_its_payload() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // The first pass finds nothing: the registry's list does not show it yet.
+    let (blind, _, _, _) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::NotFound { exhaustive: false },
+    );
+    drain_once(&outbox, &blind, None, 10).await;
+    assert_eq!(
+        outbox.pending_for(id).await.unwrap().unwrap().registry_id,
+        None
+    );
+
+    // A later pass, once it is listed, finds it, and does not submit again.
+    let (seeing, calls, _polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Processing,
+        },
+    );
+    make_due(&dal, id).await;
+    let stats = drain_once(&outbox, &seeing, None, 10).await;
+
+    assert_eq!(stats.recovered, 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "not submitted again");
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        outbox
+            .pending_for(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .registry_id
+            .as_deref(),
+        Some(CORRELATION_ID)
     );
 }
 

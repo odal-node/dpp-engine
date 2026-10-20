@@ -10,7 +10,7 @@
 //! recorded here because it is a wire-format decision that binds every issuer:
 //!
 //! 1. It reuses the verification path core already has —
-//!    [`authenticate_access_credential`]: the `kid` names a verification method
+//!    [`authenticate_access_credential_with_reason`]: the `kid` names a verification method
 //!    in the issuer's DID document, the signature is checked against that key
 //!    with EdDSA pinned and `alg:none` rejected, and the token must be typed
 //!    `vc+jwt` so another signature of the same key cannot pass for a credential.
@@ -46,7 +46,7 @@ use dpp_common::http_problem;
 use dpp_domain::Audience;
 use dpp_vc::{
     DppAccessCredential, StatusList, TrustedIssuerRegistry,
-    credential::authenticate_access_credential,
+    credential::{AuthenticationFailure, authenticate_access_credential_with_reason},
 };
 
 /// The header a caller presents an access credential in.
@@ -235,10 +235,15 @@ pub async fn read_and_verify(
     // Core's reading of the token: the key its `kid` names in the issuer's
     // document, the signature, the `vc+jwt` type that keeps another signature of
     // the same key from passing as a credential, and the issuer the document
-    // belongs to. A token with no `kid` names no key and is refused.
-    let credential = match authenticate_access_credential(jws, &did_doc) {
+    // belongs to. A token with no `kid` names no key and is refused. Asked for
+    // with the reason, as a type, so each refusal gets the sentence that says what
+    // its issuer would fix: matching core's prose would tie this to wording that
+    // names the presenter's own `kid` and document.
+    let credential = match authenticate_access_credential_with_reason(jws, &did_doc) {
         Ok(credential) => credential,
-        Err(result) => return CredentialOutcome::Rejected(reject(rejection_detail(&result))),
+        Err(failure) => {
+            return CredentialOutcome::Rejected(reject(authentication_detail(&failure)));
+        }
     };
 
     // Only now that the signature holds is it worth spending a network round
@@ -297,22 +302,54 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
         V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
         V::UntrustedIssuer { .. } => "Credential issuer is not trusted by this node.",
         V::OutOfScope { .. } => "Credential does not cover the requested product.",
-        // The authentication step's refusal: no key matching the `kid`, a
-        // signature that does not verify, a token that is not typed as a
-        // credential, or an issuer other than the document's. Core's text names
-        // the `kid` and the document, which came from the caller, so one fixed
-        // sentence stands for all of them. It says which things to check, so an
-        // issuer whose tooling does not yet set the type, or names its key by a
-        // bare fingerprint, is not sent to debug a signature that is sound. It
-        // opens with the sentence this refusal has always said.
-        V::InvalidSignature(_) => {
-            "Credential signature did not verify. Check that its `kid` names a method in the \
-             issuer's DID document, that it is typed `typ: vc+jwt` with `cty: vc`, and that its \
-             issuer is the document's."
-        }
+        // Not reachable from here — authentication has its own sentence per
+        // failure, in `authentication_detail`, and the signature has been checked
+        // before core is called — but mapped rather than lumped in so a future
+        // reordering cannot silently produce a misleading detail.
+        V::InvalidSignature(_) => "Credential signature did not verify.",
         // `Valid` is unreachable — the caller checks `is_valid()` first — and
         // `MalformedCredential` carries text derived from the credential.
         V::MalformedCredential(_) | V::Valid { .. } => "Credential is not valid.",
+    }
+}
+
+/// The sentence for a credential that could not be authenticated: one per thing
+/// its issuer would go and fix.
+///
+/// Authentication refuses for five different reasons and they used to read the
+/// same, so an issuer whose tooling had not yet set the token's type was told its
+/// signature did not verify, and went to debug a key that was sound. Each of
+/// these is something the issuer already knows about its own token, so saying it
+/// reveals nothing they did not bring. And nothing the presenter supplied is
+/// echoed: the failures that carry the `kid`, the document or the issuer carry
+/// them in fields this function does not read.
+///
+/// A signature that does not verify keeps the sentence it has always had, so a
+/// client that matches it still does.
+fn authentication_detail(failure: &AuthenticationFailure) -> &'static str {
+    use AuthenticationFailure as A;
+    match failure {
+        A::NoMatchingKey { .. } => {
+            "Credential names no key that its issuer's DID document publishes. Its `kid` must be \
+             the absolute URL of a verification method in that document."
+        }
+        A::SignatureDoesNotVerify => "Credential signature did not verify.",
+        A::Unverifiable { .. } => {
+            "Credential could not be verified: its protected header or signature is malformed, \
+             or its algorithm is not accepted."
+        }
+        A::NotTypedAsCredential { .. } => {
+            "Credential is not typed as one. Its `typ` must be `vc+jwt` and its `cty`, when \
+             present, `vc`."
+        }
+        A::MalformedPayload { .. } => "Credential payload is not a DPP access credential.",
+        A::IssuerMismatch { .. } => {
+            "Credential names a different issuer than the DID document it was checked against."
+        }
+        A::NotACompactJws => "Credential is not a compact JWS.",
+        // The failure grows variants; one this does not name is still a refusal
+        // that says nothing about the presenter's own contents.
+        _ => "Credential could not be authenticated.",
     }
 }
 
@@ -550,6 +587,134 @@ mod tests {
         )
         .await;
         assert!(matches!(out, CredentialOutcome::Rejected(_)));
+    }
+
+    /// The `detail` a rejection answers with.
+    async fn detail_of(outcome: CredentialOutcome) -> String {
+        let CredentialOutcome::Rejected(response) = outcome else {
+            panic!("expected a rejection");
+        };
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let problem: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("a problem document");
+        problem["detail"].as_str().expect("a detail").to_owned()
+    }
+
+    /// 🚨 Each way authentication can refuse tells its issuer what to fix, in a
+    /// sentence of its own. They used to read the same, so an issuer whose tooling
+    /// had not yet set the token's type was told its signature did not verify and
+    /// went to debug a key that was sound. And nothing the presenter chose, the
+    /// `kid` or the issuer it names, is echoed back.
+    #[tokio::test]
+    async fn each_authentication_failure_says_what_its_issuer_would_fix() {
+        let (key, kid) = key_and_kid();
+        let directory = Directory::with(Some(did_doc(&key, &kid)));
+        let cred = credential(CredentialRole::Recycler, 30);
+        let detail = |jws: String| {
+            let directory = &directory;
+            async move {
+                detail_of(read_and_verify(&headers_with(Some(&jws)), directory, &trusting()).await)
+                    .await
+            }
+        };
+
+        // No `kid`: the token names no key.
+        let no_kid = sign_with_header(&key, r#"{"alg":"EdDSA","cty":"vc","typ":"vc+jwt"}"#, &cred);
+        let said = detail(no_kid).await;
+        assert!(said.contains("names no key"), "{said}");
+        assert!(
+            !said.contains("signature"),
+            "it is not a signature problem: {said}"
+        );
+
+        // A `kid` that names a method the document does not publish, as a token
+        // signed before keys were named by thumbprint does.
+        let stale = sign_with_header(
+            &key,
+            r#"{"alg":"EdDSA","cty":"vc","kid":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","typ":"vc+jwt"}"#,
+            &cred,
+        );
+        let said = detail(stale).await;
+        assert!(said.contains("names no key"), "{said}");
+        assert!(
+            !said.contains("9f86d081"),
+            "the presenter's own `kid` is not echoed: {said}"
+        );
+
+        // Typed as something else: the signature is sound.
+        let untyped = sign_with_header(
+            &key,
+            &format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}"}}"#),
+            &cred,
+        );
+        let said = detail(untyped).await;
+        assert!(
+            said.contains("not typed") && said.contains("vc+jwt"),
+            "{said}"
+        );
+        assert!(!said.contains("did not verify"), "{said}");
+
+        // The one thing wrong is the signature.
+        let genuine = sign_credential(&key, &kid, &cred);
+        let (signing_input, _) = genuine.rsplit_once('.').expect("a compact JWS");
+        let forged = format!("{signing_input}.{}", "A".repeat(86));
+        assert_eq!(detail(forged).await, "Credential signature did not verify.");
+
+        // Authentic, typed, and the credential names another issuer than the
+        // document it is checked against.
+        let mut claims_another = credential(CredentialRole::Recycler, 30);
+        claims_another.issuer = "did:web:someone-else.example".to_owned();
+        let mismatched = sign_credential(&key, &kid, &claims_another);
+        let said = detail(mismatched).await;
+        assert!(said.contains("different issuer"), "{said}");
+        assert!(
+            !said.contains("someone-else"),
+            "the issuer the presenter named is not echoed: {said}"
+        );
+    }
+
+    /// Every typed reason has a sentence, none of them reads the fields the
+    /// presenter chose, and one this crate has not heard of still gets an answer.
+    #[test]
+    fn no_authentication_sentence_carries_what_the_presenter_supplied() {
+        let failures = [
+            AuthenticationFailure::NotACompactJws,
+            AuthenticationFailure::NoMatchingKey {
+                document: "did:web:secret-document.example".into(),
+                kid: "secret-kid".into(),
+            },
+            AuthenticationFailure::SignatureDoesNotVerify,
+            AuthenticationFailure::Unverifiable {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::NotTypedAsCredential {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::MalformedPayload {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::IssuerMismatch {
+                claimed: "did:web:secret-claim.example".into(),
+                document: "did:web:secret-document.example".into(),
+            },
+        ];
+        let sentences: Vec<&str> = failures.iter().map(authentication_detail).collect();
+        for sentence in &sentences {
+            assert!(
+                !sentence.contains("secret"),
+                "a presenter-supplied value reached the response: {sentence}"
+            );
+        }
+        let mut distinct = sentences.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            failures.len(),
+            "each failure has a sentence of its own: {sentences:?}"
+        );
     }
 
     #[tokio::test]

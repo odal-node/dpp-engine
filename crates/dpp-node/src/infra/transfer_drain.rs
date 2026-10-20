@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use dpp_domain::ports::registry_sync::{RegistryStatus, RegistrySyncPort};
+use dpp_domain::ports::registry_sync::{RegistrySyncPort, TransferReport};
 use dpp_domain::transfer::TransferRecord;
 use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus, RegistryTransferOutbox};
 
@@ -29,18 +29,6 @@ pub struct TransferDrainStats {
     /// Rows held back because the passport's own registration has not been
     /// accepted by the registry yet, so there is no record to amend.
     pub deferred: u32,
-}
-
-/// Whether the registry answered a transfer notification with a refusal.
-///
-/// A record has no `rejected` state: that was a state of a submission, and the
-/// port reports it as a [`SubmissionReport`](dpp_domain::ports::registry_sync::SubmissionReport).
-/// The registry's `rejected` reply to a *notification* is still a refusal of it,
-/// and arrives as the state the port has no name for, carrying the registry's
-/// word. Read as anything else it would be retried for as long as the registry
-/// keeps saying no.
-fn is_rejection(status: &RegistryStatus) -> bool {
-    matches!(status, RegistryStatus::Unrecognised(state) if state.eq_ignore_ascii_case("rejected"))
 }
 
 /// Drain up to `batch` due rows once.
@@ -119,41 +107,60 @@ pub async fn drain_once(
         metrics::histogram!("registry_transfer_drain_seconds")
             .record(started.elapsed().as_secs_f64());
         match outcome {
-            Ok(rec) if is_rejection(&rec.status) => {
+            // Taken, or already held: an earlier attempt under the same key got
+            // through. Either way the registry has the notification and sending
+            // it again would be wrong.
+            Ok(TransferReport::Accepted | TransferReport::AlreadyHeld) => {
+                let _ = outbox.mark_notified(tid, registry_id.clone()).await;
+                stats.notified += 1;
+            }
+            Ok(TransferReport::Refused { reason }) => {
                 tracing::warn!(
                     passport_id = %row.passport_id,
                     transfer_id = %tid,
+                    reason = %reason,
                     "registry rejected transfer notification"
                 );
                 metrics::counter!("registry_transfer_rejected_total").increment(1);
                 let _ = outbox
-                    .mark_rejected(tid, "registry rejected transfer notification".into())
+                    .mark_rejected(
+                        tid,
+                        format!("registry rejected transfer notification: {reason}"),
+                    )
                     .await;
                 stats.rejected += 1;
             }
-            // A state the port has no name for, other than the refusal above, is
-            // not a verdict. Closing the row as notified would record a
-            // notification the registry may not have accepted, which the
-            // registration drain declines to do for the same reason. It is a
-            // failed attempt: the row backs off, stays pending, and counts toward
-            // the stalled rollup. The notification route carries no idempotency
-            // key, so the retry sends it again.
-            Ok(rec) if matches!(rec.status, RegistryStatus::Unrecognised(_)) => {
+            // Received and not yet applied, or a state this node has no name for:
+            // neither is a verdict, and closing the row on either would record a
+            // handover the registry may not have taken, which its record never
+            // learns of. The notification stays open as a failed attempt: it backs
+            // off, counts toward the stalled rollup, and is sent again under the
+            // same idempotency key, which is what makes that the same notification
+            // and not a second. The replay settles it as already held once the
+            // registry has finished; one that never settles is for a person.
+            Ok(TransferReport::Processing) => {
+                let _ = outbox
+                    .mark_attempt_failed(
+                        tid,
+                        "the registry has the notification and has not applied it yet — sending \
+                         it again under the same key"
+                            .into(),
+                    )
+                    .await;
+                stats.retried += 1;
+            }
+            Ok(other) => {
                 let _ = outbox
                     .mark_attempt_failed(
                         tid,
                         format!(
                             "the registry answered a transfer notification with a state this \
-                             node has no name for: {:?}",
-                            rec.status
+                             node has no name for ({other:?}) — sending it again under the \
+                             same key"
                         ),
                     )
                     .await;
                 stats.retried += 1;
-            }
-            Ok(rec) => {
-                let _ = outbox.mark_notified(tid, rec.registration_id).await;
-                stats.notified += 1;
             }
             Err(e) => {
                 // Transient/unreachable — back off and retry. The row stays.
@@ -373,10 +380,15 @@ mod tests {
     }
 
     enum Outcome {
+        /// The registry took the notification.
         Notified,
+        /// A replayed key: an earlier attempt got through.
+        AlreadyHeld,
+        /// Received and not yet applied.
+        Processing,
+        /// Refused.
         Rejected,
-        /// A reply carrying a state the port has no name for that is not the
-        /// registry's `rejected`.
+        /// A state the port has no name for.
         Unrecognised,
         Transient,
     }
@@ -406,29 +418,23 @@ mod tests {
             &self,
             record: &TransferRecord,
             registry_id: &str,
-        ) -> Result<RegistryRecord, DppError> {
+        ) -> Result<TransferReport, DppError> {
             self.seen
                 .lock()
                 .unwrap()
                 .push((record.clone(), registry_id.to_owned()));
-            let status = match self.outcome {
-                // A notified transfer leaves the registration `Registered` — the
-                // registry amends the record, it does not restatus it.
-                Outcome::Notified => RegistryStatus::Registered,
-                // A record has no `rejected` state; the registry's refusal of a
-                // notification arrives as the state the port has no name for.
-                Outcome::Rejected => RegistryStatus::Unrecognised("rejected".into()),
-                Outcome::Unrecognised => RegistryStatus::Unrecognised("UNDER_REVIEW".into()),
-                Outcome::Transient => {
-                    return Err(DppError::Internal("registry unreachable".into()));
-                }
-            };
-            Ok(RegistryRecord {
-                registration_id: "EU-REG-T".into(),
-                status,
-                registered_at: Utc::now(),
-                updated_at: Utc::now(),
-            })
+            match self.outcome {
+                Outcome::Notified => Ok(TransferReport::Accepted),
+                Outcome::AlreadyHeld => Ok(TransferReport::AlreadyHeld),
+                Outcome::Processing => Ok(TransferReport::Processing),
+                Outcome::Rejected => Ok(TransferReport::Refused {
+                    reason: "no such record".into(),
+                }),
+                Outcome::Unrecognised => Ok(TransferReport::Unrecognised {
+                    state: "UNDER_REVIEW".into(),
+                }),
+                Outcome::Transient => Err(DppError::Internal("registry unreachable".into())),
+            }
         }
     }
 
@@ -583,9 +589,9 @@ mod tests {
         assert!(outbox.notified.lock().unwrap().is_empty());
     }
 
-    /// 🚨 A state this node has no name for, other than `rejected`, is not an
-    /// acceptance. Recording it as one would close the row for good on a
-    /// notification the registry may not have taken.
+    /// 🚨 A state this node has no name for is not an acceptance. Recording it as
+    /// one would close the row for good on a notification the registry may not
+    /// have taken.
     #[tokio::test]
     async fn an_unrecognised_reply_is_not_recorded_as_a_notification() {
         let (outbox, port) = fakes(Outcome::Unrecognised, vec![row_from(&record())]);
@@ -601,6 +607,51 @@ mod tests {
         );
         assert!(outbox.notified.lock().unwrap().is_empty());
         assert!(outbox.rejected.lock().unwrap().is_empty());
+    }
+
+    /// `Processing` is the registry saying it has the notification, so it is not
+    /// closed (it is not applied) and not refused. It stays open and is sent again
+    /// as the *same* notification: the record the port is handed carries the same
+    /// transfer identity each time, which is what the adapter keys the request on.
+    #[tokio::test]
+    async fn a_notification_still_being_processed_is_sent_again_under_the_same_identity() {
+        let rec = record();
+        let (outbox, port) = fakes(Outcome::Processing, vec![row_from(&rec)]);
+
+        let first = run(&outbox, &port).await;
+        let second = run(&outbox, &port).await;
+
+        assert_eq!((first.retried, second.retried), (1, 1));
+        assert!(outbox.notified.lock().unwrap().is_empty());
+        assert!(outbox.rejected.lock().unwrap().is_empty());
+        assert_eq!(
+            outbox.failed.lock().unwrap().len(),
+            2,
+            "each pass is counted"
+        );
+
+        let seen = port.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "sent again, not dropped");
+        assert!(
+            seen.iter()
+                .all(|(sent, _)| sent.transfer_id == rec.transfer_id),
+            "always the same transfer, so a key derived from it is stable"
+        );
+    }
+
+    /// A replay answered as already held is how a notification whose first answer
+    /// was lost or unsettled is finally closed, without a second one reaching the
+    /// registry.
+    #[tokio::test]
+    async fn a_notification_the_registry_already_holds_is_closed_as_notified() {
+        let (outbox, port) = fakes(Outcome::AlreadyHeld, vec![row_from(&record())]);
+
+        let stats = run(&outbox, &port).await;
+
+        assert_eq!(stats.notified, 1);
+        assert_eq!((stats.rejected, stats.retried), (0, 0));
+        assert_eq!(outbox.notified.lock().unwrap().len(), 1);
+        assert!(outbox.failed.lock().unwrap().is_empty());
     }
 
     /// An unreachable registry must not lose the notification: the row backs off

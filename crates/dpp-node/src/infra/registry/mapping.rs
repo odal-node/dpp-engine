@@ -3,7 +3,7 @@
 //! types, and makes the actual REST calls via `EuRegistrySync`.
 
 use super::client::{EuRegistrySync, RetryableError};
-use super::dashboard::{TaskPage, TaskResult, report_for};
+use super::dashboard::{Task, TaskPage, plan_pages, report_for};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
@@ -11,7 +11,8 @@ use dpp_domain::{
     operator::ResponsibleOperator,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryRecord, RegistryStatus,
-        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionReport,
+        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionLookup,
+        SubmissionReport, TransferReport,
     },
     transfer::TransferRecord,
 };
@@ -20,8 +21,8 @@ use dpp_registry::{
     IDEMPOTENCY_KEY_HEADER, OperatorIdentifier, ProductIdentifier, ProductItemIdentifier,
     REGISTRATION_PATH, RegistrationLevel, RegistrationPayload, RegistrationSubmission,
     RegistryErrorBody, RegistryStatusCode, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
-    ServiceProviderReference, StatusResponse, SubmissionOutcome, SubmissionReceipt,
-    TASK_RESULT_PATH_TEMPLATE, TASKS_PATH, TRANSFER_PATH_TEMPLATE, TransferNotification,
+    ServiceProviderReference, StatusResponse, SubmissionReceipt, TASK_RESULT_PATH_TEMPLATE,
+    TASKS_PATH, TRANSFER_PATH_TEMPLATE, TransferNotification,
 };
 
 /// Map the port's service provider onto the registry's reference to one.
@@ -43,6 +44,23 @@ const TASK_PAGE_SIZE: usize = 50;
 
 /// How many pages of the dashboard list are read looking for a submission.
 pub(super) const MAX_TASK_PAGES: u32 = 20;
+
+/// How many finished tasks' results one lookup reads from the registry. A task
+/// already read costs nothing; this bounds what a single pass can spend on the
+/// ones that are new.
+const MAX_RESULT_READS: usize = 100;
+
+/// What reading the dashboard's task list found.
+struct TaskSearch {
+    /// The tasks read, in the order they were read.
+    tasks: Vec<Task>,
+    /// Where in `tasks` the first one the caller was looking for is.
+    hit: Option<usize>,
+    /// Whether every task in the list was read. `false` means the list is longer
+    /// than the search reads, so a task that is not in `tasks` may still be on
+    /// it.
+    complete: bool,
+}
 
 /// The URL of one of the registry's routes beneath `base_url`, with `{id}`
 /// replaced by `id`.
@@ -113,15 +131,105 @@ fn record_status(code: &RegistryStatusCode) -> RegistryStatus {
     }
 }
 
+/// What the registry's reply to a transfer notification says, in the port's
+/// words.
+///
+/// The reply is a record's status because that is the one shape the registry is
+/// known to answer in, but it is not asked as one: whether the notification was
+/// taken is the question, so each status reads as an answer to it.
+/// `registered` is the record staying in service with the handover applied;
+/// `pending` is received and not yet applied. `rejected` is a refusal. A record
+/// reported suspended or deactivated, or in a state nobody has named, is not
+/// something this node can read as taken or refused, and is reported as it came.
+fn transfer_report_for(resp: &EuRegistryResponse) -> TransferReport {
+    match &resp.status {
+        RegistryStatusCode::Registered => TransferReport::Accepted,
+        RegistryStatusCode::Pending => TransferReport::Processing,
+        RegistryStatusCode::Rejected => TransferReport::Refused {
+            reason: refusal_reason(resp),
+        },
+        other => TransferReport::Unrecognised {
+            state: other.wire_str().to_owned(),
+        },
+    }
+}
+
+/// Why the registry refused a notification, in its own words, or that it gave no
+/// reason: a refusal with the reason blank would read as nothing having
+/// happened.
+fn refusal_reason(resp: &EuRegistryResponse) -> String {
+    let reasons = resp
+        .rejection_reasons
+        .iter()
+        .flatten()
+        .map(|reason| reason.trim())
+        .filter(|reason| !reason.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if !reasons.is_empty() {
+        return reasons;
+    }
+    match resp.message.as_deref().map(str::trim) {
+        Some(message) if !message.is_empty() => message.to_owned(),
+        _ => "the registry refused the notification and gave no reason".to_owned(),
+    }
+}
+
 impl EuRegistrySync {
-    /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
-    pub(super) fn response_to_record(resp: &EuRegistryResponse) -> RegistryRecord {
-        RegistryRecord {
-            registration_id: resp.registry_id.clone(),
-            status: record_status(&resp.status),
-            registered_at: resp.updated_at,
-            updated_at: resp.updated_at,
+    /// One page of the operator's dashboard tasks.
+    async fn task_page(&self, tasks_url: &str, page: u32) -> Result<TaskPage, DppError> {
+        let query = [
+            ("page", page.to_string()),
+            ("size", TASK_PAGE_SIZE.to_string()),
+        ];
+        self.with_retry(|| self.get_json(tasks_url, &query, "task list"))
+            .await
+            .map_err(RetryableError::into_dpp_error)
+    }
+
+    /// Read the dashboard's task list until `is_hit` is satisfied, or until the
+    /// pages worth reading have been.
+    ///
+    /// The first page says how long the list is, and [`plan_pages`] decides what
+    /// else is read: all of a list that fits the cap, and both ends of one that
+    /// does not, since the registry's order is not known.
+    async fn search_tasks(&self, is_hit: impl Fn(&Task) -> bool) -> Result<TaskSearch, DppError> {
+        let tasks_url = url_for(&self.config.endpoint.dashboard_base_url, TASKS_PATH, "")?;
+
+        let first = self.task_page(&tasks_url, 0).await?;
+        let total = first.total_elements;
+        let plan = plan_pages(total, TASK_PAGE_SIZE, MAX_TASK_PAGES);
+        let mut tasks = first.content;
+        let mut hit = tasks.iter().position(&is_hit);
+        let mut complete = plan.covers_all;
+
+        // A reply that gave no length ends where a page is short: nothing more
+        // is listed, so what was read is all of it.
+        let first_was_last = total.is_none() && tasks.len() < TASK_PAGE_SIZE;
+        if first_was_last {
+            complete = true;
         }
+        if hit.is_none() && !first_was_last {
+            for page in plan.pages {
+                let more = self.task_page(&tasks_url, page).await?.content;
+                let short = more.len() < TASK_PAGE_SIZE;
+                let from = tasks.len();
+                tasks.extend(more);
+                hit = tasks[from..].iter().position(&is_hit).map(|at| from + at);
+                if hit.is_some() {
+                    break;
+                }
+                if total.is_none() && short {
+                    complete = true;
+                    break;
+                }
+            }
+        }
+        Ok(TaskSearch {
+            tasks,
+            hit,
+            complete,
+        })
     }
 
     /// Map a bridge `StatusResponse` to a domain `RegistryRecord`.
@@ -482,43 +590,24 @@ impl RegistrySyncPort for EuRegistrySync {
     #[tracing::instrument(skip(self))]
     async fn check_submission(&self, correlation_id: &str) -> Result<SubmissionReport, DppError> {
         let dashboard = &self.config.endpoint.dashboard_base_url;
-        let tasks_url = url_for(dashboard, TASKS_PATH, "")?;
 
         // The registry's interface finds a submission's task by paging the
         // operator's tasks: no route that takes a correlation identifier has
-        // been seen. The page cap bounds the walk for an operator with a long
-        // history. A walk that reaches it with every page full has not shown the
-        // task to be unlisted, only that the search ran out, and says so below.
-        let mut found = None;
-        let mut cut_short = false;
-        for page in 0..MAX_TASK_PAGES {
-            let query = [
-                ("page", page.to_string()),
-                ("size", TASK_PAGE_SIZE.to_string()),
-            ];
-            let tasks: TaskPage = self
-                .with_retry(|| self.get_json(&tasks_url, &query, "task list"))
-                .await
-                .map_err(RetryableError::into_dpp_error)?;
-            let listed = tasks.content.len();
-            found = tasks
-                .content
-                .into_iter()
-                .find(|task| task.is_submission(correlation_id));
-            if found.is_some() || listed < TASK_PAGE_SIZE {
-                break;
-            }
-            cut_short = page + 1 == MAX_TASK_PAGES;
-        }
-        let Some(task) = found else {
+        // been seen.
+        let search = self
+            .search_tasks(|task| task.is_submission(correlation_id))
+            .await?;
+        let Some(task) = search.hit.map(|at| &search.tasks[at]) else {
             // Not a verdict either way, so the poll goes on. A task the list does
-            // not show yet is `Processing`; one the search stopped short of is
-            // reported as that, so the operator is told why it is not resolving.
-            if cut_short {
+            // not show yet is `Processing`. A search that read only part of a
+            // longer list has not shown it to be unlisted, only that it ran out,
+            // and says so, so the operator is told why it is not resolving.
+            if !search.complete {
                 return Ok(SubmissionReport::Unrecognised {
                     state: format!(
-                        "not found within the {MAX_TASK_PAGES} pages of {TASK_PAGE_SIZE} \
-                         tasks the search reads; the dashboard may list it further on"
+                        "not found within the {} tasks the search read; the dashboard list \
+                         is longer than that and may hold it further on",
+                        search.tasks.len()
                     ),
                 });
             }
@@ -527,11 +616,8 @@ impl RegistrySyncPort for EuRegistrySync {
 
         // A task the registry has not finished has no result worth reading, and
         // one whose state this node cannot name is reported as it stands.
-        if !matches!(
-            task.status,
-            Some(SubmissionOutcome::Success | SubmissionOutcome::Failure)
-        ) {
-            return Ok(report_for(&task, None));
+        if !task.is_finished() {
+            return Ok(report_for(task, None));
         }
         let Some(task_id) = task.id_segment() else {
             return Ok(SubmissionReport::Unrecognised {
@@ -539,11 +625,89 @@ impl RegistrySyncPort for EuRegistrySync {
             });
         };
         let result_url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
-        let result: TaskResult = self
-            .with_retry(|| self.get_json(&result_url, &[], "task result"))
-            .await
-            .map_err(RetryableError::into_dpp_error)?;
-        Ok(report_for(&task, Some(&result)))
+        let result = self.finished_result(&result_url, &task_id).await?;
+        Ok(report_for(task, Some(result.as_ref())))
+    }
+
+    /// Find the submission a request made, by what the registry reports each
+    /// passport against: the unique product identifier it was submitted under.
+    ///
+    /// For a submission whose handle was lost, which a replayed idempotency key
+    /// leaves: the registry holds it and does not say under which handle. Every
+    /// finished registration task's result lists its passports, and the one that
+    /// lists this request's identifier is the submission.
+    ///
+    /// Three things keep it from guessing. A match is by that identifier and
+    /// nothing nearer. More than one task reporting it is
+    /// [`Ambiguous`](SubmissionLookup::Ambiguous), because a successor can be
+    /// submitted under its predecessor's identifier and choosing would give a
+    /// passport another's registration. And a task still being checked reports no
+    /// passport, so it may be the one and cannot be told from one that is not:
+    /// while any such task is on the list, not finding the identifier does not
+    /// say the registry holds none.
+    #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
+    async fn find_submission(
+        &self,
+        request: &RegistrationRequest,
+    ) -> Result<SubmissionLookup, DppError> {
+        let dashboard = &self.config.endpoint.dashboard_base_url;
+        let upi = request.data_carrier_uri.as_str();
+
+        let search = self.search_tasks(|_| false).await?;
+        let mut exhaustive = search.complete;
+        let mut matches: Vec<(&Task, std::sync::Arc<super::dashboard::TaskResult>)> = Vec::new();
+        let mut network_reads = 0usize;
+
+        for task in search.tasks.iter().filter(|task| task.is_registration()) {
+            if !task.is_finished() {
+                exhaustive = false;
+                continue;
+            }
+            let (Some(task_id), Some(_)) = (task.id_segment(), task.correlation_id.as_deref())
+            else {
+                // A finished task with no way to read it, or to poll it by, may
+                // be this one, and nothing here can say.
+                exhaustive = false;
+                continue;
+            };
+            let result = if let Some(kept) = self.cached_finished_result(&task_id).await {
+                kept
+            } else if network_reads < MAX_RESULT_READS {
+                network_reads += 1;
+                let url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
+                self.read_finished_result(&url, &task_id).await?
+            } else {
+                exhaustive = false;
+                continue;
+            };
+            if result
+                .unique_product_identifiers()
+                .any(|reported| reported == upi)
+            {
+                matches.push((task, result));
+            }
+        }
+
+        match matches.as_slice() {
+            [] => Ok(SubmissionLookup::NotFound { exhaustive }),
+            [(task, result)] => Ok(SubmissionLookup::Found {
+                correlation_id: task.correlation_id.clone().unwrap_or_default(),
+                report: report_for(task, Some(result.as_ref())),
+            }),
+            several => {
+                tracing::warn!(
+                    candidates = several.len(),
+                    "more than one registry submission reports this passport's unique product \
+                     identifier — not choosing between them"
+                );
+                Ok(SubmissionLookup::Ambiguous {
+                    candidates: several
+                        .iter()
+                        .filter_map(|(task, _)| task.correlation_id.clone())
+                        .collect(),
+                })
+            }
+        }
     }
 
     async fn check_status(&self, registration_id: &str) -> Result<RegistryRecord, DppError> {
@@ -563,7 +727,7 @@ impl RegistrySyncPort for EuRegistrySync {
         &self,
         record: &TransferRecord,
         registry_id: &str,
-    ) -> Result<RegistryRecord, DppError> {
+    ) -> Result<TransferReport, DppError> {
         let base_url = &self.config.endpoint.base_url;
         let passport_id = record.passport_id;
 
@@ -624,9 +788,16 @@ impl RegistrySyncPort for EuRegistrySync {
         // The route names the registered record, so it is built from the
         // registration identifier, never from this node's passport id.
         let url = url_for(base_url, TRANSFER_PATH_TEMPLATE, registry_id)?;
+        // The handover's own identity, which is stable across every attempt at
+        // telling the registry about it. Sending it as the idempotency key is what
+        // makes a notification sent again, after an answer this node could not
+        // settle on, the same notification and not a second: a replay is answered
+        // with the conflict below, which is read as "the registry already holds it".
+        let idempotency_key = record.transfer_id.to_string();
         self.with_retry(|| {
             let url = url.clone();
             let notification = notification.clone();
+            let idempotency_key = idempotency_key.clone();
             async move {
                 let token = self
                     .get_token()
@@ -637,6 +808,7 @@ impl RegistrySyncPort for EuRegistrySync {
                     .client
                     .post(&url)
                     .bearer_auth(&token)
+                    .header(IDEMPOTENCY_KEY_HEADER, idempotency_key)
                     .json(&notification)
                     .send()
                     .await
@@ -661,6 +833,22 @@ impl RegistrySyncPort for EuRegistrySync {
                 }
                 if !resp.status().is_success() {
                     let body = resp.text().await.unwrap_or_default();
+                    // A replayed key is not a failure: an earlier attempt reached
+                    // the registry and its answer was lost, or was one this node
+                    // could not settle on. The notification is held, and sending
+                    // it a third time would be wrong, as it is for a submission.
+                    if status_code == STATUS_IDEMPOTENCY_KEY_REUSED
+                        && serde_json::from_str::<RegistryErrorBody>(&body)
+                            .is_ok_and(|b| b.is_idempotency_key_reused())
+                    {
+                        tracing::info!(
+                            passport_id = %passport_id,
+                            detail = %refusal_text(&body),
+                            "EU registry already holds this transfer notification \
+                             (idempotency key replayed) — not sending it again"
+                        );
+                        return Ok(TransferReport::AlreadyHeld);
+                    }
                     return Err(RetryableError::Fatal(format!(
                         "transfer notification failed {status_code}: {}",
                         refusal_text(&body)
@@ -668,10 +856,14 @@ impl RegistrySyncPort for EuRegistrySync {
                 }
 
                 let eu_resp: EuRegistryResponse = resp.json().await.map_err(|e| {
-                    RetryableError::Fatal(format!("invalid transfer response: {e}"))
+                    RetryableError::Fatal(format!(
+                        "invalid transfer response: {e}; the notification may have been taken, \
+                         and the retry carries the same Idempotency-Key, so it is recognised, \
+                         not sent twice"
+                    ))
                 })?;
 
-                Ok(Self::response_to_record(&eu_resp))
+                Ok(transfer_report_for(&eu_resp))
             }
         })
         .await

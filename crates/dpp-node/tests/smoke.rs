@@ -2140,10 +2140,10 @@ async fn a_credential_signed_by_a_key_this_node_does_not_publish_unlocks_nothing
         status, 401,
         "a forged signature must be refused, got {view}"
     );
-    assert!(
-        view["detail"]
-            .as_str()
-            .is_some_and(|d| d.starts_with("Credential signature did not verify.")),
+    // The forgery keeps the genuine header, so the `kid` resolves and the type is
+    // right: the signature is the one thing wrong, and that is what is said.
+    assert_eq!(
+        view["detail"], "Credential signature did not verify.",
         "the refusal must name the signature, not the holder or the passport, \
          got {view}"
     );
