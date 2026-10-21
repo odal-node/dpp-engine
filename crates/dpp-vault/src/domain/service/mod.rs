@@ -20,6 +20,7 @@
 //!
 
 mod amend;
+mod claim;
 mod create;
 /// The component-reference rule, shared with the create handler so the two
 /// entry points cannot drift apart on what a valid BOM entry is.

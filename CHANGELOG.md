@@ -379,6 +379,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   targets. `just check` still cannot *run* the gated suites, which need Docker;
   the developer guide says which command does.
 
+- **Publish refuses a second holder of an identification link or a DID, and of a
+  model or batch label.** Publish asked one question, whether another published
+  passport already prints this carrier serial, and returned early for any
+  identifier that is not a GTIN. So two passports carrying one link or one DID
+  both went live (`200` for the second), and so could two that state model level,
+  or batch level for one lot, under one GTIN: the serial those derive from their
+  own id is shared by no other passport, while their label, the GTIN or the GTIN
+  and the lot, is printed by every other one at that level. The second publish is
+  now a `422` naming the field (`/batchId`, or
+  `/productGroupData/productIdentifier`, with `/carrierSerial` unchanged) and
+  stays a draft, an amendment chain still publishes, and the lock that serialises
+  two publishes of one claim is keyed on the claim rather than on the serial.
+  The model and batch cases cannot occur through this API yet, which never states
+  a level; the check is in place for when it does. A link or DID holder that
+  differs only in its lot is not found until dpp-core's lookup by the whole value
+  (`find_by_product_identifier`) is released and pinned.
+
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build
   from the profile kind, and every self-hosted node infers `dev` because it is
