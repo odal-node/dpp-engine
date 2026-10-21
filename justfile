@@ -334,6 +334,23 @@ grants-check:
 migrations-check:
     bash scripts/migrations-check.sh
 
+# Prove migrations-check still refuses what it claims to, in the checkout shapes
+# CI hands it: it once skipped itself in every one of them and reported success.
+migrations-check-self-test:
+    bash scripts/migrations-check.test.sh
+
+# Every script in scripts/ must be run by a workflow, or be listed in the script
+# as local-only with the reason.
+#
+# `check` and CI are two hand-written lists, and for a long while six guards were
+# in the first and not the second. A new guard that no workflow runs fails here.
+ci-guard-check:
+    bash scripts/ci-guard-check.sh
+
+# Prove ci-guard-check still refuses what it claims to.
+ci-guard-check-self-test:
+    bash scripts/ci-guard-check.test.sh
+
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
 # The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
@@ -369,7 +386,7 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test check-plugins test audit
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg

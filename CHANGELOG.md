@@ -792,6 +792,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   that copy as unaffected on 21 October: it holds no roots of its own and
   re-exports those of the 1.x copy, which must stay at 1.0.10 or later.
 
+- **Six guard scripts ran in `just check` and in no workflow, and one CI check
+  was a different check from its script.** `grants-check`, `harness-check`,
+  `migrations-check`, `no-rsa-private-key`, `outbound-check` and
+  `vocabulary-check` had no CI job, so a pull request that broke one passed CI
+  and was stopped only if its author had run `just check`; each now has its own.
+  `migrations-check` could not simply be added: a CI checkout tracks one ref, so
+  it never had `origin/main` and printed "skipping" with exit 0 on every pull
+  request. It now fetches the tracking ref by name, treats a missing base as an
+  error in CI, no longer swallows a failed diff, and has a self-test that builds
+  the checkout shapes CI hands over. The `debug-prints` job carried its own copy
+  of `debug-check` and listed eight of the twelve crates, so a `println!` in
+  `dpp-types`, `dpp-render`, `dpp-seal` or `dpp-factor-data` passed it; that job
+  and the `subjects-check` and `mod-rs-check` jobs now run the scripts.
+  `just ci-guard-check`, in `just check` and a CI job of its own, fails for a
+  script in `scripts/` that no workflow runs, unless it is listed as local-only
+  with the reason. `check-plugins` is local-only by nature: it compares file
+  modification times, which a fresh checkout does not have.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking

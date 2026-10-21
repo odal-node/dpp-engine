@@ -307,17 +307,27 @@ just infra          # start PostgreSQL + Redis + NATS
 cp .env.example .env
 
 just check          # THE gate: fmt-check, clippy over every target (the Docker-gated
-                    # suites included), debug/subject/mod-rs checks, spec-version
-                    # check, unit tests, security audit
+                    # suites included), the guard scripts (debug/subject/mod-rs,
+                    # vocabulary, outbound, grants, migrations, harness, the RSA
+                    # claim, ci-guard), spec-version check, unit tests, security audit
 just openapi-check  # lints the bundle; needs Node, so NOT in `just check` — CI
                     # runs it. Regenerates the bundle and fails if it drifted
 just openapi-bundle # regenerate api/openapi.bundled.yaml from the api/ tree
-just ci             # the above + integration-feature clippy + the Docker tiers
+just ci             # the above + the Docker tiers
 
 just test           # unit only (nextest, no Docker)
 just test-integration   # the Docker tiers
 just build          # release build
 ```
+
+**A guard script is not finished until a workflow runs it.** `just check` and CI
+are two hand-written lists, and for a long while six guards were in the first and
+not the second, so a pull request that broke one passed CI. `just ci-guard-check`
+(in `just check`, and a CI job of its own) fails for any script in `scripts/` that
+no workflow runs, unless `scripts/ci-guard-check.sh` lists it as local-only with
+the reason. A new guard gets its own job in `ci.yml`, running the script rather
+than a second copy of it: a copy is what let `debug-prints` scan eight crates of
+twelve.
 
 Anything not covered by a recipe is plain cargo — e.g. `cargo run -p dpp-node`
 to run the node, and `cargo run -p dpp-cli -- bootstrap` to seed operator config
@@ -626,7 +636,7 @@ Not debt — rules that hold, stated once so they are not re-derived.
 
   🚨 **Shape, never actor.** Clause 4.2 expects archived versions to be held by the back-up provider *as well as* by this node, so a provider is **not** exempt from archiving and no back-up arrangement wires `passport_version` for us. What makes `BackupCopyPort` not-archiving is that it carries no series — one copy per passport, `retrieve` answering with one. Getting this backwards is a mistake already made and corrected once.
 
-  `scripts/vocabulary-check.sh` (in `just check`) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
+  `scripts/vocabulary-check.sh` (in `just check` and CI) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
 
 - **Errors are RFC 7807.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).
