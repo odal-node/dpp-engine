@@ -368,6 +368,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A `Cargo.lock` that had drifted from the manifests passed CI.** No step
+  built with `--locked`, so a build that found the lock out of step re-resolved
+  in the runner and discarded the result: every check passed and the committed
+  file stayed wrong, while `cargo audit` read that file. Every CI step that
+  resolves the workspace now passes `--locked`, as do `just lint` and the deny
+  step of `just audit`. The flag is left off while `.cargo/config.toml` exists,
+  because the `[patch]` onto a sibling `dpp-core` that `just core-local`
+  installs rewrites the lock by design; `just core-published` brings it back.
+  The duplicate-versions comment in `deny.toml` gave a Windows figure from
+  `cargo tree -d`; it now gives one taken on Linux with the command CI runs.
+
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
   suite passed the local gate and failed after the push; the compile-only
