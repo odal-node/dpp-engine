@@ -2,9 +2,13 @@ post:
   operationId: importFile
   summary: Bulk-import passports from a file
   description: |
-    Upload a CSV or XLSX file to create draft passports for a product group
-    (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
-    `Authorization: Bearer` token is validated and forwarded to the vault.
+    Upload a CSV or XLSX file to create draft passports for a product group.
+    The caller's `Authorization: Bearer` token is validated and forwarded to
+    the vault.
+
+    The importable set is deliberately **not enumerated here**: it is one list
+    in the handler, and the `404` body names every accepted key. This sentence
+    listed five product groups long after the importer reached more.
 
     A battery **template** key is accepted here too — `battery-ev`,
     `battery-lmt` and `battery-industrial` all import as `battery`, since the
