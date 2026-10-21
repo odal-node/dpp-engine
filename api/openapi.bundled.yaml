@@ -788,6 +788,12 @@ paths:
         How many published passports carry no seal, plus the outbox totals
         behind that number.
 
+        `unsealedPublished` counts the live ones and `unsealedTerminal` the ones
+        that have since been retired, superseded or deactivated. Terminal
+        passports still serve publicly and still owe a seal, so the repair sweep
+        seals them; they are counted apart so that the number to act on is not
+        padded with records whose product ended long ago.
+
         `unsealedPublished` is the headline; the three row counts are context.
         They answer different questions and can legitimately disagree: the
         counts describe outbox **rows**, while the obligation is about
@@ -6014,6 +6020,7 @@ components:
       description: 'Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.'
       required:
         - unsealedPublished
+        - unsealedTerminal
         - pending
         - sealed
         - exhausted
@@ -6021,7 +6028,16 @@ components:
       properties:
         unsealedPublished:
           type: integer
-          description: Published passports carrying no seal at all. `0` is the healthy state.
+          description: |-
+            Live published passports (`active` or `suspended`) carrying no seal at all. `0` is the healthy state.
+
+            Live only. A passport that was published unsealed and has since been retired, superseded or deactivated is counted in `unsealedTerminal`, so this is the number to act on without first working out which of the passports behind it still matter.
+        unsealedTerminal:
+          type: integer
+          description: |-
+            Retired, superseded or deactivated passports that were published and carry no seal. They still serve publicly and the obligation attached at publish, so the repair sweep seals them too: this is what is left of that, and it falls as the sweep works through them.
+
+            Unlike `unsealedPublished`, a non-zero value here is not a call to act: it is a backlog the sweep is already working through.
         pending:
           type: integer
         sealed:

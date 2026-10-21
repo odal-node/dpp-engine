@@ -1235,16 +1235,26 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
     }
 
     let unsealed = n("unsealedPublished");
+    let terminal = n("unsealedTerminal");
     println!("Sealing");
+    // "Live", because a retired passport is published too: the node reports
+    // those apart, and saying "every published passport" beside a non-zero
+    // terminal count would be false.
     if unsealed == 0 {
         println!(
-            "  {}  every published passport carries a seal",
+            "  {}  every live published passport carries a seal",
             style("OK").green().bold()
         );
     } else {
         println!(
-            "  {}  {unsealed} published passport(s) carry no seal",
+            "  {}  {unsealed} live published passport(s) carry no seal",
             style("UNSEALED").red().bold()
+        );
+    }
+    if terminal > 0 {
+        println!(
+            "  {terminal} retired, superseded or deactivated passport(s) carry no seal either;\n  \
+             the repair sweep seals those too, so this falls without any action."
         );
     }
     println!(
@@ -1256,7 +1266,7 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
 
     // Worth saying out loud: these two can disagree, and the direction of the
     // disagreement is the diagnosis.
-    if unsealed > 0 && n("pending") == 0 && n("exhausted") == 0 {
+    if unsealed + terminal > 0 && n("pending") == 0 && n("exhausted") == 0 {
         println!(
             "\n  Unsealed with an empty outbox — those passports have no row at all, so no\n  \
              drain will pick them up. The repair sweep queues them on its next pass."

@@ -4109,6 +4109,7 @@ mod fixtures {
     pub fn seal_summary_response() -> SealSummaryResponse {
         SealSummaryResponse {
             unsealed_published: 0,
+            unsealed_terminal: 0,
             pending: 2,
             sealed: 40,
             exhausted: 0,

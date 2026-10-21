@@ -218,6 +218,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
   with the registry's own rules rather than on the first registration.
 
+- **`GET /vault/api/v1/seal`: `unsealedPublished` counts live passports only;
+  retired, superseded and deactivated ones are `unsealedTerminal`.** The count
+  and the repair sweep shared one condition that looked at no status, so a
+  passport published unsealed and since retired stayed in the number for good,
+  and an operator could not tell a live product from a record that ended last
+  year. The two are now reported apart. The sweep still seals terminal
+  passports, deliberately: they keep serving at their public URL, so a seal on
+  one is a seal on something a verifier can fetch, and `unsealedTerminal` falls
+  as the sweep works through them.
+
+  **Migration:** a reader that took `unsealedPublished` to mean every unsealed
+  published passport adds `unsealedTerminal` to get that figure back, which is
+  always present. `SealOutbox::unsealed_published_count` is now
+  `unsealed_published_counts` and returns both. `odal seal status` prints both.
+
 ### Added
 
 - **A field that can hold personal data is refused on the write that would store
