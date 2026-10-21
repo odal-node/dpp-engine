@@ -368,6 +368,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`just check` linted less than CI did.** `just lint` ran clippy without the
+  `integration-tests` features, so a lint that existed only in a Docker-gated
+  suite passed the local gate and failed after the push; the compile-only
+  `check-integration` was the one step that touched those suites, and it does not
+  lint. `just lint` now runs the command CI ran, features on, and CI's Clippy
+  job runs `just lint`, so the command has one home and the two cannot drift.
+  `just lint-integration`, `just check-integration` and
+  `scripts/check-integration.sh` are removed: clippy type-checks the same
+  targets. `just check` still cannot *run* the gated suites, which need Docker;
+  the developer guide says which command does.
+
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build
   from the profile kind, and every self-hosted node infers `dev` because it is

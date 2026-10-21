@@ -118,7 +118,7 @@ All crates use `tracing`. Never log secrets — API keys, private keys, and pass
 ### Clippy and Formatting
 
 All code must pass:
-- `cargo clippy --workspace -- -D warnings`
+- `just lint` — clippy with every warning an error, over every target and with the Docker-gated suites' features on, as CI runs it
 - `cargo fmt --all --check`
 
 ---

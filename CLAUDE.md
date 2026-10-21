@@ -306,9 +306,9 @@ as the source of truth over any list written here.
 just infra          # start PostgreSQL + Redis + NATS
 cp .env.example .env
 
-just check          # THE gate: fmt-check, clippy, debug/subject/mod-rs checks,
-                    # spec-version check, unit tests, integration-test compile,
-                    # security audit
+just check          # THE gate: fmt-check, clippy over every target (the Docker-gated
+                    # suites included), debug/subject/mod-rs checks, spec-version
+                    # check, unit tests, security audit
 just openapi-check  # lints the bundle; needs Node, so NOT in `just check` — CI
                     # runs it. Regenerates the bundle and fails if it drifted
 just openapi-bundle # regenerate api/openapi.bundled.yaml from the api/ tree
@@ -605,11 +605,11 @@ in `dpp-node/tests/smoke.rs` is the shape to copy.
 
 Test tiers:
 - **Tier 1 (no DB)**: route mounting, health endpoints, auth middleware, validators, parsers, and the pure-logic unit tests inside each crate.
-- **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just check` also runs `check-integration` to prove they still *compile*.
+- **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just lint` turns their features on: clippy type-checks and lints them without Docker, and `just check` runs it.
 
 Two things that bite:
 
-- **A feature-gated suite that stops compiling fails only in CI.** `just test` skips them entirely. Run `just check` before pushing, not `just test`.
+- **A feature-gated suite that fails an assertion fails only in CI.** `just check` type-checks and lints those suites but cannot run them, and `just test` skips them entirely. After changing a string, a status code or an error message, run the suite that might pin it — `cargo nextest run -p <crate> --features integration-tests --test <name>`, Docker running. Run `just check` before pushing, not `just test`.
 - **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, so the reflex is to copy — and the Postgres harness reached eight copies that had drifted into six different implementations before anyone noticed.
 - **Shared test scaffolding has one home, behind `dpp-dal`'s `test-harness` feature**, enabled from `[dev-dependencies]`. Two things live there today: `test_harness` (`start_pg`, `start_pg_raw`, `start_pg_before`) and `in_memory_repo` (`InMemoryPassportRepo`). **Do not write another one** — if the shared version cannot do what a suite needs, extend it there rather than forking a copy. `just harness-check` fails the build if you do.
 - **Not everything that shares a name is duplication.** Checked and deliberately left alone: the three `serde_json::Value` passport builders (wire-shaped, for HTTP tests — a different thing from the typed `Passport` builders), and the `TestAuthProvider` / `AlwaysFail` doubles (different implementations per suite, small, purpose-built). Merging those would couple unrelated tests to one double's behaviour. The three *typed* `Passport` builders are a real candidate and are deferred, not rejected — extract them when a fourth appears, or when two of the three need the same new field.

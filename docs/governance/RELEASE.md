@@ -28,7 +28,7 @@ as the fix is verified.
 
 Before tagging a release:
 
-1. **All CI green** — `cargo fmt --all --check`, `cargo clippy --workspace`,
+1. **All CI green** — `cargo fmt --all --check`, `just lint`,
    `cargo test --workspace` pass locally.
 2. **Integration tests pass** — `cargo test -p dpp-node --features integration-tests`
    with Docker running.

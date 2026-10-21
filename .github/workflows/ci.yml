@@ -90,31 +90,19 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
-      # Linted with the `integration-tests` features ON, which folds in what a
-      # separate compile-only job used to do.
-      #
-      # Those suites are otherwise compiled nowhere except the Docker tiers,
-      # which need `test-unit` to pass first — so a stale import in one surfaced
-      # late, or not at all when Docker was unavailable. Clippy with the features
-      # on type-checks them and lints them, which a `cargo check` did not.
-      #
-      # Safe to fold rather than run twice: features are additive and the
-      # workspace has **zero** `cfg(not(feature = "integration-tests"))` code, so
-      # nothing compiled by the default build is skipped by this one. If that
-      # ever stops being true, the default-feature pass has to come back.
-      #
-      # Features are named per package rather than via `--all-features`, which
-      # would also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept
-      # out of server-side builds on purpose — see cli/Cargo.toml). That is not a
-      # gap this closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting
-      # `tests/sdk_abi.rs` needs no wasm target, only running it does, and the
-      # integration job below runs it.
-      - name: cargo clippy
+      # The command lives in the justfile, once: `just lint` is what `just check`
+      # runs and what runs here. It used to be spelled out in both places and the
+      # two drifted — the local copy left the feature-gated suites out, so a lint
+      # that existed only in one of them passed the local gate and failed here.
+      # Why the features are on, and how they are named, is on the recipe, next to
+      # the command it explains.
+      - name: Install just
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: just
+      - name: just lint
         working-directory: dpp-engine
-        run: |
-          cargo clippy --workspace --all-targets \
-            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests \
-            -- -D warnings
+        run: just lint
 
   test-unit:
     name: Unit tests
