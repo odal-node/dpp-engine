@@ -103,7 +103,7 @@ fn unauthorized(detail: &str) -> Response {
 
 /// Split an `Authorization` header into its scheme and credential.
 ///
-/// The scheme match is **case-insensitive**: RFC 7235 §2.1 defines `auth-scheme`
+/// The scheme match is **case-insensitive**: RFC 9110 §11.1 defines `auth-scheme`
 /// as a case-insensitive token, and several HTTP clients and proxies normalise
 /// it to lowercase. Matching `"Bearer "` exactly meant a conforming client
 /// sending `authorization: bearer odal_sk_…` got a `401` with
@@ -173,7 +173,7 @@ mod tests {
         assert!(extract_credential(&other_scheme).is_none());
     }
 
-    /// RFC 7235 §2.1: `auth-scheme` is a case-insensitive token, and clients and
+    /// RFC 9110 §11.1: `auth-scheme` is a case-insensitive token, and clients and
     /// proxies do normalise it. Matching `"Bearer "` exactly turned a conforming
     /// request into a 401 that reads as an invalid key.
     #[test]

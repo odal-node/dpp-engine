@@ -189,7 +189,7 @@ pub fn static_server(routes: Vec<(String, String)>) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Start a server that answers every request with one RFC 7807 problem body.
+/// Start a server that answers every request with one RFC 9457 problem body.
 ///
 /// Returns its origin. This is what lets the error-rendering suite stay in the
 /// default test lane: the behaviour under test is how the CLI renders a problem

@@ -167,7 +167,7 @@ pub async fn get_template(
 ) -> Response {
     let format = query.format.as_deref().unwrap_or("csv");
 
-    // RFC 7807, like every other error surface here. These two answered a bare
+    // RFC 9457, like every other error surface here. These two answered a bare
     // string with `text/plain`, while `GET /schemas/{pg}` and
     // `GET /product-groups/{pg}` — same crate, same failure class — already
     // answered `application/problem+json`.
