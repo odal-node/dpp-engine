@@ -132,8 +132,8 @@ Enforced in CI on every push, and by `just check` before a local commit:
 - `cargo audit` plus `scripts/check-audit-register.sh` — checks dependencies
   against the RustSec Advisory Database, and that every accepted-risk entry
   in `.cargo/audit.toml` is current (dated, code-anchored, still reachable)
-- `cargo clippy --workspace --all-targets -- -D warnings` — catches common
-  correctness issues
+- `just lint` (clippy, every warning an error, over every target) — catches
+  common correctness issues
 - `cargo test --workspace` (via `cargo nextest`) — runs the full test suite
 
 ## Cryptographic Design

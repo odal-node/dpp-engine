@@ -127,9 +127,12 @@ just ci                # check + integration-feature clippy + the Docker tiers
 against the running surface, and CI fails if that test is absent.
 
 > ⚠️ The feature-gated integration tests (`#![cfg(feature = "integration-tests")]`)
-> are **not** compiled or linted by `just check` — only by `just lint-integration`
-> and `just ci`. Run those before trusting "green," or bugs can hide in test-only
-> code that the standard gate never touches.
+> are type-checked and linted by `just check` (`just lint` turns their features
+> on), but **not run** by it: they need Docker. A change to a string, a status
+> code or an error message that one of them pins fails only when it runs, so run
+> `just test-integration`, or the one suite
+> (`cargo nextest run -p <crate> --features integration-tests --test <name>`),
+> before trusting "green."
 
 ## 7. Data model & migrations
 
