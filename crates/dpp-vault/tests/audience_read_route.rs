@@ -469,7 +469,7 @@ async fn a_credential_for_another_product_group_grants_only_public() {
     assert!(body.get("lintResult").is_none(), "nor restricted data");
 }
 
-/// An unusable credential is a 401 carrying an RFC 7807 body, and it names the
+/// An unusable credential is a 401 carrying an RFC 9457 body, and it names the
 /// header the caller must fix.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unusable_credential_is_a_problem_response() {
@@ -491,7 +491,7 @@ async fn an_unusable_credential_is_a_problem_response() {
     assert_eq!(body["status"], json!(401));
     assert!(
         body.get("detail").and_then(Value::as_str).is_some(),
-        "RFC 7807 body carries a detail"
+        "RFC 9457 body carries a detail"
     );
 }
 

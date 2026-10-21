@@ -52,7 +52,7 @@ dpp-resolver (:8003)   public QR/Digital-Link resolver (standalone, JWS-verifyin
 
 **Crates** (9 + cli): `dpp-types` (platform data: operator/auth/audit/keys),
 `dpp-dal`, `dpp-vault`, `dpp-identity`, `dpp-resolver`, `dpp-integrator`,
-`dpp-common` (event bus trait, telemetry, RFC 7807), `dpp-plugin-host`,
+`dpp-common` (event bus trait, telemetry, RFC 9457), `dpp-plugin-host`,
 `dpp-node` (the assembly), `cli`.
 
 **Dependency direction is one-way:** platform → core. Core has zero knowledge of

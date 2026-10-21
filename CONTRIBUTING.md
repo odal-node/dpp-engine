@@ -70,7 +70,7 @@ dpp-engine/
     dpp-identity/  # did:web identity service (5 endpoints)
     dpp-resolver/          # Public QR resolver (4 endpoints)
     dpp-integrator/        # CSV/XLSX bulk import (4 endpoints)
-    dpp-common/            # Event bus trait, telemetry, RFC 7807
+    dpp-common/            # Event bus trait, telemetry, RFC 9457
     dpp-plugin-host/       # Wasmtime sandbox for product group Wasm plugins
     dpp-node/              # MVP single binary
     dpp-seal/              # eIDAS qualified seal adapter stub (NOT YET WIRED)
@@ -135,7 +135,7 @@ All code must pass:
 
 - **Tier 1 (no DB)**: Route mounting, health endpoints, auth middleware, config parsing. Run with `cargo test --workspace`.
 - **Tier 2 (testcontainers)**: Full DPP lifecycle (create -> publish -> read) through the assembled node. Requires Docker. Run with `cargo test -p dpp-node --features integration-tests`.
-- **CLI (no DB, no node)**: The `odal` binary run as a child process against a temp `$HOME`. Covers first-run messages, exit codes, the written `config.toml`, and error rendering — the last against a local stub that emits an RFC 7807 body, since what is under test is how the CLI renders one, not a node that means it. Runs in `cargo test --workspace`; no feature gate, because a gate would keep it out of the lane where it catches regressions.
+- **CLI (no DB, no node)**: The `odal` binary run as a child process against a temp `$HOME`. Covers first-run messages, exit codes, the written `config.toml`, and error rendering — the last against a local stub that emits an RFC 9457 body, since what is under test is how the CLI renders one, not a node that means it. Runs in `cargo test --workspace`; no feature gate, because a gate would keep it out of the lane where it catches regressions.
 
 ---
 

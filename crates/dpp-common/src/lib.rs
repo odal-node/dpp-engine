@@ -1,4 +1,4 @@
-//! `dpp-common` — shared infrastructure: event bus, telemetry, RFC 7807 errors,
+//! `dpp-common` — shared infrastructure: event bus, telemetry, RFC 9457 errors,
 //! HTTP metrics, and request-id injection.
 
 pub mod config;
