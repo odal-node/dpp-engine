@@ -769,16 +769,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   patches, so no manifest changed for them.
 
   **`async-nats` is declared without its `websockets` feature.** A fourth copy,
-  `webpki-roots` 0.26.11, carries the same -0381 and cannot be moved: it is
-  pulled only by `tokio-websockets` 0.10, which `async-nats` 0.50 pins, and
-  0.50.0 is the newest release. The node reaches NATS over `nats://` and nothing
-  here configures `ws://` or `wss://`, so the transport is switched off and the
-  crate is in no build. A WebSocket NATS URL is no longer supported by the
-  client. The crate stays in `Cargo.lock`, because `async-nats` names it in a
-  weak feature (`tokio-websockets?/ring`) and cargo records that edge whether or
-  not the feature is on, so the advisory is registered in `.cargo/audit.toml` as
-  not in the graph, which `scripts/check-audit-register.sh` checks against the
-  default and the shipped build.
+  `webpki-roots` 0.26.11, was first reported under the same -0381 and cannot be
+  moved: it is pulled only by `tokio-websockets` 0.10, which `async-nats` 0.50
+  pins, and 0.50.0 is the newest release. The node reaches NATS over `nats://`
+  and nothing here configures `ws://` or `wss://`, so the transport is switched
+  off and the crate is in no build. A WebSocket NATS URL is no longer supported
+  by the client. The crate stays in `Cargo.lock`, because `async-nats` names it
+  in a weak feature (`tokio-websockets?/ring`) and cargo records that edge
+  whether or not the feature is on. The advisory was registered in
+  `.cargo/audit.toml` as not in the graph until the RustSec database classified
+  that copy as unaffected on 21 October: it holds no roots of its own and
+  re-exports those of the 1.x copy, which must stay at 1.0.10 or later.
 
 ## [0.14.0] - 2026-09-24
 
