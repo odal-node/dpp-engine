@@ -13,7 +13,7 @@
 ## Checklist
 
 - [ ] Tests added or updated for new behaviour
-- [ ] `just lint` passes locally (`cargo clippy --workspace --all-targets -- -D warnings`)
+- [ ] `just lint` passes locally (clippy over every target, the Docker-gated suites included — the same command CI runs)
 - [ ] `just fmt` applied (`cargo fmt --all`)
 - [ ] `just test` passes (unit); `just test-integration` run if persistence/lifecycle/auth changed (needs Docker)
 - [ ] No `println!`/`eprintln!`/`dbg!` in service-crate `src/` (use `tracing::`) — `just debug-check`
