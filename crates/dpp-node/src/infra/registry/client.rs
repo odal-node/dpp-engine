@@ -20,6 +20,12 @@
 //! the submission exists, and the adapter reports it as pending so the drain
 //! polls for the verdict instead of posting it a third time.
 //!
+//! A transfer notification carries the transfer's own identifier in the same
+//! header. It is what makes sending one again after an answer the node could not
+//! settle on (still processing, or a state it has no name for) the same
+//! notification rather than a second, and a 409 naming the key is read the same
+//! way: the registry already holds it.
+//!
 //! # Unreachable registry
 //!
 //! If the registry is unreachable (connection refused, DNS failure) the adapter
@@ -31,15 +37,21 @@
 //! "registered", which is exactly the ghost-as-real dishonesty the honesty
 //! invariant forbids.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use dpp_common::event_codes;
 use dpp_domain::error::DppError;
 use reqwest::Client;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use super::config::EuRegistrySyncConfig;
+use super::dashboard::TaskResult;
 use super::token::CachedToken;
+
+/// How many finished tasks' results are kept. A bound, not a tuning knob: it
+/// exists so the cache cannot grow with the registry's history.
+const FINISHED_RESULTS_KEPT: usize = 2_048;
 
 /// HTTP adapter for the EU Central DPP Registry.
 ///
@@ -50,6 +62,14 @@ pub struct EuRegistrySync {
     pub(super) client: Client,
     pub(super) config: EuRegistrySyncConfig,
     token_cache: Arc<RwLock<Option<CachedToken>>>,
+    /// Results of tasks the registry has finished with, by task identifier.
+    ///
+    /// A finished task's result does not change, so reading one again can only
+    /// cost a request. Looking for a submission whose handle was lost reads
+    /// every finished task's result, every pass, until it finds the passport; this
+    /// is what keeps that to the tasks that are new. Unfinished tasks are never
+    /// put here, because theirs does change.
+    finished_results: Mutex<HashMap<String, Arc<TaskResult>>>,
 }
 
 impl EuRegistrySync {
@@ -64,7 +84,48 @@ impl EuRegistrySync {
             client,
             config,
             token_cache: Arc::new(RwLock::new(None)),
+            finished_results: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// The result of a finished task this adapter has already read, if it has.
+    pub(super) async fn cached_finished_result(&self, task_id: &str) -> Option<Arc<TaskResult>> {
+        self.finished_results.lock().await.get(task_id).cloned()
+    }
+
+    /// The result of a task the registry has finished with: from the cache when
+    /// this adapter has read it before, from the registry otherwise.
+    ///
+    /// Only for a finished task. The caller checks that, because a result read
+    /// while the task is still being checked is not the result it will have.
+    pub(super) async fn finished_result(
+        &self,
+        results_url: &str,
+        task_id: &str,
+    ) -> Result<Arc<TaskResult>, DppError> {
+        if let Some(hit) = self.cached_finished_result(task_id).await {
+            return Ok(hit);
+        }
+        self.read_finished_result(results_url, task_id).await
+    }
+
+    /// Read a finished task's result from the registry and keep it.
+    pub(super) async fn read_finished_result(
+        &self,
+        results_url: &str,
+        task_id: &str,
+    ) -> Result<Arc<TaskResult>, DppError> {
+        let result: TaskResult = self
+            .with_retry(|| self.get_json(results_url, &[], "task result"))
+            .await
+            .map_err(RetryableError::into_dpp_error)?;
+        let result = Arc::new(result);
+        let mut kept = self.finished_results.lock().await;
+        if kept.len() >= FINISHED_RESULTS_KEPT {
+            kept.clear();
+        }
+        kept.insert(task_id.to_owned(), Arc::clone(&result));
+        Ok(result)
     }
 
     /// Acquire an OAuth2 access token, using the cache when possible.

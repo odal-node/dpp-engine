@@ -56,9 +56,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   is `submitted` and the registration identifier once it is `registered`, so a
   transfer notification waits for `registered` and never sends a correlation
   identifier as a record id. A submission the registry already holds, answered
-  to a replayed idempotency key, carries no handle: the row stays `submitted`
-  and is not polled until the identifier is recovered. A state the node has no
-  name for keeps the poll going and is never read as a refusal. The drain no
+  to a replayed idempotency key, carries no handle, so the drain looks for it
+  (see **Added**: a lost submission handle is found again). A state the node has
+  no name for keeps the poll going and is never read as a refusal. The drain no
   longer reports a `deactivated` outcome, because a submission's ruling is not
   a record's state.
 
@@ -219,6 +219,56 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   with the registry's own rules rather than on the first registration.
 
 ### Added
+
+- **A lost submission handle is found again, and a transfer notification is sent
+  under a stable key (needs the `dpp-core` release that carries
+  `SubmissionLookup`, `TransferReport` and `authenticate_access_credential_with_reason`).**
+  Three gaps in the registry flow had been described as limitations. Each was a
+  type in the port that could not say what happened, and each is now fixed where
+  that lives.
+
+  *The lost handle.* A replayed idempotency key is answered with the conflict and
+  not the submission, so a node whose first attempt got through and whose record
+  of the answer was lost, by a crash between the `POST` and the row write or a
+  failed write, held a `submitted` row it could never poll. The drain now calls
+  `find_submission`, which reads the dashboard and matches the passport by the
+  unique product identifier it was submitted under, the one thing the registry
+  reports each passport against, and answers with the handle and the ruling
+  together, so a recovered passport is registered in the same pass. It does not
+  guess: an identifier is not unique to a passport, since a successor can be
+  submitted under its predecessor's, so more than one submission reporting it is
+  `Ambiguous`, listed for a person, and a task still being checked reports no
+  passport, so not finding one while any is on the list is never read as the
+  registry holding none. A row that is not found is backed off and counted as an
+  attempt, so it reaches the stalled count instead of sorting to the head of the
+  queue. Finished tasks' results are kept in a bounded cache, because they do not
+  change and the lookup repeats every pass.
+
+  *Where the task is.* The dashboard's list was read from the front for twenty
+  pages, so once an operator had more than a thousand tasks a new submission on an
+  oldest-first list was never found and was polled forever. The first page says how
+  long the list is (`totalElements`), and a longer one is now read from both ends,
+  interleaved, since the order is not recorded. A search that ran out says so
+  instead of reporting the registry as still working.
+
+  *Transfer notifications.* `notify_transfer` answers with a `TransferReport`, not
+  a `RegistryRecord`: whether the registry took the notification, not where a
+  registration stands. The notification is sent with the transfer's own identifier
+  as the `Idempotency-Key`, which is what makes sending it again the same
+  notification: a reply that is still processing, or a state the node has no name
+  for, now keeps the notification open and retries it, and a replay is answered as
+  already held and closes it. Before, any reply the node could not name closed the
+  row as notified, which is a handover the registry's record may never learn of.
+  The transfer route's reply is **unobserved** (core records the route as invented),
+  so the statuses are read conservatively: only `registered` is an acceptance.
+
+  *Credential refusals.* An access credential that fails authentication is told
+  which of five things to fix: no key for its `kid`, a signature that does not
+  verify, a token not typed as a VC-JWT, a payload that is not a credential, or an
+  issuer other than its document's. They read the same before, so an issuer whose
+  tooling had not yet set `typ` was sent to debug a sound signature. The
+  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
+  sentence.
 
 - **A field that can hold personal data is refused on the write that would store
   it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
