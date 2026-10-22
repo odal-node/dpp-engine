@@ -20,6 +20,7 @@
 //!
 
 mod amend;
+mod claim;
 mod create;
 /// What create asks of an assembled draft that needs no store, shared with the
 /// dry-run route so a preview cannot pass what a create refuses.
