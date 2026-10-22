@@ -60,6 +60,8 @@ tags:
     description: API key management — create, list, revoke.
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Personal Data
+    description: Erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route reads one.
   - name: Plugins
     description: Signed product-group plugin hot-install — verify, persist, hot-swap (admin-only).
   - name: Ruleset
@@ -184,6 +186,14 @@ paths:
         would have returned, not a paraphrase of it: a `422`, or a `409` for a
         `carrierSerial` another passport already holds. A body create would accept
         returns `200` with the two verdicts.
+
+        The `422` includes the personal-data check. A field the product group's
+        schema marks as able to hold personal data that has a value and no
+        `personalData` statement, a statement about a field that is not marked, an
+        `outside` statement naming no record, and a basis a governing act does not
+        admit are all refused here as they are on create, each naming its field. The
+        check reads no store, so it is part of the preview. It never reads what a
+        field says.
 
         **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
         preconditions — the product group-data gates — and publish applies others this
@@ -2252,6 +2262,72 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /vault/api/v1/personal-data/{record}:
+    delete:
+      operationId: erasePersonalDataRecord
+      summary: Erase a record of personal data
+      description: |
+        Erases a record that a passport's `personalData` statement names
+        (`{"held": "outside", "record": "<id>"}`), keeping a tombstone. This is how
+        a withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is
+        signed, frozen, archived and copied to the back-up provider, so the personal
+        data is held in a record that can be erased instead.
+
+        **Erasing touches nothing else.** Not the passport, which is signed and
+        frozen. Not the statement in it, which keeps naming the record, so a reader
+        following the statement learns that the record is gone rather than that it
+        never existed. Not any other record.
+
+        **Idempotent.** Erasing a record that is already erased returns the receipt
+        it was given the first time, so a caller that lost the answer asks again. It
+        takes no `Idempotency-Key`.
+
+        **The tombstone is not free of personal data.** It keeps the identifier, the
+        passport and field the record belonged to, and when it was erased — none of
+        the content. A passport identifier can relate to whoever owns the item, and
+        information that can be linked to a person is personal data (GDPR Recital
+        26). The receipt is therefore as sensitive as the passport's individual-item
+        data, and the operator needs a basis for keeping the tombstone; to show that
+        it erased (Art. 5(2)) is one. Nothing in this node deletes it.
+
+        **No route reads a record.** A record is served by no resolver, public,
+        credentialed or authenticated view of a passport, and is never part of the
+        archive of past versions or of the back-up copy. Serving one is a disclosure
+        that needs a basis of its own, which only the controller can establish for
+        each purpose.
+
+        Admin-scoped, like every other route that removes something: the write scope
+        produces and moves passports, and none of that destroys anything.
+      tags:
+        - Personal Data
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: record
+          in: path
+          required: true
+          description: The record's identifier, as the passport's statement names it (`personalData.<field>.record`).
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: The record is erased. The same receipt on every call after the first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalDataErasureReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'This node never held a record with that identifier, which includes a string that could not have been one. A record that was held and is erased is not a `404`: it answers `200` with its receipt.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/unsold-goods:
     get:
       operationId: listUnsoldGoods
@@ -3155,8 +3231,8 @@ paths:
             nothing. Rows from all three import under the `battery` product group.
 
             The parameter keeps its name because renaming a path parameter renames
-            the method argument in every generated client, and for the eight
-            non-battery templates the two are still the same string.
+            the method argument in every generated client, and for every
+            non-battery template the two are still the same string.
           schema:
             type: string
             example: battery-ev
@@ -3192,9 +3268,13 @@ paths:
       operationId: importFile
       summary: Bulk-import passports from a file
       description: |
-        Upload a CSV or XLSX file to create draft passports for a product group
-        (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
-        `Authorization: Bearer` token is validated and forwarded to the vault.
+        Upload a CSV or XLSX file to create draft passports for a product group.
+        The caller's `Authorization: Bearer` token is validated and forwarded to
+        the vault.
+
+        The importable set is deliberately **not enumerated here**: it is one list
+        in the handler, and the `404` body names every accepted key. This sentence
+        listed five product groups long after the importer reached more.
 
         A battery **template** key is accepted here too — `battery-ev`,
         `battery-lmt` and `battery-industrial` all import as `battery`, since the
@@ -3682,9 +3762,10 @@ paths:
       operationId: resolveByGtin
       summary: GS1 Digital Link resolver
       description: |
-        GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node
-        prints for a model-level passport. Behaviour depends
-        on the `linkType` query / `Accept` header:
+        GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints
+        for a model-level passport. It has not been assessed against the GS1
+        Conformant Resolver Standard, and nothing here claims conformance. Behaviour
+        depends on the `linkType` query / `Accept` header:
         - default → `307` redirect to the HTML DPP page
         - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
         - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
@@ -5592,6 +5673,38 @@ components:
         skip:
           type: integer
           description: The offset this page starts at.
+    PersonalDataErasureReceipt:
+      type: object
+      description: |-
+        What is left of an erased record of personal data: which record it was, which
+        passport and field it related to, and when it was erased. None of the erased
+        content.
+
+        The tombstone is not free of personal data. A passport identifier can relate to
+        whoever owns the item (GDPR Recital 26), so the receipt is as sensitive as the
+        passport's individual-item data and is kept only as long as the operator has a
+        basis to keep it.
+      required:
+        - record
+        - passportId
+        - field
+        - erasedAt
+      properties:
+        record:
+          type: string
+          description: The erased record's identifier, as the passport's statement names it.
+        passportId:
+          type: string
+          format: uuid
+          description: The passport the record related to.
+        field:
+          type: string
+          description: The marked field the record related to, as a dotted path inside `productGroupData`.
+          example: usageHistory.negativeEvents
+        erasedAt:
+          type: string
+          format: date-time
+          description: When the record's content was erased.
     ValidateResponse:
       type: object
       description: 'The dry-run verdict. Two booleans rather than one, because create and publish deliberately differ: a body can be creatable as a draft and not yet publishable, and collapsing that into a single flag would hide the gap until the caller tried to publish.'

@@ -235,6 +235,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
+  reasons recorded for leaving them out were wrong. Electronics'
+  `productCategory` and `energyEfficiencyClass` already deserialise from a
+  string in `dpp-domain`, so the row parses them with core's own types and a
+  refused device type names core's accepted set. `EnergyEfficiencyClass`
+  catches any unknown string as `Other`, which the schema then refuses, so the
+  row refuses it first and says which row. Detergent `surfactants` is a JSON
+  array in one cell, the convention textile's `fibreComposition` already
+  taught, and is checked by core's `validate_surfactants`.
+
+  `unsold-goods` is the one product group still out, because it is not a
+  passport: an Art. 24 disclosure is recorded through the vault's own
+  `unsold-goods` route, and importing it needs a different target and a
+  document with a header section.
+
 - **A field that can hold personal data is refused on the write that would store
   it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
   2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer
@@ -247,9 +262,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
   and textile `repairHistoryUrl`. This node never reads what a field says.
 
-  Not yet done: the erasable store for the records a `held: outside` statement
-  names, and the route that erases one. Until they exist an operator keeps
-  those records elsewhere and names them.
+- **The records a `held: outside` statement names have a store of their own, and
+  an admin credential can erase one.** A published passport is signed, frozen,
+  archived and copied to the back-up provider, so personal data it is not
+  required to carry is held in a record that can be erased instead, and a
+  withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)). Core's
+  `PersonalDataPort` is now implemented on PostgreSQL in its own table,
+  `odal.personal_data_record` (migration 0043). It is not a column of the
+  passport, and the archive of past versions, the audit chain, the snapshots, the
+  outboxes and the back-up copy never see it. No route reads a record.
+
+  `DELETE /vault/api/v1/personal-data/{record}` erases one and answers the
+  receipt: the record, the passport and field it belonged to, and when it was
+  erased. Erasing a record already erased answers the first receipt again, so a
+  caller that lost the answer asks again. A record this node never held is `404`.
+  It needs an admin credential, like every other route that removes something.
+  It does not touch the passport or the statement in it, which keeps naming the
+  record, so a reader learns that the record is gone rather than that it never
+  existed. The store lists every record a passport has, erased ones included, so a
+  record whose identifier was lost on the way back from `store` can still be
+  found through the port.
+
+  **What a tombstone keeps, and why it needs a basis.** Erasure drops the
+  content and keeps the row: the identifier, the passport and field, and the
+  instant. None of the content, but a passport identifier can relate to whoever
+  owns the item, and information that can be linked to a person is personal data
+  (GDPR Recital 26). So the tombstone is protected like the passport's
+  individual-item data, and the operator needs a basis for keeping it. Showing
+  that it erased (Art. 5(2)) is one. Nothing here deletes it, and the database
+  role cannot. Erasure overwrites the content in place; the database's own
+  write-ahead log, replicas and backups hold earlier row versions, and how long
+  those live is the operator's retention.
+
+  Not yet done: no route stores a record, so nothing in this node calls `store`
+  or lists a passport's records. An operator who keeps records in this store
+  writes them through the port.
+
+  `POST /dpp/validate` now runs the checks create runs on the draft create would
+  store: core's own invariants (`Passport::validate`), then the personal-data
+  check. So it refuses a field with a value and no statement, and a battery whose
+  two placing-on-market dates disagree, where it used to pass both. Because it
+  now builds that draft, it also refuses a malformed `commodityCode`, which
+  create refused and the preview passed. The erase route logs which credential
+  erased a record, since the tombstone does not say.
 
 - **The GS1 resolver accepts a consumer product variant (AI 22) and a
   third-party extension (AI 235).** A label printed elsewhere may carry either
@@ -394,6 +449,55 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   The duplicate-versions comment in `deny.toml` gave a Windows figure from
   `cargo tree -d`; it now gives one taken on Linux with the command CI runs.
 
+- **The resolver no longer says it conforms to the GS1 Conformant Resolver
+  Standard.** The handler's documentation and the description of `GET
+  /01/{gtin}` called the route a "GS1-conformant resolver", and nothing backed
+  the claim: no revision was named, no test named the standard's criteria, and
+  two required criteria are unmet (a description of the resolver served from
+  `/.well-known/gs1resolver`, and decompression of a compressed Digital Link).
+  The text now describes the behaviour and says it has not been assessed against
+  the standard. A conformance claim, if one is made, comes from assessing every
+  criterion; that work is tracked in #477. (#469)
+
+- **Webhook delivery no longer follows redirects.** The drain's shared client
+  kept reqwest's default policy, which follows up to ten. The address guard
+  pins a named host to the addresses it approved, but hands the shared client
+  back unchanged for an IP-literal target and for the
+  `WEBHOOK_ALLOW_PRIVATE_TARGETS` opt-out. So a receiver on an approved public
+  IP could answer `302` to `169.254.169.254` and be followed there, an address
+  the guard never checked. A redirect is now the receiver's answer: a non-2xx
+  delivery, retried with backoff like any other, so a subscription must name
+  the URL its receiver answers on (`WEBHOOKS.md` says so). The client is built by
+  `webhook_drain::delivery_client`, where a test drives it against a
+  redirecting receiver. The build also no longer falls back to
+  `Client::default()`, which follows redirects, if it fails.
+
+- **A credential's product-category scope is enforced.** `GET
+  /credential/dpp/{dppId}` downgraded every credential that named a product
+  category to the public view, because a passport was thought to have no
+  category to compare against. Core's `ProductGroupData::product_category`
+  supplies one: a battery's `batteryType`, an electronics `DeviceType`, a
+  steel `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+  furniture or detergent `productType`. A credential whose categories include
+  the passport's now grants its audience. One that names other categories, or
+  is read against a group that states none (aluminium, textile, mattress, toy,
+  unsold goods, an unmodelled payload), still gets the public view: never a
+  `401`, and still recorded in the audit trail. A credential naming no category
+  is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
+  by `audience_for`, which takes the passport's category as well.
+
+- **The contract gate sees a scope extractor's `403`.**
+  `documented_error_codes_are_the_ones_handlers_return` finds the codes a
+  handler can emit by matching tokens in its source, and its `403` tokens were
+  the calls `require_write(` and `require_admin(`. The routes that take a body
+  moved those checks into the `RequireWrite` and `RequireAdmin` extractors, so
+  the scope gate runs before the body is read, and the tokens could not see a
+  type. Those routes stopped reporting `403` to the gate, and a spec that lost
+  its `403` would have passed. Every such route documents one today. The gate
+  now matches both extractors. With `403` removed from
+  `POST /dpp/{dppId}/eol`, it fails naming `eol_handler`, where it used to
+  pass.
+
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
   suite passed the local gate and failed after the push; the compile-only
@@ -404,6 +508,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `scripts/check-integration.sh` are removed: clippy type-checks the same
   targets. `just check` still cannot *run* the gated suites, which need Docker;
   the developer guide says which command does.
+
+- **Publish refuses a second holder of an identification link or a DID, and of a
+  model or batch label.** Publish asked one question, whether another published
+  passport already prints this carrier serial, and returned early for any
+  identifier that is not a GTIN. So two passports carrying one link or one DID
+  both went live (`200` for the second), and so could two that state model level,
+  or batch level for one lot, under one GTIN: the serial those derive from their
+  own id is shared by no other passport, while their label, the GTIN or the GTIN
+  and the lot, is printed by every other one at that level. The second publish is
+  now a `422` naming the field (`/batchId`, or
+  `/productGroupData/productIdentifier`, with `/carrierSerial` unchanged) and
+  stays a draft, an amendment chain still publishes, and the lock that serialises
+  two publishes of one claim is keyed on the claim rather than on the serial.
+  The model and batch cases cannot occur through this API yet, which never states
+  a level; the check is in place for when it does. A link or DID holder that
+  differs only in its lot is not found until dpp-core's lookup by the whole value
+  (`find_by_product_identifier`) is released and pinned.
 
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build

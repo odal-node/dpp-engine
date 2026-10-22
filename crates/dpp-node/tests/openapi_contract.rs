@@ -522,6 +522,10 @@ fn object_cases() -> Vec<ObjectCase> {
     // ── dpp-vault: request and response bodies ────────────────────────────
     case!("CreatePassportRequest", fixtures::create_request());
     case!("ValidateResponse", fixtures::validate_response());
+    case!(
+        "PersonalDataErasureReceipt",
+        fixtures::personal_data_erasure_receipt()
+    );
     case!("PassportListResponse", fixtures::passport_list_response());
     case!("WhoamiResponse", fixtures::whoami_response());
     case!("PassportScanStats", fixtures::passport_scan_stats());
@@ -2363,6 +2367,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/list.rs"),
         include_str!("../../dpp-vault/src/handlers/node_state.rs"),
         include_str!("../../dpp-vault/src/handlers/operator.rs"),
+        include_str!("../../dpp-vault/src/handlers/personal_data.rs"),
         include_str!("../../dpp-vault/src/handlers/plugins.rs"),
         include_str!("../../dpp-vault/src/handlers/public_read.rs"),
         include_str!("../../dpp-vault/src/handlers/public_read_by_gtin.rs"),
@@ -2425,6 +2430,15 @@ const CODE_TOKENS: &[(&str, u64)] = &[
     ("validation_error(", 422),
     ("require_write(", 403),
     ("require_admin(", 403),
+    // The same refusal, reached as an extractor rather than a call. A scope
+    // gate in the signature runs before the body extractor, which is why the
+    // routes that take a body moved to this form — but the tokens above cannot
+    // see a type, so those routes stopped reporting `403` here the moment they
+    // converted. Nothing went red: this gate only fails on a code a handler
+    // emits and the spec omits, so the missing direction is silent. The scan
+    // starts at `fn <name>(`, so it reads the signature these sit in.
+    ("RequireWrite", 403),
+    ("RequireAdmin", 403),
     ("parse_passport_id(", 400),
     // `dpp-common::http_problem`, the RFC 9457 constructors the integrator and
     // resolver reach for directly.
@@ -2858,6 +2872,7 @@ mod fixtures {
             info::VaultInfo,
             list::PassportListResponse,
             node_state::NodeState,
+            personal_data::PersonalDataErasureReceipt,
             registry_status::{
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
                 RegistryRollupView, RegistryVerificationView, TransferNotificationCounts,
@@ -3855,6 +3870,15 @@ mod fixtures {
             component_refs: Vec::new(),
             // Absent on purpose, like every optional field here.
             carrier_serial: None,
+        }
+    }
+
+    pub fn personal_data_erasure_receipt() -> PersonalDataErasureReceipt {
+        PersonalDataErasureReceipt {
+            record: "0198f2c4-7a3e-7c1d-9b52-3e8f6a1d4c70".into(),
+            passport_id: uuid(),
+            field: "usageHistory.negativeEvents".into(),
+            erased_at: ts(),
         }
     }
 

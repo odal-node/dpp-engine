@@ -39,7 +39,7 @@ set -euo pipefail
 DIRS=(crates cli)
 
 allow='crates/dpp-common/src/outbound.rs
-crates/dpp-node/src/boot/tasks.rs
+crates/dpp-node/src/infra/webhook_drain.rs
 crates/dpp-node/src/infra/registry/client.rs
 crates/dpp-integrator/src/infra/vault_client.rs
 crates/dpp-resolver/src/main.rs
