@@ -1254,7 +1254,8 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
     if terminal > 0 {
         println!(
             "  {terminal} retired, superseded or deactivated passport(s) carry no seal either;\n  \
-             the repair sweep seals those too, so this falls without any action."
+             the repair sweep seals those too, so this normally falls on its own. If it\n  \
+             does not, sealing is failing: see the exhausted count below."
         );
     }
     println!(

@@ -31,8 +31,10 @@ properties:
       falls as the sweep works through them.
 
 
-      Unlike `unsealedPublished`, a non-zero value here is not a call to act: it
-      is a backlog the sweep is already working through.
+      Unlike `unsealedPublished`, a non-zero value here is not by itself a call
+      to act: the sweep is already working through it. A value that does not
+      fall is one. It means the seals the sweep asks for are failing, which
+      `exhausted` counts and the node's log explains.
   pending:
     type: integer
   sealed:
