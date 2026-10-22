@@ -368,6 +368,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`just check` linted less than CI did.** `just lint` ran clippy without the
+  `integration-tests` features, so a lint that existed only in a Docker-gated
+  suite passed the local gate and failed after the push; the compile-only
+  `check-integration` was the one step that touched those suites, and it does not
+  lint. `just lint` now runs the command CI ran, features on, and CI's Clippy
+  job runs `just lint`, so the command has one home and the two cannot drift.
+  `just lint-integration`, `just check-integration` and
+  `scripts/check-integration.sh` are removed: clippy type-checks the same
+  targets. `just check` still cannot *run* the gated suites, which need Docker;
+  the developer guide says which command does.
+
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build
   from the profile kind, and every self-hosted node infers `dev` because it is
@@ -780,6 +791,42 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `.cargo/audit.toml` as not in the graph until the RustSec database classified
   that copy as unaffected on 21 October: it holds no roots of its own and
   re-exports those of the 1.x copy, which must stay at 1.0.10 or later.
+
+- **Six guard scripts ran in `just check` and in no workflow, and one CI check
+  was a different check from its script.** `grants-check`, `harness-check`,
+  `migrations-check`, `no-rsa-private-key`, `outbound-check` and
+  `vocabulary-check` had no CI job, so a pull request that broke one passed CI
+  and was stopped only if its author had run `just check`; each now has its own.
+  `migrations-check` could not simply be added: a CI checkout tracks one ref, so
+  it never had `origin/main` and printed "skipping" with exit 0 on every pull
+  request. It now fetches the tracking ref by name, treats a missing base as an
+  error in CI, no longer swallows a failed diff, and has a self-test that builds
+  the checkout shapes CI hands over. The `debug-prints` job carried its own copy
+  of `debug-check` and listed eight of the twelve crates, so a `println!` in
+  `dpp-types`, `dpp-render`, `dpp-seal` or `dpp-factor-data` passed it; that job
+  and the `subjects-check` and `mod-rs-check` jobs now run the scripts.
+  `just ci-guard-check`, in `just check` and a CI job of its own, fails for a
+  script in `scripts/` that no workflow runs, unless it is listed as local-only
+  with the reason. `check-plugins` is local-only by nature: it compares file
+  modification times, which a fresh checkout does not have.
+
+- **The code cited RFC 7807 and RFC 7235 after both had been obsoleted, and
+  nothing recorded which RFCs it cited.** RFC 9457 replaced 7807 and RFC 9110
+  replaced 7235. They were cited in thirty-seven places and two, while the
+  resolver already cited RFC 9457 for the same error shape, so one concept went
+  by two numbers. Neither change alters behaviour: the `application/problem+json`
+  media type and the case-insensitive auth scheme are the same in the successors.
+  The citations are corrected, and each section reference was re-read in the
+  successor rather than renumbered. The API description changes in two
+  sentences, so both OpenAPI bundles were regenerated.
+  `docs/architecture/STANDARDS.md` is a register of the twenty-eight RFCs the
+  repository cites, with each one's status, the date it was read, where it was
+  read, and where the code uses it, and `crates/dpp-node/tests/standard_citations.rs`
+  fails a citation with no row, an obsoleted specification still cited without a
+  `kept:` reason (RFC 2822 is the one, because it names chrono's parser), a draft
+  cited without its revision, a row nothing cites, and a row without a dated
+  status. It proves a citation has a status somebody read, not that the status
+  is current, so re-reading the register is now a step of the release checklist.
 
 ## [0.14.0] - 2026-09-24
 

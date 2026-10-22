@@ -1,4 +1,4 @@
-//! Extractors that refuse in RFC 7807, like the rest of this service.
+//! Extractors that refuse in RFC 9457, like the rest of this service.
 //!
 //! # What was wrong
 //!
@@ -42,7 +42,7 @@ use axum::{
 use dpp_common::http_problem::Problem;
 use serde::de::DeserializeOwned;
 
-/// `axum::Json`, refusing in RFC 7807.
+/// `axum::Json`, refusing in RFC 9457.
 ///
 /// Also implements [`IntoResponse`], because `Json` is used for both halves of a
 /// handler here — `Json(body): Json<T>` to read and `Json(value)` to write. A
@@ -57,7 +57,7 @@ impl<T: serde::Serialize> IntoResponse for Json<T> {
     }
 }
 
-/// `axum::extract::Query`, refusing in RFC 7807.
+/// `axum::extract::Query`, refusing in RFC 9457.
 pub struct Query<T>(pub T);
 
 /// Carry axum's own verdict into a problem document.

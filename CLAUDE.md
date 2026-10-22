@@ -247,7 +247,7 @@ dpp-render                      — the ONE renderer for the public passport pag
                                   resolver's live read and the continuity tier's pre-rendered
                                   snapshot, so the two cannot drift
 dpp-integrator                  — CSV/XLSX bulk import
-dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
+dpp-common                      — event bus trait, telemetry, config helpers, RFC 9457 errors
 dpp-plugin-host                 — wasmtime sandbox for product group Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
 dpp-seal                        — eIDAS qualified seal adapter: one `SealBackend` behind the
@@ -306,18 +306,28 @@ as the source of truth over any list written here.
 just infra          # start PostgreSQL + Redis + NATS
 cp .env.example .env
 
-just check          # THE gate: fmt-check, clippy, debug/subject/mod-rs checks,
-                    # spec-version check, unit tests, integration-test compile,
-                    # security audit
+just check          # THE gate: fmt-check, clippy over every target (the Docker-gated
+                    # suites included), the guard scripts (debug/subject/mod-rs,
+                    # vocabulary, outbound, grants, migrations, harness, the RSA
+                    # claim, ci-guard), spec-version check, unit tests, security audit
 just openapi-check  # lints the bundle; needs Node, so NOT in `just check` — CI
                     # runs it. Regenerates the bundle and fails if it drifted
 just openapi-bundle # regenerate api/openapi.bundled.yaml from the api/ tree
-just ci             # the above + integration-feature clippy + the Docker tiers
+just ci             # the above + the Docker tiers
 
 just test           # unit only (nextest, no Docker)
 just test-integration   # the Docker tiers
 just build          # release build
 ```
+
+**A guard script is not finished until a workflow runs it.** `just check` and CI
+are two hand-written lists, and for a long while six guards were in the first and
+not the second, so a pull request that broke one passed CI. `just ci-guard-check`
+(in `just check`, and a CI job of its own) fails for any script in `scripts/` that
+no workflow runs, unless `scripts/ci-guard-check.sh` lists it as local-only with
+the reason. A new guard gets its own job in `ci.yml`, running the script rather
+than a second copy of it: a copy is what let `debug-prints` scan eight crates of
+twelve.
 
 Anything not covered by a recipe is plain cargo — e.g. `cargo run -p dpp-node`
 to run the node, and `cargo run -p dpp-cli -- bootstrap` to seed operator config
@@ -605,11 +615,11 @@ in `dpp-node/tests/smoke.rs` is the shape to copy.
 
 Test tiers:
 - **Tier 1 (no DB)**: route mounting, health endpoints, auth middleware, validators, parsers, and the pure-logic unit tests inside each crate.
-- **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just check` also runs `check-integration` to prove they still *compile*.
+- **Tier 2 (testcontainers)**: the full lifecycle through real PostgreSQL. Gated behind the `integration-tests` feature, so `just test` never builds them — which is why `just lint` turns their features on: clippy type-checks and lints them without Docker, and `just check` runs it.
 
 Two things that bite:
 
-- **A feature-gated suite that stops compiling fails only in CI.** `just test` skips them entirely. Run `just check` before pushing, not `just test`.
+- **A feature-gated suite that fails an assertion fails only in CI.** `just check` type-checks and lints those suites but cannot run them, and `just test` skips them entirely. After changing a string, a status code or an error message, run the suite that might pin it — `cargo nextest run -p <crate> --features integration-tests --test <name>`, Docker running. Run `just check` before pushing, not `just test`.
 - **Adding a `#[cfg(test)]` helper does not make it reachable from another crate.** Rust cannot share test code across crate boundaries, so the reflex is to copy — and the Postgres harness reached eight copies that had drifted into six different implementations before anyone noticed.
 - **Shared test scaffolding has one home, behind `dpp-dal`'s `test-harness` feature**, enabled from `[dev-dependencies]`. Two things live there today: `test_harness` (`start_pg`, `start_pg_raw`, `start_pg_before`) and `in_memory_repo` (`InMemoryPassportRepo`). **Do not write another one** — if the shared version cannot do what a suite needs, extend it there rather than forking a copy. `just harness-check` fails the build if you do.
 - **Not everything that shares a name is duplication.** Checked and deliberately left alone: the three `serde_json::Value` passport builders (wire-shaped, for HTTP tests — a different thing from the typed `Passport` builders), and the `TestAuthProvider` / `AlwaysFail` doubles (different implementations per suite, small, purpose-built). Merging those would couple unrelated tests to one double's behaviour. The three *typed* `Passport` builders are a real candidate and are deferred, not rejected — extract them when a fourth appears, or when two of the three need the same new field.
@@ -626,8 +636,9 @@ Not debt — rules that hold, stated once so they are not re-derived.
 
   🚨 **Shape, never actor.** Clause 4.2 expects archived versions to be held by the back-up provider *as well as* by this node, so a provider is **not** exempt from archiving and no back-up arrangement wires `passport_version` for us. What makes `BackupCopyPort` not-archiving is that it carries no series — one copy per passport, `retrieve` answering with one. Getting this backwards is a mistake already made and corrected once.
 
-  `scripts/vocabulary-check.sh` (in `just check`) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
+  `scripts/vocabulary-check.sh` (in `just check` and CI) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
 
-- **Errors are RFC 7807.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
+- **Errors are RFC 9457.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
+- **A cited RFC or Internet-Draft has a row in `docs/architecture/STANDARDS.md`.** `crates/dpp-node/tests/standard_citations.rs` fails a citation with no row, a still-cited specification whose row says it is obsoleted (cite the successor, or give the row a `kept:` reason), and a draft cited without its revision. Read the status at `https://www.rfc-editor.org/info/rfcNNNN` and write the date. Re-check a section number against the text actually cited, never by renumbering: this repository cited two obsoleted RFCs, thirty-nine times between them, after RFC 9457 and RFC 9110 had replaced them, and the section numbers happened to survive.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).
 - **The passport graph lives in `doc`, not in tables.** Component relationships are `componentRefs` inside the passport JSONB, walked by `dpp-vault`'s `verify_tree`. There are no component/material/supplier tables in `ops/pg/*` and none are planned unless a query pattern demands them — do not add one to model a relationship the document already carries.

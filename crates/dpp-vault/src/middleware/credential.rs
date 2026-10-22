@@ -316,7 +316,7 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
     }
 }
 
-/// RFC 7807 rejection. 401 rather than 400: the request is well-formed HTTP; it
+/// RFC 9457 rejection. 401 rather than 400: the request is well-formed HTTP; it
 /// is the credential that failed, and the client's remedy is a different one.
 ///
 /// Details come from [`rejection_detail`] or are fixed strings at the call site;

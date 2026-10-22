@@ -2,7 +2,7 @@
 //!
 //! The failure this pins: against the same node and the same HTTP 401,
 //! `odal key list` printed a sentence while `odal stats` printed the raw
-//! RFC 7807 body — `requestId`, `status` and `type` included. The shared
+//! RFC 9457 body — `requestId`, `status` and `type` included. The shared
 //! renderer already existed and fifty-nine call sites used it; one did not.
 //!
 //! No node is needed to test this. The behaviour under test is how the CLI
