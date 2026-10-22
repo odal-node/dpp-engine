@@ -92,12 +92,24 @@ impl From<ErasureReceipt> for PersonalDataErasureReceipt {
 /// names nothing. Erasing a record already erased is not an error.
 pub async fn personal_data_erase_handler(
     State(state): State<AppState>,
-    RequireAdmin(_auth): RequireAdmin,
+    RequireAdmin(auth): RequireAdmin,
     Path(record): Path<String>,
 ) -> Response {
     let record = PersonalDataRecordId::new(record);
     match state.personal_data.erase(&record).await {
-        Ok(receipt) => Json(PersonalDataErasureReceipt::from(receipt)).into_response(),
+        Ok(receipt) => {
+            // Who erased it. The tombstone records what was erased and when, and
+            // not by whom, so this line is where the actor is kept. It names the
+            // record and never the passport: the module doc explains why the
+            // passport is personal data. A retry logs again and answers the
+            // same receipt.
+            tracing::info!(
+                actor = %auth.user_id,
+                record = %record,
+                "erased a personal data record"
+            );
+            Json(PersonalDataErasureReceipt::from(receipt)).into_response()
+        }
         Err(DppError::NotFound(_)) => {
             not_found_error(&format!("No personal data record {record} is held here."))
         }

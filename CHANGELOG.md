@@ -268,10 +268,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   or lists a passport's records. An operator who keeps records in this store
   writes them through the port.
 
-  `POST /dpp/validate` now runs the same personal-data check create runs, on the
-  draft create would store, and so refuses a field with a value and no statement
-  where it used to pass. Because it now builds that draft, it also refuses a
-  malformed `commodityCode`, which create refused and the preview passed.
+  `POST /dpp/validate` now runs the checks create runs on the draft create would
+  store: core's own invariants (`Passport::validate`), then the personal-data
+  check. So it refuses a field with a value and no statement, and a battery whose
+  two placing-on-market dates disagree, where it used to pass both. Because it
+  now builds that draft, it also refuses a malformed `commodityCode`, which
+  create refused and the preview passed. The erase route logs which credential
+  erased a record, since the tombstone does not say.
 
 - **The GS1 resolver accepts a consumer product variant (AI 22) and a
   third-party extension (AI 235).** A label printed elsewhere may carry either

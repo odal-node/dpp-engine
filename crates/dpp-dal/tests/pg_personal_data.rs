@@ -405,6 +405,13 @@ async fn a_record_for_a_passport_this_node_does_not_hold_is_refused() {
 
 /// What the app role is not allowed to do, tried as the app role: the grants are
 /// the first line, and a tombstone is the controller's proof that it erased.
+///
+/// Each refusal must be the grant's (`42501`, `insufficient_privilege`), not just
+/// any error. The trigger also refuses every write to an erased record, so an
+/// UPDATE tried on a tombstone fails even when the grant has been widened to the
+/// whole table, and an `is_err` here would never see that regression. So the
+/// UPDATE is tried on a present record. PostgreSQL checks column privileges
+/// before any trigger runs, so the SQLSTATE says which line refused.
 #[tokio::test]
 async fn the_app_role_can_neither_delete_a_record_nor_rewrite_it() {
     let pg = start_pg().await;
@@ -414,42 +421,51 @@ async fn the_app_role_can_neither_delete_a_record_nor_rewrite_it() {
         .store(passport, FIELD, &json!("x"))
         .await
         .expect("store");
+    let present = store
+        .store(passport, FIELD, &json!("y"))
+        .await
+        .expect("store");
     let other = a_passport(&pg).await;
     store.erase(&id).await.expect("erase");
     let id = Uuid::parse_str(id.as_str()).expect("uuid");
+    let present = Uuid::parse_str(present.as_str()).expect("uuid");
 
     let app = sqlx::PgPool::connect(&pg.app_url).await.expect("app");
 
     let delete = sqlx::query("DELETE FROM odal.personal_data_record WHERE id = $1")
         .bind(id)
         .execute(&app)
-        .await;
-    assert!(
-        delete.is_err(),
-        "a tombstone is not the app role's to delete"
-    );
+        .await
+        .expect_err("a tombstone is not the app role's to delete");
+    assert_eq!(sqlstate(&delete).as_deref(), Some("42501"), "{delete}");
 
     // Moving a record to another passport would hand its data to someone else.
     let repoint =
         sqlx::query("UPDATE odal.personal_data_record SET passport_id = $2 WHERE id = $1")
-            .bind(id)
+            .bind(present)
             .bind(other.0)
             .execute(&app)
-            .await;
-    assert!(
-        repoint.is_err(),
-        "UPDATE is granted on the two erasure columns only"
-    );
+            .await
+            .expect_err("UPDATE is granted on the two erasure columns only");
+    assert_eq!(sqlstate(&repoint).as_deref(), Some("42501"), "{repoint}");
 
     let still: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM odal.personal_data_record WHERE id = $1 AND passport_id <> $2",
+        "SELECT count(*) FROM odal.personal_data_record WHERE id = ANY($1) AND passport_id = $2",
     )
-    .bind(id)
-    .bind(other.0)
+    .bind(vec![id, present])
+    .bind(passport.0)
     .fetch_one(&app)
     .await
     .expect("count");
-    assert_eq!(still, 1);
+    assert_eq!(still, 2);
+}
+
+/// The SQLSTATE a database error carries, so a test can tell which line refused.
+fn sqlstate(error: &sqlx::Error) -> Option<String> {
+    error
+        .as_database_error()
+        .and_then(|e| e.code())
+        .map(|c| c.into_owned())
 }
 
 /// The trigger is the second line, and holds for the superuser too: an erased

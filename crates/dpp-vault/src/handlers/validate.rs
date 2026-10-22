@@ -68,18 +68,17 @@ pub async fn validate_handler(
         return rejection;
     }
     // The draft create would store, and what the service asks of it before it
-    // does. The personal-data check is judged on the assembled passport, not the
-    // body, so the preview builds the same one rather than restating how it is
-    // put together — and it reads no store, so it belongs in a dry run. Without
-    // it the preview would pass a draft whose marked field has a value and no
-    // statement, which create refuses.
+    // does: core's own invariants, then the personal-data check. Both are judged
+    // on the assembled passport, not the body, so the preview builds the same
+    // one rather than restating how it is put together. Neither reads a store, so
+    // both belong in a dry run. Without them the preview would pass a draft
+    // create refuses: one whose marked field has a value and no statement, or a
+    // battery whose two placing-on-market dates disagree.
     let passport = match super::create::assemble_passport(body) {
         Ok(passport) => passport,
         Err(rejection) => return rejection,
     };
-    if let Err(DppError::Validation(errors)) =
-        crate::domain::service::guard_personal_data(&passport)
-    {
+    if let Err(DppError::Validation(errors)) = crate::domain::service::check_new_draft(&passport) {
         return field_validation_error(&errors);
     }
 

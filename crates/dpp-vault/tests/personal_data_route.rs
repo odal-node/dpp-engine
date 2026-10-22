@@ -357,3 +357,50 @@ async fn the_dry_run_refuses_a_tariff_code_create_refuses() {
     assert_eq!(created.0, 422, "{}", created.1);
     assert_eq!(previewed, created);
 }
+
+/// The preview runs core's own invariants on the draft, as create does, rather
+/// than only the copy of some of them that the request check keeps.
+///
+/// A battery's two placing-on-market dates (the envelope's and the battery
+/// data's own) must agree, and only `Passport::validate` compares them. It
+/// reads the assembled record, so the request check never sees the pair. The
+/// preview passed this body (`200`, `createValid: true`) while create refused
+/// it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_dry_run_refuses_a_draft_core_refuses() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+
+    let body = json!({
+        "productName": "EcoBattery LFP 3000",
+        "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+        "placedOnMarketDate": "2026-07-15",
+        "productGroupData": {
+            "productGroup": "battery",
+            "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+            "batteryChemistry": "LFP",
+            "batteryType": "portable",
+            "nominalVoltageV": 48.0,
+            "nominalCapacityAh": 100.0,
+            "expectedLifetimeCycles": 3000,
+            "co2ePerUnitKg": 45.2,
+            "placedOnMarketDate": "2027-02-18"
+        }
+    });
+
+    let created = refusal(client.post_json("/api/v1/dpp", body.clone()).await).await;
+    let previewed = refusal(client.post_json("/api/v1/dpp/validate", body).await).await;
+
+    assert_eq!(created.0, 422, "{}", created.1);
+    assert!(
+        created.1["errors"]
+            .as_array()
+            .expect("the findings are addressable")
+            .iter()
+            .any(|e| e["field"] == "/productGroupData/placedOnMarketDate"),
+        "create refuses it for the dates: {}",
+        created.1
+    );
+    assert_eq!(previewed, created, "the dry run says what create says");
+}
