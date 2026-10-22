@@ -6150,7 +6150,7 @@ components:
           description: |-
             Retired, superseded or deactivated passports that were published and carry no seal. They still serve publicly and the obligation attached at publish, so the repair sweep seals them too: this is what is left of that, and it falls as the sweep works through them.
 
-            Unlike `unsealedPublished`, a non-zero value here is not by itself a call to act: the sweep is already working through it. A value that does not fall is one. It means the seals the sweep asks for are failing, which `exhausted` counts and the node's log explains.
+            Unlike `unsealedPublished`, a non-zero value here is not by itself a call to act: the sweep is already working through it. A count that does not fall is a call to act: the seals the sweep asks for are failing, which `exhausted` counts and the node's log explains.
         pending:
           type: integer
         sealed:

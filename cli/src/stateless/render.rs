@@ -1235,29 +1235,42 @@ pub fn render_seal_summary(summary: &serde_json::Value) {
     }
 
     let unsealed = n("unsealedPublished");
-    let terminal = n("unsealedTerminal");
+    // Absent from an older node's response, which is treated as "cannot say"
+    // rather than as `0`. Such a node counts its retired passports in
+    // `unsealedPublished`, so the headline must not call that number live
+    // there, and a zero printed for the missing count would hide them.
+    let terminal = summary
+        .get("unsealedTerminal")
+        .and_then(serde_json::Value::as_i64);
     println!("Sealing");
     // "Live", because a retired passport is published too: the node reports
     // those apart, and saying "every published passport" beside a non-zero
     // terminal count would be false.
+    let live = if terminal.is_some() { "live " } else { "" };
     if unsealed == 0 {
         println!(
-            "  {}  every live published passport carries a seal",
+            "  {}  every {live}published passport carries a seal",
             style("OK").green().bold()
         );
     } else {
         println!(
-            "  {}  {unsealed} live published passport(s) carry no seal",
+            "  {}  {unsealed} {live}published passport(s) carry no seal",
             style("UNSEALED").red().bold()
         );
     }
-    if terminal > 0 {
-        println!(
+    match terminal {
+        Some(terminal) if terminal > 0 => println!(
             "  {terminal} retired, superseded or deactivated passport(s) carry no seal either;\n  \
              the repair sweep seals those too, so this normally falls on its own. If it\n  \
              does not, sealing is failing: see the exhausted count below."
-        );
+        ),
+        Some(_) => {}
+        None => println!(
+            "  This node does not report retired passports apart (older version), so the\n  \
+             count above includes them."
+        ),
     }
+    let terminal = terminal.unwrap_or(0);
     println!(
         "  Outbox: {} pending, {} sealed, {} exhausted",
         n("pending"),
