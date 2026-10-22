@@ -48,6 +48,13 @@ Before tagging a release:
 8. **Dependency review** — check for known vulnerabilities with `cargo audit`.
 9. **dpp-core version pinned** — ensure the workspace uses a tagged release
    of dpp-core, not an unreleased commit.
+10. **Standards re-read** — read each row of
+    [`docs/architecture/STANDARDS.md`](../architecture/STANDARDS.md) at its
+    source (`https://www.rfc-editor.org/info/rfcNNNN`), correct `Status as read`
+    and set `Read` to today. The gate proves that every citation has a status
+    somebody read and dated; only this step proves the status is still current.
+    A specification that has since been obsoleted and is still cited fails
+    `standard_citations.rs` once its row says so.
 
 ## Release Command
 

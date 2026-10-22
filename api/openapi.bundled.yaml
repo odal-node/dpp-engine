@@ -4421,7 +4421,7 @@ components:
     Problem:
       type: object
       description: |
-        RFC 7807 / RFC 9457 problem details. The shape
+        RFC 9457 problem details. The shape
         `dpp-common::http_problem::Problem` produces, served as
         `application/problem+json`.
 
@@ -4458,7 +4458,7 @@ components:
           description: |
             The individual field failures behind this problem, when there are any.
 
-            An RFC 7807 §3.2 extension member. `detail` carries the same failures
+            An RFC 9457 §3.2 extension member. `detail` carries the same failures
             joined with `"; "` and is unaffected, so a client written before this
             member existed keeps working; `errors` is what lets a newer one address a
             single field. Publishing a battery that is missing its Annex XIII content

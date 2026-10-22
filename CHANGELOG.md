@@ -368,6 +368,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A credential's product-category scope is enforced.** `GET
+  /credential/dpp/{dppId}` downgraded every credential that named a product
+  category to the public view, because a passport was thought to have no
+  category to compare against. Core's `ProductGroupData::product_category`
+  supplies one: a battery's `batteryType`, an electronics `DeviceType`, a
+  steel `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+  furniture or detergent `productType`. A credential whose categories include
+  the passport's now grants its audience. One that names other categories, or
+  is read against a group that states none (aluminium, textile, mattress, toy,
+  unsold goods, an unmodelled payload), still gets the public view: never a
+  `401`, and still recorded in the audit trail. A credential naming no category
+  is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
+  by `audience_for`, which takes the passport's category as well.
+
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
   suite passed the local gate and failed after the push; the compile-only
@@ -809,6 +823,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   script in `scripts/` that no workflow runs, unless it is listed as local-only
   with the reason. `check-plugins` is local-only by nature: it compares file
   modification times, which a fresh checkout does not have.
+
+- **The code cited RFC 7807 and RFC 7235 after both had been obsoleted, and
+  nothing recorded which RFCs it cited.** RFC 9457 replaced 7807 and RFC 9110
+  replaced 7235. They were cited in thirty-seven places and two, while the
+  resolver already cited RFC 9457 for the same error shape, so one concept went
+  by two numbers. Neither change alters behaviour: the `application/problem+json`
+  media type and the case-insensitive auth scheme are the same in the successors.
+  The citations are corrected, and each section reference was re-read in the
+  successor rather than renumbered. The API description changes in two
+  sentences, so both OpenAPI bundles were regenerated.
+  `docs/architecture/STANDARDS.md` is a register of the twenty-eight RFCs the
+  repository cites, with each one's status, the date it was read, where it was
+  read, and where the code uses it, and `crates/dpp-node/tests/standard_citations.rs`
+  fails a citation with no row, an obsoleted specification still cited without a
+  `kept:` reason (RFC 2822 is the one, because it names chrono's parser), a draft
+  cited without its revision, a row nothing cites, and a row without a dated
+  status. It proves a citation has a status somebody read, not that the status
+  is current, so re-reading the register is now a step of the release checklist.
 
 ## [0.14.0] - 2026-09-24
 

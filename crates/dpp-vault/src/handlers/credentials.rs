@@ -165,10 +165,9 @@ pub async fn issue_credential_handler(
             role: body.role,
             country: body.country.to_uppercase(),
             product_groups: body.product_groups,
-            // Never set. A product category restriction is unevaluable on a
-            // read — a passport has no category — and the verifier here
-            // downgrades any credential carrying one to public access. Minting
-            // one would produce a credential that unlocks nothing.
+            // Never set: the request carries no category list, so a credential
+            // minted here is unscoped on that axis. The verifier does enforce
+            // one — see `VerifiedCredential::audience_for`.
             product_categories: Vec::new(),
         },
     )
