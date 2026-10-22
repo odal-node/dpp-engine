@@ -261,7 +261,7 @@ anyone has a node, let alone a key.
 
 | Command | Purpose | Auth |
 |---|---|---|
-| `odal credential issue <holder-did> --name --role --country [--product-groups] [--valid-for-days]` | Mint a DPP access credential the holder presents as `X-DPP-Credential`. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. Nothing can withdraw a credential once issued, so the lifetime is capped at 90 days and is the only control there is | API key (Admin) |
+| `odal credential issue <holder-did> --name --role --country [--product-groups] [--product-categories] [--valid-for-days]` | Mint a DPP access credential the holder presents as `X-DPP-Credential`. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. Nothing can withdraw a credential once issued, so the lifetime is capped at 90 days and is the only control there is | API key (Admin) |
 
 ### Unsold goods (ESPR Art. 24)
 

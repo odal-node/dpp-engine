@@ -40,11 +40,23 @@
 //! it rather than a free-form date. [`MAX_VALID_DAYS`] is the bound; the default
 //! is deliberately shorter. Re-issuing is cheap and a short credential is the
 //! thing that limits the damage of one going astray.
+//!
+//! # A category list is checked before anything is signed
+//!
+//! An operator that places both EV and LMT batteries can vouch for a repairer
+//! of one and not the other, by naming product categories as well as product
+//! groups. The reader at `GET /credential/dpp/{dppId}` enforces both axes, and
+//! a credential that covers nothing there is not refused but downgraded to the
+//! public view. So a category list that cannot be satisfied would be found by
+//! the holder, as reads that come back public, rather than by the operator who
+//! minted it. [`category_scope_problem`] refuses such a list with a `422`
+//! instead.
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
 use chrono::{Duration, Utc};
+use dpp_domain::product_group::ProductGroup;
 use dpp_vc::{Audience, CredentialBuilder, CredentialRole, DppCredentialSubject};
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +101,11 @@ pub struct IssueCredentialRequest {
     /// this operator publishes.
     #[serde(default)]
     pub product_groups: Vec<String>,
+    /// Product categories the credential covers within `product_groups`.
+    /// Empty means every category. See [`category_scope_problem`] for what a
+    /// non-empty list must satisfy.
+    #[serde(default)]
+    pub product_categories: Vec<String>,
     /// Lifetime in days. Defaults to [`DEFAULT_VALID_DAYS`], capped at
     /// [`MAX_VALID_DAYS`].
     #[serde(default)]
@@ -142,6 +159,9 @@ pub async fn issue_credential_handler(
     if body.country.len() != 2 || !body.country.chars().all(|c| c.is_ascii_alphabetic()) {
         return validation_error("country must be an ISO 3166-1 alpha-2 code.");
     }
+    if let Some(problem) = category_scope_problem(&body.product_groups, &body.product_categories) {
+        return validation_error(&problem);
+    }
 
     let days = body.valid_for_days.unwrap_or(DEFAULT_VALID_DAYS);
     if !(1..=MAX_VALID_DAYS).contains(&days) {
@@ -165,10 +185,7 @@ pub async fn issue_credential_handler(
             role: body.role,
             country: body.country.to_uppercase(),
             product_groups: body.product_groups,
-            // Never set: the request carries no category list, so a credential
-            // minted here is unscoped on that axis. The verifier does enforce
-            // one — see `VerifiedCredential::audience_for`.
-            product_categories: Vec::new(),
+            product_categories: body.product_categories,
         },
     )
     .expires_at(Utc::now() + Duration::days(days))
@@ -194,6 +211,92 @@ pub async fn issue_credential_handler(
         }),
     )
         .into_response()
+}
+
+/// Why `categories` cannot narrow a credential over `groups`, or `None` when
+/// it can.
+///
+/// A credential's category list is flat: it narrows every product group the
+/// credential names, and a read is admitted only where the passport states one
+/// of the listed categories. So a list that a named group cannot satisfy does
+/// not narrow that group, it shuts the group out. Three rules refuse a list
+/// that would be signed and could never work as written:
+///
+/// - **A category list needs named groups.** An empty `productGroups` means
+///   every group, and the list would shut out each group whose passports state
+///   no category.
+/// - **Every category is one a named group's passports can state.** Anything
+///   else narrows nothing, and is most likely a typo.
+/// - **Every named group admits at least one listed category.** Otherwise the
+///   credential names the group and can read none of its passports.
+///
+/// What a group's passports can state is core's answer,
+/// [`ProductGroup::product_category_values`], read from the group's current
+/// schema; nothing here lists a vocabulary. Spelling is compared exactly,
+/// because the reader compares it exactly.
+fn category_scope_problem(groups: &[String], categories: &[String]) -> Option<String> {
+    if categories.is_empty() {
+        return None;
+    }
+    if groups.is_empty() {
+        return Some(
+            "productCategories needs productGroups. An empty productGroups means every product \
+             group, and a category list would shut out each one whose passports state no \
+             category, such as textile and toy."
+                .to_owned(),
+        );
+    }
+
+    let legal: Vec<(&str, Option<&'static [String]>)> = groups
+        .iter()
+        .map(|g| {
+            let values = ProductGroup::from_wire_tag(g).product_category_values();
+            (g.as_str(), values)
+        })
+        .collect();
+    let admits = |values: Option<&[String]>, category: &String| {
+        values.is_some_and(|values| values.contains(category))
+    };
+    let describe = |groups: &[(&str, Option<&'static [String]>)]| {
+        groups
+            .iter()
+            .map(|(group, values)| match values {
+                Some(values) => format!("{group}: {}", values.join(", ")),
+                None => format!("{group}: no category"),
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+
+    let unknown: Vec<&str> = categories
+        .iter()
+        .filter(|category| !legal.iter().any(|(_, values)| admits(*values, category)))
+        .map(String::as_str)
+        .collect();
+    if !unknown.is_empty() {
+        return Some(format!(
+            "No passport in the named product groups can state '{}'. A value none of them can \
+             state narrows nothing. What each group's passports can state: {}.",
+            unknown.join("', '"),
+            describe(&legal)
+        ));
+    }
+
+    let shut_out: Vec<(&str, Option<&'static [String]>)> = legal
+        .iter()
+        .filter(|(_, values)| !categories.iter().any(|category| admits(*values, category)))
+        .copied()
+        .collect();
+    if !shut_out.is_empty() {
+        return Some(format!(
+            "This credential could read no passport in some of its product groups, because \
+             none of their passports can state any of productCategories. Drop those groups \
+             from productGroups, or give them a credential of their own. {}.",
+            describe(&shut_out)
+        ));
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -250,5 +353,87 @@ mod tests {
             wire(CredentialRole::Custom("scrap-dealer".to_owned())),
             serde_json::json!({"custom": "scrap-dealer"})
         );
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|&v| v.to_owned()).collect()
+    }
+
+    fn problem(groups: &[&str], categories: &[&str]) -> Option<String> {
+        category_scope_problem(&strings(groups), &strings(categories))
+    }
+
+    /// No category list claims no narrowing, so there is nothing to check,
+    /// whichever groups are named and whether or not they have a category axis.
+    #[test]
+    fn a_credential_naming_no_category_is_never_refused_for_scope() {
+        assert_eq!(problem(&[], &[]), None);
+        assert_eq!(problem(&["textile", "battery"], &[]), None);
+    }
+
+    /// A list that every named group can satisfy is accepted, including one
+    /// value that two groups share.
+    #[test]
+    fn categories_each_named_group_can_state_are_accepted() {
+        assert_eq!(problem(&["battery"], &["ev", "lmt"]), None);
+        assert_eq!(problem(&["battery", "steel"], &["ev", "flat"]), None);
+        assert_eq!(problem(&["steel", "furniture"], &["other"]), None);
+    }
+
+    /// The values are the schema's legal domain, not the catalog's curated
+    /// list: furniture's catalog entry does not name `bed`, and a bed is still
+    /// a furniture passport a repairer may be scoped to.
+    #[test]
+    fn a_category_outside_the_catalog_list_but_in_the_schema_is_accepted() {
+        assert_eq!(problem(&["furniture"], &["bed"]), None);
+    }
+
+    /// Without named groups the list would narrow every group, and shut out
+    /// each one with no category axis.
+    #[test]
+    fn a_category_list_needs_named_groups() {
+        let refusal = problem(&[], &["ev"]).expect("refused");
+        assert!(refusal.contains("needs productGroups"), "{refusal}");
+    }
+
+    /// A value no named group's passports can state is refused and named,
+    /// with what the groups can state, so a typo is fixed at issuance rather
+    /// than found by the holder. Spelling is exact because the reader's
+    /// comparison is.
+    #[test]
+    fn a_category_no_named_group_can_state_is_refused() {
+        let refusal = problem(&["battery"], &["ev", "evv"]).expect("refused");
+        assert!(refusal.contains("'evv'"), "names the value: {refusal}");
+        assert!(
+            refusal.contains("battery: portable, industrial, ev, lmt"),
+            "says what battery can state: {refusal}"
+        );
+
+        assert!(problem(&["battery"], &["EV"]).is_some(), "case is exact");
+        assert!(
+            problem(&["battery"], &["flat"]).is_some(),
+            "a value of an unnamed group does not count"
+        );
+    }
+
+    /// A named group that admits none of the categories is refused, whether it
+    /// has no category axis at all or simply none of these.
+    #[test]
+    fn a_named_group_no_category_reaches_is_refused() {
+        let no_axis = problem(&["battery", "textile"], &["ev"]).expect("refused");
+        assert!(no_axis.contains("textile: no category"), "{no_axis}");
+        assert!(!no_axis.contains("battery:"), "battery is fine: {no_axis}");
+
+        let none_listed = problem(&["battery", "steel"], &["ev"]).expect("refused");
+        assert!(none_listed.contains("steel: flat"), "{none_listed}");
+    }
+
+    /// A group this build has no typed variant for answers no category values,
+    /// so a category list cannot reach it. That includes a misspelt key, which
+    /// is refused rather than minted into a credential nothing matches.
+    #[test]
+    fn a_group_this_node_does_not_model_admits_no_category() {
+        let refusal = problem(&["Battery"], &["ev"]).expect("refused");
+        assert!(refusal.contains("'ev'"), "{refusal}");
     }
 }

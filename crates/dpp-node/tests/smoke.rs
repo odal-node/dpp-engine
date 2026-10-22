@@ -2095,6 +2095,101 @@ async fn a_self_issued_credential_stops_at_its_own_audience() {
     );
 }
 
+/// A category list is checked when the credential is issued and enforced when
+/// it is read.
+///
+/// The layered battery states `batteryType: "portable"`. A credential scoped to
+/// `portable` unlocks its individual-class data. One scoped to `ev` is valid,
+/// so the read is a `200` downgraded to the public view, not an error, and
+/// `X-DPP-Credential-Out-Of-Scope: product-category` says why. A value
+/// no battery can state is refused at issuance with a `422` naming it: minted,
+/// it could only ever come back public, and the holder would be the one to
+/// find out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_category_scoped_credential_is_checked_at_issuance_and_enforced_on_read() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let id = publish_layered_battery(&base, &token, &client).await;
+
+    let issue = |category: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/credentials"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "holderDid": "did:web:repairs.example",
+                    "holderName": "Nord Repair GmbH",
+                    "role": "authorised_repairer",
+                    "country": "DE",
+                    "productGroups": ["battery"],
+                    "productCategories": [category],
+                }))
+                .send()
+                .await
+                .expect("issue request failed")
+        }
+    };
+
+    let typo = issue("portabel").await;
+    assert_eq!(typo.status(), 422, "no battery can state 'portabel'");
+    let problem: serde_json::Value = typo.json().await.unwrap();
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("'portabel'")),
+        "the refusal must name the value, got {problem}"
+    );
+
+    for (category, unlocks) in [("portable", true), ("ev", false)] {
+        let resp = issue(category).await;
+        assert_eq!(resp.status(), 201, "{category} is a battery category");
+        let issued: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            issued["credential"]["credentialSubject"]["productCategories"],
+            serde_json::json!([category]),
+            "the credential must carry the list it was issued with"
+        );
+        let jws = issued["credentialJws"]
+            .as_str()
+            .expect("credentialJws must be a string");
+
+        let resp = client
+            .get(format!("{base}/vault/credential/dpp/{id}"))
+            .header("X-DPP-Credential", jws)
+            .send()
+            .await
+            .expect("credentialed read failed");
+        assert_eq!(
+            resp.status(),
+            200,
+            "{category}: out of scope is a downgrade, not an error"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-dpp-credential-out-of-scope")
+                .and_then(|v| v.to_str().ok()),
+            (!unlocks).then_some("product-category"),
+            "{category}: a downgrade says which axis missed, and only a downgrade"
+        );
+        let view: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            view["productGroupData"].get("stateOfHealthPct").is_some(),
+            unlocks,
+            "{category}: individual-class data, got {view}"
+        );
+        assert_eq!(
+            view.get("disclosureSet").is_some(),
+            unlocks,
+            "{category}: only an elevated view names a disclosure set, got {view}"
+        );
+    }
+}
+
 /// A credential naming this node as issuer but signed by a key it does not
 /// publish unlocks nothing.
 ///

@@ -170,6 +170,9 @@ odal credential issue did:web:repairs.example \
 `--role` defaults to `authorised_repairer`; `recycler`, `remanufacturer`,
 `preparer_for_reuse` and `distributor` are the other named ones.
 `--product-groups` narrows the credential; omit it to cover all.
+`--product-categories` narrows it further within those groups, e.g.
+`--product-groups battery --product-categories ev`. The node refuses a category
+none of the named groups' passports can state.
 
 Prints a JWS. The holder sends it as the `X-DPP-Credential` header.
 
@@ -194,6 +197,12 @@ curl -H "X-DPP-Credential: <jws>" \
 
 The second response carries Annex XIII point 2 and point 4 content the first
 omits — dismantling and safety data, state of health, use history.
+
+If it matches the first, run it with `curl -i`. An
+`X-DPP-Credential-Out-Of-Scope` header means the credential verified but does
+not cover this passport, and its value names why: `product-group`,
+`product-category` or `no-product-category`. No header means the node never
+verified the credential: check `CREDENTIAL_ISSUERS_SELF` above.
 
 ### ✅ Yes, this works on a laptop
 
