@@ -382,6 +382,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
   by `audience_for`, which takes the passport's category as well.
 
+- **The contract gate sees a scope extractor's `403`.**
+  `documented_error_codes_are_the_ones_handlers_return` finds the codes a
+  handler can emit by matching tokens in its source, and its `403` tokens were
+  the calls `require_write(` and `require_admin(`. The routes that take a body
+  moved those checks into the `RequireWrite` and `RequireAdmin` extractors, so
+  the scope gate runs before the body is read, and the tokens could not see a
+  type. Those routes stopped reporting `403` to the gate, and a spec that lost
+  its `403` would have passed. Every such route documents one today. The gate
+  now matches both extractors. With `403` removed from
+  `POST /dpp/{dppId}/eol`, it fails naming `eol_handler`, where it used to
+  pass.
+
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
   suite passed the local gate and failed after the push; the compile-only
