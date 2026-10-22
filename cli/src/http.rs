@@ -367,7 +367,7 @@ pub fn load_client_unchecked() -> Result<(OdalClient, crate::config::Config)> {
     Ok((client, cfg))
 }
 
-/// Parsed subset of an RFC 7807 problem body — just enough to render a human
+/// Parsed subset of an RFC 9457 problem body — just enough to render a human
 /// sentence instead of the raw JSON.
 #[derive(serde::Deserialize)]
 struct ProblemBody {
@@ -387,7 +387,7 @@ struct ProblemFieldError {
 }
 
 /// Render a non-2xx response as a human-readable message. Every node service
-/// (vault/identity/integrator/resolver) replies with an RFC 7807 problem body
+/// (vault/identity/integrator/resolver) replies with an RFC 9457 problem body
 /// on error — this extracts `title`/`detail` from it. Falls back to the raw
 /// (truncated) body for anything that isn't that shape.
 ///

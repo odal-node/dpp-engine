@@ -90,31 +90,19 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: dpp-engine
-      # Linted with the `integration-tests` features ON, which folds in what a
-      # separate compile-only job used to do.
-      #
-      # Those suites are otherwise compiled nowhere except the Docker tiers,
-      # which need `test-unit` to pass first — so a stale import in one surfaced
-      # late, or not at all when Docker was unavailable. Clippy with the features
-      # on type-checks them and lints them, which a `cargo check` did not.
-      #
-      # Safe to fold rather than run twice: features are additive and the
-      # workspace has **zero** `cfg(not(feature = "integration-tests"))` code, so
-      # nothing compiled by the default build is skipped by this one. If that
-      # ever stops being true, the default-feature pass has to come back.
-      #
-      # Features are named per package rather than via `--all-features`, which
-      # would also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept
-      # out of server-side builds on purpose — see cli/Cargo.toml). That is not a
-      # gap this closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting
-      # `tests/sdk_abi.rs` needs no wasm target, only running it does, and the
-      # integration job below runs it.
-      - name: cargo clippy
+      # The command lives in the justfile, once: `just lint` is what `just check`
+      # runs and what runs here. It used to be spelled out in both places and the
+      # two drifted — the local copy left the feature-gated suites out, so a lint
+      # that existed only in one of them passed the local gate and failed here.
+      # Why the features are on, and how they are named, is on the recipe, next to
+      # the command it explains.
+      - name: Install just
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: just
+      - name: just lint
         working-directory: dpp-engine
-        run: |
-          cargo clippy --workspace --all-targets \
-            --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests \
-            -- -D warnings
+        run: just lint
 
   test-unit:
     name: Unit tests
@@ -344,23 +332,14 @@ jobs:
           path: dpp-engine
       # Forbid println!/eprintln!/dbg! in crates/**/src (service code).
       # The cli/ directory, tests, and benches are explicitly allowed.
+      #
+      # This runs scripts/debug-check.sh, the script `just check` runs. It used to
+      # be spelled out here as well, with the crates listed by hand, and the copy
+      # covered eight of the twelve: a `println!` in dpp-types, dpp-render,
+      # dpp-seal or dpp-factor-data passed this job and failed `just check`.
       - name: Check for debug prints
         working-directory: dpp-engine
-        run: |
-          if grep -rn --include="*.rs" \
-               -e '\bprintln!' -e '\beprintln!' -e '\bdbg!' \
-               --exclude-dir=tests --exclude-dir=benches \
-               crates/dpp-common/src \
-               crates/dpp-dal/src \
-               crates/dpp-vault/src \
-               crates/dpp-identity/src \
-               crates/dpp-resolver/src \
-               crates/dpp-integrator/src \
-               crates/dpp-plugin-host/src \
-               crates/dpp-node/src; then
-            echo "ERROR: println!/eprintln!/dbg! found in service crate src — use tracing:: instead"
-            exit 1
-          fi
+        run: bash scripts/debug-check.sh
 
   subjects-check:
     name: No raw event subject literals outside dpp-common::event
@@ -371,24 +350,12 @@ jobs:
           path: dpp-engine
       # event_type/NATS-subject strings must come from dpp_common::event::subjects,
       # or a renamed subject silently stops matching subscribers.
+      #
+      # scripts/subjects-check.sh, the script `just check` runs, rather than a
+      # second copy of the same grep that could drift from it.
       - name: Check for raw dpp.passport./dpp.import. literals
         working-directory: dpp-engine
-        run: |
-          if grep -rn --include="*.rs" \
-               -e '"dpp\.passport\.' -e '"dpp\.import\.' \
-               --exclude-dir=tests --exclude-dir=benches \
-               --exclude=event.rs \
-               crates/dpp-common/src \
-               crates/dpp-dal/src \
-               crates/dpp-vault/src \
-               crates/dpp-identity/src \
-               crates/dpp-resolver/src \
-               crates/dpp-integrator/src \
-               crates/dpp-plugin-host/src \
-               crates/dpp-node/src; then
-            echo "ERROR: raw dpp.passport./dpp.import. subject literal outside dpp-common::event — use the subjects:: constants"
-            exit 1
-          fi
+        run: bash scripts/subjects-check.sh
 
   contract-fixture-check:
     name: OpenAPI contract fixtures stay exhaustive
@@ -442,30 +409,131 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      # mod.rs should be `mod` + `pub use` only. Two allocation-plan
-      # exceptions are named and excluded below: service/mod.rs (the
-      # PassportService struct + its builders) and validate/mod.rs (the
-      # dispatch fn + its error type) — both are the pack's documented
-      # deviations, not drift.
+      # mod.rs should be `mod` + `pub use` only. The two exceptions (service/mod.rs
+      # and validate/mod.rs) are named in the script, which is the one place they
+      # are written down: scripts/mod-rs-check.sh, the script `just check` runs.
       - name: Check for public items in mod.rs
         working-directory: dpp-engine
-        run: |
-          exceptions="crates/dpp-vault/src/domain/service/mod.rs crates/dpp-integrator/src/domain/validate/mod.rs"
-          violations=""
-          for f in $(find crates/*/src cli/src -name mod.rs); do
-              skip=false
-              for e in $exceptions; do
-                  [ "$f" = "$e" ] && skip=true
-              done
-              [ "$skip" = true ] && continue
-              if grep -nE '^[[:space:]]*pub[[:space:]]+(struct|enum|trait|fn|const|static|type)\b' "$f" > /dev/null; then
-                  violations="$violations $f"
-              fi
-          done
-          if [ -n "$violations" ]; then
-              echo "ERROR: mod.rs defines public items (should be a pure index) in:$violations"
-              exit 1
-          fi
+        run: bash scripts/mod-rs-check.sh
+
+  # The guards below ran in `just check` and in no workflow, so a pull request that
+  # broke one passed CI and was stopped only if its author had run `just check`.
+  # Each is the script `just check` runs, in its own job for the reason the jobs
+  # above give: so that "someone disabled the gate" is a distinct red check.
+  # `ci-guard-check` is what keeps the list honest: a script in scripts/ that no
+  # workflow runs fails there.
+  grants-check:
+    name: DELETE grants match the register in ops/pg/README.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain. "The app role cannot DELETE" is the
+      # sentence an application-compromise argument rests on, and it had drifted
+      # from the grants once already.
+      - name: Every live DELETE grant is documented
+        working-directory: dpp-engine
+        run: bash scripts/grants-check.sh
+
+  harness-check:
+    name: Shared test scaffolding has one home
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain. A copy of the Postgres harness or of the
+      # in-memory repository double fails here, instead of drifting for a year.
+      - name: No fork of the shared test harness
+        working-directory: dpp-engine
+        run: bash scripts/harness-check.sh
+
+  migrations-check:
+    name: Applied migrations are never edited
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+          # The check diffs against main with `...`, which needs a merge base, so
+          # it needs history. The default checkout is one commit on one ref, and
+          # the script used to answer that with "skipping" and a green tick.
+          fetch-depth: 0
+      # Shell only — no Rust toolchain. `sqlx::migrate!` checksums every file, so
+      # editing an applied migration stops an already-migrated node from booting.
+      - name: No migration that main already has is modified
+        working-directory: dpp-engine
+        run: bash scripts/migrations-check.sh
+      # The gate depends on the shape of the checkout it runs in, so it is tested
+      # against the shapes CI hands over, not only against a tree that is clean.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/migrations-check.test.sh
+
+  outbound-check:
+    name: No unguarded outbound HTTP clients
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain. Service code reaches the network through
+      # `dpp_common::outbound`, which applies the SSRF guard; a bare
+      # `reqwest::get` or `Client::builder()` is refused unless it is a target the
+      # operator chose and is listed in the script with the reason.
+      - name: Outbound clients go through the guarded path
+        working-directory: dpp-engine
+        run: bash scripts/outbound-check.sh
+
+  vocabulary-check:
+    name: Archive means one thing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain. No route, path file, event subject, client
+      # URL or status value takes "archive" back from EN 18221 clause 4.2.
+      - name: No route, subject or status says archive
+        working-directory: dpp-engine
+        run: bash scripts/vocabulary-check.sh
+      # A grep gate with a broken anchor exits 0 forever and is
+      # indistinguishable from a passing one, so the gate is itself tested.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/vocabulary-check.test.sh
+
+  no-rsa-private-key:
+    name: No RSA private-key operation (the RUSTSEC-2023-0071 claim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain. The audit register suppresses
+      # RUSTSEC-2023-0071 on one ground: this workspace holds no RSA private key.
+      # That is a claim about the code, held by this script and by nothing else.
+      # It plants what it looks for and fails if it cannot see it on every run, so
+      # there is no separate self-test step.
+      - name: The workspace holds no RSA private key
+        working-directory: dpp-engine
+        run: bash scripts/no-rsa-private-key.sh
+
+  ci-guard-check:
+    name: Every guard script runs in CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain.
+      - name: Every script in scripts/ is run by a workflow, or says why not
+        working-directory: dpp-engine
+        run: bash scripts/ci-guard-check.sh
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/ci-guard-check.test.sh
 
   openapi-lint:
     name: OpenAPI spec lints

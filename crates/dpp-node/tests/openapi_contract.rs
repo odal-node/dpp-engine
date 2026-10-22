@@ -2431,7 +2431,7 @@ const CODE_TOKENS: &[(&str, u64)] = &[
     ("require_write(", 403),
     ("require_admin(", 403),
     ("parse_passport_id(", 400),
-    // `dpp-common::http_problem`, the RFC 7807 constructors the integrator and
+    // `dpp-common::http_problem`, the RFC 9457 constructors the integrator and
     // resolver reach for directly.
     ("http_problem::not_found(", 404),
     ("http_problem::bad_request(", 400),

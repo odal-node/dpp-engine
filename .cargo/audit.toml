@@ -95,34 +95,9 @@
 # recorded:   2026-10-20
 # expires:    2027-01-18
 # release-on: As RUSTSEC-2026-0371.
-# --- RUSTSEC-2026-0381 --------------------------------------------------
-# crate:      webpki-roots 0.26.11
-# path:       dpp-node -> async-nats [feature websockets, off] -> tokio-websockets -> webpki-roots
-# class:      not-in-graph
-# rationale:  The bundled root store trusts the distrusted emSign intermediates;
-#             1.0.10 fixes it, and the 1.x copy in this lockfile is already
-#             there. The 0.26 copy is reached only by `tokio-websockets` 0.10,
-#             which async-nats 0.50 pins and no release moves. The workspace
-#             declares async-nats without its `websockets` feature, so no build
-#             compiles that transport or the crate. It stays in `Cargo.lock`
-#             because async-nats names it in a weak feature
-#             (`tokio-websockets?/ring`), an edge cargo records whether or not
-#             the feature is on, and `cargo audit` reads the lockfile. The node
-#             reaches NATS over `nats://`; nothing here uses `ws://` or `wss://`.
-#             THIS ENTRY IS VOID THE MOMENT `websockets` IS ENABLED FOR
-#             async-nats. The class check holds the claim, against the default
-#             graph and the shipped node build alike.
-# anchor:     Cargo.toml::async-nats
-# owner:      LKSNDRTMLKV
-# recorded:   2026-10-20
-# expires:    2027-01-18
-# release-on: async-nats ships a release whose WebSocket transport takes
-#             webpki-roots 1.0.10 or later, or drops the weak edge, so that the
-#             0.26 copy leaves the lockfile.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
-    "RUSTSEC-2026-0381",
 ]
