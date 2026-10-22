@@ -423,6 +423,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Webhook delivery no longer follows redirects.** The drain's shared client
+  kept reqwest's default policy, which follows up to ten. The address guard
+  pins a named host to the addresses it approved, but hands the shared client
+  back unchanged for an IP-literal target and for the
+  `WEBHOOK_ALLOW_PRIVATE_TARGETS` opt-out. So a receiver on an approved public
+  IP could answer `302` to `169.254.169.254` and be followed there, an address
+  the guard never checked. A redirect is now the receiver's answer: a non-2xx
+  delivery, retried with backoff like any other, so a subscription must name
+  the URL its receiver answers on (`WEBHOOKS.md` says so). The client is built by
+  `webhook_drain::delivery_client`, where a test drives it against a
+  redirecting receiver. The build also no longer falls back to
+  `Client::default()`, which follows redirects, if it fails.
+
 - **A credential's product-category scope is enforced.** `GET
   /credential/dpp/{dppId}` downgraded every credential that named a product
   category to the public view, because a passport was thought to have no

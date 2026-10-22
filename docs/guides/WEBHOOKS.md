@@ -142,6 +142,10 @@ func Verify(secret, header string, rawBody []byte, tolerance time.Duration) bool
   retried with exponential backoff and jitter, up to a fixed attempt cap, after
   which the delivery is marked `exhausted` and stops. Return `2xx` promptly
   (ideally after enqueuing the work, not after processing it).
+- **Redirects are not followed.** A `3xx` is a non-`2xx` answer like any other,
+  so it is retried and then exhausted. Subscribe the URL your receiver answers
+  on directly, not one that redirects to it: following a redirect would take a
+  delivery to an address the node never checked.
 - **Order is not guaranteed.** Backoff can reorder deliveries; use the event
   `timestamp` if ordering matters.
 - **Removing a subscription** stops new deliveries; already-queued ones still drain.
