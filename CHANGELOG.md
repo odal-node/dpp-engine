@@ -232,9 +232,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
   and textile `repairHistoryUrl`. This node never reads what a field says.
 
-  Not yet done: the erasable store for the records a `held: outside` statement
-  names, and the route that erases one. Until they exist an operator keeps
-  those records elsewhere and names them.
+- **The records a `held: outside` statement names have a store of their own, and
+  an admin credential can erase one.** A published passport is signed, frozen,
+  archived and copied to the back-up provider, so personal data it is not
+  required to carry is held in a record that can be erased instead, and a
+  withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)). Core's
+  `PersonalDataPort` is now implemented on PostgreSQL in its own table,
+  `odal.personal_data_record` (migration 0043). It is not a column of the
+  passport, and the archive of past versions, the audit chain, the snapshots, the
+  outboxes and the back-up copy never see it. No route reads a record.
+
+  `DELETE /vault/api/v1/personal-data/{record}` erases one and answers the
+  receipt: the record, the passport and field it belonged to, and when it was
+  erased. Erasing a record already erased answers the first receipt again, so a
+  caller that lost the answer asks again. A record this node never held is `404`.
+  It needs an admin credential, like every other route that removes something.
+  It does not touch the passport or the statement in it, which keeps naming the
+  record, so a reader learns that the record is gone rather than that it never
+  existed. The store lists every record a passport has, erased ones included, so a
+  record whose identifier was lost on the way back from `store` can still be
+  found through the port.
+
+  **What a tombstone keeps, and why it needs a basis.** Erasure drops the
+  content and keeps the row: the identifier, the passport and field, and the
+  instant. None of the content, but a passport identifier can relate to whoever
+  owns the item, and information that can be linked to a person is personal data
+  (GDPR Recital 26). So the tombstone is protected like the passport's
+  individual-item data, and the operator needs a basis for keeping it. Showing
+  that it erased (Art. 5(2)) is one. Nothing here deletes it, and the database
+  role cannot. Erasure overwrites the content in place; the database's own
+  write-ahead log, replicas and backups hold earlier row versions, and how long
+  those live is the operator's retention.
+
+  Not yet done: no route stores a record, so nothing in this node calls `store`
+  or lists a passport's records. An operator who keeps records in this store
+  writes them through the port.
+
+  `POST /dpp/validate` now runs the checks create runs on the draft create would
+  store: core's own invariants (`Passport::validate`), then the personal-data
+  check. So it refuses a field with a value and no statement, and a battery whose
+  two placing-on-market dates disagree, where it used to pass both. Because it
+  now builds that draft, it also refuses a malformed `commodityCode`, which
+  create refused and the preview passed. The erase route logs which credential
+  erased a record, since the tombstone does not say.
 
 - **The GS1 resolver accepts a consumer product variant (AI 22) and a
   third-party extension (AI 235).** A label printed elsewhere may carry either
@@ -367,6 +407,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   still imports.
 
 ### Fixed
+
+- **A credential's product-category scope is enforced.** `GET
+  /credential/dpp/{dppId}` downgraded every credential that named a product
+  category to the public view, because a passport was thought to have no
+  category to compare against. Core's `ProductGroupData::product_category`
+  supplies one: a battery's `batteryType`, an electronics `DeviceType`, a
+  steel `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+  furniture or detergent `productType`. A credential whose categories include
+  the passport's now grants its audience. One that names other categories, or
+  is read against a group that states none (aluminium, textile, mattress, toy,
+  unsold goods, an unmodelled payload), still gets the public view: never a
+  `401`, and still recorded in the audit trail. A credential naming no category
+  is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
+  by `audience_for`, which takes the passport's category as well.
 
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
