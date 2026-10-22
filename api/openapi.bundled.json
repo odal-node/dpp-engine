@@ -3912,7 +3912,7 @@
             "name": "productGroup",
             "in": "path",
             "required": true,
-            "description": "The **template key**, which since the battery split is no longer always\na product group: `battery-ev`, `battery-lmt` and `battery-industrial`\nare keys served here, while `battery` is a product group served by\nnothing. Rows from all three import under the `battery` product group.\n\nThe parameter keeps its name because renaming a path parameter renames\nthe method argument in every generated client, and for the eight\nnon-battery templates the two are still the same string.\n",
+            "description": "The **template key**, which since the battery split is no longer always\na product group: `battery-ev`, `battery-lmt` and `battery-industrial`\nare keys served here, while `battery` is a product group served by\nnothing. Rows from all three import under the `battery` product group.\n\nThe parameter keeps its name because renaming a path parameter renames\nthe method argument in every generated client, and for every\nnon-battery template the two are still the same string.\n",
             "schema": {
               "type": "string",
               "example": "battery-ev"
@@ -3969,7 +3969,7 @@
       "post": {
         "operationId": "importFile",
         "summary": "Bulk-import passports from a file",
-        "description": "Upload a CSV or XLSX file to create draft passports for a product group\n(`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's\n`Authorization: Bearer` token is validated and forwarded to the vault.\n\nA battery **template** key is accepted here too — `battery-ev`,\n`battery-lmt` and `battery-industrial` all import as `battery`, since the\ncategory is carried by the row's own `batteryType` column rather than being\na product group of its own. An operator who downloads `battery-ev` can post\nit back to `battery-ev` without translating the name.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
+        "description": "Upload a CSV or XLSX file to create draft passports for a product group.\nThe caller's `Authorization: Bearer` token is validated and forwarded to\nthe vault.\n\nThe importable set is deliberately **not enumerated here**: it is one list\nin the handler, and the `404` body names every accepted key. This sentence\nlisted five product groups long after the importer reached more.\n\nA battery **template** key is accepted here too — `battery-ev`,\n`battery-lmt` and `battery-industrial` all import as `battery`, since the\ncategory is carried by the row's own `batteryType` column rather than being\na product group of its own. An operator who downloads `battery-ev` can post\nit back to `battery-ev` without translating the name.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
         "tags": [
           "Integrator"
         ],

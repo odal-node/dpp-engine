@@ -3225,8 +3225,8 @@ paths:
             nothing. Rows from all three import under the `battery` product group.
 
             The parameter keeps its name because renaming a path parameter renames
-            the method argument in every generated client, and for the eight
-            non-battery templates the two are still the same string.
+            the method argument in every generated client, and for every
+            non-battery template the two are still the same string.
           schema:
             type: string
             example: battery-ev
@@ -3262,9 +3262,13 @@ paths:
       operationId: importFile
       summary: Bulk-import passports from a file
       description: |
-        Upload a CSV or XLSX file to create draft passports for a product group
-        (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
-        `Authorization: Bearer` token is validated and forwarded to the vault.
+        Upload a CSV or XLSX file to create draft passports for a product group.
+        The caller's `Authorization: Bearer` token is validated and forwarded to
+        the vault.
+
+        The importable set is deliberately **not enumerated here**: it is one list
+        in the handler, and the `404` body names every accepted key. This sentence
+        listed five product groups long after the importer reached more.
 
         A battery **template** key is accepted here too — `battery-ev`,
         `battery-lmt` and `battery-industrial` all import as `battery`, since the

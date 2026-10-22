@@ -220,6 +220,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
+  reasons recorded for leaving them out were wrong. Electronics'
+  `productCategory` and `energyEfficiencyClass` already deserialise from a
+  string in `dpp-domain`, so the row parses them with core's own types and a
+  refused device type names core's accepted set. `EnergyEfficiencyClass`
+  catches any unknown string as `Other`, which the schema then refuses, so the
+  row refuses it first and says which row. Detergent `surfactants` is a JSON
+  array in one cell, the convention textile's `fibreComposition` already
+  taught, and is checked by core's `validate_surfactants`.
+
+  `unsold-goods` is the one product group still out, because it is not a
+  passport: an Art. 24 disclosure is recorded through the vault's own
+  `unsold-goods` route, and importing it needs a different target and a
+  document with a header section.
+
 - **A field that can hold personal data is refused on the write that would store
   it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
   2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer
