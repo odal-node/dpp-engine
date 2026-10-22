@@ -383,6 +383,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A credential's product-category scope is enforced.** `GET
+  /credential/dpp/{dppId}` downgraded every credential that named a product
+  category to the public view, because a passport was thought to have no
+  category to compare against. Core's `ProductGroupData::product_category`
+  supplies one: a battery's `batteryType`, an electronics `DeviceType`, a
+  steel `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+  furniture or detergent `productType`. A credential whose categories include
+  the passport's now grants its audience. One that names other categories, or
+  is read against a group that states none (aluminium, textile, mattress, toy,
+  unsold goods, an unmodelled payload), still gets the public view: never a
+  `401`, and still recorded in the audit trail. A credential naming no category
+  is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
+  by `audience_for`, which takes the passport's category as well.
+
 - **`just check` linted less than CI did.** `just lint` ran clippy without the
   `integration-tests` features, so a lint that existed only in a Docker-gated
   suite passed the local gate and failed after the push; the compile-only
