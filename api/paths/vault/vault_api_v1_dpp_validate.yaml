@@ -18,6 +18,14 @@ post:
     `carrierSerial` another passport already holds. A body create would accept
     returns `200` with the two verdicts.
 
+    The `422` includes the personal-data check. A field the product group's
+    schema marks as able to hold personal data that has a value and no
+    `personalData` statement, a statement about a field that is not marked, an
+    `outside` statement naming no record, and a basis a governing act does not
+    admit are all refused here as they are on create, each naming its field. The
+    check reads no store, so it is part of the preview. It never reads what a
+    field says.
+
     **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
     preconditions — the product group-data gates — and publish applies others this
     route does not run:
