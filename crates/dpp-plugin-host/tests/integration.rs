@@ -149,7 +149,7 @@ fn battery_product_group_data() -> ProductGroupData {
         nominal_voltage_v: 400.0,
         nominal_capacity_ah: 100.0,
         expected_lifetime_cycles: Some(3000),
-        co2e_per_unit_kg: 150.0,
+        co2e_per_unit_kg: Some(150.0),
         recycled_content_cobalt_pct: None,
         recycled_content_lithium_pct: None,
         recycled_content_nickel_pct: None,

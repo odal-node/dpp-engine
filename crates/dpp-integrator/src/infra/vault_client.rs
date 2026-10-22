@@ -81,7 +81,7 @@ impl VaultHttpClient {
                     .json::<serde_json::Value>()
                     .await
                     .unwrap_or(serde_json::json!({"detail": "validation failed"}));
-                // RFC 7807 Problem: prefer `detail`, fall back to `title` for older shapes.
+                // RFC 9457 Problem: prefer `detail`, fall back to `title` for older shapes.
                 let msg = body
                     .get("detail")
                     .or_else(|| body.get("title"))
@@ -296,6 +296,7 @@ mod tests {
             product_name: "Test Widget".into(),
             product_group: None,
             life_status: None,
+            personal_data: Default::default(),
             supersedes_id: None,
             manufacturer: ManufacturerInfo {
                 name: "Acme".into(),

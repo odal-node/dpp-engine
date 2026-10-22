@@ -15,7 +15,7 @@ This crate is a thin bootstrapping layer. All platform services (`dpp-vault`,
   OpenTelemetry tracing.
 - You need the standard config-loading convention (`ODAL_*` env variables + optional
   `.env` file via `dotenvy`).
-- You need to serialize error responses in the RFC 7807 / Problem Details format.
+- You need to serialize error responses in the RFC 9457 / Problem Details format.
 
 ## When NOT to use this crate
 
@@ -30,7 +30,7 @@ This crate is a thin bootstrapping layer. All platform services (`dpp-vault`,
 dpp_common
 ├── config        Config-loading helper (wraps the `config` crate + dotenvy)
 ├── event         Internal event bus types shared across services
-├── http_problem  RFC 7807 ProblemDetail response type for Axum handlers
+├── http_problem  RFC 9457 ProblemDetail response type for Axum handlers
 └── telemetry     tracing-subscriber + OpenTelemetry SDK initialisation
 ```
 

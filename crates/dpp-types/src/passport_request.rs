@@ -1,5 +1,8 @@
 //! [`CreatePassportRequest`] — the body of `POST /vault/api/v1/dpp`.
 
+use std::collections::BTreeMap;
+
+use dpp_domain::PersonalDataStatement;
 use dpp_domain::passport::{ComponentRef, DerivationRef, ManufacturerInfo, MaterialEntry};
 use dpp_domain::product_group::{ProductGroup, ProductGroupData};
 use serde::{Deserialize, Serialize};
@@ -32,7 +35,10 @@ use serde::{Deserialize, Serialize};
 /// and `componentRefs` each carry a URI *and* a hash of the referenced passport's
 /// public signature, and inventing either would produce a link that fails
 /// verification. Those stay empty on the import path, and that is a property of
-/// CSV, not an oversight.
+/// CSV, not an oversight. So does `personalData`: a statement names an
+/// erasable record held elsewhere, which a row cannot point to, and the battery
+/// and textile importers leave every marked field empty, so there is nothing for
+/// a statement to speak about.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePassportRequest {
@@ -122,6 +128,20 @@ pub struct CreatePassportRequest {
     /// never saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_status: Option<dpp_domain::passport::LifeStatus>,
+    /// What the operator states about personal data, for each field of
+    /// `productGroupData` the product group's schema marks as able to hold it,
+    /// keyed by the field's dotted path (for example
+    /// `usageHistory.negativeEvents`).
+    ///
+    /// A marked field with a value is refused, on create and on every later
+    /// write to the draft, unless it has an entry here: either nothing related
+    /// is held (`{"held": "nothing"}`), or it is held outside the passport in an
+    /// erasable record, under a stated lawful basis (`{"held": "outside",
+    /// "lawfulBasis": "consent", "record": "<id>"}`). The personal data itself
+    /// never goes in the passport. Frozen at publish, like the rest of the
+    /// content.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub personal_data: BTreeMap<String, PersonalDataStatement>,
     /// Cross-operator references to this product's constituent passports (its
     /// bill of materials), each optionally qualified by how much of it the
     /// assembly contains and in what role. Shape-validated on receipt; local

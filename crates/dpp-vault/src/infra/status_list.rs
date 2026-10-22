@@ -95,6 +95,7 @@ mod tests {
             builder = builder.with_status(CredentialStatus {
                 id: format!("{url}#0"),
                 status_type: "BitstringStatusListEntry".into(),
+                status_purpose: "revocation".into(),
                 status_list_index: Some("0".into()),
                 status_list_credential: Some(url),
             });

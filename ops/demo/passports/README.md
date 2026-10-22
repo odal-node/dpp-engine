@@ -25,7 +25,7 @@ These files go straight to `POST /vault/api/v1/dpp` with a fully-populated
 |------|---------------|-----------|-------|
 | `01-battery-industrial-nmc.json` | industrial | NMC | Reference industrial pack. Full point 1–3 set + the point 4 individual-battery blocks (`dynamicPerformance`, `stateOfHealth`, `usageHistory`). |
 | `02-battery-industrial-lfp.json` | industrial | LFP | Stationary-storage style, cobalt-free, 6000-cycle. |
-| `03-battery-industrial-lead-acid.json` | industrial | lead-acid | VRLA standby. Carries `hazardSymbol: "lead"` and a non-zero `recycledContentLeadPct`. |
+| `03-battery-industrial-lead-acid.json` | industrial | lead-acid | VRLA standby. Carries `hazardSymbol: "lead"`. |
 | `04-battery-ev-nmc.json` | ev | NMC | EV traction battery. Adds the EV-only `capacityThresholdForExhaustionPct` and the `electricVehicle` `stateOfHealth` parameter set (SOCE). |
 | `05-battery-lmt-lfp.json` | lmt | LFP | e-bike pack. `stationaryOrLmt` state-of-health set; **no** capacity-threshold field (barred for LMT). |
 | `06-battery-portable-nimh.json` | portable | NiMH | Outside the Commission's per-category guidance, so the content gate imposes nothing — the minimal end of the spectrum. |

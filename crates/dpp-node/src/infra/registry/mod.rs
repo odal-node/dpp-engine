@@ -2,6 +2,7 @@
 
 mod client;
 mod config;
+mod dashboard;
 mod mapping;
 mod token;
 

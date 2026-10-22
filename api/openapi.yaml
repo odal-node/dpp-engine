@@ -106,6 +106,8 @@ components:
       $ref: components/schemas/passport/SecondLifeOperation.yaml
     DerivationRef:
       $ref: components/schemas/passport/DerivationRef.yaml
+    PersonalDataStatement:
+      $ref: components/schemas/passport/PersonalDataStatement.yaml
     LifeStatus:
       $ref: components/schemas/passport/LifeStatus.yaml
     CarbonFootprint:
@@ -152,6 +154,8 @@ components:
       $ref: components/schemas/passport-requests/TransferReason.yaml
     PassportListResponse:
       $ref: components/schemas/passport-reports/PassportListResponse.yaml
+    PersonalDataErasureReceipt:
+      $ref: components/schemas/passport-reports/PersonalDataErasureReceipt.yaml
     ValidateResponse:
       $ref: components/schemas/passport-reports/ValidateResponse.yaml
     PassportAuditEntry:
@@ -413,6 +417,8 @@ paths:
     $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
   /vault/api/v1/credentials:
     $ref: paths/vault/vault_api_v1_credentials.yaml
+  /vault/api/v1/personal-data/{record}:
+    $ref: paths/vault/vault_api_v1_personal-data_{record}.yaml
   /vault/api/v1/unsold-goods:
     $ref: paths/vault/vault_api_v1_unsold-goods.yaml
   /vault/api/v1/webhooks:
@@ -530,6 +536,10 @@ tags:
     description: API key management — create, list, revoke.
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Personal Data
+    description: >-
+      Erasing the records a passport's `personalData` statements name. A record
+      is held outside the passport so it can be erased, and no route reads one.
   - name: Plugins
     description: >-
       Signed product-group plugin hot-install — verify, persist, hot-swap

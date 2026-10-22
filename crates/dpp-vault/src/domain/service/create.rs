@@ -88,7 +88,7 @@ impl PassportService {
         // above derives that value from the catalog, which is where an
         // unparseable catalog version would otherwise pass into a record whose
         // schema validation is then silently skipped downstream.
-        passport.validate()?;
+        check_new_draft(&passport)?;
 
         self.guard_component_graph(passport.id, &passport.component_refs)
             .await?;
@@ -145,6 +145,7 @@ impl PassportService {
         // it actually applied, then build the delta from *those* — never from
         // the request body.
         let applied = apply_patch(&mut passport, &patch)?;
+        guard_personal_data(&passport)?;
         self.guard_component_graph(id, &passport.component_refs)
             .await?;
         let pre_compliance_co2e = passport.co2e_per_unit.clone();
@@ -350,12 +351,13 @@ pub(super) fn apply_lint(passport: &mut Passport) {
 /// field is immutable here by default. The old shape had the opposite default,
 /// which is why four fields were writable without anyone deciding they should
 /// be.
-const PATCHABLE_FIELDS: [&str; 5] = [
+const PATCHABLE_FIELDS: [&str; 6] = [
     "productName",
     "co2ePerUnit",
     "repairabilityScore",
     "productGroupData",
     "componentRefs",
+    "personalData",
 ];
 
 /// Serialise exactly the `applied` fields out of the validated passport.
@@ -378,6 +380,7 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
             "repairabilityScore" => serde_json::json!(passport.repairability_score),
             "productGroupData" => serde_json::json!(passport.product_group_data),
             "componentRefs" => serde_json::json!(passport.component_refs),
+            "personalData" => serde_json::json!(passport.personal_data),
             // Unreachable: `applied` only ever contains `PATCHABLE_FIELDS`
             // entries, and adding one there without a case here fails the
             // `every_patchable_field_serialises` test rather than silently
@@ -507,8 +510,54 @@ pub(super) fn apply_patch(
         passport.component_refs = refs;
         applied.push("componentRefs");
     }
+    if let Some(v) = obj.get("personalData") {
+        // The whole map is replaced, so `{}` withdraws every statement. Whether
+        // the statements fit the data is not decided here: that is
+        // [`guard_personal_data`]'s question, asked of the patched record as a
+        // whole so a change to `productGroupData` and one to `personalData` are
+        // judged together.
+        passport.personal_data = serde_json::from_value(v.clone())
+            .map_err(|e| DppError::Validation(format!("invalid personalData: {e}").into()))?;
+        applied.push("personalData");
+    }
 
     Ok(applied)
+}
+
+/// Refuse a passport that stores a field able to hold personal data without
+/// saying what is held, and any statement core finds wanting.
+///
+/// ESPR Art. 10(1)(e), Reg. (EU) 2025/2509 Art. 20(10) and Reg. (EU) 2026/405
+/// Art. 22(h) forbid *storing* customer personal data in a passport without
+/// consent, and a stored draft is storage. Asking only at publish would let a
+/// draft carrying an accident report sit in the database until someone
+/// published it, so this runs on every write that stores a passport: create,
+/// each draft update, and the draft an amendment builds.
+///
+/// Core's [`dpp_domain::check_personal_data`] makes the decision and never
+/// reads what a field says; this maps its findings to the `422` the other
+/// field-level refusals use, one entry per field.
+pub(crate) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
+    let errors = dpp_domain::check_personal_data(passport);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(DppError::Validation(dpp_domain::ValidationErrors {
+            errors,
+        }))
+    }
+}
+
+/// What create asks of the assembled draft that needs no store: core's own
+/// invariants ([`Passport::validate`]), then [`guard_personal_data`].
+///
+/// One function for [`PassportService::create`] and the dry-run route, so the
+/// preview cannot pass a draft that create refuses. The dry run used to run the
+/// personal-data half alone, and it passed a battery whose two
+/// placing-on-market dates disagree, which only `Passport::validate` compares.
+pub(crate) fn check_new_draft(passport: &Passport) -> Result<(), DppError> {
+    passport.validate()?;
+    guard_personal_data(passport)
 }
 
 /// `https` + the SSRF shape guard on the URI, and a lowercase-hex SHA-256 pin —
@@ -578,6 +627,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -987,5 +1037,111 @@ mod tests {
         // A non-UUID tail (another operator's opaque URL) resolves to no local id.
         assert!(local_component_id("https://id.other.example/dpp/opaque-slug").is_none());
         assert!(local_component_id("").is_none());
+    }
+
+    // ── personal data ────────────────────────────────────────────────────────
+
+    /// The field a battery schema marks as able to hold personal data.
+    const MARKED: &str = "usageHistory.negativeEvents";
+
+    /// An electric-vehicle battery whose accident log holds an entry: the shipped
+    /// demo passport, with the one marked field filled in.
+    fn battery_with_an_accident_logged() -> Passport {
+        let raw = include_str!("../../../../../ops/demo/passports/04-battery-ev-nmc.json");
+        let mut body: serde_json::Value = serde_json::from_str(raw).expect("demo passport is JSON");
+        body["productGroupData"]["usageHistory"]["negativeEvents"] =
+            serde_json::json!(["collision; pack housing deformed"]);
+        let mut p = stub();
+        p.product_group_data = Some(
+            serde_json::from_value(body["productGroupData"].clone())
+                .expect("demo battery data deserialises"),
+        );
+        p
+    }
+
+    fn refusal_fields(error: DppError) -> Vec<String> {
+        match error {
+            DppError::Validation(v) => v.errors.into_iter().map(|e| e.field).collect(),
+            other => panic!("expected a field-level refusal, got {other:?}"),
+        }
+    }
+
+    /// 🚨 The prohibition is on *storing* customer personal data, and a draft is
+    /// stored. A marked field with a value and no statement is refused on the
+    /// write itself, with a `422` that names the field — not left until publish.
+    #[test]
+    fn a_marked_field_with_a_value_and_no_statement_is_refused() {
+        let p = battery_with_an_accident_logged();
+        assert!(p.personal_data.is_empty());
+
+        let fields = refusal_fields(super::guard_personal_data(&p).expect_err("no statement"));
+        assert_eq!(fields, ["/productGroupData/usageHistory/negativeEvents"]);
+    }
+
+    #[test]
+    fn a_statement_that_nothing_is_held_lets_the_write_through() {
+        let mut p = battery_with_an_accident_logged();
+        apply_patch(
+            &mut p,
+            &serde_json::json!({ "personalData": { MARKED: { "held": "nothing" } } }),
+        )
+        .expect("a statement is patchable");
+
+        assert!(super::guard_personal_data(&p).is_ok());
+    }
+
+    #[test]
+    fn a_statement_about_a_field_that_is_not_marked_is_refused() {
+        let mut p = stub();
+        apply_patch(
+            &mut p,
+            &serde_json::json!({ "personalData": { "productName": { "held": "nothing" } } }),
+        )
+        .expect("a statement is patchable");
+
+        let fields = refusal_fields(super::guard_personal_data(&p).expect_err("not marked"));
+        assert_eq!(fields, ["/personalData/productName"]);
+    }
+
+    /// The patch is judged as a whole: changing `productGroupData` to hold
+    /// something while `personalData` says nothing about it is one write, and
+    /// the record it would store is refused.
+    #[test]
+    fn a_patch_that_adds_marked_content_is_judged_with_the_statements_it_leaves() {
+        let filled = battery_with_an_accident_logged();
+        let mut p = stub();
+        p.product_group_data = filled.product_group_data.clone();
+        apply_patch(
+            &mut p,
+            &serde_json::json!({ "personalData": { MARKED: { "held": "nothing" } } }),
+        )
+        .expect("a statement is patchable");
+        assert!(super::guard_personal_data(&p).is_ok());
+
+        // Withdrawing the statements leaves the content bare again.
+        let applied = apply_patch(&mut p, &serde_json::json!({ "personalData": {} }))
+            .expect("an empty map is patchable");
+        assert_eq!(applied, ["personalData"]);
+        assert!(super::guard_personal_data(&p).is_err());
+    }
+
+    #[test]
+    fn a_malformed_statement_is_a_validation_error_not_a_panic() {
+        let mut p = stub();
+        for bad in [
+            serde_json::json!({ MARKED: { "held": "somewhere" } }),
+            serde_json::json!({ MARKED: "nothing" }),
+            serde_json::json!(["not", "a", "map"]),
+        ] {
+            let result = apply_patch(&mut p, &serde_json::json!({ "personalData": bad }));
+            assert!(
+                matches!(result, Err(DppError::Validation(_))),
+                "{bad} must be refused"
+            );
+        }
+        assert!(
+            p.personal_data.is_empty(),
+            "a refused patch applies nothing"
+        );
     }
 }

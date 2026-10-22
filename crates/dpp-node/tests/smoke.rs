@@ -209,6 +209,7 @@ async fn start_node_with_ruleset(
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
     // the authenticated node-state route can report it.
     let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
@@ -253,6 +254,7 @@ async fn start_node_with_ruleset(
         cors_allowed_origins: Vec::new(),
         scan_repo,
         unsold_goods_repo,
+        personal_data,
         plugin_admin: None,
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.
@@ -1848,30 +1850,30 @@ async fn an_issued_credential_names_the_did_document_this_node_serves() {
     // The `kid` in the JWS header has to resolve *in that document*, which is
     // the half a matching `issuer` string would not catch: the same DID can be
     // named while a different key signs.
-    let header_b64 = issued["credentialJws"]
+    let jws = issued["credentialJws"]
         .as_str()
-        .expect("credentialJws must be a string")
-        .split('.')
-        .next()
-        .expect("compact JWS has a header segment");
-    let header: serde_json::Value = serde_json::from_slice(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(header_b64)
-            .expect("JWS header is base64url"),
-    )
-    .expect("JWS header is JSON");
-    let kid = header["kid"].as_str().expect("JWS header must carry kid");
+        .expect("credentialJws must be a string");
     // Resolved with the verifier's own helper rather than by comparing strings.
-    // `kid` here is a SHA-256 fingerprint of the raw key, not a verification
-    // method id, and `extract_key_by_fingerprint` additionally requires the
-    // method to be authorised for `assertionMethod` — reimplementing either
-    // rule in the test would let the test agree with itself while a verifier
-    // disagreed.
+    // `kid` is the absolute URL of a verification method, and resolving it also
+    // requires the method to be controlled by the document and authorised for
+    // `assertionMethod` — reimplementing either rule in the test would let the
+    // test agree with itself while a verifier disagreed.
+    let kid = dpp_crypto::jws::extract_kid_from_jws(jws).expect("JWS header must carry kid");
     assert!(
-        dpp_crypto::jws::verifier::extract_key_by_fingerprint(&did_doc, kid).is_some(),
+        dpp_crypto::jws::resolve_verification_key(&did_doc, jws).is_some(),
         "the signing kid {kid} must resolve to an assertion-authorised key in \
          the document this node serves, got {did_doc}"
     );
+    // The access credential is typed as a VC-JWT, so another signature of the
+    // same key cannot pass for one.
+    let header: serde_json::Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(jws.split('.').next().expect("a header segment"))
+            .expect("JWS header is base64url"),
+    )
+    .expect("JWS header is JSON");
+    assert_eq!(header["typ"], "vc+jwt");
+    assert_eq!(header["cty"], "vc");
 
     // Country is normalised on the way in, so a credential carries the form a
     // verifier compares against rather than whatever the caller typed.
@@ -2140,8 +2142,10 @@ async fn a_credential_signed_by_a_key_this_node_does_not_publish_unlocks_nothing
         status, 401,
         "a forged signature must be refused, got {view}"
     );
-    assert_eq!(
-        view["detail"], "Credential signature did not verify.",
+    assert!(
+        view["detail"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("Credential signature did not verify.")),
         "the refusal must name the signature, not the holder or the passport, \
          got {view}"
     );
@@ -2669,6 +2673,348 @@ async fn a_passport_cannot_be_created_already_waste() {
         "and the refusal has to point at the versioning event that is the right \
          way to record it: {body}"
     );
+}
+
+/// The body of a textile draft whose `repairHistoryUrl` — a log of repairs to
+/// one specific item, marked as able to hold personal data — has a value.
+fn textile_with_a_repair_history(personal_data: Option<serde_json::Value>) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "productName": "Organic Cotton Tee",
+        "productGroup": "textile",
+        "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+        "materials": [],
+        "productGroupData": {
+            "carbonFootprintKgCo2e": 4.2,
+            "careInstructions": "Machine wash cold, line dry",
+            "chemicalComplianceStandard": "OEKO-TEX 100",
+            "countryOfOrigin": "IT",
+            "countryOfRawMaterialOrigin": "IN",
+            "disassemblyInstructions": "Remove label and neck tape before recycling",
+            "endOfLifeInstructions": "Return to a textile collection point",
+            "expectedWashCycles": 50,
+            "fibreComposition": [{"fibre": "cotton", "pct": 95}, {"fibre": "elastane", "pct": 5}],
+            "microplasticSheddingMgPerWash": 12,
+            "productGroup": "textile",
+            "productIdentifier": {"gtin": "09506000134369", "scheme": "gs1"},
+            "productWeightGrams": 220,
+            "recyclabilityClass": "B",
+            "recycledContentPct": 30,
+            "sparePartsAvailable": false,
+            "waterUseLitres": 1800,
+            "repairHistoryUrl": "https://repairs.example.com/item/42",
+        },
+    });
+    if let Some(statements) = personal_data {
+        body["personalData"] = statements;
+    }
+    body
+}
+
+/// 🚨 ESPR Art. 10(1)(e) forbids *storing* customer personal data in a passport
+/// without consent, and a draft is stored. So a field the schema marks as able to
+/// hold it is refused on the write that would store it, not left until publish,
+/// and the refusal names the field. Create and every later draft update are
+/// held to it, and a statement lets the write through.
+#[tokio::test]
+async fn a_draft_holding_personal_data_without_a_statement_is_refused_on_every_write() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000084");
+    let client = reqwest::Client::new();
+    let nothing_held = serde_json::json!({ "repairHistoryUrl": { "held": "nothing" } });
+
+    // Create, with the field filled and no statement.
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&textile_with_a_repair_history(None))
+        .send()
+        .await
+        .expect("create request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 422, "must be refused: {body}");
+    assert!(
+        body.contains("/productGroupData/repairHistoryUrl"),
+        "and the refusal names the field: {body}"
+    );
+
+    // Create, with the statement.
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&textile_with_a_repair_history(Some(nothing_held.clone())))
+        .send()
+        .await
+        .expect("create request failed");
+    assert_eq!(resp.status(), 201, "a stated field is accepted");
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let id = created["id"].as_str().expect("an id").to_owned();
+    assert_eq!(
+        created["personalData"], nothing_held,
+        "the statement is stored with the draft and served back: {created}"
+    );
+
+    // Withdrawing the statement from the draft leaves the content bare: refused.
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "personalData": {} }))
+        .send()
+        .await
+        .expect("update request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 422, "a draft update is held to it too: {body}");
+    assert!(
+        body.contains("/productGroupData/repairHistoryUrl"),
+        "{body}"
+    );
+
+    // Restating it is accepted.
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "personalData": nothing_held }))
+        .send()
+        .await
+        .expect("update request failed");
+    assert_eq!(resp.status(), 200, "personalData is patchable on a draft");
+}
+
+/// 🚨 The reason the records have a store of their own: a published passport is
+/// signed, frozen, archived, sealed and copied to the back-up provider, so
+/// nothing that reaches any of those can be erased. The content of a record is
+/// found in none of them, however the passport is read and whatever it went on
+/// to feed.
+///
+/// Two halves, because each alone can pass by not looking. Every read route and
+/// audience is asked for the passport and none returns the content. And every
+/// table other than the record's own is searched for it, which covers the
+/// archive of past versions, the audit chain, the outboxes and everything a
+/// later change adds — a route nobody thought to list cannot hide it.
+///
+/// A record the passport's statement names, so the statement is in every view
+/// that carries it. The *identifier* is meant to appear there; the *content* is
+/// not.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_personal_data_record_is_in_no_view_of_the_passport_and_no_other_table() {
+    use dpp_domain::ports::personal_data::PersonalDataPort as _;
+    use sqlx::Row as _;
+
+    const MARKER: &str = "accident-report-of-jane-example-7f3a91";
+
+    let (base, pg) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000085");
+    let client = reqwest::Client::new();
+
+    // A draft that says nothing is held, to mint the passport; then the record,
+    // then the statement naming it.
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&textile_with_a_repair_history(Some(
+            serde_json::json!({ "repairHistoryUrl": { "held": "nothing" } }),
+        )))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("an id").to_owned();
+
+    let store = dpp_dal::pg::PgPersonalDataRepo::new(pg.dal.clone());
+    let record = store
+        .store(
+            dpp_domain::passport::PassportId(id.parse().expect("uuid")),
+            "repairHistoryUrl",
+            &serde_json::json!({ "report": MARKER }),
+        )
+        .await
+        .expect("the record is held");
+    let statement = serde_json::json!({
+        "repairHistoryUrl": {
+            "held": "outside", "lawfulBasis": "consent", "record": record.as_str()
+        }
+    });
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "personalData": statement }))
+        .send()
+        .await
+        .expect("update request failed");
+    assert_eq!(resp.status(), 200);
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 200, "the passport publishes: {body}");
+
+    // Every way of reading the passport, and the audiences above public.
+    let jws = issue_repairer_credential(&base, &token, &client).await;
+    let evidence = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/evidence"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("evidence request failed");
+    assert_eq!(evidence.status(), 201);
+
+    let reads = vec![
+        (
+            "public",
+            client.get(format!("{base}/vault/public/dpp/{id}")),
+        ),
+        (
+            "authenticated",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}"))
+                .bearer_auth(&token),
+        ),
+        (
+            "credentialed",
+            client
+                .get(format!("{base}/vault/credential/dpp/{id}"))
+                .header("X-DPP-Credential", &jws),
+        ),
+        (
+            "history",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/history"))
+                .bearer_auth(&token),
+        ),
+        (
+            "versions",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/versions"))
+                .bearer_auth(&token),
+        ),
+        (
+            "evidence",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/evidence"))
+                .bearer_auth(&token),
+        ),
+        (
+            "list",
+            client
+                .get(format!("{base}/vault/api/v1/dpps"))
+                .bearer_auth(&token),
+        ),
+    ];
+    let mut served = Vec::new();
+    for (name, request) in reads {
+        let resp = request.send().await.expect("read request failed");
+        assert!(resp.status().is_success(), "{name}: {}", resp.status());
+        let text = resp.text().await.unwrap_or_default();
+        assert!(
+            !text.contains(MARKER),
+            "the {name} view carries the content of a record: {text}"
+        );
+        served.push((name, text));
+    }
+    assert!(
+        served
+            .iter()
+            .any(|(name, text)| *name == "authenticated" && text.contains(record.as_str())),
+        "the statement names the record in the view that serves statements, so the \
+         absence above is not an empty read"
+    );
+
+    // And no other table holds it. Searched as whole rows, so a column nobody
+    // thought of is covered; the record's own table is the control that the
+    // search can find it at all.
+    let admin = sqlx::PgPool::connect(&pg.admin_url).await.expect("admin");
+    let tables = sqlx::query(
+        "SELECT table_schema, table_name FROM information_schema.tables
+          WHERE table_schema IN ('odal', 'identity') AND table_type = 'BASE TABLE'",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("tables");
+    assert!(
+        tables.len() > 10,
+        "the search covers the schema, not an empty list"
+    );
+    let mut holding = Vec::new();
+    for row in &tables {
+        let table = format!(
+            "{}.{}",
+            row.get::<String, _>("table_schema"),
+            row.get::<String, _>("table_name")
+        );
+        // Names come from the catalogue just read, not from a caller.
+        let found: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} t WHERE to_jsonb(t.*)::text LIKE '%' || $1 || '%'"
+        )))
+        .bind(MARKER)
+        .fetch_one(&admin)
+        .await
+        .unwrap_or_else(|e| panic!("search {table}: {e}"));
+        if found > 0 {
+            holding.push(table);
+        }
+    }
+    assert_eq!(
+        holding,
+        ["odal.personal_data_record"],
+        "the content is held in its own table and in no other"
+    );
+
+    // Erasing it changes none of what the passport serves.
+    let erased = client
+        .delete(format!(
+            "{base}/vault/api/v1/personal-data/{}",
+            record.as_str()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("erase request failed");
+    assert_eq!(erased.status(), 200);
+    let public_after = client
+        .get(format!("{base}/vault/public/dpp/{id}"))
+        .send()
+        .await
+        .expect("read request failed")
+        .text()
+        .await
+        .unwrap_or_default();
+    let authenticated_after = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .text()
+        .await
+        .unwrap_or_default();
+    for (name, after) in [
+        ("public", public_after),
+        ("authenticated", authenticated_after),
+    ] {
+        let before = &served
+            .iter()
+            .find(|(n, _)| *n == name)
+            .expect("read above")
+            .1;
+        assert_eq!(*before, after, "the {name} view is as it was after erasure");
+    }
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM odal.personal_data_record WHERE content IS NOT NULL",
+    )
+    .fetch_one(&admin)
+    .await
+    .expect("count");
+    assert_eq!(remaining, 0, "and nothing of the content is left");
 }
 
 /// The vocabulary belongs to one regulation, so it belongs to one product group.

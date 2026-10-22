@@ -72,16 +72,6 @@ COMPOSE := "docker compose --env-file .env"
 test:
     cargo nextest run --workspace
 
-# Compile the Docker-backed integration tests without running them.
-#
-# `test` above omits `--features integration-tests`, so those suites are never
-# built locally — a stale import in one of them compiles fine here and fails in
-# CI, which is exactly what happened when the credential types moved to
-# `dpp-vc`. Running them needs Docker; *compiling* them does not, so the local
-# gate can at least prove they still build.
-check-integration:
-    bash scripts/check-integration.sh
-
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 #
 # One shared Postgres for the whole run rather than one container per test.
@@ -122,13 +112,35 @@ seal-sim:
 test-seal-db:
     cargo nextest run -p dpp-dal --features integration-tests --test pg_seal_outbox
 
-# Run clippy (all warnings are errors)
+# Run clippy (all warnings are errors) — the one definition of this step.
+#
+# CI's Clippy job runs `just lint`, so the lint a contributor passes here and the
+# one the pull request is held to are the same command, not two copies that can
+# drift. They did: the local copy left the feature-gated suites out, and a lint
+# that existed only in one of them passed `just check` and failed after the push.
+#
+# The `integration-tests` features are ON. Those suites need Docker to *run*, not
+# to be checked, and are otherwise built nowhere short of the Docker tiers, so a
+# stale import in one surfaced late. Clippy with the features on type-checks them
+# and lints them, which makes a separate compile-only step redundant.
+#
+# Safe to fold rather than run twice: features are additive and the workspace has
+# **zero** `cfg(not(feature = "integration-tests"))` code, so nothing compiled by
+# the default build is skipped by this one. If that ever stops being true, the
+# default-feature pass has to come back.
+#
+# Features are named per package rather than via `--all-features`, which would
+# also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept out of
+# server-side builds on purpose — see cli/Cargo.toml). That is not a gap this
+# closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting `tests/sdk_abi.rs`
+# needs no wasm target, only running it does, and the integration tiers run it.
+#
+# This type-checks and lints the gated suites; it cannot run them. A change to a
+# string, a status code or an error message that one of them pins fails only when
+# it runs — `just test-integration`, or the one suite:
+# `cargo nextest run -p <crate> --features integration-tests --test <name>`.
 lint:
-    cargo clippy --workspace --all-targets -- -D warnings
-
-# Clippy the feature-gated integration test code (the normal gate skips it)
-lint-integration:
-    cargo clippy -p dpp-dal -p dpp-vault -p dpp-plugin-host -p dpp-node --all-targets --features integration-tests,dpp-plugin-host/wasm-fixture-tests -- -D warnings
+    cargo clippy --workspace --all-targets --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests -- -D warnings
 
 # Validate api/openapi.yaml (needs Node; no install — npx fetches on demand).
 #
@@ -322,6 +334,23 @@ grants-check:
 migrations-check:
     bash scripts/migrations-check.sh
 
+# Prove migrations-check still refuses what it claims to, in the checkout shapes
+# CI hands it: it once skipped itself in every one of them and reported success.
+migrations-check-self-test:
+    bash scripts/migrations-check.test.sh
+
+# Every script in scripts/ must be run by a workflow, or be listed in the script
+# as local-only with the reason.
+#
+# `check` and CI are two hand-written lists, and for a long while six guards were
+# in the first and not the second. A new guard that no workflow runs fails here.
+ci-guard-check:
+    bash scripts/ci-guard-check.sh
+
+# Prove ci-guard-check still refuses what it claims to.
+ci-guard-check-self-test:
+    bash scripts/ci-guard-check.test.sh
+
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
 # The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
@@ -355,11 +384,12 @@ audit:
 doc:
     cargo doc --workspace --no-deps
 
-# Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+# Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
+# included — see `lint`), the repository's guard scripts, unit tests and the audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test check-plugins test audit
 
-# Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
-ci: check lint-integration test-integration test-pg
+# Full local CI mirror — adds the Docker tiers (needs Docker running)
+ci: check test-integration test-pg
 
 # ---------------------------------------------------------------------------
 # Build

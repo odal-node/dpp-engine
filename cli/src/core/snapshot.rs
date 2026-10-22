@@ -47,6 +47,14 @@ pub async fn action_snapshot_verify(
     now: DateTime<Utc>,
 ) -> Result<SnapshotBound> {
     let document = load_document(target).await?;
+    // No outer proof is the verdict `Absent` whatever key would have checked it,
+    // and core decides that before it reads one. Finding a key first would fetch
+    // a DID document for a proof that is not there, then blame the document for
+    // it: the proof's own `kid` is what picks the key, and no proof names none.
+    // Core keeps the rule; this only declines to look for a key it will not use.
+    if document.get("snapshotJwsSignature").is_none() {
+        return Ok(dpp_vc::verify_snapshot_bound(&document, "", now));
+    }
     let key_b64 = resolve_key(&document, key, did_url).await?;
     Ok(dpp_vc::verify_snapshot_bound(&document, &key_b64, now))
 }
@@ -206,11 +214,11 @@ async fn load_document(target: &str) -> Result<serde_json::Value> {
 
 /// The base64 public key to check the snapshot's proof under.
 ///
-/// With `--did-url`, the proof's own `kid` picks the verification method, and
-/// only the primary key is used when it names none. That ordering matters
-/// across a key rotation: a snapshot signed before the rotation verifies under
-/// the archived key the DID document still carries, and resolving straight to
-/// the primary would report a perfectly sound copy as unproven.
+/// With `--did-url`, the proof's own `kid` picks the verification method, and a
+/// proof that names none resolves to no key. That matters across a key
+/// rotation: a snapshot signed before the rotation verifies under the archived
+/// key the DID document still carries, and resolving straight to the primary
+/// would report a perfectly sound copy as unproven.
 async fn resolve_key(
     document: &serde_json::Value,
     key: Option<&str>,
@@ -243,17 +251,24 @@ async fn resolve_key(
     let did_document: serde_json::Value = serde_json::from_slice(&body)
         .with_context(|| format!("{did_url} did not return a JSON DID document"))?;
 
-    let kid = document
+    // The key the proof's `kid` names in the document. A proof that names none is
+    // not checked against a key chosen for it.
+    let resolved = document
         .get("snapshotJwsSignature")
         .and_then(serde_json::Value::as_str)
-        .and_then(dpp_crypto::jws::extract_kid_from_jws);
+        .and_then(|proof| dpp_crypto::jws::resolve_verification_key(&did_document, proof));
 
-    let resolved = match kid {
-        Some(kid) => dpp_crypto::jws::extract_key_by_fingerprint(&did_document, &kid),
-        None => dpp_crypto::jws::extract_primary_public_key(&did_document),
-    };
-
-    resolved.ok_or_else(|| anyhow!("no usable Ed25519 public key in the DID document at {did_url}"))
+    // Said as what it is: the document is fine, and it is the proof's `kid` that
+    // names no method in it. A proof signed before keys were named by thumbprint,
+    // or by a key since removed, names none, and sending the operator to inspect
+    // a healthy DID document would hide that.
+    resolved.ok_or_else(|| {
+        anyhow!(
+            "no verification method in the DID document at {did_url} is named by the \
+             snapshot's proof, so there is no key to check it under (a proof signed before \
+             keys were named by thumbprint, or by a key since removed, names none)"
+        )
+    })
 }
 
 /// True for a target this command should fetch rather than open.
@@ -337,9 +352,26 @@ mod tests {
         store.generate_key("root").expect("generate key");
         let did = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
             .expect("build did document");
-        let key = dpp_crypto::jws::extract_primary_public_key(&did)
-            .expect("did document carries a primary key");
+        // Resolved the way a verifier resolves it, from a token naming the key.
+        let probe = dpp_crypto::jws::sign(&store, "root", &serde_json::json!({}), &kid(&store))
+            .expect("sign probe");
+        let key = dpp_crypto::jws::resolve_verification_key(&did, &probe)
+            .expect("did document carries the signing key");
         (dir, store, key)
+    }
+
+    /// The `kid` the node signs under: the absolute DID URL of the key's
+    /// verification method in the document `keystore` builds.
+    fn kid(store: &dpp_crypto::keystore::KeyStore) -> String {
+        let thumbprint = store
+            .public_key("root")
+            .expect("key present")
+            .thumbprint_uri()
+            .expect("thumbprint");
+        format!(
+            "{}#{thumbprint}",
+            dpp_vc::did_for("snapshot-test.example.com")
+        )
     }
 
     /// A snapshot document in the shape `render_public_snapshot` writes: the
@@ -357,7 +389,8 @@ mod tests {
             "asOf": rfc3339(as_of),
             "validUntil": rfc3339(valid_until),
         });
-        let proof = dpp_crypto::jws::sign(store, "root", &document).expect("sign snapshot");
+        let proof =
+            dpp_crypto::jws::sign(store, "root", &document, &kid(store)).expect("sign snapshot");
         document["snapshotJwsSignature"] = serde_json::Value::String(proof);
         document
     }
@@ -564,6 +597,38 @@ mod tests {
         assert!(refused(
             "http://localhost.evil.example/.well-known/did.json"
         ));
+    }
+
+    /// 🚨 A stripped proof is the verdict `Absent`, whichever way the key would
+    /// have been found. With `--did-url` the proof's own `kid` picks the key, and
+    /// a proof that is not there names none, so resolving first reported the
+    /// DID document as the problem (exit 2) and never reached the verdict this
+    /// command exists to give (exit 1). The host does not resolve: if it were
+    /// asked for a key, the error would be a DNS failure rather than a verdict.
+    #[tokio::test]
+    async fn a_stripped_proof_is_absent_without_a_key_being_fetched() {
+        let (_dir, store, _key) = keystore();
+        let as_of = Utc::now();
+        let mut document = signed_snapshot(&store, as_of, as_of + chrono::Duration::days(7));
+        document
+            .as_object_mut()
+            .expect("object")
+            .remove("snapshotJwsSignature");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("public.json");
+        std::fs::write(&path, serde_json::to_vec(&document).expect("serialise")).expect("write");
+
+        let bound = action_snapshot_verify(
+            path.to_str().expect("utf-8"),
+            None,
+            Some("https://identity.invalid/.well-known/did.json"),
+            as_of,
+        )
+        .await
+        .expect("a stripped proof is a verdict, not a check that did not happen");
+
+        assert_eq!(bound, SnapshotBound::Absent);
+        assert_eq!(exit_code(&bound), 1);
     }
 
     #[tokio::test]

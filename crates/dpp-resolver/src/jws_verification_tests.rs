@@ -38,7 +38,7 @@ fn sign_jws(payload: &serde_json::Value) -> (String, serde_json::Value) {
     let signing_key = SigningKey::generate(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let pub_key_b64 = b64.encode(signing_key.verifying_key().as_bytes());
-    let header_b64 = b64.encode(r#"{"alg":"EdDSA","crv":"Ed25519"}"#);
+    let header_b64 = b64.encode(r#"{"alg":"EdDSA","kid":"did:web:test.resolver.example#key-1"}"#);
     let payload_b64 = b64.encode(serde_json::to_vec(payload).unwrap());
     let signing_input = format!("{header_b64}.{payload_b64}");
     let sig_b64 = b64.encode(signing_key.sign(signing_input.as_bytes()).to_bytes());
@@ -311,6 +311,26 @@ async fn tampered_jws_returns_conflict() {
     let vault = serve_vault(served).await;
     assert_eq!(
         resolve_json_status(vault, did_url, "00000000-0000-4000-8000-000000000007").await,
+        StatusCode::CONFLICT
+    );
+}
+
+/// A proof whose `kid` names no method in the operator's document, which is
+/// every proof signed before keys were named by thumbprint, is unverifiable for
+/// good and not for now: `409`, not the `503` that means "try again".
+#[tokio::test]
+async fn a_proof_naming_no_key_in_the_document_returns_conflict() {
+    let signed = json!({"id": "00000000-0000-4000-8000-00000000000a", "productName": "Widget"});
+    let (jws, mut did_doc) = sign_jws(&signed);
+    // The document is reachable and publishes a key, but not under the name the
+    // proof carries.
+    did_doc["verificationMethod"][0]["id"] = json!("did:web:test.resolver.example#key-2");
+    did_doc["assertionMethod"] = json!(["did:web:test.resolver.example#key-2"]);
+    let did_url = serve_did(did_doc).await;
+    let served = json!({"id": "00000000-0000-4000-8000-00000000000a", "productName": "Widget", "status": "active", "publicJwsSignature": jws});
+    let vault = serve_vault(served).await;
+    assert_eq!(
+        resolve_json_status(vault, did_url, "00000000-0000-4000-8000-00000000000a").await,
         StatusCode::CONFLICT
     );
 }

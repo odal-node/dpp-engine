@@ -20,7 +20,11 @@
 //!
 
 mod amend;
+mod claim;
 mod create;
+/// What create asks of an assembled draft that needs no store, shared with the
+/// dry-run route so a preview cannot pass what a create refuses.
+pub(crate) use create::check_new_draft;
 /// The component-reference rule, shared with the create handler so the two
 /// entry points cannot drift apart on what a valid BOM entry is.
 pub(crate) use create::validate_component_ref;
@@ -541,6 +545,7 @@ mod snapshot_render_tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Published,
             qr_code_url: Some("https://id.example/01/09506000134352".into()),
             jws_signature: Some("full.jws.signature".into()),

@@ -37,18 +37,19 @@
 //! audited: they are the free, unregistered baseline, and recording them would
 //! turn a public right into a tracked event.
 //!
-//! # What this route still does not do
+//! # Scope: product group and product category
 //!
-//! Product-category scope is not *evaluated*, and a credential that claims one
-//! therefore unlocks nothing here. ProductGroup scope is enforced; category has no
-//! counterpart to be enforced against, because a passport carries no product
-//! category — the field that once did was renamed `product_group`, and category is now
-//! a per-product group concept with a different shape in each.
+//! A credential may narrow itself to product groups and to product categories,
+//! and both are enforced against the passport being read: the group against its
+//! `product_group`, the category against what its data states through
+//! `ProductGroupData::product_category` — a battery's `batteryType`, an
+//! electronics `DeviceType`, and so on per group.
 //!
-//! Rather than reading an unevaluable restriction as no restriction, which
-//! granted a narrowed credential its full audience over every product in its
-//! product groups, such a credential is downgraded to `Audience::Public`. See
-//! [`crate::middleware::credential::VerifiedCredential::audience_for_product_group`].
+//! Some groups have no category axis a passport can state. A credential naming
+//! a category is downgraded to `Audience::Public` on such a passport, exactly
+//! as on one whose category it does not name: a restriction that cannot be
+//! evaluated has not been met. See
+//! [`crate::middleware::credential::VerifiedCredential::audience_for`].
 
 use axum::{
     extract::{Path, State},
@@ -57,6 +58,7 @@ use axum::{
 };
 
 use dpp_domain::Audience;
+use dpp_domain::product_group::ProductGroupData;
 use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::PassportAuditEntry;
@@ -100,12 +102,17 @@ pub async fn audience_read_handler(
 
     match state.service.find_by_id_any_status(passport_id).await {
         Ok(Some(p)) if p.status == PassportStatus::Published => {
-            // Scope the credential to *this* passport's product group. A credential
-            // issued for batteries grants nothing extra on a textile passport.
+            // Scope the credential to *this* passport's product group and
+            // category. A credential issued for batteries grants nothing extra on
+            // a textile passport, nor one issued for EV batteries on an LMT one.
             let audience = match (&credential, &state.trusted_issuers) {
-                (Some(c), Some(trust)) => {
-                    c.audience_for_product_group(p.product_group.catalog_key(), trust.as_ref())
-                }
+                (Some(c), Some(trust)) => c.audience_for(
+                    p.product_group.catalog_key(),
+                    p.product_group_data
+                        .as_ref()
+                        .and_then(ProductGroupData::product_category),
+                    trust.as_ref(),
+                ),
                 _ => Audience::Public,
             };
 

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::{middleware::scope::RequireWrite, state::AppState};
 
-use super::error::{api_error, field_conflict_error, internal_error};
+use super::error::{api_error, field_conflict_error, field_validation_error, internal_error};
 use crate::extract::Json;
 
 /// Request body for passport creation.
@@ -54,6 +54,41 @@ pub async fn create_handler(
         return resp;
     }
 
+    let passport = match assemble_passport(body) {
+        Ok(passport) => passport,
+        Err(resp) => return resp,
+    };
+
+    match state.service.create(passport, &auth).await {
+        Ok(p) => (
+            StatusCode::CREATED,
+            Json(crate::api::PassportResponse::from(&p)),
+        )
+            .into_response(),
+        // What the service refuses on the assembled record rather than on the
+        // request: a field able to hold personal data that has a value and no
+        // statement, which names the field.
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// The draft `POST /api/v1/dpp` would store for `body`, or the response that
+/// refuses it.
+///
+/// Apart from [`create_handler`] so the dry-run route can build the same record
+/// and ask of it what the service asks, rather than guess at it from the
+/// request: a rule judged on the assembled passport (the product group a body
+/// implies, the acts recorded for it, the statements it carries) cannot be
+/// previewed from the body alone without restating how the passport is put
+/// together. A second copy of that would diverge the first time one of them
+/// learned something.
+///
+/// Reads no store and writes none.
+#[allow(clippy::result_large_err)]
+pub fn assemble_passport(
+    body: CreatePassportRequest,
+) -> Result<Passport, axum::response::Response> {
     // ProductGroup is the dispatch key: explicit if supplied, else derived from the
     // typed product group data, else Other.
     let product_group = body
@@ -89,7 +124,7 @@ pub async fn create_handler(
         .co2e_per_unit
         .or_else(|| {
             body.product_group_data.as_ref().and_then(|sd| match sd {
-                ProductGroupData::Battery(b) => Some(b.co2e_per_unit_kg),
+                ProductGroupData::Battery(b) => b.co2e_per_unit_kg,
                 ProductGroupData::Textile(t) => t.carbon_footprint_kg_co2e,
                 _ => None,
             })
@@ -103,11 +138,11 @@ pub async fn create_handler(
         Some(raw) if !raw.is_empty() => match dpp_domain::CommodityCode::parse(raw) {
             Ok(code) => Some(code),
             Err(e) => {
-                return api_error(
+                return Err(api_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "VALIDATION_ERROR",
                     &e.to_string(),
-                );
+                ));
             }
         },
         _ => None,
@@ -137,6 +172,7 @@ pub async fn create_handler(
         compliance_result: None,
         lint_result: None,
         product_group_data: body.product_group_data,
+        personal_data: body.personal_data,
         status: PassportStatus::Draft,
         qr_code_url: None,
         jws_signature: None,
@@ -192,14 +228,7 @@ pub async fn create_handler(
         carrier_serial: body.carrier_serial,
     };
 
-    match state.service.create(passport, &auth).await {
-        Ok(p) => (
-            StatusCode::CREATED,
-            Json(crate::api::PassportResponse::from(&p)),
-        )
-            .into_response(),
-        Err(e) => internal_error(e),
-    }
+    Ok(passport)
 }
 
 /// `409` when the serial `body` attributes is already held by another passport
@@ -377,7 +406,7 @@ mod schema_validation {
             nominal_voltage_v: 3.2,
             nominal_capacity_ah: 100.0,
             expected_lifetime_cycles: Some(3000),
-            co2e_per_unit_kg: 85.4,
+            co2e_per_unit_kg: Some(85.4),
             recycled_content_cobalt_pct: None,
             recycled_content_lithium_pct: Some(12.5),
             recycled_content_nickel_pct: None,

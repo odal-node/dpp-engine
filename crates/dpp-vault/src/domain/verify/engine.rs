@@ -420,22 +420,29 @@ mod tests {
     use std::collections::BTreeMap;
     use uuid::Uuid;
 
-    fn did_doc_for(signing_key: &SigningKey) -> serde_json::Value {
+    /// The document `did` publishes: one method, `{did}#root`, controlled by it.
+    fn did_doc_for(did: &str, signing_key: &SigningKey) -> serde_json::Value {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let x = b64.encode(signing_key.verifying_key().to_bytes());
         serde_json::json!({
+            "id": did,
             "verificationMethod": [{
-                "id": "did:web:node.example#root",
-                "type": "JsonWebKey2020",
+                "id": format!("{did}#root"),
+                "type": "JsonWebKey",
+                "controller": did,
                 "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": x },
             }],
-            "assertionMethod": ["did:web:node.example#root"],
+            "assertionMethod": [format!("{did}#root")],
         })
     }
 
-    fn sign(signing_key: &SigningKey, payload: &serde_json::Value) -> String {
+    /// A signature by `did`'s key, naming it by the absolute URL of its method.
+    fn sign(did: &str, signing_key: &SigningKey, payload: &serde_json::Value) -> String {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        let header = b64.encode(serde_json::to_vec(&serde_json::json!({"alg": "EdDSA"})).unwrap());
+        let header = b64.encode(
+            serde_json::to_vec(&serde_json::json!({"alg": "EdDSA", "kid": format!("{did}#root")}))
+                .unwrap(),
+        );
         let body = b64.encode(canonicalize(payload).unwrap());
         let signing_input = format!("{header}.{body}");
         let sig = signing_key.sign(signing_input.as_bytes());
@@ -489,15 +496,15 @@ mod tests {
             manifest_jws: String::new(),
             full_view: SignedLayer {
                 payload: full_payload.clone(),
-                jws: sign(signing_key, &full_payload),
+                jws: sign("did:web:node.example", signing_key, &full_payload),
             },
             public_view: SignedLayer {
                 payload: public_payload.clone(),
-                jws: sign(signing_key, &public_payload),
+                jws: sign("did:web:node.example", signing_key, &public_payload),
             },
             did_documents: BTreeMap::from([(
                 "did:web:node.example".to_string(),
-                did_doc_for(signing_key),
+                did_doc_for("did:web:node.example", signing_key),
             )]),
             audit_entries,
             transfer_chain: None,
@@ -511,7 +518,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", signing_key, &manifest_value);
         dossier
     }
 
@@ -536,7 +543,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", signing_key, &manifest_value);
         dossier
     }
 
@@ -623,7 +630,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
         assert_eq!(
             *by_name(&verify_dossier(&dossier, None), "content_integrity"),
             CheckStatus::Pass
@@ -689,7 +696,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
 
         let report = verify_dossier(&dossier, None);
         assert!(matches!(
@@ -753,29 +760,35 @@ mod tests {
             notes: None,
         };
         let payload = record.signing_payload();
-        record.from_signature = Some(sign(&from_key, &payload));
+        record.from_signature = Some(sign("did:web:from.example", &from_key, &payload));
         // Signed by the dossier's *issuer* — the hosting node — over the
         // acceptance payload, which is what the verifier now checks it against.
         // Signing it with `to_key` over the initiation payload, as this once
         // did, is the shape that made the attestation indistinguishable from a
         // copy of `from_signature`.
-        record.node_acceptance_attestation = Some(sign(&signing_key, &acceptance_payload(&record)));
+        record.node_acceptance_attestation = Some(sign(
+            "did:web:node.example",
+            &signing_key,
+            &acceptance_payload(&record),
+        ));
 
         dossier.transfer_chain = Some(TransferChain {
             passport_id: record.passport_id,
             original_operator: operator("did:web:from.example"),
             transfers: vec![record],
         });
-        dossier
-            .did_documents
-            .insert("did:web:from.example".to_string(), did_doc_for(&from_key));
-        dossier
-            .did_documents
-            .insert("did:web:to.example".to_string(), did_doc_for(&to_key));
+        dossier.did_documents.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
+        dossier.did_documents.insert(
+            "did:web:to.example".to_string(),
+            did_doc_for("did:web:to.example", &to_key),
+        );
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
 
         // Sanity: clean chain verifies before we tamper it.
         let clean_report = verify_dossier(&dossier, None);
@@ -798,7 +811,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
 
         let report = verify_dossier(&dossier, None);
         assert!(matches!(
@@ -882,7 +895,7 @@ mod tests {
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
-        dossier.manifest_jws = sign(&signing_key, &manifest_value);
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
 
         let mut value = serde_json::to_value(&dossier).unwrap();
         value["transferChain"]["transfers"][0]["certificationStatus"] =
