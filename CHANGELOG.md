@@ -366,6 +366,22 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   generated battery templates carry the column last; an older file without it
   still imports.
 
+- **This node issues category-scoped credentials.** `POST /api/v1/credentials`
+  accepts `productCategories`, so an operator that places both EV and LMT
+  batteries can vouch for a repairer of one and not the other. Until now every
+  credential minted here covered whole product groups. The read route already
+  enforced a category list; issuance never set one. A list that cannot work as
+  written is refused with `422` before anything is signed, because minted, its
+  holder's reads would quietly come back public. A list needs `productGroups`.
+  Each value must be one a named group's passports can state. Each named group
+  must admit at least one of the values. The legal values come from core's
+  `ProductGroup::product_category_values`, read from each group's current
+  schema, so this node lists no vocabulary of its own. `odal credential issue`
+  gains `--product-categories`. The credential read route's description now
+  states the scope rule as well: both axes are checked, a credential out of
+  scope gets a `200` with the public view (no `disclosureSet`), and the read is
+  still audited. (#502)
+
 ### Fixed
 
 - **A credential's product-category scope is enforced.** `GET

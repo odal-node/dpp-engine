@@ -776,6 +776,11 @@ pub enum CredentialCommands {
         /// Product groups the credential covers. Omit to cover all of them.
         #[arg(long, value_delimiter = ',')]
         product_groups: Vec<String>,
+        /// Product categories the credential covers within those groups, e.g.
+        /// ev,lmt. Omit to cover all of them. Needs --product-groups; the node
+        /// refuses a category no named group's passports can state.
+        #[arg(long, value_delimiter = ',')]
+        product_categories: Vec<String>,
         /// Lifetime in days (1-90)
         #[arg(long)]
         valid_for_days: Option<i64>,

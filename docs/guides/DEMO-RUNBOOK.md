@@ -170,6 +170,9 @@ odal credential issue did:web:repairs.example \
 `--role` defaults to `authorised_repairer`; `recycler`, `remanufacturer`,
 `preparer_for_reuse` and `distributor` are the other named ones.
 `--product-groups` narrows the credential; omit it to cover all.
+`--product-categories` narrows it further within those groups, e.g.
+`--product-groups battery --product-categories ev`. The node refuses a category
+none of the named groups' passports can state.
 
 Prints a JWS. The holder sends it as the `X-DPP-Credential` header.
 
