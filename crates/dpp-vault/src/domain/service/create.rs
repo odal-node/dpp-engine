@@ -88,8 +88,7 @@ impl PassportService {
         // above derives that value from the catalog, which is where an
         // unparseable catalog version would otherwise pass into a record whose
         // schema validation is then silently skipped downstream.
-        passport.validate()?;
-        guard_personal_data(&passport)?;
+        check_new_draft(&passport)?;
 
         self.guard_component_graph(passport.id, &passport.component_refs)
             .await?;
@@ -538,7 +537,7 @@ pub(super) fn apply_patch(
 /// Core's [`dpp_domain::check_personal_data`] makes the decision and never
 /// reads what a field says; this maps its findings to the `422` the other
 /// field-level refusals use, one entry per field.
-pub(super) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
+pub(crate) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
     let errors = dpp_domain::check_personal_data(passport);
     if errors.is_empty() {
         Ok(())
@@ -547,6 +546,18 @@ pub(super) fn guard_personal_data(passport: &Passport) -> Result<(), DppError> {
             errors,
         }))
     }
+}
+
+/// What create asks of the assembled draft that needs no store: core's own
+/// invariants ([`Passport::validate`]), then [`guard_personal_data`].
+///
+/// One function for [`PassportService::create`] and the dry-run route, so the
+/// preview cannot pass a draft that create refuses. The dry run used to run the
+/// personal-data half alone, and it passed a battery whose two
+/// placing-on-market dates disagree, which only `Passport::validate` compares.
+pub(crate) fn check_new_draft(passport: &Passport) -> Result<(), DppError> {
+    passport.validate()?;
+    guard_personal_data(passport)
 }
 
 /// `https` + the SSRF shape guard on the URI, and a lowercase-hex SHA-256 pin —

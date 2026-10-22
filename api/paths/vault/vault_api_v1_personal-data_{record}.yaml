@@ -1,0 +1,71 @@
+delete:
+  operationId: erasePersonalDataRecord
+  summary: Erase a record of personal data
+  description: |
+    Erases a record that a passport's `personalData` statement names
+    (`{"held": "outside", "record": "<id>"}`), keeping a tombstone. This is how
+    a withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is
+    signed, frozen, archived and copied to the back-up provider, so the personal
+    data is held in a record that can be erased instead.
+
+    **Erasing touches nothing else.** Not the passport, which is signed and
+    frozen. Not the statement in it, which keeps naming the record, so a reader
+    following the statement learns that the record is gone rather than that it
+    never existed. Not any other record.
+
+    **Idempotent.** Erasing a record that is already erased returns the receipt
+    it was given the first time, so a caller that lost the answer asks again. It
+    takes no `Idempotency-Key`.
+
+    **The tombstone is not free of personal data.** It keeps the identifier, the
+    passport and field the record belonged to, and when it was erased — none of
+    the content. A passport identifier can relate to whoever owns the item, and
+    information that can be linked to a person is personal data (GDPR Recital
+    26). The receipt is therefore as sensitive as the passport's individual-item
+    data, and the operator needs a basis for keeping the tombstone; to show that
+    it erased (Art. 5(2)) is one. Nothing in this node deletes it.
+
+    **No route reads a record.** A record is served by no resolver, public,
+    credentialed or authenticated view of a passport, and is never part of the
+    archive of past versions or of the back-up copy. Serving one is a disclosure
+    that needs a basis of its own, which only the controller can establish for
+    each purpose.
+
+    Admin-scoped, like every other route that removes something: the write scope
+    produces and moves passports, and none of that destroys anything.
+  tags:
+    - Personal Data
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: record
+      in: path
+      required: true
+      description: >-
+        The record's identifier, as the passport's statement names it
+        (`personalData.<field>.record`).
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    '200':
+      description: >-
+        The record is erased. The same receipt on every call after the first.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/PersonalDataErasureReceipt.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      description: >-
+        This node never held a record with that identifier, which includes a
+        string that could not have been one. A record that was held and is erased
+        is not a `404`: it answers `200` with its receipt.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

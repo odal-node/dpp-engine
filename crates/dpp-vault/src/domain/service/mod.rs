@@ -21,6 +21,9 @@
 
 mod amend;
 mod create;
+/// What create asks of an assembled draft that needs no store, shared with the
+/// dry-run route so a preview cannot pass what a create refuses.
+pub(crate) use create::check_new_draft;
 /// The component-reference rule, shared with the create handler so the two
 /// entry points cannot drift apart on what a valid BOM entry is.
 pub(crate) use create::validate_component_ref;
