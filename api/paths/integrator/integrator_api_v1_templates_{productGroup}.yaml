@@ -54,8 +54,8 @@ get:
         nothing. Rows from all three import under the `battery` product group.
 
         The parameter keeps its name because renaming a path parameter renames
-        the method argument in every generated client, and for the eight
-        non-battery templates the two are still the same string.
+        the method argument in every generated client, and for every
+        non-battery template the two are still the same string.
       schema:
         type: string
         example: battery-ev

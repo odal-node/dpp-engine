@@ -95,6 +95,16 @@ fn templates() -> Vec<Template> {
             source: Source::Embedded(include_str!("../../templates/construction-v1.csv")),
             filename: "odal-construction-template.csv",
         },
+        Template {
+            key: "electronics",
+            source: Source::Embedded(include_str!("../../templates/electronics-v1.csv")),
+            filename: "odal-electronics-template.csv",
+        },
+        Template {
+            key: "detergent",
+            source: Source::Embedded(include_str!("../../templates/detergent-v1.csv")),
+            filename: "odal-detergent-template.csv",
+        },
     ];
     // Derived from the category list rather than written out, so a category
     // added to the contract gets a route without anyone remembering to add one.

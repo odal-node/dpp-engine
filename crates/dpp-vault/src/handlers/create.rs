@@ -54,6 +54,41 @@ pub async fn create_handler(
         return resp;
     }
 
+    let passport = match assemble_passport(body) {
+        Ok(passport) => passport,
+        Err(resp) => return resp,
+    };
+
+    match state.service.create(passport, &auth).await {
+        Ok(p) => (
+            StatusCode::CREATED,
+            Json(crate::api::PassportResponse::from(&p)),
+        )
+            .into_response(),
+        // What the service refuses on the assembled record rather than on the
+        // request: a field able to hold personal data that has a value and no
+        // statement, which names the field.
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// The draft `POST /api/v1/dpp` would store for `body`, or the response that
+/// refuses it.
+///
+/// Apart from [`create_handler`] so the dry-run route can build the same record
+/// and ask of it what the service asks, rather than guess at it from the
+/// request: a rule judged on the assembled passport (the product group a body
+/// implies, the acts recorded for it, the statements it carries) cannot be
+/// previewed from the body alone without restating how the passport is put
+/// together. A second copy of that would diverge the first time one of them
+/// learned something.
+///
+/// Reads no store and writes none.
+#[allow(clippy::result_large_err)]
+pub fn assemble_passport(
+    body: CreatePassportRequest,
+) -> Result<Passport, axum::response::Response> {
     // ProductGroup is the dispatch key: explicit if supplied, else derived from the
     // typed product group data, else Other.
     let product_group = body
@@ -103,11 +138,11 @@ pub async fn create_handler(
         Some(raw) if !raw.is_empty() => match dpp_domain::CommodityCode::parse(raw) {
             Ok(code) => Some(code),
             Err(e) => {
-                return api_error(
+                return Err(api_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "VALIDATION_ERROR",
                     &e.to_string(),
-                );
+                ));
             }
         },
         _ => None,
@@ -193,18 +228,7 @@ pub async fn create_handler(
         carrier_serial: body.carrier_serial,
     };
 
-    match state.service.create(passport, &auth).await {
-        Ok(p) => (
-            StatusCode::CREATED,
-            Json(crate::api::PassportResponse::from(&p)),
-        )
-            .into_response(),
-        // What the service refuses on the assembled record rather than on the
-        // request: a field able to hold personal data that has a value and no
-        // statement, which names the field.
-        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
-        Err(e) => internal_error(e),
-    }
+    Ok(passport)
 }
 
 /// `409` when the serial `body` attributes is already held by another passport
