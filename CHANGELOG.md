@@ -827,6 +827,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   with the reason. `check-plugins` is local-only by nature: it compares file
   modification times, which a fresh checkout does not have.
 
+- **The code cited RFC 7807 and RFC 7235 after both had been obsoleted, and
+  nothing recorded which RFCs it cited.** RFC 9457 replaced 7807 and RFC 9110
+  replaced 7235. They were cited in thirty-seven places and two, while the
+  resolver already cited RFC 9457 for the same error shape, so one concept went
+  by two numbers. Neither change alters behaviour: the `application/problem+json`
+  media type and the case-insensitive auth scheme are the same in the successors.
+  The citations are corrected, and each section reference was re-read in the
+  successor rather than renumbered. The API description changes in two
+  sentences, so both OpenAPI bundles were regenerated.
+  `docs/architecture/STANDARDS.md` is a register of the twenty-eight RFCs the
+  repository cites, with each one's status, the date it was read, where it was
+  read, and where the code uses it, and `crates/dpp-node/tests/standard_citations.rs`
+  fails a citation with no row, an obsoleted specification still cited without a
+  `kept:` reason (RFC 2822 is the one, because it names chrono's parser), a draft
+  cited without its revision, a row nothing cites, and a row without a dated
+  status. It proves a citation has a status somebody read, not that the status
+  is current, so re-reading the register is now a step of the release checklist.
+
 ## [0.14.0] - 2026-09-24
 
 ### Breaking

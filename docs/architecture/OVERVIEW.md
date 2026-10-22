@@ -137,7 +137,7 @@ dpp-factor-data (licensed-LCI store — ghost provider until a dataset licence i
 
 **Dependency rules:**
 - `dpp-types` is pure data (no I/O, no async runtime)
-- `dpp-common` is infrastructure behaviour (event bus trait, RFC 7807)
+- `dpp-common` is infrastructure behaviour (event bus trait, RFC 9457)
 - `dpp-dal` implements core port traits against PostgreSQL
 - Service crates (`dpp-vault`, `dpp-identity`, `dpp-integrator`) are Axum HTTP services
 - `dpp-node` is the assembly point — it wires everything together

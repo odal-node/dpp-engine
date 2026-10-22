@@ -247,7 +247,7 @@ dpp-render                      — the ONE renderer for the public passport pag
                                   resolver's live read and the continuity tier's pre-rendered
                                   snapshot, so the two cannot drift
 dpp-integrator                  — CSV/XLSX bulk import
-dpp-common                      — event bus trait, telemetry, config helpers, RFC 7807 errors
+dpp-common                      — event bus trait, telemetry, config helpers, RFC 9457 errors
 dpp-plugin-host                 — wasmtime sandbox for product group Wasm plugins
 dpp-node                        — MVP single binary fusing vault + identity + integrator
 dpp-seal                        — eIDAS qualified seal adapter: one `SealBackend` behind the
@@ -638,6 +638,7 @@ Not debt — rules that hold, stated once so they are not re-derived.
 
   `scripts/vocabulary-check.sh` (in `just check` and CI) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
 
-- **Errors are RFC 7807.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
+- **Errors are RFC 9457.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
+- **A cited RFC or Internet-Draft has a row in `docs/architecture/STANDARDS.md`.** `crates/dpp-node/tests/standard_citations.rs` fails a citation with no row, a still-cited specification whose row says it is obsoleted (cite the successor, or give the row a `kept:` reason), and a draft cited without its revision. Read the status at `https://www.rfc-editor.org/info/rfcNNNN` and write the date. Re-check a section number against the text actually cited, never by renumbering: this repository cited two obsoleted RFCs, thirty-nine times between them, after RFC 9457 and RFC 9110 had replaced them, and the section numbers happened to survive.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).
 - **The passport graph lives in `doc`, not in tables.** Component relationships are `componentRefs` inside the passport JSONB, walked by `dpp-vault`'s `verify_tree`. There are no component/material/supplier tables in `ops/pg/*` and none are planned unless a query pattern demands them — do not add one to model a relationship the document already carries.
