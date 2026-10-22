@@ -209,6 +209,7 @@ async fn start_node_with_ruleset(
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
     // the authenticated node-state route can report it.
     let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
@@ -253,6 +254,7 @@ async fn start_node_with_ruleset(
         cors_allowed_origins: Vec::new(),
         scan_repo,
         unsold_goods_repo,
+        personal_data,
         plugin_admin: None,
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.
@@ -2777,6 +2779,242 @@ async fn a_draft_holding_personal_data_without_a_statement_is_refused_on_every_w
         .await
         .expect("update request failed");
     assert_eq!(resp.status(), 200, "personalData is patchable on a draft");
+}
+
+/// 🚨 The reason the records have a store of their own: a published passport is
+/// signed, frozen, archived, sealed and copied to the back-up provider, so
+/// nothing that reaches any of those can be erased. The content of a record is
+/// found in none of them, however the passport is read and whatever it went on
+/// to feed.
+///
+/// Two halves, because each alone can pass by not looking. Every read route and
+/// audience is asked for the passport and none returns the content. And every
+/// table other than the record's own is searched for it, which covers the
+/// archive of past versions, the audit chain, the outboxes and everything a
+/// later change adds — a route nobody thought to list cannot hide it.
+///
+/// A record the passport's statement names, so the statement is in every view
+/// that carries it. The *identifier* is meant to appear there; the *content* is
+/// not.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_personal_data_record_is_in_no_view_of_the_passport_and_no_other_table() {
+    use dpp_domain::ports::personal_data::PersonalDataPort as _;
+    use sqlx::Row as _;
+
+    const MARKER: &str = "accident-report-of-jane-example-7f3a91";
+
+    let (base, pg) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000085");
+    let client = reqwest::Client::new();
+
+    // A draft that says nothing is held, to mint the passport; then the record,
+    // then the statement naming it.
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&textile_with_a_repair_history(Some(
+            serde_json::json!({ "repairHistoryUrl": { "held": "nothing" } }),
+        )))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("an id").to_owned();
+
+    let store = dpp_dal::pg::PgPersonalDataRepo::new(pg.dal.clone());
+    let record = store
+        .store(
+            dpp_domain::passport::PassportId(id.parse().expect("uuid")),
+            "repairHistoryUrl",
+            &serde_json::json!({ "report": MARKER }),
+        )
+        .await
+        .expect("the record is held");
+    let statement = serde_json::json!({
+        "repairHistoryUrl": {
+            "held": "outside", "lawfulBasis": "consent", "record": record.as_str()
+        }
+    });
+    let resp = client
+        .put(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "personalData": statement }))
+        .send()
+        .await
+        .expect("update request failed");
+    assert_eq!(resp.status(), 200);
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(status, 200, "the passport publishes: {body}");
+
+    // Every way of reading the passport, and the audiences above public.
+    let jws = issue_repairer_credential(&base, &token, &client).await;
+    let evidence = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/evidence"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("evidence request failed");
+    assert_eq!(evidence.status(), 201);
+
+    let reads = vec![
+        (
+            "public",
+            client.get(format!("{base}/vault/public/dpp/{id}")),
+        ),
+        (
+            "authenticated",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}"))
+                .bearer_auth(&token),
+        ),
+        (
+            "credentialed",
+            client
+                .get(format!("{base}/vault/credential/dpp/{id}"))
+                .header("X-DPP-Credential", &jws),
+        ),
+        (
+            "history",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/history"))
+                .bearer_auth(&token),
+        ),
+        (
+            "versions",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/versions"))
+                .bearer_auth(&token),
+        ),
+        (
+            "evidence",
+            client
+                .get(format!("{base}/vault/api/v1/dpp/{id}/evidence"))
+                .bearer_auth(&token),
+        ),
+        (
+            "list",
+            client
+                .get(format!("{base}/vault/api/v1/dpps"))
+                .bearer_auth(&token),
+        ),
+    ];
+    let mut served = Vec::new();
+    for (name, request) in reads {
+        let resp = request.send().await.expect("read request failed");
+        assert!(resp.status().is_success(), "{name}: {}", resp.status());
+        let text = resp.text().await.unwrap_or_default();
+        assert!(
+            !text.contains(MARKER),
+            "the {name} view carries the content of a record: {text}"
+        );
+        served.push((name, text));
+    }
+    assert!(
+        served
+            .iter()
+            .any(|(name, text)| *name == "authenticated" && text.contains(record.as_str())),
+        "the statement names the record in the view that serves statements, so the \
+         absence above is not an empty read"
+    );
+
+    // And no other table holds it. Searched as whole rows, so a column nobody
+    // thought of is covered; the record's own table is the control that the
+    // search can find it at all.
+    let admin = sqlx::PgPool::connect(&pg.admin_url).await.expect("admin");
+    let tables = sqlx::query(
+        "SELECT table_schema, table_name FROM information_schema.tables
+          WHERE table_schema IN ('odal', 'identity') AND table_type = 'BASE TABLE'",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("tables");
+    assert!(
+        tables.len() > 10,
+        "the search covers the schema, not an empty list"
+    );
+    let mut holding = Vec::new();
+    for row in &tables {
+        let table = format!(
+            "{}.{}",
+            row.get::<String, _>("table_schema"),
+            row.get::<String, _>("table_name")
+        );
+        // Names come from the catalogue just read, not from a caller.
+        let found: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} t WHERE to_jsonb(t.*)::text LIKE '%' || $1 || '%'"
+        )))
+        .bind(MARKER)
+        .fetch_one(&admin)
+        .await
+        .unwrap_or_else(|e| panic!("search {table}: {e}"));
+        if found > 0 {
+            holding.push(table);
+        }
+    }
+    assert_eq!(
+        holding,
+        ["odal.personal_data_record"],
+        "the content is held in its own table and in no other"
+    );
+
+    // Erasing it changes none of what the passport serves.
+    let erased = client
+        .delete(format!(
+            "{base}/vault/api/v1/personal-data/{}",
+            record.as_str()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("erase request failed");
+    assert_eq!(erased.status(), 200);
+    let public_after = client
+        .get(format!("{base}/vault/public/dpp/{id}"))
+        .send()
+        .await
+        .expect("read request failed")
+        .text()
+        .await
+        .unwrap_or_default();
+    let authenticated_after = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .text()
+        .await
+        .unwrap_or_default();
+    for (name, after) in [
+        ("public", public_after),
+        ("authenticated", authenticated_after),
+    ] {
+        let before = &served
+            .iter()
+            .find(|(n, _)| *n == name)
+            .expect("read above")
+            .1;
+        assert_eq!(*before, after, "the {name} view is as it was after erasure");
+    }
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM odal.personal_data_record WHERE content IS NOT NULL",
+    )
+    .fetch_one(&admin)
+    .await
+    .expect("count");
+    assert_eq!(remaining, 0, "and nothing of the content is left");
 }
 
 /// The vocabulary belongs to one regulation, so it belongs to one product group.
