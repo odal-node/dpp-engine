@@ -66,6 +66,54 @@ pub fn credential_header_name() -> axum::http::HeaderName {
     axum::http::HeaderName::from_static("x-dpp-credential")
 }
 
+/// The response header that says why a verified credential was served the
+/// public view. Its value is [`OutOfScope::header_value`].
+///
+/// A header and not a body field, because a downgraded body is the public view
+/// byte for byte: it is the payload `publicJwsSignature` signs, and a field
+/// added beside it would make an intact body look tampered to a verifier.
+pub const OUT_OF_SCOPE_HEADER: &str = "X-DPP-Credential-Out-Of-Scope";
+
+/// [`OUT_OF_SCOPE_HEADER`] in the typed, lowercase form the response and the
+/// CORS layer need. A browser client reads it only if CORS exposes it, so
+/// `out_of_scope_header_name_matches_the_header_sent` pins the two spellings
+/// together, as `header_name_matches_the_header_read` does for the request.
+#[must_use]
+pub fn out_of_scope_header_name() -> axum::http::HeaderName {
+    axum::http::HeaderName::from_static("x-dpp-credential-out-of-scope")
+}
+
+/// Why a verified credential grants nothing beyond the public view on one
+/// passport. The credential is still valid; it does not cover this product.
+///
+/// Sent in [`OUT_OF_SCOPE_HEADER`] so a holder can tell the cases apart. None
+/// of them says anything the public body does not: the group is in the body,
+/// every group's category field is public, and whether a group states a
+/// category at all follows from the group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutOfScope {
+    /// The credential names product groups, and not this passport's.
+    ProductGroup,
+    /// The credential names product categories, and not the one this passport
+    /// states.
+    ProductCategory,
+    /// The credential names product categories, and this passport's group
+    /// states none.
+    NoProductCategory,
+}
+
+impl OutOfScope {
+    /// The value sent in [`OUT_OF_SCOPE_HEADER`].
+    #[must_use]
+    pub const fn header_value(self) -> &'static str {
+        match self {
+            Self::ProductGroup => "product-group",
+            Self::ProductCategory => "product-category",
+            Self::NoProductCategory => "no-product-category",
+        }
+    }
+}
+
 /// The network lookups credential verification needs.
 ///
 /// A port rather than a concrete fetcher so the verification logic below stays
@@ -110,20 +158,25 @@ impl VerifiedCredential {
     }
 
     /// The audience this credential grants **over a passport in
-    /// `product_group_key` whose data states `passport_category`**.
+    /// `product_group_key` whose data states `passport_category`**, or the
+    /// reason it grants nothing beyond the public view there.
     ///
     /// A credential naming product groups or product categories grants nothing
-    /// extra outside them, so an out-of-scope credential resolves to
-    /// [`Audience::Public`] rather than an error: it is a valid credential that
-    /// simply does not cover this product, and public access is the baseline
-    /// every caller already has. Denying instead would also make the route a
-    /// probe for which product group or category a passport is in.
+    /// extra outside them, so an out-of-scope credential is served the public
+    /// view rather than an error: it is a valid credential that simply does not
+    /// cover this product, and public access is the baseline every caller
+    /// already has. Denying instead would also make the route a probe for which
+    /// product group or category a passport is in. The [`OutOfScope`] says
+    /// which axis missed, for the response header.
     ///
     /// The scope rule itself is core's — an empty list means unscoped on that
     /// axis, a populated one must contain the passport's value — applied by
-    /// re-running the pure claims check with both values now known. Nothing
-    /// here re-implements it, and nothing here touches the network:
-    /// authentication, issuer trust and revocation were all settled in
+    /// re-running the pure claims check with the passport's values now known.
+    /// Core reports a group miss and a category miss as one `OutOfScope`, so it
+    /// is asked about the group alone first and the category second: the order
+    /// of the questions tells the two apart, and its message is never parsed.
+    /// Nothing here re-implements the rule, and nothing here touches the
+    /// network: authentication, issuer trust and revocation were all settled in
     /// [`read_and_verify`] before the database was reached.
     ///
     /// ## A category the passport cannot state does not satisfy a category scope
@@ -139,34 +192,54 @@ impl VerifiedCredential {
     /// is not asking about category at all. Passed through for a passport that
     /// cannot answer, it would read an issuer's narrowing as its opposite: a
     /// credential scoped to one category would unlock every product in its
-    /// groups that states none. So a credential naming any category resolves
-    /// to [`Audience::Public`] on such a passport — the same downgrade a
-    /// category mismatch gets — decided here, before core is asked. Core still
-    /// sees a `None` when the credential names no category, where "no
-    /// requirement" is the truth.
-    #[must_use]
+    /// groups that states none. So a credential naming any category is out of
+    /// scope on such a passport, as [`OutOfScope::NoProductCategory`]: the same
+    /// downgrade a category mismatch gets, decided here before core is asked
+    /// about the category. Core is never handed the passport's `None`.
+    ///
+    /// ## Anything else core refuses here is a race, and gets the baseline
+    ///
+    /// Validity was settled in [`read_and_verify`]. The one thing that can
+    /// change between there and here is the clock, so a credential expiring in
+    /// between is refused by this re-check too. That is not a scope miss, and
+    /// it is answered `Ok(Audience::Public)`: the public view, with no reason.
     pub fn audience_for(
         &self,
         product_group_key: &str,
         passport_category: Option<&str>,
         trust: &dyn TrustedIssuerRegistry,
-    ) -> Audience {
-        if passport_category.is_none() && !self.0.credential_subject.product_categories.is_empty() {
-            return Audience::Public;
+    ) -> Result<Audience, OutOfScope> {
+        use dpp_vc::VerificationResult;
+
+        let now = chrono::Utc::now();
+        let claims = |category: Option<&str>| {
+            dpp_vc::verify_credential_claims_with_trust(
+                &self.0,
+                Some(product_group_key),
+                category,
+                now,
+                trust,
+            )
+        };
+
+        match claims(None) {
+            VerificationResult::OutOfScope { .. } => return Err(OutOfScope::ProductGroup),
+            result if !result.is_valid() => return Ok(Audience::Public),
+            _ => {}
         }
 
-        let scoped = dpp_vc::verify_credential_claims_with_trust(
-            &self.0,
-            Some(product_group_key),
-            passport_category,
-            chrono::Utc::now(),
-            trust,
-        );
-        if scoped.is_valid() {
-            self.audience()
-        } else {
-            Audience::Public
+        if !self.0.credential_subject.product_categories.is_empty() {
+            let Some(category) = passport_category else {
+                return Err(OutOfScope::NoProductCategory);
+            };
+            match claims(Some(category)) {
+                VerificationResult::OutOfScope { .. } => return Err(OutOfScope::ProductCategory),
+                result if !result.is_valid() => return Ok(Audience::Public),
+                _ => {}
+            }
         }
+
+        Ok(self.audience())
     }
 
     /// The underlying credential, for revocation checking and audit.
@@ -698,12 +771,12 @@ mod tests {
         };
         assert_eq!(
             c.audience_for("battery", Some("ev"), &trusting()),
-            Audience::LegitimateInterest,
+            Ok(Audience::LegitimateInterest),
             "in scope: the credential names battery"
         );
         assert_eq!(
             c.audience_for("textile", None, &trusting()),
-            Audience::Public,
+            Err(OutOfScope::ProductGroup),
             "out of scope: a battery credential must not unlock a textile passport"
         );
     }
@@ -731,7 +804,7 @@ mod tests {
         assert_eq!(c.audience(), Audience::Authority);
         assert_eq!(
             c.audience_for("not-a-product_group", None, &trust),
-            Audience::Public
+            Err(OutOfScope::ProductGroup)
         );
     }
 
@@ -756,7 +829,7 @@ mod tests {
         };
         assert_eq!(
             c.audience_for("textile", None, &trusting()),
-            Audience::LegitimateInterest
+            Ok(Audience::LegitimateInterest)
         );
     }
 
@@ -789,18 +862,20 @@ mod tests {
 
         assert_eq!(
             c.audience_for("battery", Some("ev"), &trusting()),
-            Audience::LegitimateInterest,
+            Ok(Audience::LegitimateInterest),
             "in scope on both axes"
         );
         assert_eq!(
             c.audience_for("electronics", Some("ev"), &trusting()),
-            Audience::Public,
-            "a matching category does not stand in for a matching product group"
+            Err(OutOfScope::ProductGroup),
+            "a matching category does not stand in for a matching product group, \
+             and the group is the miss reported"
         );
     }
 
     /// A credential narrowed to EV batteries grants nothing extra on an LMT
-    /// battery. It stays valid, so the answer is a downgrade and not a 401.
+    /// battery. It stays valid, so the answer is a downgrade and not a 401, and
+    /// the reason names the category axis, not the group it does cover.
     #[tokio::test]
     async fn a_credential_naming_another_category_grants_only_public() {
         let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
@@ -810,7 +885,7 @@ mod tests {
         assert_eq!(c.audience(), Audience::LegitimateInterest);
         assert_eq!(
             c.audience_for("battery", Some("lmt"), &trusting()),
-            Audience::Public
+            Err(OutOfScope::ProductCategory)
         );
     }
 
@@ -826,7 +901,7 @@ mod tests {
         for passport_category in [Some("ev"), Some("lmt"), None] {
             assert_eq!(
                 c.audience_for("battery", passport_category, &trusting()),
-                Audience::LegitimateInterest,
+                Ok(Audience::LegitimateInterest),
                 "passport category {passport_category:?}"
             );
         }
@@ -836,8 +911,9 @@ mod tests {
     /// narrowed to one. Core reads a `None` category as "no requirement", so
     /// handing it the passport's `None` would grant a textile-scoped,
     /// category-narrowed credential its full audience over every textile
-    /// passport — the restriction read as its opposite. It must land where a
-    /// mismatch lands, not where an unscoped credential does.
+    /// passport — the restriction read as its opposite. It must be downgraded
+    /// as a mismatch is, not granted as an unscoped credential is, and it says
+    /// which of the two category misses it was.
     #[tokio::test]
     async fn a_passport_stating_no_category_is_treated_as_a_mismatch() {
         let mut narrowed = credential(CredentialRole::AuthorisedRepairer, 30);
@@ -849,17 +925,63 @@ mod tests {
         unscoped.credential_subject.product_groups = vec!["textile".into()];
         let unscoped = verified(&unscoped).await;
 
-        let cannot_answer = narrowed.audience_for("textile", None, &trusting());
-        assert_eq!(cannot_answer, Audience::Public);
         assert_eq!(
-            cannot_answer,
-            narrowed.audience_for("textile", Some("footwear"), &trusting()),
-            "same outcome as a category mismatch"
+            narrowed.audience_for("textile", None, &trusting()),
+            Err(OutOfScope::NoProductCategory)
         );
-        assert_ne!(
-            cannot_answer,
+        assert_eq!(
+            narrowed.audience_for("textile", Some("footwear"), &trusting()),
+            Err(OutOfScope::ProductCategory),
+            "a downgrade like a category mismatch, told apart from one"
+        );
+        assert_eq!(
             unscoped.audience_for("textile", None, &trusting()),
+            Ok(Audience::LegitimateInterest),
             "not the outcome of a credential that names no category"
+        );
+    }
+
+    /// Group is asked before category, so a credential that misses both is
+    /// reported for the group: the axis a holder has to fix first.
+    #[tokio::test]
+    async fn a_credential_missing_both_axes_is_reported_for_the_group() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
+        assert_eq!(
+            c.audience_for("textile", None, &trusting()),
+            Err(OutOfScope::ProductGroup)
+        );
+        assert_eq!(
+            c.audience_for("steel", Some("flat"), &trusting()),
+            Err(OutOfScope::ProductGroup)
+        );
+    }
+
+    /// The header values are the wire contract the API description enumerates,
+    /// and nothing mechanical compares that YAML enum to this one.
+    #[test]
+    fn the_out_of_scope_reasons_are_sent_as_documented() {
+        assert_eq!(OutOfScope::ProductGroup.header_value(), "product-group");
+        assert_eq!(
+            OutOfScope::ProductCategory.header_value(),
+            "product-category"
+        );
+        assert_eq!(
+            OutOfScope::NoProductCategory.header_value(),
+            "no-product-category"
+        );
+    }
+
+    /// The typed response header name must be the lowercase form of the header
+    /// documented, for the same reason as the request header: CORS exposes the
+    /// typed form, and a drift would hide the header from browser clients.
+    #[test]
+    fn out_of_scope_header_name_matches_the_header_sent() {
+        assert_eq!(
+            out_of_scope_header_name().as_str(),
+            OUT_OF_SCOPE_HEADER.to_ascii_lowercase()
         );
     }
 

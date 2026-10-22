@@ -2100,7 +2100,8 @@ async fn a_self_issued_credential_stops_at_its_own_audience() {
 ///
 /// The layered battery states `batteryType: "portable"`. A credential scoped to
 /// `portable` unlocks its individual-class data. One scoped to `ev` is valid,
-/// so the read is a `200` downgraded to the public view, not an error. A value
+/// so the read is a `200` downgraded to the public view, not an error, and
+/// `X-DPP-Credential-Out-Of-Scope: product-category` says why. A value
 /// no battery can state is refused at issuance with a `422` naming it: minted,
 /// it could only ever come back public, and the holder would be the one to
 /// find out.
@@ -2167,6 +2168,13 @@ async fn a_category_scoped_credential_is_checked_at_issuance_and_enforced_on_rea
             resp.status(),
             200,
             "{category}: out of scope is a downgrade, not an error"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-dpp-credential-out-of-scope")
+                .and_then(|v| v.to_str().ok()),
+            (!unlocks).then_some("product-category"),
+            "{category}: a downgrade says which axis missed, and only a downgrade"
         );
         let view: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(

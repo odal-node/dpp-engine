@@ -48,9 +48,9 @@
 //! groups. The reader at `GET /credential/dpp/{dppId}` enforces both axes, and
 //! a credential that covers nothing there is not refused but downgraded to the
 //! public view. So a category list that cannot be satisfied would be found by
-//! the holder, as reads that quietly come back public, rather than by the
-//! operator who minted it. [`category_scope_problem`] refuses such a list with
-//! a `422` instead.
+//! the holder, as reads that come back public, rather than by the operator who
+//! minted it. [`category_scope_problem`] refuses such a list with a `422`
+//! instead.
 
 use axum::extract::State;
 use axum::http::StatusCode;
