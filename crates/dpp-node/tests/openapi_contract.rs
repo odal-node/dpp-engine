@@ -2430,6 +2430,15 @@ const CODE_TOKENS: &[(&str, u64)] = &[
     ("validation_error(", 422),
     ("require_write(", 403),
     ("require_admin(", 403),
+    // The same refusal, reached as an extractor rather than a call. A scope
+    // gate in the signature runs before the body extractor, which is why the
+    // routes that take a body moved to this form — but the tokens above cannot
+    // see a type, so those routes stopped reporting `403` here the moment they
+    // converted. Nothing went red: this gate only fails on a code a handler
+    // emits and the spec omits, so the missing direction is silent. The scan
+    // starts at `fn <name>(`, so it reads the signature these sit in.
+    ("RequireWrite", 403),
+    ("RequireAdmin", 403),
     ("parse_passport_id(", 400),
     // `dpp-common::http_problem`, the RFC 9457 constructors the integrator and
     // resolver reach for directly.
