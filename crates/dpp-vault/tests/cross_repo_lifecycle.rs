@@ -686,6 +686,15 @@ async fn a_misfiled_or_off_schema_disclosure_is_refused_and_an_implausible_one_i
         .await;
     assert_eq!(resp.status(), 422);
 
+    // A field the format does not have is refused rather than dropped, so a
+    // misspelt one cannot be stored as if its content had been disclosed.
+    let mut misspelt = unsold_goods_report();
+    misspelt["measuresPlaned"] = serde_json::json!("Extending the donation offer window.");
+    let resp = client
+        .put_json("/api/v1/unsold-goods/2027-01-01", misspelt)
+        .await;
+    assert_eq!(resp.status(), 422);
+
     let resp = client.get("/api/v1/unsold-goods").await;
     let listed: serde_json::Value = resp.json().await.unwrap();
     assert!(

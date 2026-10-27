@@ -20,9 +20,14 @@
 //!
 //! # What is checked, and what is only reported
 //!
-//! The report is refused when it does not match the `unsold-goods` JSON Schema,
-//! the same check a passport's product group data gets at publish, or when its
-//! financial year does not start on the path's day or end after it starts.
+//! The report is refused when the body as sent does not match the
+//! `unsold-goods` JSON Schema, the same check a passport's product group data
+//! gets at publish, or when its financial year does not start on the path's day
+//! or end after it starts.
+//!
+//! The schema sees the body before it is parsed. Parsing drops any field the
+//! type does not know, so a check run on the parsed report would pass a
+//! misspelt field and store the report without it.
 //!
 //! The plausibility checks dpp-rules carries for the disclosure (a treatment
 //! split that does not total 100, a CN category at the wrong depth, a donation
@@ -70,9 +75,9 @@ fn financial_year_start(path: &str) -> Result<NaiveDate, Response> {
     })
 }
 
-/// The report against the `unsold-goods` JSON Schema.
+/// The body, as sent, against the `unsold-goods` JSON Schema.
 #[allow(clippy::result_large_err)]
-fn check_against_schema(report: &UnsoldGoodsReport) -> Result<(), Response> {
+fn check_against_schema(body: &serde_json::Value) -> Result<(), Response> {
     let key = ProductGroup::UnsoldGoods.catalog_key();
     // The catalog's current version, as the integrator's schema route resolves
     // it, so the schema a client fetches is the one its report is checked by.
@@ -81,9 +86,8 @@ fn check_against_schema(report: &UnsoldGoodsReport) -> Result<(), Response> {
             "the catalog names no current schema for `{key}`"
         )));
     };
-    let data = serde_json::to_value(report).map_err(internal_error)?;
     schema_registry()
-        .validate_strict(key, version, &data)
+        .validate_strict(key, version, body)
         .map_err(|errors| field_validation_error(&errors))
 }
 
@@ -93,11 +97,18 @@ pub async fn unsold_goods_put_handler(
     State(state): State<AppState>,
     RequireWrite(auth): RequireWrite,
     Path(start): Path<String>,
-    Json(report): Json<UnsoldGoodsReport>,
+    Json(body): Json<serde_json::Value>,
 ) -> Response {
     let start = match financial_year_start(&start) {
         Ok(start) => start,
         Err(response) => return response,
+    };
+    if let Err(response) = check_against_schema(&body) {
+        return response;
+    }
+    let report: UnsoldGoodsReport = match serde_json::from_value(body) {
+        Ok(report) => report,
+        Err(e) => return validation_error(&format!("The report could not be read: {e}")),
     };
     if report.financial_year.start != start {
         return validation_error(&format!(
@@ -108,9 +119,6 @@ pub async fn unsold_goods_put_handler(
     }
     if report.financial_year.end <= report.financial_year.start {
         return validation_error("financialYear.end must be after financialYear.start.");
-    }
-    if let Err(response) = check_against_schema(&report) {
-        return response;
     }
 
     let lint_findings = dpp_domain::lint_product_group_data(
