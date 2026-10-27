@@ -77,7 +77,7 @@ tags:
   - name: Integrator
     description: CSV/XLSX bulk import — product groups, their versioned JSON Schemas, templates, upload, and async job polling.
   - name: Identity
-    description: Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`.
+    description: Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`, and the DID document also at the root, `/.well-known/did.json`, where the did:web method resolves the node's DID. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`.
   - name: Identity (internal)
     description: mTLS service-to-service signing/rotation. **Not exposed by the fused node**, which signs in-process — reachable only on the standalone identity service, and only from a client presenting `CN=odal-vault`.
   - name: Public Resolver
@@ -797,6 +797,12 @@ paths:
       description: |
         How many published passports carry no seal, plus the outbox totals
         behind that number.
+
+        `unsealedPublished` counts the live ones and `unsealedTerminal` the ones
+        that have since been retired, superseded or deactivated. Terminal
+        passports still serve publicly and still owe a seal, so the repair sweep
+        seals them; they are counted apart so that the number to act on is not
+        padded with records whose product ended long ago.
 
         `unsealedPublished` is the headline; the three row counts are context.
         They answer different questions and can legitimately disagree: the
@@ -3371,6 +3377,29 @@ paths:
       summary: did:web DID document
       description: |
         Serves the operator's `did:web` DID document. Public, unauthenticated.
+      tags:
+        - Identity
+      security: []
+      responses:
+        '200':
+          description: The DID document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DidDocument'
+  /.well-known/did.json:
+    get:
+      operationId: getRootDidDocument
+      summary: did:web DID document, at the did:web resolution path
+      description: |
+        Serves the operator's `did:web` DID document at the path the did:web method
+        resolves a pathless DID to: `did:web:<host>` is looked up at
+        `https://<host>/.well-known/did.json`. The node's DID is pathless, so this
+        is where a verifier fetches it.
+
+        The same document as `/identity/.well-known/did.json`, which stays for
+        callers that already use it. The standalone identity service serves this
+        path too. Public, unauthenticated.
       tags:
         - Identity
       security: []
@@ -6127,6 +6156,7 @@ components:
       description: 'Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.'
       required:
         - unsealedPublished
+        - unsealedTerminal
         - pending
         - sealed
         - exhausted
@@ -6134,7 +6164,16 @@ components:
       properties:
         unsealedPublished:
           type: integer
-          description: Published passports carrying no seal at all. `0` is the healthy state.
+          description: |-
+            Live published passports (`active` or `suspended`) carrying no seal at all. `0` is the healthy state.
+
+            Live only. A passport that was published unsealed and has since been retired, superseded or deactivated is counted in `unsealedTerminal`, so this is the number to act on without first working out which of the passports behind it still matter.
+        unsealedTerminal:
+          type: integer
+          description: |-
+            Retired, superseded or deactivated passports that were published and carry no seal. They still serve publicly and the obligation attached at publish, so the repair sweep seals them too: this is what is left of that, and it falls as the sweep works through them.
+
+            Unlike `unsealedPublished`, a non-zero value here is not by itself a call to act: the sweep is already working through it. A count that does not fall is a call to act: the seals the sweep asks for are failing, which `exhausted` counts and the node's log explains.
         pending:
           type: integer
         sealed:
