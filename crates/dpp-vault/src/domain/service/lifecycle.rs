@@ -18,7 +18,7 @@ use dpp_types::{
     audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
 };
 
-use super::{PassportService, retention_years_for};
+use super::{PassportService, retention_deadline, retention_years_for};
 
 impl PassportService {
     /// Suspend a published passport.
@@ -213,8 +213,8 @@ impl PassportService {
         {
             // Same resolver publish uses, so the guard and the sealed deadline
             // agree by construction.
-            let retention_years = i64::from(retention_years_for(&passport.product_group));
-            let retention_end = published_at + chrono::Duration::days(365 * retention_years);
+            let retention_end =
+                retention_deadline(published_at, retention_years_for(&passport.product_group));
             if Utc::now() < retention_end {
                 tracing::warn!(
                     code = event_codes::RETENTION_BLOCKED,
