@@ -25,9 +25,10 @@ no third party sees it.
 3. **One process to run.** `dpp-node` combines the vault, identity and integrator
    services in one binary, started with `docker compose` or `odal up`. Each service
    keeps its own router and binary, so it can be split out later.
-4. **Open standards first.** GS1 Digital Link for carriers, `did:web` and W3C
-   Verifiable Credentials for identity and access, JWS for signatures, OpenAPI 3.1 for
-   the HTTP contract, PostgreSQL and NATS JetStream for storage and events.
+4. **Open standards first.** Digital links for carriers (GS1 Digital Link where there
+   is a GTIN), `did:web` and W3C Verifiable Credentials for identity and access, JWS
+   for signatures, OpenAPI 3.1 for the HTTP contract, PostgreSQL and NATS JetStream for
+   storage and events.
 5. **The database is the source of truth.** Obligations that must not be lost (EU
    registry registration) are written to an outbox in the same transaction as the
    change. Events and webhooks are sent after commit and never fail the operation.
@@ -47,7 +48,7 @@ no third party sees it.
 | Import | CSV and XLSX with templates per product group, row-level reports, dry run, delta matching |
 | Compliance | Signed Wasm plugins per product group, plausibility lint, signed ruleset channel with hot swap |
 | Regulatory catalog | Which product groups need a passport, from when, under which acts |
-| Resolver | GS1 Digital Link resolution, HTML, JSON-LD and AAS views, QR codes, signature verification on every read |
+| Resolver | Digital link resolution (GS1 Digital Link and by passport id), HTML, JSON-LD and AAS views, QR codes, signature verification on every read |
 | Operator administration | API keys with scopes, facilities, operator identifiers, webhooks, unsold-goods disclosure lines |
 | Continuity | Signed pre-rendered snapshots of public pages in object storage |
 | Operations | `odal` CLI and console, Prometheus metrics, trust mode reporting |

@@ -96,11 +96,19 @@ It is the one route a `read`-scoped key can use to learn its own scope.
 ## 4. Issue passports
 
 ```bash
-odal template textile -o textile.csv     # the columns the importer expects
-odal --profile prod passport import textile.csv
+odal template battery-industrial -o battery.csv   # the columns the importer expects
+odal --profile prod passport import battery.csv
 odal --profile prod passport validate
 odal --profile prod passport publish
 ```
+
+Battery templates are keyed by category: `battery-ev`, `battery-lmt` and
+`battery-industrial`. A CSV row carries the template's columns only, and an EV, LMT or
+industrial battery over 2 kWh owes the full Annex XIII content. Its row imports as a
+draft, and `publish` refuses it until that content is supplied, naming every missing
+field. Supply it as JSON, which `odal passport import` also accepts:
+[`ops/demo/passports/`](../../ops/demo/passports/) has publishable examples for each
+category.
 
 ### What the data must look like
 
@@ -236,12 +244,10 @@ re-sign existing ones.
 ## Network and domain
 
 `DID_WEB_BASE_URL` must be reachable over HTTPS, because verifiers fetch the signing
-key from its `/.well-known/did.json`. Forward that path to the node's identity route:
+key from its `/.well-known/did.json`. The node serves the DID document at that path
+itself, so the proxy forwards everything to it:
 
 ```nginx
-location /.well-known/did.json {
-    proxy_pass http://127.0.0.1:8001/identity/.well-known/did.json;
-}
 location / {
     proxy_pass http://127.0.0.1:8001;
 }

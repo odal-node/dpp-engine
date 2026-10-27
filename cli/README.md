@@ -98,10 +98,10 @@ odal bootstrap --legal-name "Example GmbH" --country DE \
 odal facility add --name "Main plant" --value 4012345000009 --country DE --default
 odal operator-id add --scheme vat --value DE123456789 --primary
 
-odal template textile -o textile.csv # the header row the importer expects
-odal passport import textile.csv     # creates drafts
-odal passport validate               # checks the stored drafts
-odal passport publish                # signs and publishes every draft
+odal passport import ops/demo/samples/battery-full.json  # creates a battery draft
+odal passport validate                                # checks the stored drafts
+odal passport publish                                 # signs and publishes every draft
+odal template battery-industrial -o battery.csv       # the CSV columns for your own data
 ```
 
 `bootstrap` mints the first API key and saves it under the active profile. It

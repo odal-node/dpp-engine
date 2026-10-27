@@ -29,7 +29,9 @@ Then drive it with the CLI from source:
 set -a; . ./.env; set +a
 just cli -- bootstrap --legal-name "Example GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
-just cli -- passport import ops/demo/datasets/01-textile-small-valid.csv
+just cli -- facility add --name "Main plant" --value 4012345000009 --country DE --default
+just cli -- operator-id add --scheme vat --value DE123456789 --primary
+just cli -- passport import ops/demo/samples/battery-full.json
 just cli -- passport validate
 just cli -- passport publish
 ```
@@ -50,7 +52,7 @@ dpp-node (:8001)
 ├── /integrator/*   dpp-integrator  CSV/XLSX import
 ├── dpp-plugin-host                 wasmtime sandbox for product group plugins
 └── dpp-dal                         PostgreSQL repositories, migrations
-dpp-resolver (:8003)                public GS1 Digital Link resolver
+dpp-resolver (:8003)                public digital link resolver
 cli/ (odal)                         operator CLI, over the HTTP API
 ```
 

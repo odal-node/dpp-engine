@@ -32,7 +32,9 @@ company, facility or product data in examples or tests.
    field the curated section did not show. It is computed from the data, so a field
    added to a product group schema in `dpp-core` appears on the page with no change
    here.
-3. **The QR code** for the passport's GS1 Digital Link (`src/carrier.rs`).
+3. **The QR code** for the carrier the passport was signed with at publish: a GS1
+   Digital Link for a product with a GTIN, otherwise the passport's `/dpp/{id}`
+   address (`src/carrier.rs`).
 
 Every interpolated value goes through `esc.rs`.
 
@@ -58,7 +60,7 @@ src/
 ├── sections/      one curated section per product group, and the dispatch
 ├── remainder.rs   the table of public fields no section shows
 ├── fields.rs      field extraction and formatting helpers
-├── carrier.rs     GS1 Digital Link URI for the QR code
+├── carrier.rs     the signed carrier URI for the QR code
 └── esc.rs         HTML escaping
 ```
 

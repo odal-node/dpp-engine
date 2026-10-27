@@ -11,10 +11,10 @@ The node mounts this crate's router under `/integrator`.
 ## Try it
 
 ```bash
-curl -s http://localhost:8001/integrator/api/v1/templates/textile > textile.csv
+curl -s http://localhost:8001/integrator/api/v1/templates/battery-industrial > battery.csv
 # fill in rows, then:
-curl -s -X POST http://localhost:8001/integrator/api/v1/import/textile \
-  -H "Authorization: Bearer $ODAL_API_KEY" -F file=@textile.csv
+curl -s -X POST http://localhost:8001/integrator/api/v1/import/battery-industrial \
+  -H "Authorization: Bearer $ODAL_API_KEY" -F file=@battery.csv
 ```
 
 Batteries are served per category: `battery-ev`, `battery-lmt` and

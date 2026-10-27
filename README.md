@@ -7,9 +7,19 @@ running it in production for your own organisation's products and compliance
 obligations is free. It is built on [`dpp-core`](https://github.com/odal-node/dpp-core),
 the Apache-2.0 Rust library that holds the data model, schemas and regulatory rules.
 
-[![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
 [![CI](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml)
-[![Rust 1.96+](https://img.shields.io/badge/Rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
+[![Advisories](https://img.shields.io/github/actions/workflow/status/odal-node/dpp-engine/advisories.yml?branch=main&label=advisories)](https://github.com/odal-node/dpp-engine/actions/workflows/advisories.yml)
+[![Fuzzing](https://img.shields.io/github/actions/workflow/status/odal-node/dpp-engine/fuzz.yml?branch=main&label=fuzzing)](https://github.com/odal-node/dpp-engine/actions/workflows/fuzz.yml)
+[![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.package%5B'rust-version'%5D&label=MSRV&prefix=Rust%20&logo=rust)](Cargo.toml)
+[![Docs](https://img.shields.io/badge/docs-docs.odal--node.io-blue)](https://docs.odal-node.io)
+[![Status: pre-production](https://img.shields.io/badge/status-pre--production-yellow)](#dpp-engine)
+
+[![dpp-core](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies%5B'dpp-domain'%5D&label=dpp-core&logo=rust)](https://github.com/odal-node/dpp-core)
+[![Docker Compose](https://img.shields.io/badge/runs%20on-Docker%20Compose-2496ED?logo=docker&logoColor=white)](docker/)
+[![PostgreSQL](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2Fdocker%2Fdocker-compose.yml&query=%24.services.postgres.image&label=database&logo=postgresql&logoColor=white)](docker/docker-compose.yml)
+[![OpenAPI](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2Fapi%2Fopenapi.yaml&query=%24.openapi&label=OpenAPI&logo=openapiinitiative)](https://docs.odal-node.io/api/)
+[![Wasm plugins](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies.wasmtime.version&label=plugins%20on%20wasmtime&logo=webassembly)](crates/dpp-plugin-host)
 
 > [!NOTE]
 > **Status: pre-production.** CI runs the full passport lifecycle against PostgreSQL
@@ -18,7 +28,7 @@ the Apache-2.0 Rust library that holds the data model, schemas and regulatory ru
 
 ## Quick start
 
-From `git clone` to a signed passport that resolves from a GS1 Digital Link. Most of
+From `git clone` to a signed battery passport that resolves from its digital link. Most of
 the time goes into the first build: about 2 minutes for the CLI and 15 to 20 minutes
 for the two container images on a 6-core machine. Later starts take seconds.
 
@@ -75,7 +85,7 @@ identifier before they publish. The values below are valid test values.
 
 ```bash
 set -a; . ./.env; set +a
-odal bootstrap --legal-name "Example Textiles GmbH" --country DE \
+odal bootstrap --legal-name "Example Batteries GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 odal facility add --name "Berlin plant" --value 4012345000009 --country DE --default
 odal operator-id add --scheme vat --value DE123456789 --primary
@@ -103,28 +113,22 @@ seal                ghost
 ...
 ```
 
-### 5. Create and publish a passport over REST
+### 5. Create and publish a battery passport over REST
+
+[`ops/demo/samples/battery-full.json`](ops/demo/samples/battery-full.json) is an
+industrial LFP battery with its performance, durability, recycled-content,
+hazardous-substance, dismantling and conformity data filled in. The battery passport
+has an obligation in force, which is why step 4 registered a facility and an operator
+identifier. Post the sample as the create body:
 
 ```bash
 curl -s -X POST http://localhost:8001/vault/api/v1/dpp \
   -H "Authorization: Bearer $ODAL_API_KEY" -H 'Content-Type: application/json' \
-  -d '{
-    "productName": "Organic cotton T-shirt",
-    "productGroup": "textile",
-    "manufacturer": { "name": "Example Textiles GmbH", "address": "Musterstrasse 1, 10115 Berlin" },
-    "productGroupData": {
-      "productGroup": "textile",
-      "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
-      "fibreComposition": [{ "fibre": "organic cotton", "pct": 100.0 }],
-      "countryOfOrigin": "PT",
-      "careInstructions": "Machine wash 30°C",
-      "chemicalComplianceStandard": "OEKO-TEX Standard 100"
-    }
-  }'
+  -d @ops/demo/samples/battery-full.json
 ```
 
 The response is the draft, with a server-assigned UUID v7 `id`, `"status":"draft"`
-and `"schemaVersion":"1.4.0"`. Publish it:
+and the newest battery `schemaVersion`. Publish it:
 
 ```bash
 export DPP_ID=<id from the response>
@@ -133,18 +137,20 @@ curl -s -X POST "http://localhost:8001/vault/api/v1/dpp/$DPP_ID/publish" \
 ```
 
 The passport is now `"status":"active"`, carries an Ed25519 `jwsSignature`, and has a
-`qrCodeUrl` of the form `http://localhost:8003/01/09506000134352/21/<serial>`: the GS1
-Digital Link printed on the product.
+`qrCodeUrl` of the form `http://localhost:8003/01/09506000134352/21/<serial>`: the
+digital link printed on the battery. The battery has a GTIN, so its digital link is a
+GS1 Digital Link. The smoke test `the_quick_start_battery_sample_creates_and_publishes`
+runs this step against a real node, so the sample cannot stop publishing unnoticed.
 
 ### 6. Resolve it like a scanner
 
 ```bash
 curl -si http://localhost:8003/01/09506000134352 | head -n 3
 curl -s -H 'Accept: application/ld+json' "http://localhost:8003/dpp/$DPP_ID"
-curl -s http://localhost:8001/identity/.well-known/did.json
+curl -s http://localhost:8001/.well-known/did.json
 ```
 
-The Digital Link answers `307` with a redirect to `/dpp/<id>`. The resolver serves
+The GS1 route answers `307` with a redirect to `/dpp/<id>`. The resolver serves
 the public view as JSON-LD, as HTML (open `http://localhost:8003/dpp/<id>` in a
 browser), or as an Asset Administration Shell environment, depending on `Accept`.
 The DID document holds the public key that verifies the signature.
@@ -203,7 +209,7 @@ Two binaries, both compiled with `dpp-core`:
 | Binary | Port | What it does |
 |---|---|---|
 | `dpp-node` | 8001 | One Axum process with three route groups: `/vault/*` (passport write engine and lifecycle), `/identity/*` (`did:web` document and signing), `/integrator/*` (CSV/XLSX bulk import). Hosts the Wasm plugin sandbox and the outbox drainers. |
-| `dpp-resolver` | 8003 | Public, read-only. Resolves GS1 Digital Links and serves the content-negotiated public view, verifying the signature before it answers. Deployed separately. |
+| `dpp-resolver` | 8003 | Public, read-only. Resolves each passport's digital link (GS1 Digital Link routes for a product with a GTIN, `/dpp/{id}` for every passport) and serves the content-negotiated public view, verifying the signature before it answers. Deployed separately. |
 | `odal` | none | The operator CLI: stack lifecycle, onboarding, passports, keys, webhooks, plugins, dossiers. Calls the node's HTTP API. |
 
 | Infrastructure | Port | Role |
@@ -240,7 +246,7 @@ Design points an integrator will meet:
 | `dpp-node` | bin | The node binary: router, boot checks, outbox drainers, ruleset channel |
 | `dpp-vault` | lib, bin | Passport lifecycle (publish, amend, supersede, suspend, retire, end of life), transfer of responsibility, hash-chained audit, evidence dossiers |
 | `dpp-identity` | lib, bin | `did:web` documents, signing and key rotation |
-| `dpp-resolver` | lib, bin | Public GS1 Digital Link resolver |
+| `dpp-resolver` | lib, bin | Public resolver for each passport's digital link |
 | `dpp-render` | lib | The single HTML renderer for the public passport page, shared by the resolver and the pre-rendered continuity snapshot |
 | `dpp-integrator` | lib, bin | CSV/XLSX import with per-product-group templates |
 | `dpp-dal` | lib | PostgreSQL access through `sqlx`, and the migrations runner |

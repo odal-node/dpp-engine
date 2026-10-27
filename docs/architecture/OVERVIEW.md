@@ -112,8 +112,8 @@ share one PostgreSQL connection pool.
 ### Read path (QR scan)
 
 ```text
-1. A consumer scans the GS1 Digital Link on the product: GET /01/{gtin}/21/{serial}
-   on the resolver
+1. A consumer scans the digital link on the product, here a GS1 Digital Link:
+   GET /01/{gtin}/21/{serial} on the resolver
 2. The resolver redirects (307) to /dpp/{id}
 3. The resolver reads the public view from the node (GET /vault/public/dpp/{id}) and the
    operator's DID document, and verifies the JWS before answering

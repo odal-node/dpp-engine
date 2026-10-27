@@ -97,10 +97,6 @@ before the first publish.
 
 ```caddyfile
 api.operator.example {
-    handle /.well-known/did.json {
-        rewrite * /identity/.well-known/did.json
-        reverse_proxy 127.0.0.1:8001
-    }
     reverse_proxy 127.0.0.1:8001
 }
 dpp.operator.example {

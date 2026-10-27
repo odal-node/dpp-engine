@@ -1,6 +1,7 @@
 # dpp-resolver
 
-The public reader for Digital Product Passports: it answers GS1 Digital Link scans,
+The public reader for Digital Product Passports: it answers scans of a passport's
+digital link (a GS1 Digital Link, or the passport's own `/dpp/{id}` address),
 verifies each passport's signature against the operator's `did:web` document, and
 serves the public view as HTML, JSON-LD or an Asset Administration Shell. It needs
 no authentication and runs as its own process, separate from the node. Part of

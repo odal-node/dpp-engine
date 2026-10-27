@@ -61,7 +61,7 @@ dpp-engine/
     dpp-node/           the node binary: router, boot checks, outbox drainers
     dpp-vault/          passport lifecycle, transfer, audit, evidence dossiers
     dpp-identity/       did:web documents, signing, key rotation
-    dpp-resolver/       public GS1 Digital Link resolver
+    dpp-resolver/       public digital link resolver
     dpp-render/         the HTML renderer for the public passport page
     dpp-integrator/     CSV/XLSX import
     dpp-dal/            PostgreSQL access (sqlx), single-tenant

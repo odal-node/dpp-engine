@@ -38,7 +38,7 @@ conditions, so anyone can build their own implementation on it.
 
 | Repository | Licence | Contains |
 |---|---|---|
-| `dpp-core` | Apache-2.0 | Domain types and port traits, schema validation, regulatory rules, Ed25519 and JWS, `did:web`, GS1 Digital Link, AAS, calculators, the Wasm plugin ABI |
+| `dpp-core` | Apache-2.0 | Domain types and port traits, schema validation, regulatory rules, Ed25519 and JWS, `did:web`, product identifiers and GS1 Digital Link, AAS, calculators, the Wasm plugin ABI |
 | `dpp-engine` | BSL-1.1 | HTTP services, PostgreSQL persistence, authentication, event bus, plugin host, operator administration, the `odal` CLI |
 
 ## Why the engine is BSL-1.1
