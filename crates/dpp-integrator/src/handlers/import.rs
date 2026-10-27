@@ -6,7 +6,11 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
-use dpp_common::http_problem::{self, Problem};
+use dpp_common::{
+    event::{self, DppEvent, EventBus},
+    http_problem::{self, Problem},
+};
+use dpp_types::{STANDALONE_OPERATOR_ID, state_change::WebhookEvent};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -22,7 +26,7 @@ use crate::{
         validate::{self, RowValidationError},
         xlsx_parser,
     },
-    infra::job_store::{ImportJob, JobStatus},
+    infra::job_store::{ImportJob, JobStatus, JobStore},
     state::AppState,
 };
 
@@ -386,16 +390,38 @@ pub async fn import_file(
             .into_response();
     }
 
+    let summary = JobSummary {
+        job_id,
+        product_group: product_group.clone(),
+        total_rows,
+    };
+    let rejected_before_the_batch: BTreeSet<usize> = row_errors.iter().map(|e| e.row).collect();
+
     // ── Sync path (≤ SYNC_THRESHOLD valid rows) ───────────────────────────────
     if valid_rows.len() <= SYNC_THRESHOLD {
-        let batch = run_batch(
-            valid_rows,
-            &classifications,
-            &state.vault_client,
-            &auth_token,
-            state.batch_concurrency,
-        )
-        .await;
+        let outcome = {
+            let vault_client = state.vault_client.clone();
+            let auth_token = auth_token.clone();
+            let concurrency = state.batch_concurrency;
+            run_to_outcome(async move {
+                run_batch(
+                    valid_rows,
+                    &classifications,
+                    &vault_client,
+                    &auth_token,
+                    concurrency,
+                )
+                .await
+            })
+            .await
+        };
+        let batch = match outcome {
+            Ok(batch) => batch,
+            Err(reason) => {
+                fail_job(&*state.job_store, &*state.events, &summary, reason.clone()).await;
+                return http_problem::internal_error(reason).into_response();
+            }
+        };
         let (created, updated, batch_errors) = batch_result_into_entries(batch.clone());
         let mut all_errors = row_errors;
         all_errors.extend(batch_errors);
@@ -413,9 +439,14 @@ pub async fn import_file(
         // a failure. `failed_rows` is a subset of the rows, so this cannot
         // underflow the way counting error entries did.
         let failed_rows: BTreeSet<usize> = all_errors.iter().map(|e| e.row).collect();
-        if let Err(e) = state.job_store.complete(job_id, batch).await {
-            tracing::error!(%job_id, error = %e, "failed to record import job completion");
-        }
+        complete_job(
+            &*state.job_store,
+            &*state.events,
+            &summary,
+            batch,
+            &rejected_before_the_batch,
+        )
+        .await;
 
         return (
             StatusCode::OK,
@@ -435,22 +466,36 @@ pub async fn import_file(
     // ── Async path (> SYNC_THRESHOLD rows) ───────────────────────────────────
     let vault_client = state.vault_client.clone();
     let job_store = state.job_store.clone();
+    let events = state.events.clone();
     let concurrency = state.batch_concurrency;
 
     tokio::spawn(async move {
         if let Err(e) = job_store.set_status(job_id, JobStatus::Processing).await {
             tracing::error!(%job_id, error = %e, "failed to mark import job processing");
         }
-        let batch = run_batch(
-            valid_rows,
-            &classifications,
-            &vault_client,
-            &auth_token,
-            concurrency,
-        )
+        let outcome = run_to_outcome(async move {
+            run_batch(
+                valid_rows,
+                &classifications,
+                &vault_client,
+                &auth_token,
+                concurrency,
+            )
+            .await
+        })
         .await;
-        if let Err(e) = job_store.complete(job_id, batch).await {
-            tracing::error!(%job_id, error = %e, "failed to record import job completion");
+        match outcome {
+            Ok(batch) => {
+                complete_job(
+                    &*job_store,
+                    &*events,
+                    &summary,
+                    batch,
+                    &rejected_before_the_batch,
+                )
+                .await;
+            }
+            Err(reason) => fail_job(&*job_store, &*events, &summary, reason).await,
         }
     });
 
@@ -463,6 +508,131 @@ pub async fn import_file(
         }),
     )
         .into_response()
+}
+
+// ─── Job outcome ─────────────────────────────────────────────────────────────
+
+/// What an import job's event names it by.
+struct JobSummary {
+    job_id: Uuid,
+    product_group: String,
+    total_rows: usize,
+}
+
+/// Run the batch in a task of its own and wait for it.
+///
+/// A panic inside the batch then ends as an error here, which marks the job
+/// failed, rather than unwinding through the caller and leaving the job
+/// `queued` or `processing` for ever, with no event to say it stopped.
+async fn run_to_outcome<F>(batch: F) -> Result<BatchResult, String>
+where
+    F: std::future::Future<Output = BatchResult> + Send + 'static,
+{
+    match tokio::spawn(batch).await {
+        Ok(result) => Ok(result),
+        Err(e) if e.is_panic() => {
+            Err("the import stopped before it finished: its batch panicked".to_owned())
+        }
+        Err(_) => Err("the import stopped before it finished: its batch was cancelled".to_owned()),
+    }
+}
+
+/// `event` as webhook subscribers receive it, or `None` if it cannot be
+/// serialised, which is logged: the job's own outcome is still recorded.
+fn webhook_of(event: &DppEvent) -> Option<WebhookEvent> {
+    match serde_json::to_string(event) {
+        Ok(body) => Some(WebhookEvent {
+            event_type: event.event_type.clone(),
+            body,
+        }),
+        Err(e) => {
+            tracing::warn!(event_type = %event.event_type, error = %e, "cannot serialise an import event");
+            None
+        }
+    }
+}
+
+async fn publish(events: &dyn EventBus, event: &DppEvent) {
+    if let Err(e) = events.publish(event).await {
+        tracing::warn!(event_type = %event.event_type, error = %e, "failed to publish event (non-fatal)");
+    }
+}
+
+/// Record a finished batch on the job and send `dpp.import.completed`.
+///
+/// The webhook deliveries are queued by the job store in the write that
+/// completes the job; the bus publish follows it. A job whose result cannot be
+/// recorded did not finish as far as anyone polling it can tell, so it is
+/// marked failed instead, and `dpp.import.failed` is sent.
+///
+/// `rejected_before_the_batch` are the rows validation refused, which never
+/// reached the batch; the event counts them with the batch's own failures.
+async fn complete_job(
+    job_store: &dyn JobStore,
+    events: &dyn EventBus,
+    summary: &JobSummary,
+    batch: BatchResult,
+    rejected_before_the_batch: &BTreeSet<usize>,
+) {
+    let failed_rows: BTreeSet<usize> = rejected_before_the_batch
+        .iter()
+        .copied()
+        .chain(batch.errors.iter().map(|e| e.row))
+        .collect();
+    let event = DppEvent::v1(
+        event::subjects::IMPORT_COMPLETED,
+        STANDALONE_OPERATOR_ID,
+        serde_json::json!({
+            "jobId": summary.job_id.to_string(),
+            "productGroup": summary.product_group,
+            "totalRows": summary.total_rows,
+            "created": batch.created.len(),
+            "updated": batch.updated.len(),
+            "failedRows": failed_rows.len(),
+        }),
+    );
+    match job_store
+        .complete(summary.job_id, batch, webhook_of(&event))
+        .await
+    {
+        Ok(()) => publish(events, &event).await,
+        Err(e) => {
+            tracing::error!(job_id = %summary.job_id, error = %e, "failed to record import job completion");
+            fail_job(
+                job_store,
+                events,
+                summary,
+                format!("the import ran, but its result could not be recorded: {e}"),
+            )
+            .await;
+        }
+    }
+}
+
+/// Mark the job failed with `reason` and send `dpp.import.failed`.
+async fn fail_job(
+    job_store: &dyn JobStore,
+    events: &dyn EventBus,
+    summary: &JobSummary,
+    reason: String,
+) {
+    let event = DppEvent::v1(
+        event::subjects::IMPORT_FAILED,
+        STANDALONE_OPERATOR_ID,
+        serde_json::json!({
+            "jobId": summary.job_id.to_string(),
+            "productGroup": summary.product_group,
+            "totalRows": summary.total_rows,
+            "reason": reason,
+        }),
+    );
+    if let Err(e) = job_store
+        .fail(summary.job_id, reason, webhook_of(&event))
+        .await
+    {
+        tracing::error!(job_id = %summary.job_id, error = %e, "failed to record import job failure");
+    }
+    publish(events, &event).await;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -883,6 +1053,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new(&base_url)),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 4,
+            events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
         (state, mock_state)
@@ -1435,6 +1606,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
         let app = build_router(state);
@@ -1594,5 +1766,170 @@ mod tests {
         let result = job.result.expect("completed job must carry a result");
         assert_eq!(result.created.len(), 101);
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 101);
+    }
+}
+
+#[cfg(test)]
+mod job_outcome_tests {
+    //! What an import job's outcome records, and what it tells subscribers.
+
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use dpp_common::event::{DppEvent, EventBus, EventBusError, subjects};
+
+    use super::*;
+    use crate::domain::batch_runner::{CreatedItem, RowError};
+    use crate::infra::job_store::{ImportJob, InMemoryJobStore, JobStatus, JobStore};
+
+    #[derive(Default)]
+    struct RecordingBus(Mutex<Vec<DppEvent>>);
+
+    #[async_trait]
+    impl EventBus for RecordingBus {
+        async fn publish(&self, event: &DppEvent) -> Result<(), EventBusError> {
+            self.0.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
+
+    impl RecordingBus {
+        fn only(&self) -> DppEvent {
+            let events = self.0.lock().unwrap();
+            assert_eq!(events.len(), 1, "expected exactly one event: {events:?}");
+            events[0].clone()
+        }
+    }
+
+    /// Completes nothing: the store a recorded result cannot reach.
+    struct CannotComplete(InMemoryJobStore);
+
+    #[async_trait]
+    impl JobStore for CannotComplete {
+        async fn insert(&self, job: ImportJob) -> anyhow::Result<()> {
+            self.0.insert(job).await
+        }
+        async fn get(&self, id: Uuid) -> Option<ImportJob> {
+            self.0.get(id).await
+        }
+        async fn set_status(&self, id: Uuid, status: JobStatus) -> anyhow::Result<()> {
+            self.0.set_status(id, status).await
+        }
+        async fn complete(
+            &self,
+            _id: Uuid,
+            _result: BatchResult,
+            _notify: Option<WebhookEvent>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("the database went away")
+        }
+        async fn fail(
+            &self,
+            id: Uuid,
+            reason: String,
+            notify: Option<WebhookEvent>,
+        ) -> anyhow::Result<()> {
+            self.0.fail(id, reason, notify).await
+        }
+        async fn record_report(&self, id: Uuid, report: ImportReport) -> anyhow::Result<()> {
+            self.0.record_report(id, report).await
+        }
+        async fn cleanup(&self, max_age: chrono::Duration) {
+            self.0.cleanup(max_age).await;
+        }
+    }
+
+    async fn job(store: &dyn JobStore) -> JobSummary {
+        let job_id = Uuid::now_v7();
+        store
+            .insert(ImportJob::new(job_id, 3))
+            .await
+            .expect("insert");
+        JobSummary {
+            job_id,
+            product_group: "battery".into(),
+            total_rows: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_batch_that_panics_ends_as_a_failed_job() {
+        let store = InMemoryJobStore::new();
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+
+        let outcome = run_to_outcome(async { panic!("a row the batch could not handle") }).await;
+        let reason = outcome.expect_err("a panic is an outcome, not an unwind");
+        fail_job(&store, &bus, &summary, reason).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Failed(_)
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_FAILED);
+        assert_eq!(event.data["jobId"], summary.job_id.to_string());
+        assert!(event.data["reason"].as_str().unwrap().contains("panicked"));
+    }
+
+    #[tokio::test]
+    async fn a_finished_batch_completes_the_job_and_counts_what_it_did() {
+        let store = InMemoryJobStore::new();
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+        let batch = BatchResult {
+            created: vec![CreatedItem {
+                row: 1,
+                passport_id: Uuid::now_v7().to_string(),
+            }],
+            updated: vec![],
+            errors: vec![RowError {
+                row: 3,
+                field: "gtin".into(),
+                message: "refused by the vault".into(),
+            }],
+        };
+
+        // Row 2 was refused by validation and never reached the batch.
+        complete_job(&store, &bus, &summary, batch, &BTreeSet::from([2])).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Completed
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_COMPLETED);
+        assert_eq!(event.data["productGroup"], "battery");
+        assert_eq!(event.data["totalRows"], 3);
+        assert_eq!(event.data["created"], 1);
+        assert_eq!(event.data["updated"], 0);
+        assert_eq!(event.data["failedRows"], 2);
+    }
+
+    #[tokio::test]
+    async fn a_result_that_cannot_be_recorded_fails_the_job() {
+        let store = CannotComplete(InMemoryJobStore::new());
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+        let batch = BatchResult {
+            created: vec![],
+            updated: vec![],
+            errors: vec![],
+        };
+
+        complete_job(&store, &bus, &summary, batch, &BTreeSet::new()).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Failed(_)
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_FAILED);
+        assert!(
+            event.data["reason"]
+                .as_str()
+                .unwrap()
+                .contains("could not be recorded")
+        );
     }
 }
