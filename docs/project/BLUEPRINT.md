@@ -76,7 +76,7 @@ fails, the operation still succeeds. Consumers must be idempotent.
 | Event bus (NATS JetStream) | Done | Fire-after-commit, NoOp fallback |
 | Wasm plugin compliance | Done | Sandboxed product group plugins |
 | EU Central Registry sync | **Outbox done**; adapter ghost until spec | Registration intent committed in the publish transaction to the durable `registry_sync` outbox; background drain with backoff; `EuRegistrySync` HTTP adapter activates when the Commission publishes the Art. 13 API |
-| Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — conformance pass pending (implementation plan 07) |
+| Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — the routes store that format (Implementing Regulation (EU) 2026/2), one report per financial year |
 | End-of-life & transfer of responsibility | Done | Typed EOL declaration; dual-signed transfer handshake (initiate/accept, fail-closed verify); hash-chained audit |
 | Evidence dossier generation + verification | Done | `POST/GET …/dpp/{id}/evidence`, `POST …/evidence/{id}/verify`, `odal verify` |
 | Trust-mode honesty (`NODE_PROFILE`) | Done | Per-port `trustMode` on the authenticated `/vault/api/v1/node/state`, plus a `trust_mode` gauge on `/metrics`; production profile refuses to boot on ghost trust adapters |

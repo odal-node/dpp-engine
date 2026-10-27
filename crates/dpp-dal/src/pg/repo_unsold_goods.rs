@@ -1,18 +1,15 @@
-//! `UnsoldGoodsStore` on PostgreSQL (`ops/pg/0008`, `0037`).
+//! `UnsoldGoodsStore` on PostgreSQL (`ops/pg/0044`).
 //!
-//! One table, no outbox and no state machine: an Art. 24 disclosure line is
-//! written once and read back. `operator_id`/`operator_name` are report
-//! *content* — the operator the disclosure is about — and not a tenant key, so
-//! neither is used to scope a query. The node is single-tenant; every row it
-//! holds is its own operator's.
+//! One row per financial year, no outbox and no state machine. The report is
+//! stored whole as `report`; the financial year is projected out of it because
+//! it is the key, so recording a year again replaces its row.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::Row;
-use uuid::Uuid;
 
-use dpp_domain::DppError;
-use dpp_types::{CreateUnsoldGoodsEntry, UnsoldGoodsEntry, UnsoldGoodsStore};
+use dpp_domain::{DppError, UnsoldGoodsReport};
+use dpp_types::{UnsoldGoodsDisclosure, UnsoldGoodsStore};
 
 use super::{PgDal, db_err};
 
@@ -27,89 +24,70 @@ impl PgUnsoldGoodsRepo {
         Self { dal }
     }
 
-    fn row_to_entry(row: &sqlx::postgres::PgRow) -> UnsoldGoodsEntry {
-        UnsoldGoodsEntry {
-            id: row.get::<Uuid, _>("id"),
-            reporting_period: row.get::<String, _>("reporting_period"),
-            unit_count: row.get::<Option<i64>, _>("unit_count"),
-            volume_kg: row.get::<f64, _>("volume_kg"),
-            product_category: row.get::<String, _>("product_category"),
-            reason: row.get::<String, _>("reason"),
-            destination: row.get::<String, _>("destination"),
-            destruction_justification: row.get::<Option<String>, _>("destruction_justification"),
-            country_of_disposal: row.get::<String, _>("country_of_disposal"),
-            operator_name: row.get::<Option<String>, _>("operator_name"),
+    fn row_to_disclosure(row: &sqlx::postgres::PgRow) -> Result<UnsoldGoodsDisclosure, DppError> {
+        let report = serde_json::from_value(row.get::<serde_json::Value, _>("report"))
+            .map_err(|e| DppError::Serialisation(format!("stored unsold-goods report: {e}")))?;
+        Ok(UnsoldGoodsDisclosure {
+            report,
+            recorded_by: row.get("recorded_by"),
             created_at: row.get::<DateTime<Utc>, _>("created_at"),
-        }
+            updated_at: row.get::<DateTime<Utc>, _>("updated_at"),
+        })
     }
-}
-
-/// Every column the read model needs, in one place so the two queries cannot
-/// select different sets and diverge on which fields come back populated.
-///
-/// A macro rather than a `const`, because sqlx 0.9 takes a statically-known
-/// query string and rejects one built with `format!`. `concat!` splices this at
-/// compile time, so both statements stay literals and the list is still written
-/// once.
-macro_rules! columns {
-    () => {
-        "id, reporting_period, unit_count, volume_kg, product_category, reason, \
-         destination, destruction_justification, country_of_disposal, \
-         operator_name, created_at"
-    };
 }
 
 #[async_trait]
 impl UnsoldGoodsStore for PgUnsoldGoodsRepo {
-    async fn create(
+    async fn put(
         &self,
-        entry: &CreateUnsoldGoodsEntry,
-        operator_id: &str,
-        operator_name: Option<&str>,
-    ) -> Result<UnsoldGoodsEntry, DppError> {
-        let row = sqlx::query(concat!(
-            "INSERT INTO odal.unsold_goods_report
-                 (operator_id, operator_name, reporting_period, unit_count, volume_kg,
-                  product_category, reason, destination, destruction_justification,
-                  country_of_disposal)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               RETURNING ",
-            columns!()
-        ))
-        .bind(operator_id)
-        .bind(operator_name)
-        .bind(&entry.reporting_period)
-        .bind(entry.unit_count)
-        .bind(entry.volume_kg)
-        .bind(entry.product_category.as_str())
-        .bind(entry.reason.as_str())
-        .bind(entry.destination.as_str())
-        .bind(entry.destruction_justification.as_deref())
-        .bind(entry.country_of_disposal.to_uppercase())
+        report: &UnsoldGoodsReport,
+        recorded_by: &str,
+    ) -> Result<UnsoldGoodsDisclosure, DppError> {
+        let doc = serde_json::to_value(report)
+            .map_err(|e| DppError::Serialisation(format!("unsold-goods report: {e}")))?;
+        let row = sqlx::query(
+            r#"INSERT INTO odal.unsold_goods_disclosure
+                 (financial_year_start, financial_year_end, report, recorded_by)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (financial_year_start) DO UPDATE SET
+                 financial_year_end = EXCLUDED.financial_year_end,
+                 report             = EXCLUDED.report,
+                 recorded_by        = EXCLUDED.recorded_by,
+                 updated_at         = now()
+               RETURNING report, recorded_by, created_at, updated_at"#,
+        )
+        .bind(report.financial_year.start)
+        .bind(report.financial_year.end)
+        .bind(&doc)
+        .bind(recorded_by)
         .fetch_one(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(Self::row_to_entry(&row))
+        Self::row_to_disclosure(&row)
     }
 
-    async fn list(
-        &self,
-        reporting_period: Option<&str>,
-    ) -> Result<Vec<UnsoldGoodsEntry>, DppError> {
-        // One statement with a null-guarded predicate rather than two query
-        // strings: the filter is optional, and branching on it is how the two
-        // column lists drift apart.
-        let rows = sqlx::query(concat!(
-            "SELECT ",
-            columns!(),
-            " FROM odal.unsold_goods_report
-               WHERE ($1::text IS NULL OR reporting_period = $1)
-               ORDER BY created_at DESC"
-        ))
-        .bind(reporting_period)
+    async fn get(&self, start: NaiveDate) -> Result<Option<UnsoldGoodsDisclosure>, DppError> {
+        let row = sqlx::query(
+            r#"SELECT report, recorded_by, created_at, updated_at
+               FROM odal.unsold_goods_disclosure
+               WHERE financial_year_start = $1"#,
+        )
+        .bind(start)
+        .fetch_optional(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        row.as_ref().map(Self::row_to_disclosure).transpose()
+    }
+
+    async fn list(&self) -> Result<Vec<UnsoldGoodsDisclosure>, DppError> {
+        let rows = sqlx::query(
+            r#"SELECT report, recorded_by, created_at, updated_at
+               FROM odal.unsold_goods_disclosure
+               ORDER BY financial_year_start DESC"#,
+        )
         .fetch_all(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(rows.iter().map(Self::row_to_entry).collect())
+        rows.iter().map(Self::row_to_disclosure).collect()
     }
 }

@@ -185,21 +185,21 @@ Append-only audit trail for passport lifecycle events.
 | `newStatus` | string | |
 | `timestamp` | datetime | |
 
-### 3.7 unsold_goods_report
+### 3.7 unsold_goods_disclosure
 
-ESPR unsold goods destruction reporting. Tracks exemptions and validated destruction events.
+The ESPR Art. 24 disclosure of discarded unsold consumer products, one row per
+financial year (`0044`, which drops the older `unsold_goods_report`). The report
+is stored whole, in the format Implementing Regulation (EU) 2026/2 prescribes.
+Recording a year again replaces its row.
 
-| Field | Type | Notes |
+| Column | Type | Notes |
 |---|---|---|
-| `operatorId` | string | |
-| `passportId` | string | FK to passport |
-| `productCategory` | string | |
-| `destination` | string | recycling, donation, discountSale, other |
-| `reason` | string | safetyHazard, regulatory, expiry, other |
-| `quantity` | int | |
-| `reportingPeriod` | string | |
-| `exemptDestruction` | bool | |
-| `createdAt` | datetime | |
+| `financial_year_start` | date | Primary key, projected out of `report` |
+| `financial_year_end` | date | Checked to be after the start |
+| `report` | jsonb | dpp-domain's `UnsoldGoodsReport` |
+| `recorded_by` | text | The API caller who recorded the stored version |
+| `created_at` | timestamptz | When the year was first recorded |
+| `updated_at` | timestamptz | When the stored version was recorded |
 
 ### 3.8 import_job
 

@@ -89,10 +89,7 @@ pub use snapshot::{
 pub use successor::SuccessorLookup;
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
-pub use unsold_goods::{
-    CreateUnsoldGoodsEntry, Destination, DiscardReason, ProductCategory, UnsoldGoodsEntry,
-    UnsoldGoodsStore,
-};
+pub use unsold_goods::{UnsoldGoodsDisclosure, UnsoldGoodsStore};
 pub use webhook::{
     CreateWebhookRequest, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus, WebhookOutbox,
     WebhookSubscription, WebhookSubscriptionStore,

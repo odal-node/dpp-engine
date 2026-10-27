@@ -430,7 +430,7 @@ impl PassportService {
 
 /// Process-wide product group catalog (manifests parsed once). Shared across the
 /// split lifecycle files — `super::catalog()` from any of them.
-fn catalog() -> &'static dpp_domain::ProductGroupCatalog {
+pub(crate) fn catalog() -> &'static dpp_domain::ProductGroupCatalog {
     static CATALOG: std::sync::OnceLock<dpp_domain::ProductGroupCatalog> =
         std::sync::OnceLock::new();
     CATALOG.get_or_init(dpp_domain::ProductGroupCatalog::new)
@@ -559,7 +559,7 @@ mod retention_deadline_tests {
 }
 
 /// Process-wide versioned JSON Schema registry (parsed once).
-fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
+pub(crate) fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
     static REGISTRY: std::sync::OnceLock<dpp_domain::schemas::VersionedSchemaRegistry> =
         std::sync::OnceLock::new();
     REGISTRY.get_or_init(dpp_domain::schemas::VersionedSchemaRegistry::new)

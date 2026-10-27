@@ -640,7 +640,7 @@ async fn t8_app_role_can_read_every_table() {
         "odal.passport_audit",
         "odal.registry_sync",
         "odal.import_job",
-        "odal.unsold_goods_report",
+        "odal.unsold_goods_disclosure",
         "odal.registry_identity_audit",
         "odal.passport_transfer",
         "odal.personal_data_record",

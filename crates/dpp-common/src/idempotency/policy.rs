@@ -100,15 +100,6 @@ const KEYED: &[(Method, &str, RoutePolicy)] = &[
         "/vault/api/v1/operator-identifiers",
         RoutePolicy::verbatim(),
     ),
-    // A disclosure line, and the route serves no DELETE — so a duplicate is
-    // permanent in the same way a facility is, with a regulatory edge the
-    // others do not have: Art. 24 is disclosed publicly for a financial year,
-    // and a discard counted twice overstates what the operator actually did.
-    (
-        Method::POST,
-        "/vault/api/v1/unsold-goods",
-        RoutePolicy::verbatim(),
-    ),
     // Issuance mints a credential and stores nothing: the node keeps no record
     // of what it signed, and publishes no status list, so a duplicate cannot be
     // found afterwards and could not be withdrawn if it were. A lost response
@@ -228,12 +219,12 @@ mod tests {
     /// and `dpp-node`'s `idempotency_policy` suite asserts every template here
     /// is a route the assembled node actually serves.
     ///
-    /// Ten creates plus the additive scan ingest — the full set the design note
-    /// first counted, now that `POST /credentials` and `POST /unsold-goods`
-    /// have both landed.
+    /// Nine creates plus the additive scan ingest. The unsold-goods disclosure
+    /// left the set when it became a `PUT` of a whole financial year: recording
+    /// the same year twice replaces it, so a retry cannot duplicate anything.
     #[test]
-    fn the_keyed_set_is_eleven_routes() {
-        assert_eq!(KEYED.len(), 11);
+    fn the_keyed_set_is_ten_routes() {
+        assert_eq!(KEYED.len(), 10);
     }
 
     /// Two entries for the same operation would make `policy_for` depend on

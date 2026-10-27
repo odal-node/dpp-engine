@@ -1,0 +1,19 @@
+type: object
+description: >-
+  What recording a disclosure answers: the stored disclosure, and what the
+  plausibility checks found in it.
+required:
+  - disclosure
+  - lintFindings
+properties:
+  disclosure:
+    $ref: ./UnsoldGoodsDisclosure.yaml
+  lintFindings:
+    type: array
+    description: >-
+      Advisory findings: a treatment split that does not total 100, a CN
+      category at the wrong depth, a donation reason claimed beside a stronger
+      one, measures too short to describe anything. None of them refused the
+      disclosure.
+    items:
+      $ref: ../passport/LintFinding.yaml

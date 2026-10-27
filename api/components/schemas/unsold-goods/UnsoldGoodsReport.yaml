@@ -1,0 +1,41 @@
+type: object
+description: |
+  One financial year's disclosure of discarded unsold consumer products (ESPR
+  Art. 24), in the format Commission Implementing Regulation (EU) 2026/2
+  prescribes: the disclosing `entity` with its EUID and scope, the
+  `financialYear`, the Annex I table of discarded `lines` (CN categories,
+  units and weight with their estimate markers, whether packaging is included,
+  the reason under Delegated Regulation (EU) 2026/296, the treatment split),
+  and the `measuresTaken` and `measuresPlanned`.
+
+  **Described by the versioned JSON Schema, not here.** The authoritative
+  description is the `unsold-goods` product group schema served at
+  `GET /integrator/api/v1/schemas/unsold-goods`, and a report is checked
+  against it before it is stored. Copying it into this document would create a
+  second description to drift, as for `ProductGroupData`.
+required:
+  - entity
+  - financialYear
+  - lines
+  - measuresTaken
+  - measuresPlanned
+properties:
+  entity:
+    type: object
+    description: Who is disclosing, its identifier and the disclosure's scope.
+    additionalProperties: true
+  financialYear:
+    type: object
+    description: The undertaking's own financial year, as `start` and `end` dates.
+    additionalProperties: true
+  lines:
+    type: array
+    description: The Annex I table, one line per CN category and reason.
+    items:
+      type: object
+      additionalProperties: true
+  measuresTaken:
+    type: string
+  measuresPlanned:
+    type: string
+additionalProperties: true
