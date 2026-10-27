@@ -460,6 +460,8 @@ paths:
     $ref: paths/integrator/integrator_api_v1_imports_{job_id}.yaml
   /identity/.well-known/did.json:
     $ref: paths/identity/identity_.well-known_did.json.yaml
+  /.well-known/did.json:
+    $ref: paths/identity/well-known_did.json.yaml
   /internal/sign:
     $ref: paths/identity/internal_sign.yaml
   /internal/verify:
@@ -570,9 +572,10 @@ tags:
   - name: Identity
     description: >-
       Public did:web identity: DID document, health, readiness. On the fused
-      node these are served under `/identity/*`. The standalone identity service
-      (:8002) serves them at the root: `/health`, `/ready`,
-      `/.well-known/did.json`.
+      node these are served under `/identity/*`, and the DID document also at
+      the root, `/.well-known/did.json`, where the did:web method resolves the
+      node's DID. The standalone identity service (:8002) serves them at the
+      root: `/health`, `/ready`, `/.well-known/did.json`.
   - name: Identity (internal)
     description: >-
       mTLS service-to-service signing/rotation. **Not exposed by the fused
