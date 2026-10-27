@@ -31,7 +31,7 @@ For delivery to an HTTP endpoint instead, use signed webhooks
 | `dpp.passport.updated` | A draft is updated |
 | `dpp.passport.published` | A draft is signed and published (status `active`) |
 | `dpp.passport.suspended` | A published passport is suspended |
-| `dpp.passport.superseded` | `amend` replaces a passport with a corrected successor. The payload carries `successorId`. The `supersede` route, which links an existing successor, publishes no event |
+| `dpp.passport.superseded` | A passport is replaced by a successor: `amend` issues a corrected one, or `supersede` links one already published. Both publish the same payload, which carries `successorId` |
 | `dpp.passport.retired` | A passport is retired (terminal) |
 | `dpp.passport.deactivated` | End of life is declared (terminal) |
 | `dpp.passport.transferred` | A transfer of responsibility is initiated, accepted, rejected or cancelled. The payload's `phase` says which |
