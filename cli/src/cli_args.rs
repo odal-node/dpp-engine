@@ -187,7 +187,9 @@ pub enum Commands {
     /// Download the CSV import template for a product group (the header row
     /// `odal passport import` expects)
     Template {
-        /// Product group key (battery, textile, steel, aluminium, tyre)
+        /// Template key: the product group, or for a battery the group and its
+        /// category (`battery-ev`). A key this node does not serve is refused
+        /// with the list of keys it does.
         product_group: String,
         /// Output file (stdout if omitted)
         #[arg(short, long)]
