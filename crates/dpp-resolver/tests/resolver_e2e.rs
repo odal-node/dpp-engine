@@ -86,7 +86,7 @@ fn sample_battery_passport() -> serde_json::Value {
         "id": "00000000-0000-4000-9000-000000000002",
         "productName": "EcoCell 48V",
         "status": "active",
-        "manufacturer": {"name": "GreenCell GmbH", "address": "Munich, DE"},
+        "manufacturer": {"name": "Example Batteries GmbH", "address": "Munich, DE"},
         "productGroupData": {
             "productGroup": "battery",
             "batteryChemistry": "LFP",
