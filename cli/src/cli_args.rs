@@ -405,10 +405,11 @@ pub enum PassportCommands {
 pub enum TransferCommands {
     /// Sign a pending handover onto the passport's transfer chain. Only a
     /// published passport can be transferred.
-    ///
-    /// Boxed, and its eleven arguments held in their own struct: two full
-    /// economic operators inline would make every variant of this enum — and
-    /// so every variant of `Commands` above it — as large as this one.
+    //
+    // Boxed, and its eleven arguments held in their own struct: two full
+    // economic operators inline would make every variant of this enum — and
+    // so every variant of `Commands` above it — as large as this one. A `//`
+    // comment, not `///`: clap prints a variant's doc comment as its help.
     Initiate(Box<TransferInitiateArgs>),
     /// Countersign a pending handover and complete it
     Accept {
