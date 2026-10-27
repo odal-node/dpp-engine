@@ -5,6 +5,12 @@ get:
     How many published passports carry no seal, plus the outbox totals
     behind that number.
 
+    `unsealedPublished` counts the live ones and `unsealedTerminal` the ones
+    that have since been retired, superseded or deactivated. Terminal
+    passports still serve publicly and still owe a seal, so the repair sweep
+    seals them; they are counted apart so that the number to act on is not
+    padded with records whose product ended long ago.
+
     `unsealedPublished` is the headline; the three row counts are context.
     They answer different questions and can legitimately disagree: the
     counts describe outbox **rows**, while the obligation is about
