@@ -104,7 +104,7 @@
     },
     {
       "name": "Identity",
-      "description": "Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`."
+      "description": "Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`, and the DID document also at the root, `/.well-known/did.json`, where the did:web method resolves the node's DID. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`."
     },
     {
       "name": "Identity (internal)",
@@ -4107,6 +4107,29 @@
         "operationId": "getDidDocument",
         "summary": "did:web DID document",
         "description": "Serves the operator's `did:web` DID document. Public, unauthenticated.\n",
+        "tags": [
+          "Identity"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The DID document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DidDocument"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/did.json": {
+      "get": {
+        "operationId": "getRootDidDocument",
+        "summary": "did:web DID document, at the did:web resolution path",
+        "description": "Serves the operator's `did:web` DID document at the path the did:web method\nresolves a pathless DID to: `did:web:<host>` is looked up at\n`https://<host>/.well-known/did.json`. The node's DID is pathless, so this\nis where a verifier fetches it.\n\nThe same document as `/identity/.well-known/did.json`, which stays for\ncallers that already use it. The standalone identity service serves this\npath too. Public, unauthenticated.\n",
         "tags": [
           "Identity"
         ],
