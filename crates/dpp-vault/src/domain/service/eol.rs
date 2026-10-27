@@ -1,7 +1,7 @@
 //! `declare_eol` — end-of-life declaration (recycled, destroyed, exported, or
 //! lost), transitioning a passport to the terminal `Deactivated` status.
 
-use dpp_common::{event, event_codes};
+use dpp_common::event;
 use dpp_domain::{
     eol::EolEvent,
     error::DppError,
@@ -66,26 +66,14 @@ impl PassportService {
         );
         let updated = self
             .commit_passport_change(
-                StateChange::new(entry)
-                    .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated)),
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated)),
+                    RegistryStatusIntent::Deactivated,
+                ),
                 event,
             )
             .await?;
-
-        // Registry outbox: record the deactivated status intent (pushed to the
-        // EU registry once its status API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Deactivated)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue deactivated status to registry outbox (non-fatal)"
-            );
-        }
 
         // Reconcile the continuity tier: the live public read serves only
         // `Published`, so a deactivated passport must stop being served from the

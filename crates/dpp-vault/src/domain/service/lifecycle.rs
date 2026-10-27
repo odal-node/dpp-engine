@@ -66,26 +66,14 @@ impl PassportService {
         );
         let updated = self
             .commit_passport_change(
-                StateChange::new(entry)
-                    .with_passport(PassportWrite::Status(id, PassportStatus::Suspended)),
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Suspended)),
+                    RegistryStatusIntent::Suspended,
+                ),
                 event,
             )
             .await?;
-
-        // Record the suspended status intent in the registry outbox (drained to
-        // the EU registry once its status-push API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Suspended)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue suspended status to registry outbox (non-fatal)"
-            );
-        }
 
         // Reconcile the continuity tier: a suspended passport must not keep
         // being served as `active` from the static tier (non-fatal).
@@ -252,26 +240,14 @@ impl PassportService {
         );
         let updated = self
             .commit_passport_change(
-                StateChange::new(entry)
-                    .with_passport(PassportWrite::Status(id, PassportStatus::Retired)),
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Retired)),
+                    RegistryStatusIntent::Deactivated,
+                ),
                 event,
             )
             .await?;
-
-        // Record the deactivated status intent in the registry outbox (drained
-        // to the EU registry once its status-push API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Deactivated)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue deactivated status to registry outbox (non-fatal)"
-            );
-        }
 
         // Reconcile the continuity tier — a retired passport keeps serving,
         // so its snapshot is refreshed rather than withdrawn (non-fatal).

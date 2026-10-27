@@ -8,11 +8,13 @@
 //! nothing swept for them, so a node killed between the passport write and the
 //! enqueue had changed the passport and told no subscriber. The registry and
 //! transfer outboxes had already closed the same gap for their own rows by
-//! writing them in the passport's transaction; webhooks had not.
+//! writing them in the passport's transaction; webhooks had not, and neither
+//! had the registry status a suspension, retirement or end of life owes, which
+//! was recorded after the commit as "non-fatal".
 //!
 //! [`StateChangeLog::commit`] writes the lot in one transaction: the archived
-//! pre-change version, the passport, the transfer chain, the registry rows, the
-//! audit entry and the webhook deliveries. Either all of them are there
+//! pre-change version, the passport, the transfer chain, the registry rows and
+//! status intent, the audit entry and the webhook deliveries. Either all of them are there
 //! afterwards or none is. Only the event bus publish stays after the commit: it
 //! leaves the database, so it cannot be part of the transaction, and a bus
 //! subscriber is not owed delivery the way a webhook subscriber is.
@@ -38,6 +40,7 @@ use dpp_domain::{
 };
 
 use crate::audit::PassportAuditEntry;
+use crate::registry_sync::RegistryStatusIntent;
 
 /// The write a state change makes to the passport itself.
 #[derive(Debug, Clone)]
@@ -76,6 +79,10 @@ pub struct StateChange {
     /// The EU registry notification an accepted transfer owes: the transfer id
     /// and the serialised record.
     pub transfer_notice: Option<(Uuid, serde_json::Value)>,
+    /// The status the EU registry is owed for the written passport: suspended,
+    /// or deactivated. Recorded on its existing `registry_sync` row; a passport
+    /// that never registered has none, and nothing is recorded for it.
+    pub registry_intent: Option<RegistryStatusIntent>,
     /// The audit entry recording the change, chained onto the passport's trail.
     pub audit: PassportAuditEntry,
     /// The event webhook subscribers are sent.
@@ -92,6 +99,7 @@ impl StateChange {
             transfer_chain: None,
             registration: None,
             transfer_notice: None,
+            registry_intent: None,
             audit,
             webhook: None,
         }
@@ -122,6 +130,13 @@ impl StateChange {
     #[must_use]
     pub fn with_transfer_notice(mut self, transfer_id: Uuid, payload: serde_json::Value) -> Self {
         self.transfer_notice = Some((transfer_id, payload));
+        self
+    }
+
+    /// Record the status the EU registry is owed for the written passport.
+    #[must_use]
+    pub fn with_registry_intent(mut self, intent: RegistryStatusIntent) -> Self {
+        self.registry_intent = Some(intent);
         self
     }
 

@@ -63,7 +63,7 @@ use dpp_types::{
     audit::AuditRepository,
     evidence::EvidenceDossierRepository,
     operator::OperatorConfigRepository,
-    registry_sync::RegistrySyncOutbox,
+    registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
     registry_transfer::RegistryTransferOutbox,
     seal::SealOutbox,
     snapshot::SnapshotOutbox,
@@ -435,6 +435,21 @@ impl PassportService {
         Ok(written)
     }
 
+    /// `change`, recording the status the EU registry is owed when this node
+    /// registers passports at all. A node with no registry outbox owes the
+    /// registry nothing, so nothing is recorded.
+    fn owing_registry_status(
+        &self,
+        change: StateChange,
+        intent: RegistryStatusIntent,
+    ) -> StateChange {
+        if self.registry_outbox.is_some() {
+            change.with_registry_intent(intent)
+        } else {
+            change
+        }
+    }
+
     /// [`Self::commit_change`] for a change that writes the passport, returning
     /// it as written.
     async fn commit_passport_change(
@@ -455,6 +470,7 @@ impl PassportService {
             transfer_chain,
             registration,
             transfer_notice,
+            registry_intent,
             audit,
             webhook: _,
         } = change;
@@ -474,6 +490,11 @@ impl PassportService {
             }
             Some(PassportWrite::Patch(id, delta)) => Some(self.repo.patch_fields(id, delta).await?),
         };
+        if let (Some(intent), Some(outbox), Some(p)) =
+            (registry_intent, &self.registry_outbox, &written)
+        {
+            outbox.enqueue_status(p.id, intent).await?;
+        }
         if let Some(chain) = transfer_chain {
             match (transfer_notice, &self.transfer_outbox) {
                 (Some((transfer_id, payload)), Some(outbox)) => {
