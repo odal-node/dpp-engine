@@ -50,6 +50,53 @@ impl PgRegistrySyncRepo {
     }
 }
 
+/// Queue the registration a publish owes, inside the transaction that writes
+/// the published passport.
+///
+/// Shared by [`RegistrySyncOutbox::commit_publish`] and the state-change log.
+pub(crate) async fn queue_registration_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    passport_id: PassportId,
+    payload: &serde_json::Value,
+) -> Result<(), DppError> {
+    // A previously *rejected* row is re-queued with the corrected payload so
+    // a fixed passport can actually be resubmitted (and `due()`, which only
+    // selects 'pending', picks it back up). Rows already 'registered' or
+    // 'pending' are left untouched.
+    sqlx::query(
+        r#"INSERT INTO odal.registry_sync (passport_id, payload, status)
+           VALUES ($1, $2, 'pending')
+           ON CONFLICT (passport_id) DO UPDATE SET
+             payload = EXCLUDED.payload,
+             status = 'pending',
+             attempts = 0,
+             next_attempt_at = now(),
+             message = NULL,
+             updated_at = now()
+           WHERE odal.registry_sync.status = 'rejected'"#,
+    )
+    .bind(passport_id.0)
+    .bind(payload)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    // Re-publishing is what makes a recorded `suspended` intent obsolete —
+    // `Suspended -> Published` is a legal transition. Clear it unconditionally
+    // (the upsert above only fires for 'rejected' rows, and a 'registered'
+    // row can be carrying a stale intent too), so the future status-sync path
+    // can never push a suspension for a passport that is live again.
+    sqlx::query(
+        r#"UPDATE odal.registry_sync
+           SET status_intent = NULL, updated_at = now()
+           WHERE passport_id = $1 AND status_intent IS NOT NULL"#,
+    )
+    .bind(passport_id.0)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 #[async_trait]
 impl RegistrySyncOutbox for PgRegistrySyncRepo {
     async fn commit_publish(
@@ -60,41 +107,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         let mut tx = self.dal.begin().await?;
         // Same transaction as the passport write — the atomicity guarantee.
         update_passport_in_tx(&mut tx, passport).await?;
-        // A previously *rejected* row is re-queued with the corrected payload so
-        // a fixed passport can actually be resubmitted (and `due()`, which only
-        // selects 'pending', picks it back up). Rows already 'registered' or
-        // 'pending' are left untouched.
-        sqlx::query(
-            r#"INSERT INTO odal.registry_sync (passport_id, payload, status)
-               VALUES ($1, $2, 'pending')
-               ON CONFLICT (passport_id) DO UPDATE SET
-                 payload = EXCLUDED.payload,
-                 status = 'pending',
-                 attempts = 0,
-                 next_attempt_at = now(),
-                 message = NULL,
-                 updated_at = now()
-               WHERE odal.registry_sync.status = 'rejected'"#,
-        )
-        .bind(passport.id.0)
-        .bind(&payload)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
-        // Re-publishing is what makes a recorded `suspended` intent obsolete —
-        // `Suspended -> Published` is a legal transition. Clear it unconditionally
-        // (the upsert above only fires for 'rejected' rows, and a 'registered'
-        // row can be carrying a stale intent too), so the future status-sync path
-        // can never push a suspension for a passport that is live again.
-        sqlx::query(
-            r#"UPDATE odal.registry_sync
-               SET status_intent = NULL, updated_at = now()
-               WHERE passport_id = $1 AND status_intent IS NOT NULL"#,
-        )
-        .bind(passport.id.0)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        queue_registration_in_tx(&mut tx, passport.id, &payload).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }

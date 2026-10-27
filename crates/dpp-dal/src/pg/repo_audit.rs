@@ -25,6 +25,65 @@ impl PgAuditRepo {
     }
 }
 
+/// Chain `entry` onto its passport's trail inside `tx`.
+///
+/// The body of [`AuditRepository::append`], shared with the state-change log so
+/// an audit entry commits together with the change it records.
+pub(crate) async fn append_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    entry: PassportAuditEntry,
+) -> Result<(), DppError> {
+    // Normalise the timestamp to microsecond precision *before* hashing:
+    // Postgres `timestamptz` is microsecond-resolution, so the value we hash
+    // must equal the value it stores, or the chain won't verify after a
+    // round-trip (the sub-microsecond part of `Utc::now()` is dropped on read).
+    let mut entry = entry;
+    if let Some(ts) = chrono::DateTime::from_timestamp_micros(entry.timestamp.timestamp_micros()) {
+        entry.timestamp = ts;
+    }
+    // Chain link: read this passport's current head under the same tx,
+    // then hash this entry's content folded with the head's hash. The
+    // append-only trigger guarantees the head cannot have been rewritten.
+    let prev_hash: String = sqlx::query_scalar(
+        r#"SELECT entry_hash FROM odal.passport_audit
+           WHERE passport_id = $1
+           ORDER BY ts DESC, id DESC
+           LIMIT 1"#,
+    )
+    .bind(&entry.passport_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db_err)?
+    .flatten()
+    .unwrap_or_else(|| GENESIS_PREV_HASH.to_owned());
+    let entry_hash = entry.chain_hash(&prev_hash);
+    sqlx::query(
+        r#"INSERT INTO odal.passport_audit
+             (id, passport_id, actor, action,
+              previous_status, new_status, metadata, ts, request_id,
+              prev_hash, entry_hash)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+    )
+    .bind(entry.id)
+    .bind(&entry.passport_id)
+    .bind(&entry.actor)
+    .bind(&entry.action)
+    .bind(&entry.previous_status)
+    .bind(&entry.new_status)
+    .bind(&entry.metadata)
+    .bind(entry.timestamp)
+    // Written after `entry_hash` is computed, and not an input to it: the
+    // column has been `NULL` on every row since 0005, so hashing it would
+    // invalidate every chain already on disk. See `PassportAuditEntry`.
+    .bind(&entry.request_id)
+    .bind(&prev_hash)
+    .bind(&entry_hash)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 #[async_trait]
 impl AuditRepository for PgAuditRepo {
     /// Write one audit entry; the DB trigger enforces immutability —
@@ -33,57 +92,8 @@ impl AuditRepository for PgAuditRepo {
     /// # Errors
     /// Returns `DppError::Internal` on DB error or trigger constraint violation.
     async fn append(&self, entry: PassportAuditEntry) -> Result<(), DppError> {
-        // Normalise the timestamp to microsecond precision *before* hashing:
-        // Postgres `timestamptz` is microsecond-resolution, so the value we hash
-        // must equal the value it stores, or the chain won't verify after a
-        // round-trip (the sub-microsecond part of `Utc::now()` is dropped on read).
-        let mut entry = entry;
-        if let Some(ts) =
-            chrono::DateTime::from_timestamp_micros(entry.timestamp.timestamp_micros())
-        {
-            entry.timestamp = ts;
-        }
         let mut tx = self.dal.begin().await?;
-        // Chain link: read this passport's current head under the same tx,
-        // then hash this entry's content folded with the head's hash. The
-        // append-only trigger guarantees the head cannot have been rewritten.
-        let prev_hash: String = sqlx::query_scalar(
-            r#"SELECT entry_hash FROM odal.passport_audit
-               WHERE passport_id = $1
-               ORDER BY ts DESC, id DESC
-               LIMIT 1"#,
-        )
-        .bind(&entry.passport_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db_err)?
-        .flatten()
-        .unwrap_or_else(|| GENESIS_PREV_HASH.to_owned());
-        let entry_hash = entry.chain_hash(&prev_hash);
-        sqlx::query(
-            r#"INSERT INTO odal.passport_audit
-                 (id, passport_id, actor, action,
-                  previous_status, new_status, metadata, ts, request_id,
-                  prev_hash, entry_hash)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
-        )
-        .bind(entry.id)
-        .bind(&entry.passport_id)
-        .bind(&entry.actor)
-        .bind(&entry.action)
-        .bind(&entry.previous_status)
-        .bind(&entry.new_status)
-        .bind(&entry.metadata)
-        .bind(entry.timestamp)
-        // Written after `entry_hash` is computed, and not an input to it: the
-        // column has been `NULL` on every row since 0005, so hashing it would
-        // invalidate every chain already on disk. See `PassportAuditEntry`.
-        .bind(&entry.request_id)
-        .bind(&prev_hash)
-        .bind(&entry_hash)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        append_in_tx(&mut tx, entry).await?;
         tx.commit().await.map_err(db_err)
     }
 

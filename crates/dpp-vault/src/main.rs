@@ -134,7 +134,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_registry_reader(operator_repo.clone())
         .with_evidence_store(evidence_repo)
-        .with_webhooks(webhook_repo.clone()),
+        .with_webhooks(webhook_repo.clone())
+        .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo.clone()));

@@ -10,6 +10,7 @@
 //!    `registry_identity`: these describe how this node is deployed and run.
 //!    They belong here permanently; they are not part of the DPP standard.
 //! 2. **Persistence ports** — `registry_sync::RegistrySyncOutbox`,
+//!    `state_change::StateChangeLog`,
 //!    `transfer::TransferStore`: these persist operational records (an outbox,
 //!    a chain-per-passport store). They live engine-side deliberately: the
 //!    standard defines the *records*, not how a given deployment queues or
@@ -37,6 +38,7 @@ pub mod registry_transfer;
 pub mod scan;
 pub mod seal;
 pub mod snapshot;
+pub mod state_change;
 pub mod successor;
 pub mod transfer;
 pub mod trust;
@@ -85,6 +87,7 @@ pub use snapshot::{
     SnapshotOutbox, SnapshotOutboxCounts, SnapshotReconcileRow, SnapshotReconcileStatus,
     SnapshotStore,
 };
+pub use state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent};
 pub use successor::SuccessorLookup;
 pub use transfer::TransferStore;
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
