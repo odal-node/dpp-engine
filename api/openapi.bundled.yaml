@@ -2193,6 +2193,13 @@ paths:
         claimed is conferred by a member state. The three authority roles are
         refused with `422`.
 
+        **Narrow by category as well as by group.** `productCategories` limits
+        the credential to passports that state one of the listed categories,
+        within `productGroups`. An operator that places both EV and LMT batteries
+        can vouch for a repairer of one and not the other. A list that cannot work
+        as written is refused rather than signed. Otherwise the holder, not the
+        operator, would be the one to find out, from reads served the public view.
+
         **Issuing is not trusting.** A credential minted here is honoured by *this*
         node only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).
         An operator running more than one node ordinarily mints on one and honours
@@ -2242,8 +2249,13 @@ paths:
         '422':
           description: |
             The request cannot produce a usable credential — an authority role, a
-            `holderDid` that is not a DID, a `country` that is not alpha-2, or a
-            `validForDays` outside 1–90.
+            `holderDid` that is not a DID, a `country` that is not alpha-2, a
+            `validForDays` outside 1–90, or a `productCategories` list that cannot
+            work as written: one given without `productGroups`, one holding a value
+            no named group's passports can state, or one that leaves a named group
+            with no passport the credential could read. For the last two, the
+            `detail` names the values or groups at fault and what those groups'
+            passports can state.
           content:
             application/problem+json:
               schema:
@@ -2893,6 +2905,27 @@ paths:
         carrying the proof computed over that view. Credentialed reads are
         recorded to the passport's audit trail; anonymous reads are not.
 
+        **A credential that does not cover this passport gets the public view,
+        not an error.** A credential may narrow itself to product groups and to
+        product categories, and both are checked against the passport being read:
+        the group against its `productGroup`, the category against the one its
+        data states (a battery's `batteryType`, an electronics `productCategory`,
+        and so on per group). A credential naming categories does not cover a
+        passport whose group states none, such as textile or toy. Out of scope,
+        a valid credential gets a `200` with the public view, byte-identical to
+        `/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an
+        elevated view names one. Denying instead would make this route a probe for
+        which group or category a passport is in. The read is still recorded to
+        the audit trail, with the public classes it was reduced to. `401` is for a
+        credential that fails verification, never for one out of scope.
+
+        **Why a credential was out of scope is in the
+        `X-DPP-Credential-Out-Of-Scope` header**, not the body, because the body
+        is the public view exactly: the payload `publicJwsSignature` signs. The
+        group is checked first, so a credential that misses both axes is reported
+        for the group. The header says nothing the public body does not: the group
+        is in the body, and every group's category field is public.
+
         Returns the public view (not an error) when credential verification
         is not configured on this node.
       tags:
@@ -2913,6 +2946,29 @@ paths:
       responses:
         '200':
           description: Passport filtered to the resolved audience.
+          headers:
+            X-DPP-Credential-Out-Of-Scope:
+              description: |
+                Present only when a verified credential was served the public view
+                because it does not cover this passport, naming the axis that
+                missed:
+
+                - `product-group`: the credential names product groups, and not
+                  this passport's;
+                - `product-category`: it names product categories, and not the one
+                  this passport states;
+                - `no-product-category`: it names product categories, and this
+                  passport's group states none.
+
+                Absent on an anonymous read, on a read the credential covers, and
+                on a node with credential verification unconfigured.
+              required: false
+              schema:
+                type: string
+                enum:
+                  - product-group
+                  - product-category
+                  - no-product-category
           content:
             application/json:
               schema:
@@ -7327,6 +7383,30 @@ components:
             product group this operator publishes.
           example:
             - battery
+        productCategories:
+          type: array
+          items:
+            type: string
+          description: |
+            Product categories the credential covers within `productGroups`. Omit or
+            leave empty to cover every category.
+
+            The list is flat: it narrows every named group, and a read is admitted
+            only where the passport states one of the listed values. A value is
+            compared exactly with the category the passport's data states: a
+            battery's `batteryType`, an electronics `productCategory`, a steel
+            `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+            furniture or detergent `productType`. The legal values are that
+            property's `enum` in the group's current schema
+            (`GET /integrator/api/v1/schemas/{productGroup}`). Aluminium, mattress,
+            textile, toy and unsold goods state no category.
+
+            A list that cannot work as written is refused with `422` rather than
+            signed: one given without `productGroups`, one holding a value no named
+            group's passports can state, or one that leaves a named group with no
+            passport the credential could read.
+          example:
+            - ev
         validForDays:
           type: integer
           minimum: 1

@@ -421,6 +421,34 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   generated battery templates carry the column last; an older file without it
   still imports.
 
+- **This node issues category-scoped credentials.** `POST /api/v1/credentials`
+  accepts `productCategories`, so an operator that places both EV and LMT
+  batteries can vouch for a repairer of one and not the other. Until now every
+  credential minted here covered whole product groups. The read route already
+  enforced a category list; issuance never set one. A list that cannot work as
+  written is refused with `422` before anything is signed; minted, it would be
+  found by its holder, from reads that come back public. A list needs
+  `productGroups`. Each value must be one a named group's passports can state.
+  Each named group must admit at least one of the values. The legal values come
+  from core's `ProductGroup::product_category_values`, read from each group's
+  current schema, so this node lists no vocabulary of its own.
+  `odal credential issue` gains `--product-categories`. (#502)
+
+- **A credential served only the public view is told why.** `GET
+  /credential/dpp/{dppId}` answers a valid credential that does not cover the
+  passport with a `200` and the public view, and now adds
+  `X-DPP-Credential-Out-Of-Scope`: `product-group`, `product-category`, or
+  `no-product-category` when the credential names categories and the
+  passport's group states none. Until now a credential for the wrong group and
+  one for the wrong category looked the same to its holder. The reason is a
+  header because the body is the public view byte for byte, the payload its
+  proof signs. The group is checked first, so a credential missing both is
+  reported for the group. CORS exposes the header to browser clients. The
+  route's description now states the whole scope rule: both axes are checked,
+  out of scope is a `200` and never a `401`, and the read is still audited.
+  `VerifiedCredential::audience_for` returns `Result<Audience, OutOfScope>`.
+  (#502)
+
 ### Fixed
 
 - **The resolver no longer says it conforms to the GS1 Conformant Resolver

@@ -206,6 +206,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     role,
                     country,
                     product_groups,
+                    product_categories,
                     valid_for_days,
                 },
         } => {
@@ -215,6 +216,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                 role,
                 country,
                 product_groups,
+                product_categories,
                 valid_for_days,
             })
             .await

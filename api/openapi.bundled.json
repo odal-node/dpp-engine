@@ -2746,7 +2746,7 @@
       "post": {
         "operationId": "issueCredential",
         "summary": "Issue an access credential",
-        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n\n**Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the\nkeyed set: the node stores no record of what it signed and publishes no\nstatus list, so a duplicate cannot be found afterwards and could not be\nwithdrawn if it were. A retry under the same key replays the original\nresponse — including `credentialJws`, which is what stops the retry from\nminting a *second* live credential.\n\nRequires an admin-scoped key.\n",
+        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can — membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Narrow by category as well as by group.** `productCategories` limits\nthe credential to passports that state one of the listed categories,\nwithin `productGroups`. An operator that places both EV and LMT batteries\ncan vouch for a repairer of one and not the other. A list that cannot work\nas written is refused rather than signed. Otherwise the holder, not the\noperator, would be the one to find out, from reads served the public view.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n\n**Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the\nkeyed set: the node stores no record of what it signed and publishes no\nstatus list, so a duplicate cannot be found afterwards and could not be\nwithdrawn if it were. A retry under the same key replays the original\nresponse — including `credentialJws`, which is what stops the retry from\nminting a *second* live credential.\n\nRequires an admin-scoped key.\n",
         "tags": [
           "Access"
         ],
@@ -2797,7 +2797,7 @@
             "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
-            "description": "The request cannot produce a usable credential — an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, or a\n`validForDays` outside 1–90.\n",
+            "description": "The request cannot produce a usable credential — an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, a\n`validForDays` outside 1–90, or a `productCategories` list that cannot\nwork as written: one given without `productGroups`, one holding a value\nno named group's passports can state, or one that leaves a named group\nwith no passport the credential could read. For the last two, the\n`detail` names the values or groups at fault and what those groups'\npassports can state.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3561,7 +3561,7 @@
       "get": {
         "operationId": "readDppByCredential",
         "summary": "Audience-scoped read of a published DPP",
-        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n",
+        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\n**A credential that does not cover this passport gets the public view,\nnot an error.** A credential may narrow itself to product groups and to\nproduct categories, and both are checked against the passport being read:\nthe group against its `productGroup`, the category against the one its\ndata states (a battery's `batteryType`, an electronics `productCategory`,\nand so on per group). A credential naming categories does not cover a\npassport whose group states none, such as textile or toy. Out of scope,\na valid credential gets a `200` with the public view, byte-identical to\n`/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an\nelevated view names one. Denying instead would make this route a probe for\nwhich group or category a passport is in. The read is still recorded to\nthe audit trail, with the public classes it was reduced to. `401` is for a\ncredential that fails verification, never for one out of scope.\n\n**Why a credential was out of scope is in the\n`X-DPP-Credential-Out-Of-Scope` header**, not the body, because the body\nis the public view exactly: the payload `publicJwsSignature` signs. The\ngroup is checked first, so a credential that misses both axes is reported\nfor the group. The header says nothing the public body does not: the group\nis in the body, and every group's category field is public.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n",
         "tags": [
           "Credentialed Access"
         ],
@@ -3588,6 +3588,20 @@
         "responses": {
           "200": {
             "description": "Passport filtered to the resolved audience.",
+            "headers": {
+              "X-DPP-Credential-Out-Of-Scope": {
+                "description": "Present only when a verified credential was served the public view\nbecause it does not cover this passport, naming the axis that\nmissed:\n\n- `product-group`: the credential names product groups, and not\n  this passport's;\n- `product-category`: it names product categories, and not the one\n  this passport states;\n- `no-product-category`: it names product categories, and this\n  passport's group states none.\n\nAbsent on an anonymous read, on a read the credential covers, and\non a node with credential verification unconfigured.\n",
+                "required": false,
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "product-group",
+                    "product-category",
+                    "no-product-category"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8697,6 +8711,16 @@
             "description": "Product groups the credential covers. Omit or leave empty to cover every\nproduct group this operator publishes.\n",
             "example": [
               "battery"
+            ]
+          },
+          "productCategories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Product categories the credential covers within `productGroups`. Omit or\nleave empty to cover every category.\n\nThe list is flat: it narrows every named group, and a read is admitted\nonly where the passport states one of the listed values. A value is\ncompared exactly with the category the passport's data states: a\nbattery's `batteryType`, an electronics `productCategory`, a steel\n`productCategory`, a tyre `tyreClass`, a construction `productFamily`, a\nfurniture or detergent `productType`. The legal values are that\nproperty's `enum` in the group's current schema\n(`GET /integrator/api/v1/schemas/{productGroup}`). Aluminium, mattress,\ntextile, toy and unsold goods state no category.\n\nA list that cannot work as written is refused with `422` rather than\nsigned: one given without `productGroups`, one holding a value no named\ngroup's passports can state, or one that leaves a named group with no\npassport the credential could read.\n",
+            "example": [
+              "ev"
             ]
           },
           "validForDays": {
