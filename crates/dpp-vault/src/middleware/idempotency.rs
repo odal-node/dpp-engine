@@ -21,8 +21,9 @@ use crate::middleware::auth::AuthContext;
 /// on the first keyed call instead of as a cross-caller key collision later.
 ///
 /// `user_id`, not the key id: a caller that rotates its API key mid-retry is
-/// the same caller, and its retry must still find its own key. Single-tenant,
-/// so there is no operator to fold in — see ADR-005.
+/// the same caller, and its retry must still find its own key. No operator is
+/// folded in either: a node serves exactly one operator, so the operator is the
+/// same for every key this store holds.
 #[must_use]
 pub fn idempotency_state(store: Arc<dyn IdempotencyStore>) -> IdempotencyLayerState {
     IdempotencyLayerState {
