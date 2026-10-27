@@ -6,7 +6,7 @@ get:
     (port 8001) this is mounted at `/integrator/health`.
 
     Checks nothing beyond itself, and in particular says nothing about whether
-    an import currently in flight is progressing — an import is a job, and
+    an import currently in flight is progressing: an import is a job, and
     `GET /integrator/api/v1/imports/{job_id}` is what reports on one.
 
     The body carries the service name and version.

@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinBatchSerial
-  summary: GS1 Digital Link resolver — GTIN + batch/lot + serial
+  summary: GS1 Digital Link resolver (GTIN + batch/lot + serial)
   description: |
     The shape this node printed for a batched passport before its carrier
     followed the passport's stated level, and one any conformant label may

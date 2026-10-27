@@ -10,7 +10,7 @@ get:
     electronic identification means expire), and a lapsed operator cannot
     register or amend anything until it verifies again.
 
-    **Absent is not zero** — see the per-passport route.
+    **Absent is not zero**: see the per-passport route.
   tags:
     - Registry
   security:

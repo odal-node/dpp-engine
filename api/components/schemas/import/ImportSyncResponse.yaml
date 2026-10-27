@@ -13,7 +13,7 @@ properties:
     type: string
     format: uuid
     description: >-
-      The job this response's report was persisted under — retrievable later via
+      The job this response's report was persisted under: retrievable later via
       the job-status endpoint.
   totalRows:
     type: integer
@@ -44,6 +44,6 @@ properties:
     description: >-
       Rows that matched an existing passport and updated it. Counted in
       `successCount`, which is deliberately not `created.length +
-      updated.length` — see that field.
+      updated.length`: see that field.
     items:
       $ref: ./ImportUpdatedEntry.yaml

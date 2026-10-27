@@ -4,7 +4,7 @@ description: |
 
   One object rather than two loose fields so a date cannot be served without its
   basis. Most of the catalog is undated, and of the dates that exist some trace
-  to an adopted text and some are a reading — a date presented bare turns a
+  to an adopted text and some are a reading: a date presented bare turns a
   qualified reading into an unqualified claim.
 properties:
   date:

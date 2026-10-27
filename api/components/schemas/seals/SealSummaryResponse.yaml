@@ -39,8 +39,8 @@ properties:
 
       A node that keeps its audit state restores the last completed report at
       boot, so a restart no longer empties this. Where it is still `null` after a
-      deployment, the honest reading is that no pass has ever finished against
-      this database — on a large estate, check the audit's cadence before
+      deployment, no pass has ever finished against this database. On a large
+      estate, check the audit's cadence before
       concluding anything about the seals.
   trustMode:
     type:
@@ -54,7 +54,7 @@ properties:
     description: >-
       The tier the **currently configured** sealing backend resolved to. The
       counts say how much sealing is outstanding; this says whether the sealing
-      that does happen is worth anything — a node can sit at
+      that does happen is worth anything: a node can sit at
       `unsealedPublished: 0` while every one of those seals was signed by a key
       it generated itself, and no count would show it.
 

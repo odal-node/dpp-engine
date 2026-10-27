@@ -26,7 +26,7 @@ post:
   operationId: addOperatorIdentifier
   summary: Add an operator identifier
   description: |
-    Add an economic-operator identifier. Validated by scheme — LEI uses
+    Add an economic-operator identifier. Validated by scheme: LEI uses
     ISO 7064 MOD 97-10; DUNS is 9 digits; EORI/VAT require a country prefix.
     Requires an admin-scoped key.
 
