@@ -1,0 +1,23 @@
+type: object
+description: One financial year's disclosure, as stored.
+required:
+  - report
+  - recordedBy
+  - createdAt
+  - updatedAt
+properties:
+  report:
+    $ref: ./UnsoldGoodsReport.yaml
+  recordedBy:
+    type: string
+    description: The user id of the API caller who recorded the stored version.
+  createdAt:
+    type: string
+    format: date-time
+    description: When the financial year was first recorded.
+  updatedAt:
+    type: string
+    format: date-time
+    description: >-
+      When the stored version was recorded. Equal to `createdAt` until the year
+      is recorded again.

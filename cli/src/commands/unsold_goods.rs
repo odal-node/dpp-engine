@@ -1,92 +1,139 @@
 //! `odal unsold-goods` — record and read the ESPR Art. 24 disclosure.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde_json::Value;
 
 use crate::core::unsold_goods::{
-    DisclosureLine, action_unsold_goods_list, action_unsold_goods_record,
+    action_unsold_goods_get, action_unsold_goods_list, action_unsold_goods_put,
 };
 
-/// `odal unsold-goods record` — write one line of the Art. 24 disclosure.
-///
-/// Prints the retry advice on the write itself rather than leaving it in the
-/// docs, because the route serves no `DELETE`: a line recorded twice is
-/// permanent, and Art. 24 figures are published for a financial year, so the
-/// duplicate becomes an overstatement of what the operator actually discarded.
-pub async fn run_unsold_goods_record(line: DisclosureLine) -> Result<()> {
-    let (client, cfg) = crate::http::load_client()?;
-    let id = action_unsold_goods_record(&line, &client, &cfg).await?;
+fn text<'a>(v: &'a Value, pointer: &str) -> &'a str {
+    v.pointer(pointer).and_then(Value::as_str).unwrap_or("-")
+}
 
-    println!("Recorded disclosure line {id}.");
+/// `odal unsold-goods put --file <report.json>` — store a financial year's
+/// disclosure, replacing one stored for the same year.
+///
+/// Prints the lint findings as well as the outcome: they refuse nothing, and a
+/// disclosure is published, so the operator should see them before it is.
+pub async fn run_unsold_goods_put(file: &str, json: bool) -> Result<()> {
+    let raw = std::fs::read_to_string(file).with_context(|| format!("cannot read {file}"))?;
+    let report: Value =
+        serde_json::from_str(&raw).with_context(|| format!("{file} is not JSON"))?;
+    let (client, cfg) = crate::http::load_client()?;
+    let recorded = action_unsold_goods_put(&report, &client, &cfg).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&recorded)?);
+        return Ok(());
+    }
+    let disclosure = &recorded["disclosure"];
     println!(
-        "  {} — {} units, {} kg, {} → {}",
-        line.period, line.units, line.kg, line.category, line.destination
+        "Recorded the disclosure of {} for the financial year {} to {}.",
+        text(disclosure, "/report/entity/name"),
+        text(disclosure, "/report/financialYear/start"),
+        text(disclosure, "/report/financialYear/end"),
     );
-    // Said on the write rather than only in the docs: this route serves no
-    // DELETE, so a line recorded twice is a figure overstated for a financial
-    // year that gets published.
-    println!();
-    println!("There is no delete — pass --idempotency-key if you retry this.");
+    let findings = recorded["lintFindings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !findings.is_empty() {
+        println!("\nFindings (advisory, nothing was refused):");
+        for f in &findings {
+            println!(
+                "  [{}] {}: {}",
+                text(f, "/severity"),
+                text(f, "/field"),
+                text(f, "/message")
+            );
+        }
+    }
     Ok(())
 }
 
-/// `odal unsold-goods list` — read the disclosure back, newest first.
-///
-/// The table flags lines carrying no unit count instead of printing a zero for
-/// them. Art. 24(1)(a) asks for the number *and* the weight, and a row written
-/// before the count had a column is incomplete rather than empty — an operator
-/// assembling a return from these figures has to be able to tell the two apart.
-pub async fn run_unsold_goods_list(period: Option<&str>, json: bool) -> Result<()> {
+/// `odal unsold-goods get <START>` — one financial year's disclosure.
+pub async fn run_unsold_goods_get(start: &str, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    let lines = action_unsold_goods_list(period, &client, &cfg).await?;
-
+    let disclosure = action_unsold_goods_get(start, &client, &cfg).await?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&lines)?);
+        println!("{}", serde_json::to_string_pretty(&disclosure)?);
         return Ok(());
     }
-
-    if lines.is_empty() {
-        match period {
-            Some(p) => println!("No disclosure lines recorded for {p}."),
-            None => println!("No disclosure lines recorded."),
-        }
-        return Ok(());
-    }
-
-    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("-").to_owned();
+    let report = &disclosure["report"];
     println!(
-        "{:<6}  {:<14}  {:>8}  {:>10}  {:<18}  {:<8}",
-        "YEAR", "CATEGORY", "UNITS", "KG", "DESTINATION", "COUNTRY"
+        "{} ({}), financial year {} to {}",
+        text(report, "/entity/name"),
+        text(report, "/entity/identifier/value"),
+        text(report, "/financialYear/start"),
+        text(report, "/financialYear/end"),
+    );
+    let lines = report["lines"].as_array().cloned().unwrap_or_default();
+    println!(
+        "\n{:<12}  {:>10}  {:>10}  {:<34}",
+        "CN", "UNITS", "KG", "REASON"
     );
     for l in &lines {
-        let units = l
-            .get("unitCount")
-            .and_then(Value::as_i64)
-            .map_or_else(|| "-".to_owned(), |n| n.to_string());
-        let kg = l
-            .get("volumeKg")
-            .and_then(Value::as_f64)
-            .map_or_else(|| "-".to_owned(), |n| format!("{n:.1}"));
+        let cn = l["cnCategories"]
+            .as_array()
+            .map(|c| {
+                c.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        // Annex I marks an estimate with `±`.
+        let quantity = |q: &Value| {
+            let value = q["value"]
+                .as_u64()
+                .map_or_else(|| "-".to_owned(), |v| v.to_string());
+            if q["estimated"].as_bool() == Some(true) {
+                format!("±{value}")
+            } else {
+                value
+            }
+        };
         println!(
-            "{:<6}  {:<14}  {units:>8}  {kg:>10}  {:<18}  {:<8}",
-            s(l, "reportingPeriod"),
-            s(l, "productCategory"),
-            s(l, "destination"),
-            s(l, "countryOfDisposal"),
+            "{cn:<12}  {:>10}  {:>10}  {:<34}",
+            quantity(&l["unitsDiscarded"]),
+            quantity(&l["weightKg"]),
+            text(l, "/reason"),
         );
     }
-    println!("\n{} line(s).", lines.len());
-    // Art. 24(1)(a) asks for the number and the weight. A row written before
-    // the count had a column reports `-`, and an operator building a return
-    // from these figures needs to see that rather than read it as zero.
-    if lines
-        .iter()
-        .any(|l| l.get("unitCount").is_none_or(Value::is_null))
-    {
+    println!(
+        "\n{} line(s). Recorded by {} at {}.",
+        lines.len(),
+        text(&disclosure, "/recordedBy"),
+        text(&disclosure, "/updatedAt"),
+    );
+    Ok(())
+}
+
+/// `odal unsold-goods list` — every stored disclosure, latest year first.
+pub async fn run_unsold_goods_list(json: bool) -> Result<()> {
+    let (client, cfg) = crate::http::load_client()?;
+    let disclosures = action_unsold_goods_list(&client, &cfg).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&disclosures)?);
+        return Ok(());
+    }
+    if disclosures.is_empty() {
+        println!("No disclosures recorded.");
+        return Ok(());
+    }
+    println!(
+        "{:<10}  {:<10}  {:>5}  {:<30}",
+        "START", "END", "LINES", "ENTITY"
+    );
+    for d in &disclosures {
+        let lines = d["report"]["lines"].as_array().map_or(0, Vec::len);
         println!(
-            "Some lines carry no unit count — they predate the column. Art. 24(1)(a)\n\
-             asks for the number *and* the weight, so those lines are incomplete."
+            "{:<10}  {:<10}  {lines:>5}  {:<30}",
+            text(d, "/report/financialYear/start"),
+            text(d, "/report/financialYear/end"),
+            text(d, "/report/entity/name"),
         );
     }
+    println!("\n{} disclosure(s).", disclosures.len());
     Ok(())
 }

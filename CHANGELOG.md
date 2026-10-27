@@ -218,6 +218,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
   with the registry's own rules rather than on the first registration.
 
+- **The unsold-goods disclosure is one report per financial year, in the format
+  of Implementing Regulation (EU) 2026/2.** `POST /vault/api/v1/unsold-goods`
+  stored one line at a time, in a shape older than the act: a five-value
+  category, one destination per line, and no CN code, estimate or packaging
+  marker, EUID or measures. `PUT /vault/api/v1/unsold-goods/{financialYearStart}`
+  now stores the whole report, dpp-domain's `UnsoldGoodsReport`, replacing one
+  stored for the same year, and `GET` reads one year back. A report that fails
+  the `unsold-goods` JSON Schema, or names a different year from its path, is
+  refused with `422`; the plausibility findings come back as `lintFindings` and
+  refuse nothing. The route takes no `Idempotency-Key`, since a retry replaces
+  rather than duplicates. `odal unsold-goods record` is replaced by
+  `put --file <report.json>` and `get <start>`.
+
+  **Migration:** `0044` drops `odal.unsold_goods_report` and creates
+  `odal.unsold_goods_disclosure`. A line of the old shape cannot become a line of
+  the new one without inventing its CN code, its reason under Delegated
+  Regulation (EU) 2026/296 and its treatment split, so stored lines are not
+  carried over: record each year again as a report.
+
 ### Added
 
 - **Bulk import and CSV templates reach `electronics` and `detergent`.** Both

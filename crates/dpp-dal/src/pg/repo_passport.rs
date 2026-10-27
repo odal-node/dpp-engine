@@ -40,8 +40,7 @@ use super::{PgDal, db_err};
 /// `the_identifier_expression_is_the_one_the_index_covers` holds the two equal.
 ///
 /// A macro rather than a `const` because sqlx takes only a literal statement,
-/// and `concat!` splices a macro into one where it cannot splice a `const` —
-/// the same arrangement as `repo_unsold_goods`'s column list.
+/// and `concat!` splices a macro into one where it cannot splice a `const`.
 macro_rules! identifier_sql {
     () => {
         "(COALESCE(doc->'productGroupData'->'productIdentifier'->>'gtin', \

@@ -1,0 +1,101 @@
+parameters:
+  - name: financialYearStart
+    in: path
+    required: true
+    description: The first day of the financial year, as `YYYY-MM-DD`.
+    schema:
+      type: string
+      format: date
+get:
+  operationId: getUnsoldGoods
+  summary: Read one financial year's unsold-goods disclosure
+  description: |
+    The ESPR Art. 24 disclosure stored for the financial year that starts on
+    `financialYearStart`. Admin, like the listing.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: The stored disclosure.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/UnsoldGoodsDisclosure.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      description: No disclosure is stored for that financial year.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+put:
+  operationId: putUnsoldGoods
+  summary: Record one financial year's unsold-goods disclosure
+  description: |
+    Stores the ESPR Art. 24 disclosure of unsold consumer products discarded
+    in one financial year, replacing any disclosure already stored for the
+    year that starts on `financialYearStart`. The body is the whole report, in
+    the format Commission Implementing Regulation (EU) 2026/2 prescribes.
+
+    **This is not a passport.** There is no digital product passport anywhere
+    in Art. 24 or Art. 25: the subject is an *operator over a financial year*,
+    the medium is the operator's own website, and the trigger is discarding
+    unsold stock. Nothing here is signed, sealed, retention-locked or
+    registered.
+
+    **Checked before it is stored.** The report is refused with `422` when it
+    does not match the `unsold-goods` JSON Schema served at
+    `GET /integrator/api/v1/schemas/unsold-goods`, when `financialYear.start`
+    is not the day the path names, or when the year does not end after it
+    starts.
+
+    **Plausibility findings refuse nothing.** A treatment split that does not
+    total 100, a CN category at the wrong depth, a donation reason claimed
+    beside a stronger one, or measures too short to describe anything come
+    back in `lintFindings`, as a passport's lint findings never refuse a
+    publish.
+
+    Idempotent by shape: recording the same year again replaces it, so no
+    `Idempotency-Key` is taken. Requires a write-scoped key; reading the
+    disclosures back requires admin.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/unsold-goods/UnsoldGoodsReport.yaml
+  responses:
+    '200':
+      description: The disclosure as stored, with the plausibility findings.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/UnsoldGoodsRecorded.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      description: >-
+        The report does not match the `unsold-goods` JSON Schema, names a
+        different financial year from the path, or has a year that does not
+        end after it starts.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

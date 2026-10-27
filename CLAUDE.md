@@ -478,8 +478,9 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
-| POST | `/vault/api/v1/unsold-goods` | Bearer **(write)** | Record an ESPR Art. 24 disclosure line for unsold consumer products discarded in a financial year. Not a passport — Art. 24's subject is an operator over a year. `exemptDestruction` requires a justification (Art. 25 bans the destruction outright from 19 July 2026); any other destination refuses one |
-| GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | List those lines, newest first, optionally filtered by financial year |
+| PUT | `/vault/api/v1/unsold-goods/{financialYearStart}` | Bearer **(write)** | Record the ESPR Art. 24 disclosure for the financial year starting that day, replacing one stored for it. The body is dpp-domain's `UnsoldGoodsReport`, the format of Implementing Regulation (EU) 2026/2; `422` when it fails the `unsold-goods` JSON Schema or names a different year. Not a passport — Art. 24's subject is an operator over a year. Plausibility findings come back as `lintFindings` and refuse nothing |
+| GET | `/vault/api/v1/unsold-goods/{financialYearStart}` | Bearer (admin) | That year's stored disclosure; `404` when none is |
+| GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | Every stored disclosure, latest financial year first |
 | POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | DELETE | `/vault/api/v1/personal-data/{record}` | Bearer (admin) | Erase a record a passport's `personalData` statement names, keeping a tombstone, and answer the receipt. Idempotent: a retry gets the first receipt; `404` for a record this node never held. Touches neither the passport nor its statement. **No route reads a record** — they are in `odal.personal_data_record` (migration 0043) only, never in the passport, archive or back-up copy |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |

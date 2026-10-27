@@ -21,8 +21,9 @@ const DOCUMENTED_EXCEPTIONS: &[(&str, &str)] = &[
     ),
     (
         "odal.unsold_goods_report",
-        "schema seat for the not-yet-built unsold-goods bulk-import feature in \
-         dpp-integrator; no repo reads or writes it yet.",
+        "created by 0008 and dropped by 0044, when the disclosure became one \
+         report per financial year in `odal.unsold_goods_disclosure`; nothing \
+         reads or writes it.",
     ),
     (
         "identity.did_document",

@@ -271,8 +271,9 @@ stock, none of which is a product placed on the market.
 
 | Command | Purpose | Auth |
 |---|---|---|
-| `odal unsold-goods record --period --units --kg --category --reason --destination [--justification] --country` | Record one disclosure line. Art. 24(1)(a) asks for the number **and** the weight, so both are required. `--destination exemptDestruction` requires a `--justification` — Art. 25 bans the destruction outright from 19 July 2026 — and every other destination refuses one | API key (write) |
-| `odal unsold-goods list [--period] [--json]` | The recorded lines, newest first, optionally for one financial year. Admin rather than write: reading the operator's own annual figures back is an administrative act, not part of producing passports | API key (Admin) |
+| `odal unsold-goods put --file <report.json> [--json]` | Store a financial year's disclosure, replacing one stored for that year. The file holds the whole report in the format Implementing Regulation (EU) 2026/2 prescribes: the disclosing entity and its EUID, the financial year, the discarded lines and the measures taken and planned. The node checks it against the `unsold-goods` JSON Schema (`GET /integrator/api/v1/schemas/unsold-goods`) and prints the plausibility findings, which refuse nothing | API key (write) |
+| `odal unsold-goods get <start> [--json]` | One financial year's disclosure, by its first day (`YYYY-MM-DD`) | API key (Admin) |
+| `odal unsold-goods list [--json]` | Every stored disclosure, latest financial year first. Admin rather than write: reading the operator's own annual figures back is an administrative act, not part of producing passports | API key (Admin) |
 
 ### Continuity snapshots
 

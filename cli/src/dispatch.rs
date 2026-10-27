@@ -44,7 +44,7 @@ use crate::commands::{
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     transfer::{run_transfer_initiate, run_transfer_resolve},
-    unsold_goods::{run_unsold_goods_list, run_unsold_goods_record},
+    unsold_goods::{run_unsold_goods_get, run_unsold_goods_list, run_unsold_goods_put},
     up::run_up,
     update::run_update,
     validate::run_validate,
@@ -220,33 +220,14 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             .await
         }
         Commands::UnsoldGoods {
-            command:
-                UnsoldGoodsCommands::Record {
-                    period,
-                    units,
-                    kg,
-                    category,
-                    reason,
-                    destination,
-                    justification,
-                    country,
-                },
-        } => {
-            run_unsold_goods_record(crate::core::unsold_goods::DisclosureLine {
-                period,
-                units,
-                kg,
-                category,
-                reason,
-                destination,
-                justification,
-                country,
-            })
-            .await
-        }
+            command: UnsoldGoodsCommands::Put { file, json },
+        } => run_unsold_goods_put(&file, json).await,
         Commands::UnsoldGoods {
-            command: UnsoldGoodsCommands::List { period, json },
-        } => run_unsold_goods_list(period.as_deref(), json).await,
+            command: UnsoldGoodsCommands::Get { start, json },
+        } => run_unsold_goods_get(&start, json).await,
+        Commands::UnsoldGoods {
+            command: UnsoldGoodsCommands::List { json },
+        } => run_unsold_goods_list(json).await,
         Commands::Webhook {
             command: WebhookCommands::List,
         } => run_webhook_list().await,

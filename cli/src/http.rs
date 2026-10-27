@@ -240,6 +240,25 @@ impl OdalClient {
         Ok((status, body))
     }
 
+    /// PUT JSON `payload` to `url` with the client's credential. Carries no
+    /// idempotency key: a `PUT` replaces, so a retry is idempotent by shape.
+    pub async fn put_json(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(StatusCode, String)> {
+        let resp = self
+            .inner
+            .put(url)
+            .header(AUTHORIZATION, &self.authorization)
+            .json(payload)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
     /// DELETE `url` with the client's credential.
     pub async fn delete(&self, url: &str) -> Result<(StatusCode, String)> {
         let resp = self

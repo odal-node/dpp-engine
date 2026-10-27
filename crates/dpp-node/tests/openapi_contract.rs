@@ -482,11 +482,9 @@ fn object_cases() -> Vec<ObjectCase> {
         fixtures::issue_credential_request()
     );
     case!("IssuedCredential", fixtures::issued_credential());
-    case!(
-        "CreateUnsoldGoodsEntry",
-        fixtures::create_unsold_goods_entry()
-    );
-    case!("UnsoldGoodsEntry", fixtures::unsold_goods_entry());
+    case!("UnsoldGoodsReport", fixtures::unsold_goods_report());
+    case!("UnsoldGoodsDisclosure", fixtures::unsold_goods_disclosure());
+    case!("UnsoldGoodsRecorded", fixtures::unsold_goods_recorded());
     case!("PassportAuditEntry", fixtures::audit_entry());
     case!("PassportVersion", fixtures::passport_version());
     case!("Facility", fixtures::facility());
@@ -618,18 +616,6 @@ fn enum_cases() -> Vec<EnumCase> {
         EnumCase {
             name: "PassportStatus",
             variants: wire(&fixtures::all_passport_statuses()),
-        },
-        EnumCase {
-            name: "UnsoldProductCategory",
-            variants: wire(&fixtures::all_unsold_product_categories()),
-        },
-        EnumCase {
-            name: "UnsoldDiscardReason",
-            variants: wire(&fixtures::all_unsold_discard_reasons()),
-        },
-        EnumCase {
-            name: "UnsoldDestination",
-            variants: wire(&fixtures::all_unsold_destinations()),
         },
         EnumCase {
             name: "OperatorRole",
@@ -774,11 +760,6 @@ fn query_cases() -> Vec<QueryCase> {
         "get",
         "/vault/api/v1/dpp/{dppId}/versions",
         fixtures::versions_query()
-    );
-    case!(
-        "get",
-        "/vault/api/v1/unsold-goods",
-        fixtures::unsold_goods_list_query()
     );
     case!(
         "get",
@@ -3267,76 +3248,27 @@ mod fixtures {
         }
     }
 
-    pub fn all_unsold_product_categories() -> Vec<dpp_types::ProductCategory> {
-        use dpp_types::ProductCategory as C;
-        vec![
-            C::Apparel,
-            C::Footwear,
-            C::HomeTextile,
-            C::Accessories,
-            C::Other,
-        ]
+    /// The report the dal tests store, so every suite checks one disclosure.
+    pub fn unsold_goods_report() -> dpp_domain::UnsoldGoodsReport {
+        serde_json::from_str(include_str!(
+            "../../dpp-dal/tests/fixtures/unsold_goods/report.json"
+        ))
+        .expect("the fixture is a report")
     }
 
-    pub fn all_unsold_discard_reasons() -> Vec<dpp_types::DiscardReason> {
-        use dpp_types::DiscardReason as R;
-        vec![
-            R::EndOfSeason,
-            R::QualityDefect,
-            R::PackagingDefect,
-            R::OverProduction,
-            R::CustomerReturn,
-            R::Other,
-        ]
-    }
-
-    pub fn all_unsold_destinations() -> Vec<dpp_types::Destination> {
-        use dpp_types::Destination as D;
-        vec![
-            D::Donation,
-            D::Recycling,
-            D::Repurposing,
-            D::SupplierReturn,
-            D::ExemptDestruction,
-        ]
-    }
-
-    pub fn create_unsold_goods_entry() -> dpp_types::CreateUnsoldGoodsEntry {
-        dpp_types::CreateUnsoldGoodsEntry {
-            reporting_period: "2026".into(),
-            unit_count: 1240,
-            volume_kg: 860.5,
-            product_category: dpp_types::ProductCategory::Apparel,
-            reason: dpp_types::DiscardReason::EndOfSeason,
-            destination: dpp_types::Destination::ExemptDestruction,
-            destruction_justification: Some(
-                "Contaminated stock unfit for use under Art. 25(5)".into(),
-            ),
-            country_of_disposal: "DE".into(),
-        }
-    }
-
-    pub fn unsold_goods_entry() -> dpp_types::UnsoldGoodsEntry {
-        dpp_types::UnsoldGoodsEntry {
-            id: uuid(),
-            reporting_period: "2026".into(),
-            unit_count: Some(1240),
-            volume_kg: 860.5,
-            product_category: "apparel".into(),
-            reason: "endOfSeason".into(),
-            destination: "exemptDestruction".into(),
-            destruction_justification: Some(
-                "Contaminated stock unfit for use under Art. 25(5)".into(),
-            ),
-            country_of_disposal: "DE".into(),
-            operator_name: Some("Nord Textiles GmbH".into()),
+    pub fn unsold_goods_disclosure() -> dpp_types::UnsoldGoodsDisclosure {
+        dpp_types::UnsoldGoodsDisclosure {
+            report: unsold_goods_report(),
+            recorded_by: "ops-user".into(),
             created_at: ts(),
+            updated_at: ts(),
         }
     }
 
-    pub fn unsold_goods_list_query() -> dpp_vault::handlers::unsold_goods::ListQuery {
-        dpp_vault::handlers::unsold_goods::ListQuery {
-            reporting_period: Some("2026".into()),
+    pub fn unsold_goods_recorded() -> dpp_vault::handlers::unsold_goods::UnsoldGoodsRecorded {
+        dpp_vault::handlers::unsold_goods::UnsoldGoodsRecorded {
+            disclosure: unsold_goods_disclosure(),
+            lint_findings: vec![lint_finding()],
         }
     }
 

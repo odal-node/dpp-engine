@@ -595,119 +595,129 @@ async fn both_routes_retire_a_passport_the_same_way() {
     );
 }
 
-/// The ESPR Art. 24 disclosure line, and the Art. 25 rule that guards it.
+/// The ESPR Art. 24 disclosure, one financial year per record.
 ///
-/// Art. 25 prohibits destroying unsold consumer products listed in Annex VII
-/// from 19 July 2026, so `exemptDestruction` is the one destination recording an
-/// act that is otherwise forbidden and it has to say which exemption it relies
-/// on. The converse matters as much: a justification attached to a donation
-/// describes nothing, and a field that is sometimes meaningful and sometimes
-/// ignored is how a reviewer stops reading it.
+/// Implementing Regulation (EU) 2026/2 prescribes one disclosure per
+/// undertaking per financial year, so the year is the key: recording it again
+/// replaces what was stored rather than adding a second disclosure beside it.
 ///
 /// Nothing here is a passport — the subject of Art. 24 is an operator over a
 /// financial year — which is why this exercises the operator-scoped routes and
 /// creates no DPP at all.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_recorded_destruction_must_name_its_exemption() {
+async fn a_financial_year_is_disclosed_once_and_replaced_when_recorded_again() {
     let pg = start_postgres().await;
     let base_url = start_vault(pg.dal.clone()).await;
     seed_complete_operator(&pg.dal).await;
     let token = make_jwt("00000000-0000-0000-0000-000000000099");
     let client = TestClient::new(&base_url, &token);
 
-    let line = |destination: &str, justification: Option<&str>| {
-        let mut body = serde_json::json!({
-            "reportingPeriod": "2026",
-            "unitCount": 1240,
-            "volumeKg": 860.5,
-            "productCategory": "apparel",
-            "reason": "endOfSeason",
-            "destination": destination,
-            "countryOfDisposal": "de",
-        });
-        if let Some(j) = justification {
-            body["destructionJustification"] = serde_json::json!(j);
-        }
-        body
-    };
-
-    // A destruction with no exemption stated is refused.
+    let mut report = unsold_goods_report();
     let resp = client
-        .post_json("/api/v1/unsold-goods", line("exemptDestruction", None))
+        .put_json("/api/v1/unsold-goods/2027-01-01", report.clone())
         .await;
-    assert_eq!(resp.status(), 422, "a destruction must name its exemption");
-    let detail = resp.text().await.unwrap_or_default();
-    assert!(
-        detail.contains("Art. 25"),
-        "the refusal should cite the ban it enforces: {detail}"
-    );
-
-    // And a justification on something that was not destroyed is refused too.
-    let resp = client
-        .post_json(
-            "/api/v1/unsold-goods",
-            line("donation", Some("not applicable")),
-        )
-        .await;
+    assert_eq!(resp.status(), 200);
+    let recorded: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(recorded["disclosure"]["report"], report);
     assert_eq!(
-        resp.status(),
-        422,
-        "a justification on a donation explains nothing"
+        recorded["lintFindings"],
+        serde_json::json!([]),
+        "the fixture is a well-formed disclosure"
     );
 
-    // The two valid shapes are accepted.
+    // A year nobody recorded is a 404, not an empty disclosure.
+    let resp = client.get("/api/v1/unsold-goods/2026-01-01").await;
+    assert_eq!(resp.status(), 404);
+
+    report["measuresPlanned"] =
+        serde_json::json!("Extending the donation offer window to sixteen weeks.");
     let resp = client
-        .post_json(
-            "/api/v1/unsold-goods",
-            line("exemptDestruction", Some("Contaminated stock, Art. 25(5)")),
-        )
+        .put_json("/api/v1/unsold-goods/2027-01-01", report.clone())
         .await;
-    assert_eq!(resp.status(), 201);
+    assert_eq!(resp.status(), 200);
+
+    let resp = client.get("/api/v1/unsold-goods/2027-01-01").await;
+    assert_eq!(resp.status(), 200);
     let stored: serde_json::Value = resp.json().await.unwrap();
-    // Art. 24(1)(a) asks for the number *and* the weight. `0008` had a column
-    // for only one of them, so this is the half that had to be added.
-    assert_eq!(stored["unitCount"], 1240);
-    assert_eq!(stored["volumeKg"], 860.5);
-    // Normalised, and the operator is the node's own rather than the caller's.
-    assert_eq!(stored["countryOfDisposal"], "DE");
-    assert!(
-        stored["operatorName"].is_string(),
-        "the disclosure names the operator it is about: {stored}"
+    assert_eq!(
+        stored["report"], report,
+        "the second record replaced the first"
     );
 
-    let resp = client
-        .post_json("/api/v1/unsold-goods", line("recycling", None))
-        .await;
-    assert_eq!(resp.status(), 201);
-
-    // Both come back, and the period filter narrows rather than empties.
-    let resp = client
-        .get("/api/v1/unsold-goods?reportingPeriod=2026")
-        .await;
+    let resp = client.get("/api/v1/unsold-goods").await;
     assert_eq!(resp.status(), 200);
-    let rows: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(rows.as_array().expect("array").len(), 2);
+    let listed: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(listed.as_array().expect("array").len(), 1);
+}
 
+/// What refuses a disclosure, and what only reports on it.
+///
+/// A path that is not a date is a `400`; a report that names a different year
+/// from its path, or does not match the `unsold-goods` JSON Schema, is a `422`
+/// and stores nothing. The plausibility checks refuse nothing: a treatment
+/// split that does not total 100 is stored and comes back as a finding.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_misfiled_or_off_schema_disclosure_is_refused_and_an_implausible_one_is_not() {
+    let pg = start_postgres().await;
+    let base_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = TestClient::new(&base_url, &token);
+
+    // A financial year is addressed by its first day, not by its number.
     let resp = client
-        .get("/api/v1/unsold-goods?reportingPeriod=2025")
+        .put_json("/api/v1/unsold-goods/2027", unsold_goods_report())
         .await;
-    assert_eq!(resp.status(), 200);
-    assert!(
-        resp.json::<serde_json::Value>()
-            .await
-            .unwrap()
-            .as_array()
-            .expect("array")
-            .is_empty(),
-        "a different year holds nothing"
-    );
+    assert_eq!(resp.status(), 400);
 
-    // A period that is not a financial year is refused rather than matching
-    // nothing — Art. 24(1) discloses a year, annually.
+    // The fixture covers 2027, so filing it under 2026 would store one year's
+    // figures as another's.
     let resp = client
-        .get("/api/v1/unsold-goods?reportingPeriod=2026-01")
+        .put_json("/api/v1/unsold-goods/2026-01-01", unsold_goods_report())
         .await;
     assert_eq!(resp.status(), 422);
+
+    // An empty table parses, and is a disclosure of nothing: the schema asks
+    // for at least one line.
+    let mut empty = unsold_goods_report();
+    empty["lines"] = serde_json::json!([]);
+    let resp = client
+        .put_json("/api/v1/unsold-goods/2027-01-01", empty)
+        .await;
+    assert_eq!(resp.status(), 422);
+
+    let resp = client.get("/api/v1/unsold-goods").await;
+    let listed: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        listed.as_array().expect("array").is_empty(),
+        "a refused disclosure stores nothing: {listed}"
+    );
+
+    let mut short = unsold_goods_report();
+    short["lines"][0]["treatment"]["disposalPct"] = serde_json::json!(1);
+    let resp = client
+        .put_json("/api/v1/unsold-goods/2027-01-01", short)
+        .await;
+    assert_eq!(resp.status(), 200, "a plausibility finding refuses nothing");
+    let recorded: serde_json::Value = resp.json().await.unwrap();
+    let codes: Vec<&str> = recorded["lintFindings"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter_map(|f| f["code"].as_str())
+        .collect();
+    assert!(
+        codes.contains(&"unsold_goods.treatment_split_does_not_total_100"),
+        "{codes:?}"
+    );
+}
+
+/// The report the dal suite stores, so both suites check one disclosure.
+fn unsold_goods_report() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../dpp-dal/tests/fixtures/unsold_goods/report.json"
+    ))
+    .expect("the fixture is JSON")
 }
 
 /// A voluntary passport is named as voluntary, and is not held to content the
