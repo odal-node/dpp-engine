@@ -5,6 +5,7 @@ description: >-
   outstanding.
 required:
   - unsealedPublished
+  - unsealedTerminal
   - pending
   - sealed
   - exhausted
@@ -12,7 +13,28 @@ required:
 properties:
   unsealedPublished:
     type: integer
-    description: Published passports carrying no seal at all. `0` is the healthy state.
+    description: >-
+      Live published passports (`active` or `suspended`) carrying no seal at
+      all. `0` is the healthy state.
+
+
+      Live only. A passport that was published unsealed and has since been
+      retired, superseded or deactivated is counted in `unsealedTerminal`, so
+      this is the number to act on without first working out which of the
+      passports behind it still matter.
+  unsealedTerminal:
+    type: integer
+    description: >-
+      Retired, superseded or deactivated passports that were published and carry
+      no seal. They still serve publicly and the obligation attached at publish,
+      so the repair sweep seals them too: this is what is left of that, and it
+      falls as the sweep works through them.
+
+
+      Unlike `unsealedPublished`, a non-zero value here is not by itself a call
+      to act: the sweep is already working through it. A count that does not
+      fall is a call to act: the seals the sweep asks for are failing, which
+      `exhausted` counts and the node's log explains.
   pending:
     type: integer
   sealed:
