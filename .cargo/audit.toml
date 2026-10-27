@@ -95,9 +95,34 @@
 # recorded:   2026-10-20
 # expires:    2027-01-18
 # release-on: As RUSTSEC-2026-0371.
+# --- RUSTSEC-2026-0387 --------------------------------------------------
+# crate:      crypto-bigint 0.5.5
+# path:       dpp-seal -> x509-verify -> p256 / p384 / p521 0.13 ->
+#             elliptic-curve 0.13 -> crypto-bigint 0.5
+# class:      reachable-but-mitigated
+# rationale:  Operations meant to be constant-time (subtraction, division,
+#             Montgomery multiplication) could branch on the values they
+#             compute, which leaks a secret integer through timing. The 0.5
+#             line has no fix: the advisory is patched from 0.7.6, and the
+#             0.7 copy in this lockfile is past it. 0.5 is reached only
+#             through `x509-verify`, whose ECDSA code checks a certificate's
+#             signature with the issuer's public key. Verification holds no
+#             secret, so a timing channel has nothing to leak. The node's own
+#             P-256 signing keys (the local development sealer and its
+#             timestamp authority) are on `p256` 0.14, a direct dependency of
+#             dpp-seal, and so on the patched crypto-bigint 0.7.
+#             THIS ENTRY IS VOID THE MOMENT ANY CODE SIGNS, DERIVES A SHARED
+#             SECRET OR GENERATES A KEY WITH THE 0.13 CURVE CRATES.
+# anchor:     crates/dpp-seal/src/cades/signature.rs::VerifyingKey
+# owner:      LKSNDRTMLKV
+# recorded:   2026-10-27
+# expires:    2027-04-27
+# release-on: `x509-verify` moves to the 0.14 curve crates, or is replaced by
+#             a verifier that does not pull crypto-bigint 0.5.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
+    "RUSTSEC-2026-0387",
 ]
