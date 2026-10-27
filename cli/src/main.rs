@@ -68,6 +68,32 @@ mod tests {
         );
     }
 
+    /// A field's `///` doc comment is its help text, so a 🚨 note written for
+    /// the next reader of the code is printed to an operator. The note on
+    /// `snapshot verify --key` was. Walks every command, so the next one fails
+    /// here rather than in front of someone.
+    #[test]
+    fn no_help_text_carries_a_note_for_maintainers() {
+        fn walk(cmd: &mut clap::Command, path: &str, leaks: &mut Vec<String>) {
+            let help = cmd.render_long_help().to_string();
+            if help.contains('🚨') {
+                leaks.push(format!("{path}:\n{help}"));
+            }
+            for sub in cmd.get_subcommands_mut() {
+                let path = format!("{path} {}", sub.get_name());
+                walk(sub, &path, leaks);
+            }
+        }
+
+        let mut leaks = Vec::new();
+        walk(&mut Cli::command(), "odal", &mut leaks);
+        assert!(
+            leaks.is_empty(),
+            "help text carries a maintainers' note:\n{}",
+            leaks.join("\n\n")
+        );
+    }
+
     #[test]
     fn tty_guard_suppressed_in_test_runner() {
         // cargo test pipes stdin — not a TTY — so the guard returns false,
