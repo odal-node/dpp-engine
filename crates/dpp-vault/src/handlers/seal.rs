@@ -728,8 +728,8 @@ pub async fn seal_repair_handler(
 
 /// Operator-wide sealing state.
 ///
-/// `unsealedPublished` is the headline and the other three are context, not the
-/// other way round. The counts describe outbox *rows*; the obligation is about
+/// `unsealedPublished` is the headline and the three row counts are context, not
+/// the other way round. The counts describe outbox *rows*; the obligation is about
 /// *passports*, and the two come apart exactly where it matters most — a crash
 /// between commit and enqueue publishes a passport that no row will ever cover,
 /// so `pending: 0, exhausted: 0` is consistent with any number of unsealed
@@ -737,8 +737,19 @@ pub async fn seal_repair_handler(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SealSummaryResponse {
-    /// Published passports carrying no seal at all. `0` is the healthy state.
+    /// Live published passports (published or suspended) carrying no seal at
+    /// all. `0` is the healthy state.
+    ///
+    /// Live only: a passport that has since been retired, superseded or
+    /// deactivated is counted in `unsealed_terminal`, so this number is the
+    /// one an operator can act on without first working out which of the
+    /// passports behind it still matter.
     pub unsealed_published: i64,
+    /// Retired, superseded or deactivated passports that were published and
+    /// carry no seal. They still serve publicly and the obligation attached at
+    /// publish, so the repair sweep seals them too; this is what is left of
+    /// that, and `0` once it has been through them.
+    pub unsealed_terminal: i64,
     /// Rows awaiting a sealing attempt.
     pub pending: i64,
     /// Rows whose seal is on the passport.
@@ -816,6 +827,7 @@ pub async fn seal_summary_handler(
             StatusCode::OK,
             Json(SealSummaryResponse {
                 unsealed_published: 0,
+                unsealed_terminal: 0,
                 pending: 0,
                 sealed: 0,
                 exhausted: 0,
@@ -834,7 +846,7 @@ pub async fn seal_summary_handler(
         Ok(c) => c,
         Err(e) => return internal_error(e),
     };
-    let unsealed_published = match outbox.unsealed_published_count().await {
+    let unsealed = match outbox.unsealed_published_counts().await {
         Ok(n) => n,
         Err(e) => return internal_error(e),
     };
@@ -842,7 +854,8 @@ pub async fn seal_summary_handler(
     (
         StatusCode::OK,
         Json(SealSummaryResponse {
-            unsealed_published,
+            unsealed_published: unsealed.live,
+            unsealed_terminal: unsealed.terminal,
             pending: counts.pending,
             sealed: counts.sealed,
             exhausted: counts.exhausted,
