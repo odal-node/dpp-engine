@@ -501,6 +501,7 @@ unprotected one. Read the table in the code.
 | GET | `/identity/health` | None | Identity health |
 | GET | `/identity/ready` | None | Identity ready |
 | GET | `/identity/.well-known/did.json` | None | DID document |
+| GET | `/.well-known/did.json` | None | The same DID document, at the path the did:web method resolves the node's pathless DID to |
 | GET | `/integrator/health` | None | Integrator health |
 | GET | `/integrator/api/v1/templates/{productGroup}` | None | CSV template download |
 | POST | `/integrator/api/v1/import/{productGroup}` | Bearer (forwarded) | File upload import |
