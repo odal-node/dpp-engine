@@ -7,7 +7,7 @@
 //! this names one and cannot create it. They share the transition and nothing
 //! else, and the shared part lives in one place — `supersede_predecessor`.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use dpp_common::{event, event_codes};
 use dpp_domain::{
     error::DppError,
@@ -18,7 +18,7 @@ use dpp_types::{
     audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
 };
 
-use super::{PassportService, retention_years_for};
+use super::{PassportService, retention_deadline, retention_years_for};
 
 impl PassportService {
     /// Suspend a published passport.
@@ -190,9 +190,9 @@ impl PassportService {
 
     /// Permanently retire a passport after retention expiry.
     ///
-    /// Blocked by the ESPR retention guard: if `retention_locked` is set and the
-    /// product group's minimum retention period has not yet elapsed from `published_at`,
-    /// returns `DppError::Validation`. Emits `dpp.passport.retired`.
+    /// Blocked by the ESPR retention guard: if `retention_locked` is set and
+    /// `retirement_deadline` has not passed, returns `DppError::Validation`.
+    /// Emits `dpp.passport.retired`.
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
     pub async fn retire(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
         let passport = self.find_by_id(id).await?;
@@ -211,10 +211,11 @@ impl PassportService {
         if passport.retention_locked
             && let Some(published_at) = passport.published_at
         {
-            // Same resolver publish uses, so the guard and the sealed deadline
-            // agree by construction.
-            let retention_years = i64::from(retention_years_for(&passport.product_group));
-            let retention_end = published_at + chrono::Duration::days(365 * retention_years);
+            let retention_end = retirement_deadline(
+                passport.retention_until,
+                published_at,
+                retention_years_for(&passport.product_group),
+            );
             if Utc::now() < retention_end {
                 tracing::warn!(
                     code = event_codes::RETENTION_BLOCKED,
@@ -274,5 +275,70 @@ impl PassportService {
         self.enqueue_snapshot_reconcile(updated.id).await;
 
         Ok(updated)
+    }
+}
+
+/// The deadline `retire` enforces: the later of the one sealed into the
+/// passport at publish (`retention_until`) and the one the product group's
+/// current period gives from `published_at`.
+///
+/// The two agree until the catalog changes a product group's period in a later
+/// `dpp-core`. Then neither alone is right. The sealed one is the obligation
+/// recorded when the passport was published, and a shorter period later must
+/// not cut it short. The current one is what the law asks of the product group
+/// now, and a longer period applies to passports already published. A passport
+/// published before `retention_until` existed carries none and gets the
+/// current period.
+fn retirement_deadline(
+    sealed: Option<DateTime<Utc>>,
+    published_at: DateTime<Utc>,
+    current_years: u32,
+) -> DateTime<Utc> {
+    let current = retention_deadline(published_at, current_years);
+    sealed.map_or(current, |sealed| sealed.max(current))
+}
+
+#[cfg(test)]
+mod retirement_deadline_tests {
+    use chrono::{DateTime, TimeZone, Utc};
+
+    use super::retirement_deadline;
+    use crate::domain::service::retention_deadline;
+
+    fn published() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 3, 1, 9, 30, 0).unwrap()
+    }
+
+    #[test]
+    fn a_period_that_shortens_does_not_shorten_the_guard() {
+        // Published under a 15-year period; the catalog now says 10.
+        let sealed = retention_deadline(published(), 15);
+        assert_eq!(retirement_deadline(Some(sealed), published(), 10), sealed);
+    }
+
+    #[test]
+    fn a_period_that_lengthens_lengthens_the_guard() {
+        // Published under a 10-year period; the catalog now says 15.
+        let sealed = retention_deadline(published(), 10);
+        assert_eq!(
+            retirement_deadline(Some(sealed), published(), 15),
+            retention_deadline(published(), 15)
+        );
+    }
+
+    #[test]
+    fn a_stricter_deadline_set_before_publish_holds() {
+        // An operator may seal a longer deadline than the catalog's before
+        // publishing, for a delegated act stricter than the catalog knows.
+        let sealed = Utc.with_ymd_and_hms(2050, 1, 1, 0, 0, 0).unwrap();
+        assert_eq!(retirement_deadline(Some(sealed), published(), 10), sealed);
+    }
+
+    #[test]
+    fn a_passport_without_a_sealed_deadline_gets_the_current_period() {
+        assert_eq!(
+            retirement_deadline(None, published(), 10),
+            retention_deadline(published(), 10)
+        );
     }
 }
