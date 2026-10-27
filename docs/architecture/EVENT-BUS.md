@@ -1,65 +1,106 @@
-# Event Bus Architecture
+# Event bus
 
-This document covers the platform event bus: the trait, the versioned envelope, NATS JetStream integration, and the fire-after-commit guarantee.
+The node publishes a versioned event for each passport and import change. With
+`NATS_URL` set, events go to a NATS JetStream stream; without it, they are discarded.
+Events are notifications: the database is the source of truth.
 
----
+## Subscribing
 
-## 1. Design Decisions
-
-- **Trait location**: `dpp-common` (infrastructure behaviour), not `dpp-types` (pure data). The event bus is behaviour, not a domain type. `dpp-types` stays data-only.
-- **Fire-and-forget**: Callers emit events after the DB commit succeeds. If publish fails, the error is logged but the mutation is NOT rolled back. The database is the source of truth; events are notifications.
-- **NoOp fallback**: When `NATS_URL` is not configured, `NoOpEventBus` is injected. Self-hosted single-node deployments work without NATS.
-
----
-
-## 2. Event Envelope
-
-Every event uses the `DppEvent` versioned envelope:
-
-```rust
-pub struct DppEvent {
-    pub version: u32,           // Envelope schema version (starts at 1)
-    pub event_id: Uuid,         // UUIDv7 (time-ordered)
-    pub event_type: String,     // NATS subject, e.g. "dpp.passport.published"
-    pub timestamp: DateTime<Utc>,
-    pub operator_id: String,    // Owning operator
-    pub data: serde_json::Value, // Event-specific payload
-}
+```bash
+nats sub 'dpp.>'                 # every event
+nats sub 'dpp.passport.>'        # passport events only
 ```
 
-JSON serialisation uses `#[serde(rename_all = "camelCase")]`:
+The node creates the stream on start-up if it does not exist:
+
+| Setting | Value |
+|---|---|
+| Stream | `DPP_EVENTS` |
+| Subjects | `dpp.>` |
+| Storage | File (survives a NATS restart) |
+| Retention | Limits policy, 7-day maximum age |
+
+For delivery to an HTTP endpoint instead, use signed webhooks
+([WEBHOOKS.md](../guides/WEBHOOKS.md)). They carry the same events.
+
+## Subjects
+
+| Subject | Published when |
+|---|---|
+| `dpp.passport.created` | A draft is created |
+| `dpp.passport.updated` | A draft is updated |
+| `dpp.passport.published` | A draft is signed and published (status `active`) |
+| `dpp.passport.suspended` | A published passport is suspended |
+| `dpp.passport.superseded` | `amend` replaces a passport with a corrected successor. The payload carries `successorId`. The `supersede` route, which links an existing successor, publishes no event |
+| `dpp.passport.retired` | A passport is retired (terminal) |
+| `dpp.passport.deactivated` | End of life is declared (terminal) |
+| `dpp.passport.transferred` | A transfer of responsibility is initiated, accepted, rejected or cancelled. The payload's `phase` says which |
+
+`dpp_common::event::subjects` also defines `dpp.passport.failed`,
+`dpp.import.completed` and `dpp.import.failed`. Nothing publishes them yet.
+
+The constants in `dpp_common::event::subjects` are the authoritative list.
+`just subjects-check` fails the build when a service crate writes a subject as a
+string literal instead of using them.
+
+## Envelope
+
+Every event is a `DppEvent`, serialised with camelCase keys:
 
 ```json
 {
   "version": 1,
-  "eventId": "01964f3a-...",
+  "eventId": "0196f3a2-7c1e-7b3a-9f10-2d4e6c8a0b12",
   "eventType": "dpp.passport.published",
   "timestamp": "2026-05-27T14:30:00Z",
   "operatorId": "self_hosted",
-  "data": { "passportId": "...", "status": "active" }
+  "data": { "passportId": "…", "status": "active" }
 }
 ```
 
----
-
-## 3. Well-Known Subjects
-
-| Subject | When Emitted |
+| Field | Meaning |
 |---|---|
-| `dpp.passport.created` | New passport created (draft) |
-| `dpp.passport.updated` | Draft passport fields updated |
-| `dpp.passport.published` | Passport signed and published (draft -> active) |
-| `dpp.passport.suspended` | Active passport suspended |
-| `dpp.passport.retired` | Passport retired (irreversible) |
-| `dpp.passport.failed` | Passport operation failed |
-| `dpp.import.completed` | Bulk import job completed |
-| `dpp.import.failed` | Bulk import job failed |
+| `version` | Envelope and payload version. It increases when the `data` shape changes |
+| `eventId` | UUID v7, so ids sort by time |
+| `eventType` | The subject |
+| `operatorId` | The node's constant operator identity |
+| `data` | Subject-specific payload |
 
-All subjects follow the pattern `dpp.{resource}.{action}`, compatible with NATS subject wildcards (`dpp.>` for all events, `dpp.passport.>` for passport events only).
+## Delivery guarantees
 
----
+```mermaid
+sequenceDiagram
+    participant S as PassportService
+    participant P as PostgreSQL
+    participant B as EventBus (NATS or no-op)
+    participant W as webhook_delivery outbox
+    S->>P: commit the change
+    S->>B: publish event (errors logged at WARN, not returned)
+    S->>W: queue webhook deliveries (errors logged, not returned)
+```
 
-## 4. EventBus Trait
+- **No event without a commit.** Events are published after the database commit, so
+  a failed write never produces one.
+- **An event can be lost.** If NATS is down, or the process stops between commit and
+  publish, the event is not sent and is not retried. The operation itself has
+  succeeded.
+- **An event can arrive more than once.** JetStream consumers can be redelivered a
+  message.
+- **No ordering across subjects.**
+
+Obligations that must not be lost, such as EU registry registration, do not rely on
+the event bus: they are written to an outbox inside the database transaction
+([DESIGN-PATTERNS.md](DESIGN-PATTERNS.md#4-outboxes)).
+
+## Consumer guidelines
+
+1. Make handlers idempotent, keyed on `eventId`.
+2. Branch on `version` when you depend on the shape of `data`.
+3. Treat an event as a prompt to read current state from the API, not as the state.
+4. Do not depend on receiving every event; reconcile periodically if you need a
+   complete picture.
+
+## The trait
 
 ```rust
 #[async_trait]
@@ -68,63 +109,18 @@ pub trait EventBus: Send + Sync {
 }
 ```
 
-### Implementations
+| Implementation | Location | Behaviour |
+|---|---|---|
+| `NoOpEventBus` | `dpp-common` | Logs the event at `DEBUG` and discards it. Used when `NATS_URL` is unset |
+| `NatsEventBus` | `dpp-node/src/infra/nats_event_bus.rs` | Publishes to JetStream. The node fails to start if `NATS_URL` is set and unreachable |
 
-**NoOpEventBus** — Logs the event at DEBUG level and discards it. Default when `NATS_URL` is absent.
+The trait lives in `dpp-common` because publishing is behaviour; `dpp-types` holds
+data only.
 
-**NatsEventBus** — Publishes to NATS JetStream:
-- Stream: `DPP_EVENTS`
-- Subject pattern: `dpp.>`
-- Retention: 7-day message TTL
-- Storage: File-based (survives NATS restart)
-- Location: `dpp-node/src/infra/nats_event_bus.rs`
+## Adding an event
 
----
+1. Add a constant to `dpp_common::event::subjects`.
+2. Emit it from the service method with `self.emit(subjects::YOUR_SUBJECT, data)`.
+3. Add it to the table above and to the webhook event list.
 
-## 5. Fire-After-Commit Flow
-
-```
-PassportService::publish()
-    |
-    +-- 1. Validate passport state
-    +-- 2. Sign with Ed25519 via IdentityPort
-    +-- 3. Update passport in PostgreSQL (retention_locked = true)
-    |       (registry registration is written to the registry_sync outbox in the same transaction)
-    +-- 4. Emit event:
-            DppEvent::v1("dpp.passport.published", operator_id, data)
-    +-- 5. Return published passport to handler
-```
-
-If step 3 fails (DB error), step 4 never runs — no phantom events.
-If step 4 fails (NATS down), the error is logged at WARN and the function returns the published passport. The consumer sees the event eventually (when NATS recovers) or misses it (acceptable — DB is the source of truth).
-
----
-
-## 6. Consumer Guidelines
-
-Consumers of the event bus should follow these rules:
-
-1. **Be idempotent** — The same event may be delivered more than once (at-least-once delivery via JetStream).
-2. **Use the version field** — When the event payload shape changes, the version increments. Handle both versions during migration.
-3. **Don't rely on ordering** — Events are published per-subject. Cross-subject ordering is not guaranteed.
-4. **Don't use events as the source of truth** — Always read from the database for the canonical state. Events are notifications, not commands.
-
----
-
-## 7. Adding a New Event
-
-1. Add a constant to `dpp-common/src/event.rs::subjects`:
-
-```rust
-pub const PASSPORT_RECALLED: &str = "dpp.passport.recalled";
-```
-
-2. Emit it from the appropriate service method:
-
-```rust
-self.emit(subjects::PASSPORT_RECALLED, &auth.operator_id, &passport);
-```
-
-3. Update this document's subject table.
-
-No NATS configuration changes needed — the `dpp.>` wildcard subject captures all new subjects automatically.
+The `dpp.>` stream subject already covers any new subject; no NATS change is needed.

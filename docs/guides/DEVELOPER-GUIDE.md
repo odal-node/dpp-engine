@@ -1,259 +1,205 @@
-# Developer Guide — dpp-engine
+# Developer guide
 
-Everything you need to understand, run, test, and extend the Odal Node platform —
-in one place. If you read only one doc, read this.
+How to build, run, test and extend `dpp-engine`. Git workflow and pull request rules
+are in [CONTRIBUTING.md](../../CONTRIBUTING.md) and
+[GIT-STRATEGY.md](../governance/GIT-STRATEGY.md). Every command below is a
+[`justfile`](../../justfile) recipe; `just --list` shows them all.
 
-> **Commands live in the [`justfile`](../../justfile).** Run `just --list` for the
-> full menu; this guide shows the common ones and explains the *why*. Git workflow,
-> branching, and PR rules live in [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md)
-> and [CONTRIBUTING.md](../../CONTRIBUTING.md).
+## Prerequisites
 
----
+| Tool | Why |
+|---|---|
+| Rust 1.96.0 | Pinned by `rust-toolchain.toml`; `rustup` installs it on first build |
+| Docker with Compose v2 | PostgreSQL, Redis and NATS for running the node and for the integration tests |
+| [`just`](https://github.com/casey/just) | Command runner |
+| `cargo-nextest`, `cargo-audit` | Test runner and dependency audit used by `just check` |
+| Node.js | Only for `just openapi-*`, which run `@redocly/cli` through `npx` |
 
-## 1. What this is
+## Run the node from source
 
-Odal Node issues **EU Digital Product Passports**. It is two repos:
-
-- **`dpp-core`** (Apache-2.0) — the standard in code: domain types, crypto/JWS,
-  GS1, schemas, the `dpp-calc` calculators, and the **port traits** that define
-  the platform boundary. Stateless; compiles with zero infrastructure.
-- **`dpp-engine`** (this repo, BSL-1.1) — the deployable product: HTTP services,
-  PostgreSQL persistence (single-tenant, no RLS), auth, event bus, the Wasm
-  plugin host, the `odal` CLI.
-
-**The Golden Rule:** code that changes because an *EU regulation* changed belongs
-in `dpp-core`; code that changes because of *how the system is deployed, run, or
-operated* belongs here.
-
-## 2. Prerequisites
-
-- **Rust** — stable toolchain (pinned by `rust-toolchain.toml`; MSRV is
-  `rust-version` in the root `Cargo.toml`).
-- **Docker** + **Docker Compose** — PostgreSQL (and optionally NATS, Redis) for
-  running the node and the integration tests.
-- **just** — command runner (`cargo install just`). `just --list` shows everything.
-- **cargo-nextest** — test runner (`cargo install cargo-nextest`).
-- **cargo-audit** — dependency vulnerability scanning (`cargo install cargo-audit`).
-
-## 3. The shape of the platform
-
-The MVP ships as **one binary, `dpp-node`**, fusing three services on one port
-(8001) under sub-path routing, plus a separately-deployed resolver (8003):
-
-```
-dpp-node (:8001)
-  /vault/*       passport write engine (create, version, sign, audit)
-  /identity/*    did:web identity (DID document, in-process signing)
-  /integrator/*  CSV/XLSX bulk import (async jobs)
-  └── dpp-plugin-host (wasmtime)   product group compliance plugins
-  └── dpp-dal (PostgreSQL/sqlx)    persistence, implements core port traits
-dpp-resolver (:8003)   public QR/Digital-Link resolver (standalone, JWS-verifying)
+```bash
+just infra                 # PostgreSQL :5432, Redis :6379, NATS :4222 in Docker
+cp .env.example .env       # set KEY_STORE_PASSPHRASE; uncomment ADMIN_USERNAME / ADMIN_PASSWORD
+just node                  # cargo run -p dpp-node, on :8001; applies migrations at start-up
 ```
 
-**Crates** (9 + cli): `dpp-types` (platform data: operator/auth/audit/keys),
-`dpp-dal`, `dpp-vault`, `dpp-identity`, `dpp-resolver`, `dpp-integrator`,
-`dpp-common` (event bus trait, telemetry, RFC 9457), `dpp-plugin-host`,
-`dpp-node` (the assembly), `cli`.
+Then drive it with the CLI from source:
 
-**Dependency direction is one-way:** platform → core. Core has zero knowledge of
-the platform. Persistence is a set of **port-trait implementations** in `dpp-dal`
-(`PassportRepository`, `IdentityPort`, etc., defined in `dpp-core::dpp-domain`).
-
-## 4. Run it locally
-
-```sh
-just infra            # PostgreSQL :5432, Redis :6379, NATS :4222 (Docker)
-cp .env.example .env  # then edit ADMIN_PASSWORD, KEY_STORE_PASSPHRASE, …
-just node             # node on :8001 — auto-applies migrations on boot
-```
-
-Drive it with the `odal` CLI (full reference: [cli/README.md](../../cli/README.md)):
-
-```sh
-just cli -- bootstrap                                       # operator + first API key
-just cli -- passport import ops/demo/datasets/09-battery-valid.csv
+```bash
+set -a; . ./.env; set +a
+just cli -- bootstrap --legal-name "Example GmbH" --country DE \
+  --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
+just cli -- passport import ops/demo/datasets/01-textile-small-valid.csv
 just cli -- passport validate
 just cli -- passport publish
 ```
 
-The build itself needs no infrastructure (`just build` / `cargo build --workspace`
-compiles with no live connection); only *running* the node needs the database.
+`just resolver` runs the resolver on :8003. To run everything in containers instead,
+use `odal up` as in the [README quick start](../../README.md#quick-start), or
+`just up`. `just up-local` builds the images against a sibling `../dpp-core` checkout.
 
-## 5. Environment variables
+Building needs no running infrastructure; only running the node and the integration
+tests do.
 
-`.env.example` is the source of truth — copy it to `.env`. The essentials:
+## Layout
 
-**Required**
+```text
+dpp-node (:8001)
+├── /vault/*        dpp-vault       passport lifecycle, audit, keys, webhooks, evidence, seals
+├── /identity/*     dpp-identity    did:web document (signing is in-process)
+├── /integrator/*   dpp-integrator  CSV/XLSX import
+├── dpp-plugin-host                 wasmtime sandbox for product group plugins
+└── dpp-dal                         PostgreSQL repositories, migrations
+dpp-resolver (:8003)                public GS1 Digital Link resolver
+cli/ (odal)                         operator CLI, over the HTTP API
+```
+
+The crate list and what each one does is in the
+[README](../../README.md#crates); `[workspace] members` in `Cargo.toml` is
+authoritative. Dependencies point one way: the engine depends on `dpp-core`, never
+the reverse.
+
+**Where code belongs.** If it changes because a regulation changed, it goes in
+`dpp-core`. If it changes because of how the node is deployed, stored or operated, it
+stays here. Tenant, audit, API-key and auth concerns never go into `dpp-core`.
+
+### Building against a local `dpp-core`
+
+The workspace pins `dpp-core` crates from crates.io. To build against a sibling
+checkout:
+
+```bash
+just core-local        # writes .cargo/config.toml with a [patch.crates-io] override
+just core-published    # removes it again
+```
+
+`.cargo/config.toml` is git-ignored, so CI always builds against the published
+crates.
+
+## Configuration
+
+[`.env.example`](../../.env.example) is the reference: every variable, grouped by
+binary, with its default and its reasoning. The ones you need to run the node:
 
 | Variable | Example | Notes |
 |---|---|---|
-| `DATABASE_URL` | `postgres://odal_app:pass@localhost:5432/odal` | App role — no DDL. Single-tenant: no RLS. |
+| `DATABASE_URL` | `postgres://odal_app:…@localhost:5432/odal` | Application role: no DDL, no row-level security |
+| `DATABASE_MIGRATE_URL` | `postgres://postgres:…@localhost:5432/odal` | Optional. When set, migrations run at start-up |
 | `KEY_STORE_PATH` | `./dev-keystore.enc` | Encrypted Ed25519 key store |
-| `KEY_STORE_PASSPHRASE` | `dev-passphrase` | Key store passphrase |
-| `DID_WEB_BASE_URL` | `http://localhost:8001` | Base URL for did:web resolution |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / … | Local admin auth — lets `odal bootstrap` mint the first API key |
+| `KEY_STORE_PASSPHRASE` | output of `openssl rand -base64 32` | Never reuse a template value |
+| `DID_WEB_BASE_URL` | `http://localhost:8001` | Origin of the `did:web` identifier |
+| `RESOLVER_BASE_URL` | `http://localhost:8003` | Origin printed into QR codes. Required; no default |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | | Local admin credential for `odal bootstrap`. Leave unset once a key exists if you do not want the path |
+| `NODE_PROFILE` | `development` (default) | `sandbox` refuses to start while a required trust adapter is a stub; `production` also refuses sandbox adapters |
+| `LOG_LEVEL` | `info` | A `tracing` filter, so `dpp_vault=debug,info` also works |
+| `LOG_FORMAT` | unset | `pretty` for readable terminal output; JSON otherwise |
 
-**Optional**
+The node refuses to start on the placeholder admin credentials that older example
+files shipped, under any profile.
 
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_MIGRATE_URL` | *(none)* | Privileged role; if set, the node runs migrations at boot. Omit to pre-apply externally. |
-| `NODE_PORT` | `8001` | Node listen port (`PORT` is a legacy fallback) |
-| `LOG_LEVEL` / `LOG_FORMAT` | `info` / json | `LOG_FORMAT=pretty` for human-readable local logs |
-| `NATS_URL` | *(none)* | NATS JetStream URL. Omit → NoOp event bus |
-| `CORS_ALLOWED_ORIGINS` | *(none)* | Comma-separated origin list |
-| `BATCH_CONCURRENCY` | `20` | Concurrent rows during bulk import |
-| `PLUGINS_DIR` | `./plugins` | `.wasm` product group plugins; empty/missing → passthrough compliance |
-| `METRICS_ADDR` | `127.0.0.1:9100` | Private Prometheus listener — **off** the public API port (set empty to disable) |
+## Test
 
-## 6. Test it
-
-Commands are justfile recipes — `just --list` for all of them:
-
-```sh
-just test              # unit / CLI / resolver — no Docker
-just test-integration  # testcontainers tiers (dal, vault, plugin-host, node) — needs Docker
-just test-pg           # the pg_integration T1–T7 lane
-just check             # local gate: fmt-check → lint → debug-check → test → audit
-just ci                # check + integration-feature clippy + the Docker tiers
+```bash
+just test               # unit tests, no Docker
+just check              # the CI gate: fmt, clippy (integration features included), guard scripts, unit tests, audit
+just test-integration   # the Docker-backed tiers (dal, vault, plugin host, node)
+just test-pg            # only the dpp-dal PostgreSQL lane
+just ci                 # check + the Docker tiers
+just test-changed       # tests for the crates your branch touched
 ```
 
-| Tier | Docker? | What it covers |
+| Tier | Needs Docker | Covers |
 |---|---|---|
-| Unit (`just test`) | No | Route mounting, health, auth middleware, config parsing, validators, resolver e2e |
-| Integration (`just test-integration`) | Yes | Full DPP lifecycle through the assembled node, single-tenant persistence — against real `postgres:17` / `nats` containers via `testcontainers` |
+| Unit (`just test`) | No | Route mounting, health, auth middleware, config parsing, validators, the resolver end to end with test doubles |
+| Integration (`just test-integration`) | Yes | The full passport lifecycle through the assembled node against real `postgres:17` and NATS containers |
 
-**Discipline that matters:** a feature is not done until a test exercises it
-against the running surface, and CI fails if that test is absent.
+Things to know:
 
-> ⚠️ The feature-gated integration tests (`#![cfg(feature = "integration-tests")]`)
-> are type-checked and linted by `just check` (`just lint` turns their features
-> on), but **not run** by it: they need Docker. A change to a string, a status
-> code or an error message that one of them pins fails only when it runs, so run
-> `just test-integration`, or the one suite
-> (`cargo nextest run -p <crate> --features integration-tests --test <name>`),
-> before trusting "green."
+- **`just check` compiles and lints the integration suites but does not run them.**
+  A change to a status code or message that an integration test pins fails only when
+  the suite runs. Run `just test-integration`, or one suite with
+  `cargo nextest run -p <crate> --features integration-tests --test <name>`.
+- **One shared PostgreSQL harness.** Integration suites use `dpp-dal`'s
+  `test-harness` feature (`start_pg` and friends). `just harness-check` fails on a
+  second copy.
+- **Answer behaviour questions with a committed test**, named for the fact it pins
+  (`a_bad_check_digit_is_refused_while_the_body_is_parsed`), and watch it fail
+  once before trusting it.
+- **Documenting an error code in `api/paths/` means writing the test that produces
+  it** when the code is ambiguous (for example `404` versus `422`).
+- **Test key stores use `tempfile::tempdir()`**, never `std::env::temp_dir()`: they
+  hold private keys.
 
-## 7. Data model & migrations
+## Migrations
 
-- **Schema** in `ops/pg/0001_extensions_roles_schemas.sql` through
-  `0012_registry_identity_grants.sql` — a clean, FK-ordered set (extensions/roles → operator →
-  api_key → passport → audit → registry_sync → import_job → unsold_goods →
-  identity → grants → public-JWS-mutable → registry/identity grants). Applied via `PgDal::migrate(url)` at boot if
-  `DATABASE_MIGRATE_URL` is set, or pre-applied by ops tooling. Schema only.
-- The **bootstrap seed** (operator config, first API key) is **not** a migration —
-  it is applied through `odal bootstrap` over the node API. Never a hand-run script.
-- **Never edit an already-applied migration.** sqlx records each migration's
-  checksum; changing an applied file trips the checksum guard on the next boot.
-  Add a new numbered file instead. (In dev, `just reset-db` clears it — see
-  Troubleshooting.)
+Migrations are `ops/pg/NNNN_*.sql`, applied by `sqlx::migrate!`. Add a new numbered
+file; never edit or renumber an existing one, because sqlx stores each file's
+checksum and a node with a mismatched checksum refuses to start.
+`just migrations-check` enforces this, and `just grants-check` checks the `DELETE`
+grants against [`ops/pg/README.md`](../../ops/pg/README.md). In development,
+`just reset-db` drops the database volume and re-applies everything.
 
-## 8. Auth
+[DATA-MODEL.md](../architecture/DATA-MODEL.md) explains the schema.
 
-The node's `CompositeAuthProvider` chains two providers:
+## Authentication
 
-1. **API key** — `Authorization: Bearer odal_sk_…` (SHA-256 hash compare).
-2. **Local admin** — `Authorization: Bearer base64(user:pass)` against
-   `ADMIN_USERNAME`/`ADMIN_PASSWORD`. The CLI's `bootstrap` uses this to mint the
-   **first** key before any key exists. (The middleware only reads a `Bearer `
-   scheme — plain HTTP `Basic` is rejected.)
+| Header | Provider |
+|---|---|
+| `Authorization: Bearer odal_sk_…` | API key: SHA-256 hash lookup, scope `read`, `write` or `admin` |
+| `Authorization: Basic base64(user:pass)` | Local admin from `ADMIN_USERNAME` / `ADMIN_PASSWORD`, used by `odal bootstrap` before any key exists |
 
-Internal signing/key-rotation routes are **not mounted** on the public port
-(red-team ATK-1 fix): the node signs **in-process** via a shared `KeyStore`.
+The middleware routes by scheme, so a `Bearer` token is never checked against the
+local admin credential. The node signs in-process and exposes no signing endpoint.
+Details: [AUTH.md](../architecture/AUTH.md).
 
-## 9. Observability
+## Observability
 
-### Logging
+- **Logs:** `tracing`, JSON by default, `LOG_FORMAT=pretty` for terminals.
+- **Metrics:** Prometheus on a private listener, `METRICS_ADDR` (default
+  `127.0.0.1:9100` for the node, `127.0.0.1:9101` for the resolver), not on the API
+  port.
 
-Set the log level via `LOG_LEVEL` (or `RUST_LOG` for per-crate filters):
-
-```sh
-LOG_LEVEL=info                       # production default — INFO+, JSON format
-LOG_FORMAT=pretty just node          # human-readable terminal output for local dev
-RUST_LOG=dpp_vault=debug,info just node   # per-crate granularity
+```bash
+curl -s http://127.0.0.1:9100/metrics | head
 ```
 
-Unset `LOG_FORMAT` (or any value other than `pretty`) → structured JSON, the
-production default that Loki/Grafana expect.
+[METRICS-PLAN.md](../ops/METRICS-PLAN.md) lists every series and the suggested
+alerts. There is no OpenTelemetry export.
 
-### Metrics
+## Extending the engine
 
-The node exposes Prometheus metrics on a **private loopback listener**
-(`METRICS_ADDR`, default `127.0.0.1:9100`) — deliberately **not** on the public
-API port (red-team RT2-7), so operational telemetry isn't exposed to anyone who
-can reach the API:
+- **A CLI command:** add `cli/src/commands/<name>.rs` with a `run_<name>`, register
+  it in `commands/mod.rs`, add the clap variant in `cli_args.rs` and the arm in
+  `dispatch.rs`. Talk to the node through `OdalClient`; the CLI never touches the
+  database.
+- **A route:** add the handler in the owning crate, then the path file under
+  `api/paths/<service>/` and any schemas. `openapi_contract.rs` fails until the route
+  and its types are documented. See [`api/README.md`](../../api/README.md).
+- **A product group:** schemas, data model and validation go in `dpp-core`
+  (`dpp-domain`), and optionally a Wasm plugin. The engine picks it up from the
+  catalog; the passport graph is not parameterised per product group.
+- **A calculation:** EU methodology belongs in `dpp-core`'s `dpp-calc`.
+- **An event:** add the subject to `dpp_common::event::subjects`
+  ([EVENT-BUS.md](../architecture/EVENT-BUS.md)).
 
-```sh
-curl http://127.0.0.1:9100/metrics
-```
+## Conventions
 
-Phase-0 golden set — every series that has an alert rule attached:
+- **Serde:** camelCase on the wire and in `doc` JSON. The `identity` schema's tables
+  are the snake_case exception.
+- **Errors:** every HTTP error is an RFC 9457 `Problem` from `dpp-common`. Propagate
+  errors; a write that can fail must surface the failure to its caller.
+- **Identifiers:** UUID v7 (`Uuid::now_v7()`) for anything that is an identifier.
+- **Single operator:** each node serves one operator (`STANDALONE_OPERATOR_ID` is
+  `self_hosted`). Isolation between operators is a deployment boundary.
+- **Style:** rustfmt defaults, `thiserror` in libraries and `anyhow` in binaries, no
+  `unwrap` or `expect` in library code paths, `tracing` instead of `println!` in
+  service crates (`just debug-check`).
 
-| Series | Labels | Alert trigger |
-|---|---|---|
-| `http_requests_total` | `route`, `method`, `status` | 5xx rate > 1% over 10 min |
-| `http_request_duration_seconds` | `route`, `method` | — |
-| `passport_publish_total` | `outcome` (success/error) | — |
-| `signing_failures_total` | — | Any increment in 5 min → page |
-| `jws_verify_total` | `outcome` (ok/tampered/disabled) | Tampered spike → page |
-| `plugin_invocations_total` | `product group`, `outcome` | — |
-| `plugin_fuel_exhausted_total` | `product group` | Any increment → review |
-| `db_ping_duration_seconds` | — | `/ready` failing 3× → page |
-| `cache_requests_total` | `result` | — |
+## Troubleshooting
 
-`registry_queue_depth` is deferred to H1 (registry adapter not yet wired).
-
-## 10. Extending the platform
-
-- **Add a CLI command:** create `cli/src/commands/<name>.rs` exposing
-  `run_<name>`, register it in `commands/mod.rs`, add the variant + match arm in
-  `main.rs`. Talk to the node via `OdalClient` (`get`/`post_json`/`patch_json`/
-  `delete`); never hit the database directly from the CLI.
-- **Add a product group:** add `schemas/<product-group>/vX.Y.Z.json` in `dpp-core`, the
-  `ProductGroupData` variant + validation, and (optionally) a Wasm plugin. The graph
-  backbone is **product-group-agnostic** — don't parameterise it per product group.
-- **Add a calculator:** it computes EU methodology → it belongs in `dpp-core`'s
-  `dpp-calc` (Apache-2.0), not here.
-
-## 11. Conventions
-
-- **Serde:** camelCase on the wire and in DB columns (exception: the identity
-  namespace tables use snake_case — documented MVP debt).
-- **Errors:** propagate, never swallow. A logged-but-unpropagated error hid a
-  broken import-job and a fail-open JWS — both real incidents. If a write can
-  fail, the caller must see it (e.g. `bootstrap` returns 500 rather than a fake
-  job id).
-- **Single operator:** every deployment is one operator (`STANDALONE_OPERATOR_ID`
-  = `self_hosted`). No RLS — isolation is an infrastructure boundary (one node per
-  operator). Multi-operator hosting is post-release via the Control Plane.
-- **Compliance logic stays open** — all regulatory logic is Apache-2.0 in dpp-core.
-- **Git workflow** (branches, commits, PRs, tags): see
-  [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md) and
-  [CONTRIBUTING.md](../../CONTRIBUTING.md). Code style: rustfmt defaults,
-  `thiserror` in libs / `anyhow` in binaries, no `unwrap`/`expect` in library paths.
-
-## 12. Troubleshooting
-
-- **`migration N was previously applied but has been modified`** — the dev DB
-  holds a stale migration checksum. Reset it: **`just reset-db`** (drops the
-  `pg-data` volume, recreates, re-applies clean). Don't edit applied migrations.
-- **`Failed to bind … (os error 10048)` / address already in use** — a `dpp-node`
-  is already running (it holds both `:8001` and the metrics `:9100`). Find it:
-  `netstat -ano | grep -E ':8001|:9100'`; stop it: `taskkill //IM dpp-node.exe //F`
-  (Windows/git-bash) or `Ctrl+C` in its terminal.
-- **`failed to remove … dpp-node.exe (Access is denied / os error 5)`** during a
-  test build — a running node locks the binary. Stop the node first; the
-  integration tests don't need it running (they spin their own containers). To
-  keep the node up, build the tests into a separate dir:
-  `CARGO_TARGET_DIR=target-it just test-integration`.
-- **Linux-only checks on Windows** — the plugin-host fuel-limit test SEH-aborts on
-  Windows; run `just test-integration` under WSL2 (a real Linux kernel) or rely on
-  CI. The same applies to performance/metrics numbers, which must be measured on a
-  Linux box.
-
-## 13. Where to look next
-
-- [cli/README.md](../../cli/README.md) — full CLI command reference.
-- `docs/architecture/` — OVERVIEW, DATA-MODEL, AUTH, EVENT-BUS, DESIGN-PATTERNS.
-- [GIT-STRATEGY.md](../governance/GIT-STRATEGY.md), [CONTRIBUTING.md](../../CONTRIBUTING.md) — git workflow + contribution.
-- `dpp-cor
+| Symptom | Fix |
+|---|---|
+| `migration N was previously applied but has been modified` | The development database holds an old checksum. `just reset-db` |
+| `Address already in use` on 8001 or 9100 | A node is already running. Find it with `ss -ltnp \| grep -E ':8001\|:9100'` and stop it |
+| A test build fails to replace a locked `dpp-node.exe` (Windows) | Stop the running node, or build tests elsewhere: `CARGO_TARGET_DIR=target-it just test-integration` |
+| The plugin-host fuel-limit test aborts on Windows | Run the integration tiers under Linux or WSL2, or rely on CI |

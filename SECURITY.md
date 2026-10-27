@@ -1,153 +1,164 @@
-# Security Policy
+# Security policy
 
-## Reporting a Vulnerability
+## Report a vulnerability
 
-**Do NOT open a public GitHub issue for security vulnerabilities.**
+**Do not open a public issue.** Report privately through **Report a vulnerability** on this
+repository's **Security** tab, or by email to **security@odal-node.io**, with:
 
-Report vulnerabilities privately to **security@odal-node.io** with:
+1. What the vulnerability is and what it allows.
+2. Steps to reproduce, or a minimal proof of concept.
+3. The affected crates and versions.
+4. A suggested fix or mitigation, if you have one.
 
-1. A description of the vulnerability and its potential impact
-2. Steps to reproduce or a minimal proof of concept
-3. The affected crate(s) and version(s)
-4. Any suggested fix or mitigation, if you have one
+## Response times
 
-## What to Expect
+| Step | Target |
+|---|---|
+| Acknowledgement | 48 hours |
+| Initial assessment and severity | 5 business days |
+| Fix or mitigation, critical or high severity | 14 days |
+| Fix or mitigation, medium or low severity | 30 days |
+| Public disclosure | After the fix is released, coordinated with you |
 
-| Step | Timeframe |
-|------|-----------|
-| Acknowledgement of your report | Within 48 hours |
-| Initial assessment and severity classification | Within 5 business days |
-| Fix or mitigation for critical/high severity | Within 14 days |
-| Fix or mitigation for medium/low severity | Within 30 days |
-| Public disclosure (coordinated with reporter) | After fix is released |
-
-We follow coordinated vulnerability disclosure (CVD).
+We follow coordinated vulnerability disclosure.
 
 ## Scope
 
-This policy covers all crates in the dpp-engine workspace:
+This policy covers every crate in the `dpp-engine` workspace:
 
-| Crate | Security-Relevant Surface |
-|-------|---------------------------|
-| **dpp-vault** | Authentication middleware, API key hashing, passport access control |
-| **dpp-dal** | SQL query construction, input escaping, database credentials |
-| **dpp-identity** | Ed25519 key management, JWS signing endpoints |
-| **dpp-node** | Service assembly, NATS credentials, config loading |
-| **dpp-integrator** | File upload handling, CSV parsing |
-| **dpp-plugin-host** | Wasm sandbox boundaries, fuel/memory limits |
-| **dpp-types** | Auth context, API key types |
-| **dpp-common** | Event bus credentials |
+| Crate | Security-relevant surface |
+|---|---|
+| `dpp-node` | Service assembly, boot checks, configuration, NATS credentials, mTLS on internal routes |
+| `dpp-vault` | Authentication middleware, API key hashing, passport access control, evidence dossiers, webhook delivery |
+| `dpp-dal` | SQL query construction, database credentials, role grants |
+| `dpp-identity` | Ed25519 key management, JWS signing, `did:web` documents |
+| `dpp-resolver` | Public, unauthenticated request handling; signature verification before serving |
+| `dpp-render` | HTML rendering of passport content |
+| `dpp-integrator` | File upload handling, CSV and XLSX parsing |
+| `dpp-plugin-host` | Wasm sandbox boundaries, fuel and memory limits, plugin signature checks |
+| `dpp-seal` | Seal backends, CMS envelopes, EU Trusted List verification |
+| `dpp-types` | Auth context, API key types |
+| `dpp-common` | Event bus credentials, the outbound URL guard (SSRF), RFC 9457 errors |
+| `dpp-cli` (`odal`) | Local credential storage (`~/.config/odal/credentials.toml`, owner-only) |
 
-Issues in the following areas are particularly important:
+Findings that matter most:
 
-- Authentication bypass (accessing protected endpoints without valid credentials)
-- API key hash timing attacks or lookup bypasses
-- SQL injection in parameterized queries
-- Wasm sandbox escape (plugin gaining host access)
-- Private key leakage (Ed25519 keys exposed in logs, responses, or events)
-- Privilege escalation (accessing another operator's data)
+- Authentication bypass: reaching a protected endpoint without valid credentials.
+- API key hash timing attacks or lookup bypasses.
+- SQL injection.
+- Wasm sandbox escape: a plugin gaining host access.
+- Private key leakage: Ed25519 keys in logs, responses or events.
+- Privilege escalation: a read-only or write key performing admin actions.
+- Server-side request forgery through webhook targets, credential issuers or other
+  outbound calls.
 
-## Out of Scope
+## Out of scope
 
-- Issues in dpp-core (report to the same email, but the core has its own security policy)
-- Feature requests or non-security bugs (use GitHub Issues)
+- **Issues in `dpp-core`.** Report them to the same address; the core has its
+  [own policy](https://github.com/odal-node/dpp-core/blob/main/SECURITY.md).
+- **Feature requests and ordinary bugs.** Use GitHub Issues.
 
-A small number of upstream advisories are accepted risk rather than out of
-scope: the engine runs a dated, code-anchored suppression register
-(`.cargo/audit.toml`, enforced by `scripts/check-audit-register.sh`). Every
-entry states its reachability as a checked category — not in the dependency
-graph, dev- or build-time only, reachable but mitigated by a named guard, or
-reachable and accepted — plus the code fact that makes the category true, an
-owner, and an expiry date after which CI fails until it is re-verified. The
-categories are checked against both a default build and the feature set the
-published image is built with, because a claim that holds only outside the
-shipped artefact is not a claim about what operators run.
+A few upstream advisories are accepted risk rather than out of scope. The engine keeps a
+dated suppression register in `.cargo/audit.toml`, enforced by
+`scripts/check-audit-register.sh`. Every entry states its reachability as a checked
+category (not in the dependency graph; dev or build time only; reachable but mitigated by a
+named guard; reachable and accepted), the code fact that makes the category true, an owner,
+and an expiry date after which CI fails until it is re-checked. The categories are checked
+against both a default build and the feature set the published image is built with,
+because a claim that holds only outside the shipped artefact says nothing about what
+operators run.
 
-`.cargo/audit.toml` is the authoritative list, and this document deliberately
-does not restate what is in it — including how many entries there are or
-whether any is reachable. Read the file: every entry carries its own category,
-evidence and expiry date. A summary here would be a second copy of a fact whose
-home is that file, and it would go stale the first time an upstream fix lands.
+`.cargo/audit.toml` is the authoritative list. This document does not restate it,
+including how many entries there are or whether any is reachable: every entry carries its
+own category, evidence and expiry, and a summary here would go stale the first time an
+upstream fix lands. If you believe a suppressed advisory is exploitable, report it; the
+register's reachability claim may be wrong or out of date.
 
-If you believe a suppressed advisory is in fact exploitable, report it — the
-register's own reachability claim may be wrong or stale, and that is exactly
-the kind of report we want.
+## Supported versions
 
-## Supported Versions
+Only the latest tagged minor release receives security fixes. [CHANGELOG.md](CHANGELOG.md)
+names the current version.
 
-Only the latest tagged minor release receives security patches — see
-[CHANGELOG.md](CHANGELOG.md) for the current version.
+## Authentication
 
-## Authentication Security
+### API key storage
 
-### API Key Storage
+API keys are stored as SHA-256 hashes; the full key is never persisted. The first 12
+characters are kept as a prefix for an indexed lookup.
 
-API keys are stored as SHA-256 hashes. The full key is never persisted.
-The prefix (first 12 characters) enables efficient DB lookup without
-scanning all keys.
+### Credential handling
 
-### Credential Handling
+- API keys, passwords and Ed25519 private keys are never logged.
+- No development or unsigned bypass auth provider ships. Integration tests define their own
+  test-only provider; see [AUTH.md](docs/architecture/AUTH.md).
+- The local admin credential (`Authorization: Basic base64(user:pass)`) comes from the
+  `ADMIN_USERNAME` and `ADMIN_PASSWORD` environment variables, never from the database or a
+  configuration file, and is matched only for the `Basic` scheme, so a Bearer token can
+  never authenticate as local admin. With either variable unset, no Basic credential is
+  accepted. The node refuses to start on known placeholder values.
 
-- API keys, passwords, and Ed25519 private keys are never logged
-- No dev/unsigned bypass auth provider ships. Integration tests define their
-  own test-local auth stub rather than relying on a shipped bypass provider —
-  see [AUTH.md §3.4](docs/architecture/AUTH.md#34-devauthprovider--removed-phase-0--audit-finding-v0)
-- HTTP Basic auth credentials (`Authorization: Basic base64(user:pass)`) are
-  read from `ADMIN_USERNAME`/`ADMIN_PASSWORD` environment variables, not
-  from the database or configuration files, and are only ever matched
-  against the `Basic` scheme — a Bearer token can never authenticate as
-  local admin, see [AUTH.md §3.3](docs/architecture/AUTH.md#33-localauthprovider)
+### PostgreSQL access
 
-### PostgreSQL Access
+- `PgDal` uses a connection pool with the app role (`odal_app`). Its credentials come from
+  `DATABASE_URL` at startup and are never written to disk. The node refuses to start if
+  that URL connects as a superuser.
+- The app role cannot run DDL, and may `DELETE` only from the counter and queue tables
+  listed under "The DELETE set" in [`ops/pg/README.md`](ops/pg/README.md), which
+  `just grants-check` holds to the actual grants. No table holding passport, audit,
+  evidence, seal or registry data has a `DELETE` grant.
+- The node serves one operator, with no row-level security: isolation between operators is
+  an infrastructure boundary (one node per operator), not an in-process one.
+- Migration credentials (`DATABASE_MIGRATE_URL`) are used only at startup and are not kept
+  in the pool.
 
-- `PgDal` uses a connection pool with the app role (`odal_app`); credentials are
-  loaded from `DATABASE_URL` at startup and never written to disk
-- The app role cannot run DDL and cannot `DELETE` (one sanctioned exception).
-  The node is single-tenant; there is no Row-Level Security, because
-  isolation is an infrastructure boundary — one node per operator
-  — not an in-process one
-- Migration credentials (`DATABASE_MIGRATE_URL`) are used only at startup and are
-  not kept in the pool
+## Wasm plugin sandbox
 
-## Wasm Plugin Security
-
-Sector plugins run in a sandboxed Wasm environment:
+Product group plugins run in a sandboxed Wasm environment:
 
 | Capability | Status |
 |---|---|
-| Filesystem | DENIED |
-| Network | DENIED |
-| System random | DENIED |
-| Threads | DENIED (single-threaded) |
-| CPU | Capped via fuel metering (10M fuel) |
+| Filesystem | Denied |
+| Network | Denied |
+| System random | Denied |
+| Threads | Denied (single-threaded) |
+| CPU | Capped by fuel metering (10M fuel) |
 | Memory | Capped per instance (64 MiB) |
 
-Plugins communicate only via JSON over Wasm linear memory. They cannot
-access the host filesystem, network, or any other system resource.
+Plugins communicate only through JSON in Wasm linear memory. A plugin must carry a valid
+Ed25519 signature from `PLUGIN_SIGNING_KEY` to load; `ALLOW_UNSIGNED_PLUGINS=true` lifts
+that only under `NODE_PROFILE=development`, and a production or sandbox node refuses to
+start with it set.
 
-## Security Tooling
+## Security checks
 
-Enforced in CI on every push, and by `just check` before a local commit:
+In CI on every push, and in `just check` locally:
 
-- `cargo audit` plus `scripts/check-audit-register.sh` — checks dependencies
-  against the RustSec Advisory Database, and that every accepted-risk entry
-  in `.cargo/audit.toml` is current (dated, code-anchored, still reachable)
-- `just lint` (clippy, every warning an error, over every target) — catches
-  common correctness issues
-- `cargo test --workspace` (via `cargo nextest`) — runs the full test suite
+- `cargo audit` with `scripts/check-audit-register.sh`: dependencies against the RustSec
+  Advisory Database, and every accepted-risk entry in `.cargo/audit.toml` current (dated,
+  tied to code, still reachable). The advisory scan also runs daily on a schedule.
+- `just lint`: clippy, every warning an error, over every target.
+- The full test suite through `cargo nextest`, and the integration tiers in CI.
+- Guard scripts, including the outbound URL guard (`outbound-check.sh`), the XML parser
+  configuration (`no-xml-entity-resolution.sh`) and the database grants
+  (`grants-check.sh`).
 
-## Cryptographic Design
+## Cryptography
 
-dpp-engine delegates all cryptographic operations to dpp-core (`dpp-crypto`).
-The platform does not implement any custom cryptography. The only
-crypto-adjacent operation in the platform is SHA-256 hashing of API keys,
-which uses the `sha2` crate.
+Passport signing, JWS and the keystore come from `dpp-core` (`dpp-crypto`); see the
+[dpp-core security policy](https://github.com/odal-node/dpp-core/blob/main/SECURITY.md).
+The engine adds:
 
-For the full cryptographic design, see the
-[dpp-core Security Policy](https://github.com/odal-node/dpp-core/blob/main/SECURITY.md).
+| Purpose | Mechanism | Crates |
+|---|---|---|
+| API key storage | SHA-256 | `sha2` |
+| Webhook payload signatures | HMAC-SHA256 | `hmac`, `sha2` |
+| Plugin and ruleset bundle signatures | Ed25519 verification | `ed25519-dalek` |
+| Seal envelopes and certificates | CMS (CAdES), X.509 | `cms`, `x509-cert`, `der`, `rcgen` |
+| EU Trusted List signatures | XMLDSig | `xml-sec` |
 
-## Recognition
+No primitive is implemented in this repository.
 
-We credit security researchers in the CHANGELOG and release notes (unless
-you prefer to remain anonymous). We do not currently operate a bug bounty
-programme.
+## Credit
+
+Reporters are credited in the CHANGELOG and release notes unless they prefer to stay
+anonymous. There is no bug bounty.

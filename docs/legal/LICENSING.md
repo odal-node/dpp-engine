@@ -1,85 +1,66 @@
 # Licensing
 
-## dpp-engine — BSL-1.1
+`dpp-core` is an open-source Rust library under Apache-2.0: stateless, with no
+database and no network I/O. `dpp-engine` is the self-hostable node built on it, under
+the Business Source License 1.1. Running it in production for your own organisation's
+products and compliance obligations is free. Offering it to third parties as a hosted
+service, or embedding it in a competing product, needs a commercial licence.
 
-dpp-engine is licensed under the **Business Source License 1.1** (BSL-1.1).
+This page summarises the terms. The [`LICENSE`](../../LICENSE) file is authoritative.
 
-### What This Means
+## dpp-engine: Business Source License 1.1
 
-| Use Case | Permitted | Notes |
+| Use | Allowed | Basis |
 |---|---|---|
-| Reading and studying the source code | Yes | Source-available |
-| Self-hosting for your own business operations | Yes | Additional Use Grant |
-| Modifying for internal use | Yes | |
-| Offering as a hosted service to third parties | **No** | Requires a commercial license |
-| Redistributing as a competing product | **No** | Requires a commercial license |
-| Using after the Change Date | Yes (Apache-2.0) | BSL conversion clause |
+| Read, audit, copy and modify the source | Yes | BSL-1.1 base grant |
+| Non-production use: development, testing, evaluation | Yes | BSL-1.1 base grant |
+| Production use to issue, sign, store and serve passports for your own organisation's products and compliance obligations | Yes, at no charge | Additional Use Grant |
+| Offering the engine to third parties as a hosted or managed service | No, needs a commercial licence | Outside the grant |
+| Redistributing or embedding it in a competing product, where it provides a material part of the value | No, needs a commercial licence | Outside the grant |
+| Any use of a release after its Change Date | Yes, under Apache-2.0 | Change Licence |
 
-### Key Terms
+| Term | Value |
+|---|---|
+| Licensor | Aleksandar Temelkov, trading as "Odal Node" |
+| Licensed Work | Odal Node |
+| Change Date | Four years after each release |
+| Change Licence | Apache License, Version 2.0 |
 
-- **Change Date**: 4 years from each version's release date.
-- **Change License**: Apache-2.0 (the same license as dpp-core).
-- **Additional Use Grant**: Production self-hosting to issue, sign, store, and
-  serve DPPs for your own organisation's products and compliance — at no
-  charge. The grant does **not** permit offering the Licensed Work to third
-  parties as a hosted/managed service or as part of a competing product (those
-  require a commercial license). **The LICENSE file is authoritative;** this
-  table is a summary.
-- **Licensor**: Aleksandar Temelkov, trading as "Odal Node".
+Each release converts to Apache-2.0 on its own Change Date.
 
-After the Change Date, the specific version converts automatically to
-Apache-2.0 and may be used without restriction.
+For a commercial licence, contact **legal@odal-node.io**.
 
-### Commercial Licensing
+## dpp-core: Apache-2.0
 
-For organisations that need to offer dpp-engine as a hosted service
-or embed it in a competing product, commercial licenses are available.
-Contact: dev@odal-node.io
+The library holds the data model, JSON Schemas, regulatory rules, signing and
+verification, identifiers and calculators. It is Apache-2.0 with no additional
+conditions, so anyone can build their own implementation on it.
 
-## dpp-core — Apache-2.0
-
-The core library (`dpp-core`) is licensed under Apache-2.0 with no
-restrictions. All regulatory logic, domain types, cryptographic primitives,
-and schema validation are open-source and free to use.
-
-The core/platform licensing boundary aligns with the architectural boundary:
-
-| Layer | License | Contains |
+| Repository | Licence | Contains |
 |---|---|---|
-| dpp-core | Apache-2.0 | Domain types, port traits, schema validation, Ed25519, JWS, did:web, GS1 |
-| dpp-engine | BSL-1.1 | HTTP services, PostgreSQL persistence, auth, event bus, operator management |
+| `dpp-core` | Apache-2.0 | Domain types and port traits, schema validation, regulatory rules, Ed25519 and JWS, `did:web`, GS1 Digital Link, AAS, calculators, the Wasm plugin ABI |
+| `dpp-engine` | BSL-1.1 | HTTP services, PostgreSQL persistence, authentication, event bus, plugin host, operator administration, the `odal` CLI |
 
-## Why BSL-1.1
+## Why the engine is BSL-1.1
 
-BSL-1.1 balances openness with sustainability:
+- **The source is open to read and audit**, including by the operators and authorities
+  who rely on its output.
+- **Self-hosting for your own compliance is free**, so there is no lock-in to a hosted
+  service.
+- **Hosted-service rights are reserved**, which funds maintenance.
+- **The restriction expires**: every release becomes Apache-2.0 after four years.
+- **The regulatory logic is not restricted at all**: it lives in Apache-2.0 `dpp-core`,
+  and the engine's port implementations can be rebuilt by anyone.
 
-1. **Source transparency**: Anyone can read, audit, and verify the platform code.
-2. **Self-hosting permitted**: Operators can run the platform on their own infrastructure.
-3. **Commercial sustainability**: the BSL reserves hosted/managed-service rights, keeping the project maintainable while the source stays open.
-4. **Time-limited restriction**: Every version converts to Apache-2.0 after 4 years.
-5. **No vendor lock-in**: The core library is fully open. The platform's port trait implementations can be replicated by anyone.
+## Dependencies
 
-## Dependency Licensing
-
-All dependencies used by dpp-engine are compatible with BSL-1.1:
-
-| Dependency | License | Notes |
-|---|---|---|
-| dpp-core | Apache-2.0 | Core library |
-| axum | MIT | HTTP framework |
-| serde | MIT/Apache-2.0 | Serialisation |
-| tokio | MIT | Async runtime |
-| reqwest | MIT/Apache-2.0 | HTTP client |
-| chrono | MIT/Apache-2.0 | Date/time |
-| uuid | MIT/Apache-2.0 | UUID generation |
-| tracing | MIT | Logging |
-| wasmtime | Apache-2.0 | Wasm runtime |
-| ed25519-dalek | BSD-3-Clause | Ed25519 |
-
-No GPL-licensed dependencies are used.
+Third-party crates must carry one of the licences allowed in [`deny.toml`](../../deny.toml)
+(MIT, Apache-2.0, BSD, ISC, MPL-2.0 and similar permissive licences).
+`cargo deny check licenses`, run by `just audit`, enforces it. No GPL-licensed crate is
+allowed.
 
 ## References
 
-- [BSL-1.1 Full Text](https://mariadb.com/bsl11/)
-- [Apache-2.0 Full Text](https://www.apache.org/licenses/LICENSE-2.0)
-- [dpp-core License](https://github.com/odal-node/dpp-core/blob/main/LICENSE)
+- [Business Source License 1.1](https://mariadb.com/bsl11/)
+- [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- [`dpp-core` licence](https://github.com/odal-node/dpp-core/blob/main/LICENSE)

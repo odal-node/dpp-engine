@@ -1,216 +1,222 @@
-# Contributing Guide
+# Contributing
 
-This document is for anyone contributing to `dpp-engine` — the self-hostable Odal Node engine. It covers setup, coding conventions, testing strategy, commit format, and the PR workflow.
+How to build, test and change `dpp-engine`. For the organization-wide rules (issues first,
+primary sources, conduct), see the
+[organization guide](https://github.com/odal-node/.github/blob/main/CONTRIBUTING.md).
+Documentation follows the
+[documentation style guide](https://github.com/odal-node/.github/blob/main/DOCS-STYLE.md).
 
----
+`dpp-engine` is licensed under BSL-1.1. Read [LICENSE](LICENSE) before you contribute.
 
 ## 1. Prerequisites
 
-| Tool | Minimum Version | Install |
+| Tool | Version | Install |
 |---|---|---|
-| Rust | see `rust-toolchain.toml` | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| Docker | 24+ | https://docs.docker.com/get-docker/ |
-| Docker Compose | v2 | Included with Docker Desktop |
+| Rust | pinned in `rust-toolchain.toml` | [rustup.rs](https://rustup.rs) |
+| Docker with Compose v2 | 24+ | [docs.docker.com](https://docs.docker.com/get-docker/) |
+| just | latest | `cargo install just` |
+| cargo-nextest | latest | `cargo install cargo-nextest` |
+| cargo-audit | latest | `cargo install cargo-audit` |
 
-Optional but recommended:
+Docker runs the local infrastructure (PostgreSQL, Redis, NATS) and the integration tests
+(testcontainers). `just openapi-check` also needs Node.js.
 
-| Tool | Purpose |
-|---|---|
-| `cargo-nextest` | Fast parallel test runner: `cargo install cargo-nextest` |
-| `cargo-audit` | Security advisory check: `cargo install cargo-audit` |
-| `cargo-watch` | Auto-recompile on file change: `cargo install cargo-watch` |
-| `just` | Command runner: `cargo install just` |
-
-Docker is required for infrastructure (PostgreSQL, Redis, NATS).
-
----
-
-## 2. Local Setup
+## 2. Local setup
 
 ```bash
 git clone https://github.com/odal-node/dpp-engine.git
 cd dpp-engine
-
-# Start infrastructure
-docker compose -f docker/docker-compose.dev.yml up -d
-
-# Copy environment config
-cp .env.example .env
-
-# Build
-cargo build --workspace
-
-# Run tests (unit tests, no Docker needed)
-cargo test --workspace
-
-# Run integration tests (requires Docker for postgres:17 testcontainer)
-cargo test -p dpp-node --features integration-tests
-
-# Run the node
-cargo run -p dpp-node
+just infra              # PostgreSQL, Redis and NATS in Docker
+cp .env.example .env    # then set KEY_STORE_PASSPHRASE
+cargo run -p dpp-node   # the node, on port 8001
 ```
 
----
+| Command | What it runs |
+|---|---|
+| `just check` | The local gate: format, clippy over every target (the Docker-gated suites included), the guard scripts, the spec-version check, unit tests, `cargo audit` |
+| `just ci` | `just check` plus the Docker-backed integration tiers |
+| `just test` | Unit tests (`cargo nextest`), no Docker |
+| `just test-integration` | The Docker-backed integration tiers |
+| `just openapi-check` | Lint the OpenAPI bundle and fail if it drifted from `api/` (needs Node) |
+| `just openapi-bundle` | Regenerate `api/openapi.bundled.yaml` from the `api/` tree |
+| `just core-local` / `just core-published` | Build against a sibling `../dpp-core` checkout, or back against crates.io |
 
-## 3. Workspace Structure
+`just --list` shows every recipe. Run `just check` before you push, not only `just test`:
+`just test` never builds the feature-gated integration suites.
 
-```
+## 3. Workspace layout
+
+```text
 dpp-engine/
-  Cargo.toml              # Workspace root — 10 member crates
-  LICENSE                  # BSL-1.1
-  docker/                  # Dockerfiles + compose (dev infra + prod stack)
-  scripts/                 # the check scripts `just check` runs
+  Cargo.toml            workspace root: 12 crates and the CLI
+  LICENSE               BSL-1.1
+  api/                  the OpenAPI 3.1 description, authored multi-file and bundled
+  docker/               Dockerfiles and Compose files (dev infrastructure, full stack)
+  scripts/              the guard scripts `just check` and CI run
   ops/
-    pg/                    # PostgreSQL DDL migrations (0001–0012_*.sql)
-    demo/                  # CSV/XLSX import fixtures + JSON samples
+    pg/                 PostgreSQL migrations, append-only and never renumbered
+    bootstrap/          database role provisioning
+    demo/               import fixtures, demo passports and evidence dossiers
   crates/
-    dpp-types/             # Platform-wide types (operator, auth, audit, API keys)
-    dpp-dal/               # PostgreSQL DAL (sqlx, single-tenant, no RLS)
-    dpp-vault/             # Passport write engine (27 HTTP endpoints)
-    dpp-identity/  # did:web identity service (5 endpoints)
-    dpp-resolver/          # Public QR resolver (4 endpoints)
-    dpp-integrator/        # CSV/XLSX bulk import (4 endpoints)
-    dpp-common/            # Event bus trait, telemetry, RFC 9457
-    dpp-plugin-host/       # Wasmtime sandbox for product group Wasm plugins
-    dpp-node/              # MVP single binary
-    dpp-seal/              # eIDAS qualified seal adapter stub (NOT YET WIRED)
-    dpp-factor-data/       # Licensed LCI factor data store stub (NOT YET WIRED)
-  cli/                     # Management CLI (the `dpp` control plane)
-  web/                     # Dashboard (Next.js)
-  docs/                    # Architecture and design documentation
+    dpp-node/           the node binary: router, boot checks, outbox drainers
+    dpp-vault/          passport lifecycle, transfer, audit, evidence dossiers
+    dpp-identity/       did:web documents, signing, key rotation
+    dpp-resolver/       public GS1 Digital Link resolver
+    dpp-render/         the HTML renderer for the public passport page
+    dpp-integrator/     CSV/XLSX import
+    dpp-dal/            PostgreSQL access (sqlx), single-tenant
+    dpp-types/          operator, auth, audit and API-key types
+    dpp-common/         event bus, RFC 9457 errors, metrics, idempotency
+    dpp-plugin-host/    the wasmtime sandbox for product group plugins
+    dpp-seal/           eIDAS seal backends behind the SealPort
+    dpp-factor-data/    licensed LCI factor store (stub provider only; no dependent yet)
+  cli/                  the `odal` CLI (package dpp-cli)
+  docs/                 architecture, operations, governance
 ```
 
-### Dependency Rules
+### Dependencies
 
-The dependency graph is strictly acyclic:
+Internal edges, from each crate's `[dependencies]` (core crates in parentheses):
 
+```text
+dpp-common       -> (none)
+dpp-types        -> (dpp-domain, dpp-rules)
+dpp-dal          -> dpp-common, dpp-types, (dpp-domain)
+dpp-render       -> (dpp-digital-link)
+dpp-seal         -> dpp-common, dpp-types, (dpp-domain)
+dpp-plugin-host  -> dpp-common, (dpp-domain, dpp-plugin-traits)
+dpp-integrator   -> dpp-common, dpp-types, (dpp-domain)
+dpp-identity     -> dpp-common, (dpp-crypto, dpp-domain, dpp-vc)
+dpp-vault        -> dpp-common, dpp-dal, dpp-types, (dpp-calc, dpp-crypto, dpp-digital-link, dpp-domain, dpp-registry, dpp-rules, dpp-vc)
+dpp-resolver     -> dpp-common, dpp-render, (dpp-aas, dpp-crypto, dpp-digital-link, dpp-domain, dpp-vc)
+dpp-node         -> dpp-common, dpp-dal, dpp-identity, dpp-integrator, dpp-plugin-host, dpp-render, dpp-seal, dpp-types, dpp-vault, (dpp-crypto, dpp-domain, dpp-registry, dpp-rules, dpp-vc)
+dpp-factor-data  -> (dpp-calc)
+dpp-cli          -> dpp-types, (dpp-crypto, dpp-vc)
 ```
-dpp-types        -> (standalone, no internal deps)
-dpp-common       -> (standalone, no internal deps)
-dpp-dal          -> dpp-types, dpp-domain (core)
-dpp-vault        -> dpp-dal, dpp-types, dpp-common, dpp-domain (core)
-dpp-integrator   -> dpp-types, dpp-common
-dpp-node         -> dpp-vault, dpp-identity, dpp-integrator, dpp-common
 
-# not yet wired into dpp-node:
-dpp-seal         -> dpp-domain (core) [SealPort trait]
-dpp-factor-data  -> dpp-calc (core)   [FactorProvider trait]
-```
+**The engine adapts to `dpp-core`, never the reverse.** No engine change modifies core
+types or traits. Tenant, audit, API-key and auth concerns stay in the engine. If a rule
+changes because the law changed, it belongs in `dpp-core`; if it changes because of how
+the system is deployed or operated, it belongs here.
 
-**Core purity rule**: No engine crate may modify `dpp-core` types or traits. The engine adapts to core, not the reverse.
+## 4. Code conventions
 
----
+### Serde and column naming
 
-## 4. Coding Conventions
+Database columns and API responses use **camelCase** through
+`#[serde(rename_all = "camelCase")]`. The exception is the identity tables, which use
+snake_case.
 
-### Serde and DB Column Naming
+### Errors
 
-All DB columns and API responses use **camelCase** via `#[serde(rename_all = "camelCase")]` on structs. Exception: identity namespace tables use snake_case (legacy, accepted for MVP).
+HTTP errors are RFC 9457 problem documents (`dpp_common::http_problem::Problem`) on every
+surface. Service code uses `DppError` from `dpp-domain`; infrastructure code maps errors
+with `anyhow` and converts to `DppError` at the boundary.
 
-### Error Types
+### Identifiers
 
-Service-layer crates use `DppError` from `dpp-domain`. Infrastructure crates map errors via `anyhow` and convert to `DppError` at the boundary.
+New identifiers are UUID v7 (`now_v7()`), so they sort by time.
 
 ### Logging
 
-All crates use `tracing`. Never log secrets — API keys, private keys, and passphrases must never appear in log output.
+All crates use `tracing`. API keys, private keys and passphrases never appear in logs.
 
-### Clippy and Formatting
+### Lints and formatting
 
-All code must pass:
-- `just lint` — clippy with every warning an error, over every target and with the Docker-gated suites' features on, as CI runs it
-- `cargo fmt --all --check`
+Code passes `just lint` (clippy with warnings as errors, over every target, with the
+Docker-gated suites' features on, as CI runs it) and `cargo fmt --all --check`.
 
----
+## 5. Tests
 
-## 5. Testing Strategy
-
-| Test type | Location | Scope |
+| Kind | Where | Scope |
 |---|---|---|
-| Unit test | `src/*.rs` (inline `#[cfg(test)]`) | Pure logic, validators, parsers |
-| Integration test | `tests/` directory | Full HTTP lifecycle with testcontainers |
-| CLI test | `cli/tests/` | The `odal` binary as a child process: exit codes, output, and what it writes to `config.toml` |
+| Unit tests | inline `#[cfg(test)]` modules | Pure logic, validators, parsers |
+| Integration tests | each crate's `tests/`, behind the `integration-tests` feature | Full HTTP lifecycle against PostgreSQL in testcontainers |
+| CLI tests | `cli/tests/` | The `odal` binary as a child process: exit codes, output, the `config.toml` it writes |
 
-### Test Tiers
+- **Tier 1 (no database):** route mounting, health endpoints, auth middleware, config
+  parsing. Runs in `just test`.
+- **Tier 2 (testcontainers):** the full passport lifecycle (create, publish, read)
+  through the assembled node. Needs Docker; runs in `just test-integration`.
+- **CLI (no database, no node):** the `odal` binary run against a temporary `$HOME`,
+  covering first-run messages, exit codes, the written `config.toml` and error rendering
+  (the last against a local stub that returns an RFC 9457 body). Runs in `just test`.
 
-- **Tier 1 (no DB)**: Route mounting, health endpoints, auth middleware, config parsing. Run with `cargo test --workspace`.
-- **Tier 2 (testcontainers)**: Full DPP lifecycle (create -> publish -> read) through the assembled node. Requires Docker. Run with `cargo test -p dpp-node --features integration-tests`.
-- **CLI (no DB, no node)**: The `odal` binary run as a child process against a temp `$HOME`. Covers first-run messages, exit codes, the written `config.toml`, and error rendering — the last against a local stub that emits an RFC 9457 body, since what is under test is how the CLI renders one, not a node that means it. Runs in `cargo test --workspace`; no feature gate, because a gate would keep it out of the lane where it catches regressions.
+Shared test scaffolding lives behind `dpp-dal`'s `test-harness` feature. Do not write
+another Postgres harness; extend that one. `just harness-check` fails if you do.
 
----
+If you document an error condition in `api/paths/`, write a test that produces it and
+asserts the status.
 
-## 6. Commit Format
+## 6. Commits
 
-All commits follow [Conventional Commits](https://www.conventionalcommits.org/) v1.0.0:
+[Conventional Commits](https://www.conventionalcommits.org/) v1.0.0:
 
-```
+```text
 <type>(<scope>): <subject>
 ```
 
-**Types:** `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `security`
+- **Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `chore`, `ci`, `build`,
+  `style`, `revert`. CI rejects a pull request title with any other type.
+- **Scopes:** the area touched, for example `vault`, `dal`, `identity`, `integrator`,
+  `node`, `types`, `common`, `resolver`, `seal`, `cli`, `ops`, `deps`, `ci`, `docs`. Never
+  `engine` or `dpp-engine`.
+- **Subject:** imperative mood, under 50 characters.
+- **Breaking change:** `!` after the scope, for example
+  `feat(types)!: rename TenantConfig to OperatorConfig`.
+- **No AI attribution:** no `Co-Authored-By`, `Generated-By` or similar trailers.
 
-**Scopes:** `vault`, `dal`, `identity`, `integrator`, `node`, `types`, `common`, `resolver`, `ops`, `ci`, `docs`
-
-**Examples:**
-```
+```text
 feat(vault): add operator config PATCH endpoint
 fix(dal): normalise api_key repo query
 docs(ops): rewrite seed data for new schema
 chore(deps): upgrade axum to 0.8.2
 ```
 
-Breaking changes use `!` after the scope: `feat(types)!: rename TenantConfig to OperatorConfig`.
+Sign off every commit under the [DCO](https://developercertificate.org/):
+`git commit -s`.
 
-### NEVER include AI attribution
+## 7. Pull requests
 
-Do not add `Co-Authored-By`, `Generated-By`, or any AI attribution tags in commit messages.
+- Every change goes through a pull request. Nobody pushes directly to `main`.
+- CI passes: build, tests, clippy, the guard scripts, the integration tiers.
+- A change to a port implementation names the `dpp-core` version it targets.
+- The pull request title is a Conventional Commit.
 
----
+### New dependencies
 
-## 7. Pull Request Workflow
+A pull request that adds a **direct** dependency answers these in its description:
 
-- Every change goes through a PR. No direct pushes to `main`.
-- All CI checks must pass: build, test, clippy.
-- PRs that modify port trait implementations must explain the core version targeted.
-- PR titles follow the same Conventional Commits format.
+- **What it is for:** the specific need.
+- **Which targets it compiles for:** anything platform-specific (build scripts, `libc` or
+  system headers, proc-macro build cost).
+- **Maintenance status:** last release, open advisories (`cargo audit`, `cargo deny
+  check`), and whether one person or an established team maintains it.
+- **Whether it touches untrusted input, secrets or the network.** This matters most. The
+  engine's untrusted-input surfaces are: uploaded XLSX and CSV (`dpp-integrator`), Wasm
+  plugin binaries (`dpp-plugin-host`), signed compliance rulesets, webhook targets, and
+  resolver requests. A dependency on one of those paths is a different decision from one
+  in the CLI's progress bar; say which it is.
 
-### New Dependencies
+This is a checklist for the description, not a CI check. It gives the reviewer the
+context the author had when choosing the crate.
 
-A PR that adds a new **direct** dependency states, in the PR description:
+### Branch names
 
-- **What it's for** — the specific need, not "might be useful".
-- **What targets it compiles for** — does it pull anything platform-specific
-  (build scripts, `libc`/system headers, a proc-macro-only build-time cost)?
-- **Maintenance status** — last release, open advisories (`cargo audit`/
-  `cargo deny check`), whether it's a small crate with one maintainer or
-  something with an established team behind it.
-- **Does it touch untrusted input, secrets, or the network?** — the one that
-  actually matters. This engine's untrusted-input surfaces are enumerable:
-  uploaded XLSX/CSV (`dpp-integrator`), Wasm plugin binaries
-  (`dpp-plugin-host`), signed compliance rulesets, webhook targets, and
-  resolver requests. A dependency landing on any of those paths is a
-  different decision than one in the CLI's progress bar — say which it is.
-
-This is a checklist for the PR description, not a CI gate — a mechanical
-check here would just be theatre. It exists so the review has the same
-context the author had when picking the crate, not to block the PR.
-
-### Branch Names
-
-```
+```text
 feat/operator-config-endpoint
 fix/api-key-hash-lookup
 docs/architecture-suite
 chore/upgrade-sqlx
 ```
 
----
+## 8. Security practices
 
-## 8. Security Practices
-
-- **No hardcoded secrets** anywhere, including tests. Use temp files with random names.
+- **No hard-coded secrets**, including in tests. Use temporary files with random names;
+  a test keystore uses `tempfile::tempdir()`.
 - **No `unsafe` code** without explicit justification.
 - **Never log API keys or private keys.**
-- **`cargo audit`** should pass before release.
+- **`cargo audit`** passes before release.
 
-Report security vulnerabilities to **security@odal-node.io** — do not open public issues.
+Report vulnerabilities privately to **security@odal-node.io**, never in a public issue.
+See [SECURITY.md](SECURITY.md).
