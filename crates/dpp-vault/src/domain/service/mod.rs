@@ -494,6 +494,70 @@ pub(crate) fn retention_years_for(product_group: &dpp_domain::ProductGroup) -> u
         .map_or(RETENTION_FLOOR_YEARS, |(years, _basis)| years)
 }
 
+/// When a retention period of `years`, starting at `published_at`, ends: the
+/// same date and time `years` calendar years later.
+///
+/// Publish seals this as `retention_until` and `retire` enforces it, so both
+/// call this one function rather than each writing the arithmetic.
+///
+/// Calendar years, not 365-day ones. `published_at + 365 * years` days ends a
+/// day early for every 29 February in the period, so a ten-year period ended
+/// two or three days before its anniversary and `retire` let a passport go
+/// inside it. A period that starts on 29 February ends on 28 February when the
+/// final year has no leap day, since `checked_add_months` clamps to the last
+/// day of the month. A deadline past the end of `DateTime`'s range saturates to
+/// its maximum: never.
+pub(crate) fn retention_deadline(
+    published_at: chrono::DateTime<chrono::Utc>,
+    years: u32,
+) -> chrono::DateTime<chrono::Utc> {
+    published_at
+        .checked_add_months(chrono::Months::new(years.saturating_mul(12)))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
+}
+
+#[cfg(test)]
+mod retention_deadline_tests {
+    use chrono::{DateTime, TimeZone, Utc};
+
+    use super::retention_deadline;
+
+    fn at(y: i32, m: u32, d: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, m, d, 9, 30, 0).unwrap()
+    }
+
+    #[test]
+    fn ten_years_end_on_the_anniversary_not_three_days_before_it() {
+        // 2028, 2032 and 2036 each have a 29 February inside this period, so
+        // 3650 days ended on 27 February 2036.
+        assert_eq!(retention_deadline(at(2026, 3, 1), 10), at(2036, 3, 1));
+    }
+
+    #[test]
+    fn a_29_february_publish_ends_on_28_february_in_a_common_year() {
+        assert_eq!(retention_deadline(at(2028, 2, 29), 1), at(2029, 2, 28));
+        assert_eq!(retention_deadline(at(2028, 2, 29), 4), at(2032, 2, 29));
+        assert_eq!(retention_deadline(at(2028, 2, 29), 10), at(2038, 2, 28));
+    }
+
+    #[test]
+    fn the_time_of_day_is_kept() {
+        let published = Utc.with_ymd_and_hms(2026, 10, 27, 23, 59, 59).unwrap();
+        assert_eq!(
+            retention_deadline(published, 10),
+            Utc.with_ymd_and_hms(2036, 10, 27, 23, 59, 59).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_deadline_past_the_representable_range_is_never() {
+        assert_eq!(
+            retention_deadline(at(2026, 1, 1), u32::MAX),
+            DateTime::<Utc>::MAX_UTC
+        );
+    }
+}
+
 /// Process-wide versioned JSON Schema registry (parsed once).
 fn schema_registry() -> &'static dpp_domain::schemas::VersionedSchemaRegistry {
     static REGISTRY: std::sync::OnceLock<dpp_domain::schemas::VersionedSchemaRegistry> =
