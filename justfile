@@ -37,6 +37,19 @@ REDOCLY_VERSION := "2.46.2"
 # which is the one CLAUDE.md tells you to use.
 COMPOSE := "docker compose --env-file .env"
 
+# `--locked` for the cargo commands CI also runs by name (`lint`, `audit`'s deny).
+#
+# CI passes it on every step that resolves the workspace, so a `Cargo.lock` that
+# has drifted from the manifests fails the build and names the file, instead of
+# being re-resolved and thrown away. Drift is a property of the lock, not of the
+# command, so one locked command in `just check` is enough to surface it here.
+#
+# Empty while `.cargo/config.toml` exists: that file is the `[patch]` onto the
+# sibling `../dpp-core` that `just core-local` installs, and it rewrites the lock
+# by design — the same reason `docker/node.Dockerfile` leaves `--locked` off its
+# local stage. `just core-published` removes it and the flag comes back.
+LOCKED := if path_exists(justfile_directory() + "/.cargo/config.toml") == "true" { "" } else { "--locked" }
+
 # ---------------------------------------------------------------------------
 # Why the gate's checks live in scripts/ rather than as shebang recipes
 #
@@ -140,7 +153,7 @@ test-seal-db:
 # it runs — `just test-integration`, or the one suite:
 # `cargo nextest run -p <crate> --features integration-tests --test <name>`.
 lint:
-    cargo clippy --workspace --all-targets --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests -- -D warnings
+    cargo clippy {{ LOCKED }} --workspace --all-targets --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests -- -D warnings
 
 # Validate api/openapi.yaml (needs Node; no install — npx fetches on demand).
 #
@@ -378,7 +391,7 @@ audit:
     cargo audit --deny yanked --deny unmaintained
     bash scripts/check-audit-register.sh
     bash scripts/check-audit-register.test.sh
-    cargo deny check bans licenses sources
+    cargo deny {{ LOCKED }} check bans licenses sources
 
 # Build documentation (engine does not gate docs with -D warnings yet)
 doc:

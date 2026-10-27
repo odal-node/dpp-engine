@@ -35,6 +35,16 @@ const JWS: &str = "header.payload.signature";
 
 /// A published passport, optionally already sealed.
 async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> PassportId {
+    seed_in(dal, PassportStatus::Published, seal, jws).await
+}
+
+/// The same, in a chosen status.
+async fn seed_in(
+    dal: &PgDal,
+    status: PassportStatus,
+    seal: Option<SealedEnvelope>,
+    jws: Option<&str>,
+) -> PassportId {
     let passport = Passport {
         id: PassportId::new(),
         batch_id: None,
@@ -57,7 +67,7 @@ async fn seed(dal: &PgDal, seal: Option<SealedEnvelope>, jws: Option<&str>) -> P
         compliance_result: None,
         lint_result: None,
         product_group_data: None,
-        status: PassportStatus::Published,
+        status,
         qr_code_url: None,
         jws_signature: jws.map(ToOwned::to_owned),
         public_jws_signature: None,
@@ -233,6 +243,35 @@ async fn the_summary_counts_unsealed_passports_not_outbox_rows() {
     assert_eq!(
         body["sealingConfigured"], true,
         "the harness wires an outbox, as any node with a provider does"
+    );
+}
+
+/// **The headline number is the one an operator can act on, so it must not be
+/// padded with records whose product ended.**
+///
+/// A passport that was published unsealed and has since been retired is still
+/// unsealed, and the summary must say so rather than lose it — but under its own
+/// name, so `unsealedPublished: 1` means one live passport and not "one of these
+/// two, somewhere".
+#[tokio::test(flavor = "multi_thread")]
+async fn the_summary_reports_a_retired_unsealed_passport_apart_from_a_live_one() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed(&pg.dal, None, Some(JWS)).await;
+    seed_in(&pg.dal, PassportStatus::Retired, None, Some(JWS)).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client.get("/api/v1/seal").await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(
+        body["unsealedPublished"], 1,
+        "only the live passport belongs in the headline: {body}"
+    );
+    assert_eq!(
+        body["unsealedTerminal"], 1,
+        "the retired one is still unsealed and must still be reported: {body}"
     );
 }
 
