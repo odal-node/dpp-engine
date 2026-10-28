@@ -41,6 +41,16 @@ pub(crate) async fn append_in_tx(
     if let Some(ts) = chrono::DateTime::from_timestamp_micros(entry.timestamp.timestamp_micros()) {
         entry.timestamp = ts;
     }
+    // One appender per passport at a time. A status change holds the passport
+    // row, but a change that writes no passport does not, and under READ
+    // COMMITTED two appenders would read the same head and each link to it.
+    // Held to the end of `tx`, so the head read below sees what the previous
+    // holder committed.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('odal.passport_audit'), hashtext($1))")
+        .bind(&entry.passport_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
     // Chain link: read this passport's current head under the same tx,
     // then hash this entry's content folded with the head's hash. The
     // append-only trigger guarantees the head cannot have been rewritten.
