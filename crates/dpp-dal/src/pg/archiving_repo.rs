@@ -30,6 +30,15 @@
 //! any writer not on its list, so the next direct write has to be argued for
 //! rather than merged.
 //!
+//! A second door does change content: [`PgStateChangeLog`], which commits a
+//! state change with its audit entry and webhook deliveries in one
+//! transaction. It does not pass through this decorator, so it archives for
+//! itself, the same pre-change state this type would, inside that transaction.
+//! Its writes use the statements in `repo_passport.rs`, so the gate above still
+//! sees one writer.
+//!
+//! [`PgStateChangeLog`]: super::PgStateChangeLog
+//!
 //! The cost is that a repository now writes somewhere the caller did not name,
 //! which is a real surprise — so the type is named for what it does, and the
 //! composition root wires it visibly rather than hiding it behind a constructor.

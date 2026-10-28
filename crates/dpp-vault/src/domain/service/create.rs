@@ -15,7 +15,12 @@ use dpp_domain::{
     product_group::{CarbonFootprint, ProductGroupData, RepairabilityScore},
     status::PassportStatus,
 };
-use dpp_types::{STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext};
+use dpp_types::{
+    STANDALONE_OPERATOR_ID,
+    audit::PassportAuditEntry,
+    auth::AuthContext,
+    state_change::{PassportWrite, StateChange},
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -96,28 +101,25 @@ impl PassportService {
         apply_compliance(&mut passport, &*self.compliance);
         apply_lint(&mut passport);
 
-        let created = self.repo.create(passport).await?;
-
         let entry = PassportAuditEntry::new(
-            &created.id.to_string(),
+            &passport.id.to_string(),
             "created",
             &auth.user_id,
             None,
             Some(&PassportStatus::Draft.to_string()),
         );
-        self.audit.append(entry).await?;
-
-        // Event emitted after commit — failure is logged, not propagated.
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_CREATED,
             serde_json::json!({
-                "passportId": created.id.to_string(),
+                "passportId": passport.id.to_string(),
                 "status": "draft",
             }),
+        );
+        self.commit_passport_change(
+            StateChange::new(entry).with_passport(PassportWrite::Insert(passport)),
+            event,
         )
-        .await;
-
-        Ok(created)
+        .await
     }
 
     /// Partial-update a draft passport.
@@ -172,30 +174,22 @@ impl PassportService {
             delta.insert("lintResult".into(), serde_json::json!(lint));
         }
 
-        let updated = self
-            .repo
-            .patch_fields(id, serde_json::Value::Object(delta))
-            .await?;
-
-        let entry = PassportAuditEntry::new(
-            &updated.id.to_string(),
-            "updated",
-            &auth.user_id,
-            None,
-            None,
-        );
-        self.audit.append(entry).await?;
-
-        self.emit(
+        let entry = PassportAuditEntry::new(&id.to_string(), "updated", &auth.user_id, None, None);
+        // Only a draft is updated, so the status the event reports is known
+        // before the write; the guard above refused anything else.
+        let event = Self::event(
             event::subjects::PASSPORT_UPDATED,
             serde_json::json!({
-                "passportId": updated.id.to_string(),
-                "status": updated.status.to_string(),
+                "passportId": id.to_string(),
+                "status": passport.status.to_string(),
             }),
+        );
+        self.commit_passport_change(
+            StateChange::new(entry)
+                .with_passport(PassportWrite::Patch(id, serde_json::Value::Object(delta))),
+            event,
         )
-        .await;
-
-        Ok(updated)
+        .await
     }
 
     /// Gather the local component subgraph reachable from `seeds`, bounded to a

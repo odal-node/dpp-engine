@@ -36,6 +36,32 @@ fn row_to_version(row: &sqlx::postgres::PgRow) -> Result<PassportVersion, DppErr
     })
 }
 
+/// Archive `doc` as a version of `passport_id`, superseded at `superseded_at`.
+///
+/// One statement for both callers: the store's own [`archive`] on the pool, and
+/// the state-change log inside the transaction that makes the change.
+///
+/// [`archive`]: PassportVersionStore::archive
+pub(crate) async fn insert_version<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    passport_id: uuid::Uuid,
+    doc: &serde_json::Value,
+    superseded_at: DateTime<Utc>,
+) -> Result<(), DppError> {
+    sqlx::query(
+        "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(passport_id)
+    .bind(doc)
+    .bind(superseded_at)
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 fn passport_uuid(passport_id: &str) -> Result<uuid::Uuid, DppError> {
     uuid::Uuid::parse_str(passport_id)
         .map_err(|e| DppError::Validation(format!("passport id is not a UUID: {e}").into()))
@@ -49,18 +75,13 @@ impl PassportVersionStore for PgPassportVersionRepo {
         doc: &serde_json::Value,
         superseded_at: DateTime<Utc>,
     ) -> Result<(), DppError> {
-        sqlx::query(
-            "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
-             VALUES ($1, $2, $3, $4)",
+        insert_version(
+            self.dal.pool(),
+            passport_uuid(passport_id)?,
+            doc,
+            superseded_at,
         )
-        .bind(uuid::Uuid::now_v7())
-        .bind(passport_uuid(passport_id)?)
-        .bind(doc)
-        .bind(superseded_at)
-        .execute(self.dal.pool())
         .await
-        .map_err(db_err)?;
-        Ok(())
     }
 
     async fn versions(&self, passport_id: &str) -> Result<Vec<PassportVersion>, DppError> {

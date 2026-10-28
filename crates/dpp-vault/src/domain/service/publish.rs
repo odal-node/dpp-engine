@@ -16,8 +16,11 @@ use dpp_domain::{
     status::PassportStatus,
 };
 use dpp_types::{
-    STANDALONE_OPERATOR_ID, audit::PassportAuditEntry, auth::AuthContext,
+    STANDALONE_OPERATOR_ID,
+    audit::PassportAuditEntry,
+    auth::AuthContext,
     snapshot::snapshot_json_key,
+    state_change::{PassportWrite, StateChange},
 };
 
 use super::{PassportService, retention_deadline, retention_years_for};
@@ -462,7 +465,7 @@ impl PassportService {
         //   registrations are built.
         let registration = match &self.registry_outbox {
             None => None,
-            Some(outbox) => {
+            Some(_) => {
                 // The scheme is only assertable for the value the passport
                 // actually carries. If that value did not come from the current
                 // primary identifier — the primary was changed after the draft
@@ -494,7 +497,7 @@ impl PassportService {
                         );
                         let payload = serde_json::to_value(&reg_req)
                             .map_err(|e| DppError::Serialisation(e.to_string()))?;
-                        Some((outbox, payload))
+                        Some(payload)
                     }
                     Err(missing)
                         if super::passport_obligation_live(
@@ -519,39 +522,6 @@ impl PassportService {
             }
         };
 
-        // Persist the published passport. With a registration, the passport
-        // write and its enqueue commit atomically (ESPR Art. 13), and the node's
-        // drain task performs the registration with backoff. Without one — no
-        // outbox (in-memory test doubles), or nothing registrable — a plain
-        // update.
-        let updated = match registration {
-            Some((outbox, payload)) => match outbox.commit_publish(&passport, payload).await {
-                Ok(()) => {
-                    metrics::counter!("passport_publish_total", "outcome" => "success")
-                        .increment(1);
-                    passport
-                }
-                Err(e) => {
-                    metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
-                    return Err(e);
-                }
-            },
-            None => match self.repo.update(passport).await {
-                Ok(p) => {
-                    metrics::counter!("passport_publish_total", "outcome" => "success")
-                        .increment(1);
-                    p
-                }
-                Err(e) => {
-                    metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
-                    return Err(e);
-                }
-            },
-        };
-        // Written, so a publish waiting on this label now finds it live. Nothing
-        // below decides who holds it, and the back-up copy can be slow.
-        drop(label);
-
         // Stamp the exact payloads that were signed (not the current row) as
         // metadata on this publish's audit entry. `jws_signature` and
         // `public_jws_signature` are frozen at this moment and never re-signed
@@ -562,7 +532,7 @@ impl PassportService {
         // runs this same path again and appends a new "published" entry with
         // a fresh snapshot; generation always uses the most recent one.
         let entry = PassportAuditEntry::new(
-            &updated.id.to_string(),
+            &passport.id.to_string(),
             "published",
             &auth.user_id,
             None,
@@ -572,7 +542,36 @@ impl PassportService {
             "fullViewPayload": payload,
             "publicViewPayload": public_view,
         }));
-        self.audit.append(entry).await?;
+        let event = Self::event(
+            event::subjects::PASSPORT_PUBLISHED,
+            serde_json::json!({
+                "passportId": passport.id.to_string(),
+                "status": "active",
+                "qrCodeUrl": passport.qr_code_url,
+            }),
+        );
+
+        // Persist the published passport. Its registration, when it owes one,
+        // commits with it (ESPR Art. 13), and the node's drain task performs
+        // the registration with backoff. Without one — no outbox (in-memory
+        // test doubles), or nothing registrable — the passport alone.
+        let mut change = StateChange::new(entry).with_passport(PassportWrite::Replace(passport));
+        if let Some(payload) = registration {
+            change = change.with_registration(payload);
+        }
+        let updated = match self.commit_passport_change(change, event).await {
+            Ok(p) => {
+                metrics::counter!("passport_publish_total", "outcome" => "success").increment(1);
+                p
+            }
+            Err(e) => {
+                metrics::counter!("passport_publish_total", "outcome" => "error").increment(1);
+                return Err(e);
+            }
+        };
+        // Written, so a publish waiting on this label now finds it live. Nothing
+        // below decides who holds it, and the back-up copy can be slow.
+        drop(label);
 
         // ESPR Art. 10(4) third-party back-up copy — fire-after-commit, non-blocking.
         // Failures are logged but never propagated; the DB write is the source of truth.
@@ -586,16 +585,6 @@ impl PassportService {
                 "ESPR back-up copy failed (non-fatal)"
             );
         }
-
-        self.emit(
-            event::subjects::PASSPORT_PUBLISHED,
-            serde_json::json!({
-                "passportId": updated.id.to_string(),
-                "status": "active",
-                "qrCodeUrl": updated.qr_code_url,
-            }),
-        )
-        .await;
 
         // Mirror the freshly-signed public view to the continuity tier so it
         // stays reachable if the node goes down (non-blocking, non-fatal).

@@ -142,6 +142,62 @@ pub(crate) async fn update_passport_in_tx(
     Ok(())
 }
 
+/// Insert a new passport inside an open transaction.
+///
+/// The statement behind [`PgPassportRepo::create`], shared with the state-change
+/// log so a create commits together with its audit entry and webhook deliveries.
+pub(crate) async fn insert_passport_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    passport: &Passport,
+) -> Result<(), DppError> {
+    let doc = PgPassportRepo::to_doc(passport)?;
+    sqlx::query(
+        // Every scalar column here is a **projection of `doc`**, never a
+        // second source of truth: the document is authoritative and these
+        // exist so a value can be filtered, indexed or reported on without
+        // reaching into JSONB. `passport_column_coverage.rs` fails the build
+        // if a column on this table is left out of both this statement and
+        // the update, which is how ten of them came to sit permanently NULL
+        // while reading as authoritative.
+        //
+        // `version` and `supersedes_id` carry the version chain —
+        // `idx_passport_supersedes` indexes the second, and "is this record
+        // still the head" is a predicate, not a document read.
+        //
+        // `assessed_at` and `ruleset_version` live one level down, inside
+        // `complianceResult`, because that is where the determination that
+        // produced them lives. A missing `complianceResult` yields SQL NULL
+        // through both arrows rather than an error.
+        r#"INSERT INTO odal.passport
+             (id, product_group, status, retention_locked, schema_version,
+              version, supersedes_id,
+              granularity, retention_until, product_id,
+              assessed_at, ruleset_version,
+              created_at, updated_at, published_at, doc)
+           VALUES ($1,
+                   $2->>'productGroup',
+                   COALESCE($2->>'status','draft'),
+                   COALESCE(($2->>'retentionLocked')::boolean, false),
+                   COALESCE($2->>'schemaVersion','1.0.0'),
+                   COALESCE(($2->>'version')::integer, 1),
+                   NULLIF($2->>'supersedesId','')::uuid,
+                   $2->>'granularity',
+                   NULLIF($2->>'retentionUntil','')::timestamptz,
+                   NULLIF($2->>'productId','')::uuid,
+                   NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz,
+                   $2->'complianceResult'->>'rulesetVersion',
+                   now(), now(),
+                   NULLIF($2->>'publishedAt','')::timestamptz,
+                   $2)"#,
+    )
+    .bind(passport.id.0)
+    .bind(&doc)
+    .execute(&mut **tx)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 /// PostgreSQL implementation of [`PassportRepository`].
 ///
 /// Each method serialises to/from the `doc JSONB` column. Scalar columns
@@ -187,58 +243,78 @@ impl PgPassportRepo {
     fn uuid_of(id: PassportId) -> Uuid {
         id.0
     }
+
+    /// The stored passport, locked until `tx` ends, or `None` when there is none.
+    pub(crate) async fn current_for_update_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+    ) -> Result<Option<Passport>, DppError> {
+        let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
+            .bind(Self::uuid_of(id))
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
+            .transpose()
+    }
+
+    /// Merge `delta` into the stored passport inside `tx`.
+    ///
+    /// The body of [`PassportRepository::patch_fields`], shared with the
+    /// state-change log so a draft update commits together with its audit entry
+    /// and webhook deliveries.
+    pub(crate) async fn patch_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+        delta: serde_json::Value,
+    ) -> Result<Passport, DppError> {
+        // Reject protected/state-machine fields up front: they are set only via
+        // the publish pipeline / update_status and back scalar columns this path
+        // does not rewrite, so patching them would bypass the state machine and
+        // desync the doc from its enforcing column. The rule itself lives in
+        // `crate::protected_fields` so the in-memory backend answers with it too.
+        crate::protected_fields::refuse_protected(&delta)?;
+
+        // Row lock makes concurrent patches serialise instead of clobbering.
+        let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
+            .bind(Self::uuid_of(id))
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        let Some(row) = row else {
+            return Err(DppError::NotFound(id.to_string()));
+        };
+        let mut doc: serde_json::Value = row.get("doc");
+        if let (serde_json::Value::Object(dm), serde_json::Value::Object(pm)) = (&delta, &mut doc) {
+            for (k, v) in dm {
+                if v.is_null() {
+                    pm.remove(k);
+                } else {
+                    pm.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        let passport = self.read_doc(doc.clone())?;
+        // Doc-only write: the scalar columns are all protected fields (rejected
+        // above), so they can never drift from the doc via this path.
+        sqlx::query("UPDATE odal.passport SET doc = $2 WHERE id = $1")
+            .bind(Self::uuid_of(id))
+            .bind(&doc)
+            .execute(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        Ok(passport)
+    }
 }
 
 #[async_trait]
 impl PassportRepository for PgPassportRepo {
     /// Persist a new passport; scalar columns are populated from the JSON doc.
     async fn create(&self, passport: Passport) -> Result<Passport, DppError> {
-        let doc = Self::to_doc(&passport)?;
         let mut tx = self.dal.begin().await?;
-        sqlx::query(
-            // Every scalar column here is a **projection of `doc`**, never a
-            // second source of truth: the document is authoritative and these
-            // exist so a value can be filtered, indexed or reported on without
-            // reaching into JSONB. `passport_column_coverage.rs` fails the build
-            // if a column on this table is left out of both this statement and
-            // the update, which is how ten of them came to sit permanently NULL
-            // while reading as authoritative.
-            //
-            // `version` and `supersedes_id` carry the version chain —
-            // `idx_passport_supersedes` indexes the second, and "is this record
-            // still the head" is a predicate, not a document read.
-            //
-            // `assessed_at` and `ruleset_version` live one level down, inside
-            // `complianceResult`, because that is where the determination that
-            // produced them lives. A missing `complianceResult` yields SQL NULL
-            // through both arrows rather than an error.
-            r#"INSERT INTO odal.passport
-                 (id, product_group, status, retention_locked, schema_version,
-                  version, supersedes_id,
-                  granularity, retention_until, product_id,
-                  assessed_at, ruleset_version,
-                  created_at, updated_at, published_at, doc)
-               VALUES ($1,
-                       $2->>'productGroup',
-                       COALESCE($2->>'status','draft'),
-                       COALESCE(($2->>'retentionLocked')::boolean, false),
-                       COALESCE($2->>'schemaVersion','1.0.0'),
-                       COALESCE(($2->>'version')::integer, 1),
-                       NULLIF($2->>'supersedesId','')::uuid,
-                       $2->>'granularity',
-                       NULLIF($2->>'retentionUntil','')::timestamptz,
-                       NULLIF($2->>'productId','')::uuid,
-                       NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz,
-                       $2->'complianceResult'->>'rulesetVersion',
-                       now(), now(),
-                       NULLIF($2->>'publishedAt','')::timestamptz,
-                       $2)"#,
-        )
-        .bind(Self::uuid_of(passport.id))
-        .bind(&doc)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
+        insert_passport_in_tx(&mut tx, &passport).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(passport)
     }
@@ -474,42 +550,8 @@ impl PassportRepository for PgPassportRepo {
         id: PassportId,
         delta: serde_json::Value,
     ) -> Result<Passport, DppError> {
-        // Reject protected/state-machine fields up front: they are set only via
-        // the publish pipeline / update_status and back scalar columns this path
-        // does not rewrite, so patching them would bypass the state machine and
-        // desync the doc from its enforcing column. The rule itself lives in
-        // `crate::protected_fields` so the in-memory backend answers with it too.
-        crate::protected_fields::refuse_protected(&delta)?;
-
         let mut tx = self.dal.begin().await?;
-        // Row lock makes concurrent patches serialise instead of clobbering.
-        let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
-            .bind(Self::uuid_of(id))
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_err)?;
-        let Some(row) = row else {
-            return Err(DppError::NotFound(id.to_string()));
-        };
-        let mut doc: serde_json::Value = row.get("doc");
-        if let (serde_json::Value::Object(dm), serde_json::Value::Object(pm)) = (&delta, &mut doc) {
-            for (k, v) in dm {
-                if v.is_null() {
-                    pm.remove(k);
-                } else {
-                    pm.insert(k.clone(), v.clone());
-                }
-            }
-        }
-        let passport = self.read_doc(doc.clone())?;
-        // Doc-only write: the scalar columns are all protected fields (rejected
-        // above), so they can never drift from the doc via this path.
-        sqlx::query("UPDATE odal.passport SET doc = $2 WHERE id = $1")
-            .bind(Self::uuid_of(id))
-            .bind(&doc)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+        let passport = self.patch_in_tx(&mut tx, id, delta).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(passport)
     }
