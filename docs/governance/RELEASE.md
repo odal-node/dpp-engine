@@ -55,9 +55,11 @@ The version is in four places, changed in one pull request:
 Merge the release pull request, wait for CI on the merge commit (including both
 **Container image** checks), then tag that commit:
 
+Replace `<version>` below with the release number from `Cargo.toml`, without the `v`.
+
 ```bash
-git tag -a v0.15.0 -m "v0.15.0"
-git push origin v0.15.0
+git tag -a v<version> -m "v<version>"
+git push origin v<version>
 ```
 
 > [!WARNING]
@@ -69,8 +71,8 @@ To build an image locally (the build context is the directory containing
 `dpp-engine/`, and `dpp-core/` for local-core builds):
 
 ```bash
-docker build -t ghcr.io/odal-node/dpp-node:0.15.0 -f dpp-engine/docker/node.Dockerfile .
-docker build -t ghcr.io/odal-node/dpp-resolver:0.15.0 -f dpp-engine/docker/resolver.Dockerfile .
+docker build -t ghcr.io/odal-node/dpp-node:<version> -f dpp-engine/docker/node.Dockerfile .
+docker build -t ghcr.io/odal-node/dpp-resolver:<version> -f dpp-engine/docker/resolver.Dockerfile .
 ```
 
 ## Supply-chain attestations
@@ -78,8 +80,8 @@ docker build -t ghcr.io/odal-node/dpp-resolver:0.15.0 -f dpp-engine/docker/resol
 Each image pushed by `release.yml` carries two attestations beside it:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:0.15.0 --format '{{ json .SBOM }}'
-docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:0.15.0 --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:<version> --format '{{ json .SBOM }}'
+docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:<version> --format '{{ json .Provenance }}'
 ```
 
 - **SBOM:** the Debian runtime packages from BuildKit's filesystem scan, and the Rust
@@ -92,7 +94,7 @@ docker buildx imagetools inspect ghcr.io/odal-node/dpp-node:0.15.0 --format '{{ 
 The crate list can also be read from a pulled image directly:
 
 ```bash
-docker create --name tmp ghcr.io/odal-node/dpp-node:0.15.0
+docker create --name tmp ghcr.io/odal-node/dpp-node:<version>
 docker cp tmp:/usr/local/bin/dpp-node ./dpp-node && docker rm tmp
 cargo audit bin ./dpp-node
 ```

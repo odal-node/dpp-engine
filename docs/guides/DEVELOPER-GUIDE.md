@@ -9,10 +9,10 @@ are in [CONTRIBUTING.md](../../CONTRIBUTING.md) and
 
 | Tool | Why |
 |---|---|
-| Rust 1.96.0 | Pinned by `rust-toolchain.toml`; `rustup` installs it on first build |
+| Rust | The version pinned in `rust-toolchain.toml`; `rustup` installs it on first build |
 | Docker with Compose v2 | PostgreSQL, Redis and NATS for running the node and for the integration tests |
 | [`just`](https://github.com/casey/just) | Command runner |
-| `cargo-nextest`, `cargo-audit` | Test runner and dependency audit used by `just check` |
+| `cargo-nextest`, `cargo-audit`, `cargo-deny` | Test runner and the dependency checks `just check` runs (`just audit` calls both `cargo audit` and `cargo deny`) |
 | Node.js | Only for `just openapi-*`, which run `@redocly/cli` through `npx` |
 
 ## Run the node from source

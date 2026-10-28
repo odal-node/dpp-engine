@@ -32,7 +32,8 @@ From `git clone` to a signed battery passport that resolves from its digital lin
 the time goes into the first build: about 2 minutes for the CLI and 15 to 20 minutes
 for the two container images on a 6-core machine. Later starts take seconds.
 
-**You need:** Docker 24+ with Compose v2, Rust 1.96 ([rustup](https://rustup.rs)),
+**You need:** Docker 24+ with Compose v2, Rust ([rustup](https://rustup.rs) installs the
+version pinned in `rust-toolchain.toml`),
 `git`, `curl` and `openssl`. Ports 8001 and 8003 must be free.
 
 > [!NOTE]

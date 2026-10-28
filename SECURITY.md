@@ -136,6 +136,8 @@ In CI on every push, and in `just check` locally:
 - `cargo audit` with `scripts/check-audit-register.sh`: dependencies against the RustSec
   Advisory Database, and every accepted-risk entry in `.cargo/audit.toml` current (dated,
   tied to code, still reachable). The advisory scan also runs daily on a schedule.
+- `cargo deny check bans licenses sources`: every dependency's licence, banned crates,
+  and the registries and git sources dependencies may come from.
 - `just lint`: clippy, every warning an error, over every target.
 - The full test suite through `cargo nextest`, and the integration tiers in CI.
 - Guard scripts, including the outbound URL guard (`outbound-check.sh`), the XML parser

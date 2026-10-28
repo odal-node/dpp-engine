@@ -17,6 +17,7 @@ Documentation follows the
 | just | latest | `cargo install just` |
 | cargo-nextest | latest | `cargo install cargo-nextest` |
 | cargo-audit | latest | `cargo install cargo-audit` |
+| cargo-deny | latest | `cargo install cargo-deny` |
 
 Docker runs the local infrastructure (PostgreSQL, Redis, NATS) and the integration tests
 (testcontainers). `just openapi-check` also needs Node.js.
@@ -33,7 +34,7 @@ cargo run -p dpp-node   # the node, on port 8001
 
 | Command | What it runs |
 |---|---|
-| `just check` | The local gate: format, clippy over every target (the Docker-gated suites included), the guard scripts, the spec-version check, unit tests, `cargo audit` |
+| `just check` | The local gate: format, clippy over every target (the Docker-gated suites included), the guard scripts, the spec-version check, unit tests, `cargo audit` and `cargo deny` |
 | `just ci` | `just check` plus the Docker-backed integration tiers |
 | `just test` | Unit tests (`cargo nextest`), no Docker |
 | `just test-integration` | The Docker-backed integration tiers |
@@ -216,7 +217,7 @@ chore/upgrade-sqlx
   a test keystore uses `tempfile::tempdir()`.
 - **No `unsafe` code** without explicit justification.
 - **Never log API keys or private keys.**
-- **`cargo audit`** passes before release.
+- **`just audit`** (`cargo audit` and `cargo deny`) passes before release.
 
 Report vulnerabilities privately to **security@odal-node.io**, never in a public issue.
 See [SECURITY.md](SECURITY.md).
