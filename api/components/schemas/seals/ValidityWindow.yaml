@@ -4,7 +4,7 @@ description: >-
 
 
   The window travels with the verdict so a reader can check the arithmetic
-  rather than take it on trust — and because the two dates are what an auditor
+  rather than take it on trust, and because the two dates are what an auditor
   compares against a Trusted List entry when asking the other half of
   Art. 32(1)(b).
 required:
@@ -28,4 +28,4 @@ properties:
       - notYetValid
     description: >-
       Where the judged moment falls in the window. `expired` and `notYetValid`
-      are findings only when that moment is attested — see `judgedAt`.
+      are findings only when that moment is attested: see `judgedAt`.

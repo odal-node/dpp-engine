@@ -8,10 +8,10 @@ description: >-
   Commission Implementing Decision (EU) 2026/1736.
 
 
-  🚨 **Not the `retired` lifecycle status**, which is a terminal state reached
+  **Not the `retired` lifecycle status**, which is a terminal state reached
   after the ESPR retention period and says the record has stopped changing. This
-  is the standard's sense of the word — historical versions of a passport that is
-  still live — and the two are unrelated.
+  is the standard's sense of the word (historical versions of a passport that is
+  still live) and the two are unrelated.
 required:
   - id
   - passportId
@@ -41,7 +41,7 @@ properties:
     type: string
     format: date-time
     description: >-
-      When this version stopped being current — the instant the change that
+      When this version stopped being current: the instant the change that
       replaced it was applied.
 
 

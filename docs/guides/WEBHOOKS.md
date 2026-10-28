@@ -1,66 +1,59 @@
-# Signed Outbound Webhooks
+# Signed webhooks
 
-Your node can POST an event to your own systems (ERP, PLM, a no-code automation)
-every time a passport changes — created, updated, published, suspended, retired,
-deactivated, or transferred. Deliveries are **signed** so your receiver can prove
-the request really came from your node.
+The node can POST each passport event to your own systems (ERP, PLM, an automation
+tool). Every delivery is signed with HMAC-SHA256, so the receiver can check that it
+came from your node and was not modified.
 
----
+## Subscribe
 
-## Managing subscriptions
-
-Via the CLI:
-
-```sh
-# Subscribe to everything (the default when --events is omitted)
-odal webhook add https://hooks.example.com/odal
-
-# Subscribe to specific events only
+```bash
+odal webhook add https://hooks.example.com/odal                     # every event
 odal webhook add https://hooks.example.com/odal \
-  --events dpp.passport.published,dpp.passport.transferred
-
-odal webhook list
-odal webhook test <id>     # send a synthetic dpp.webhook.test delivery
-odal webhook remove <id>   # stop delivering (existing queued deliveries still drain)
+  --events dpp.passport.published,dpp.passport.transferred          # selected events
 ```
 
-Or via the API (`Bearer` admin credential required):
+The response contains the signing secret (`whsec_…`). It is shown once and cannot be
+retrieved later; store it with the receiver.
+
+```bash
+odal webhook list
+odal webhook test <id>      # queue a signed dpp.webhook.test delivery
+odal webhook remove <id>    # stop new deliveries; queued ones still go out
+```
+
+The same operations over the API need an `admin` key:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET`  | `/vault/api/v1/webhooks` | List subscriptions (secret redacted) |
-| `POST` | `/vault/api/v1/webhooks` | Create — **the signing secret is returned once** |
-| `DELETE` | `/vault/api/v1/webhooks/{id}` | Soft-remove (`active=false`) |
-| `POST` | `/vault/api/v1/webhooks/{id}/test` | Enqueue a test delivery |
+| `GET` | `/vault/api/v1/webhooks` | List subscriptions (secrets redacted) |
+| `POST` | `/vault/api/v1/webhooks` | Create a subscription; returns the secret once |
+| `DELETE` | `/vault/api/v1/webhooks/{id}` | Deactivate a subscription |
+| `POST` | `/vault/api/v1/webhooks/{id}/test` | Queue a test delivery |
 
-The signing secret is shown **only** in the create response. Store it now; it
-cannot be recovered later.
+### Events
 
-### Event subjects
+A subscription receives the events in its filter, or every event when the filter is
+`*` (the default). The subjects are listed in
+[EVENT-BUS.md](../architecture/EVENT-BUS.md#subjects): `dpp.passport.created`,
+`updated`, `published`, `suspended`, `superseded`, `retired`, `deactivated` and
+`transferred`; `dpp.import.completed` and `dpp.import.failed`; plus `dpp.webhook.test`
+for test deliveries.
 
-`dpp.passport.created`, `dpp.passport.updated`, `dpp.passport.published`,
-`dpp.passport.suspended`, `dpp.passport.retired`, `dpp.passport.deactivated`,
-`dpp.passport.transferred`, and `dpp.webhook.test`. Use `*` to receive all.
+## What the receiver gets
 
----
+A `POST` with the event envelope as the body:
 
-## The request your receiver sees
-
-`POST` with a JSON body (the event envelope) and these headers:
-
-| Header | Meaning |
+| Header | Value |
 |---|---|
-| `X-Odal-Signature` | `t=<unix-seconds>,v1=<hex>` — see verification below |
-| `X-Odal-Delivery`  | Unique delivery id — **use it to de-duplicate** (see semantics) |
-| `X-Odal-Event`     | The event type, e.g. `dpp.passport.published` |
-| `Content-Type`     | `application/json` |
-
-Body:
+| `X-Odal-Signature` | `t=<unix-seconds>,v1=<hex HMAC>` |
+| `X-Odal-Delivery` | Delivery id, stable across retries. De-duplicate on it |
+| `X-Odal-Event` | The subject, for example `dpp.passport.published` |
+| `Content-Type` | `application/json` |
 
 ```json
 {
   "version": 1,
-  "eventId": "0198f...",
+  "eventId": "0198f2c4-5a1b-7e3d-8c2f-1a9b3c5d7e0f",
   "eventType": "dpp.passport.published",
   "timestamp": "2026-07-11T10:30:00Z",
   "operatorId": "self_hosted",
@@ -68,14 +61,11 @@ Body:
 }
 ```
 
----
+## Verify the signature
 
-## Verifying the signature
-
-The signature is `HMAC-SHA256(secret, "{timestamp}.{raw_body}")`, hex-encoded, in
-the `v1=` field of `X-Odal-Signature`. **Sign the raw request bytes** — do not
-re-serialize the parsed JSON. Reject deliveries whose `t` is too old (a few
-minutes) to blunt replay, and compare using a constant-time function.
+`v1` is the hex HMAC-SHA256 of `"{t}.{raw body}"` under the subscription secret.
+Compute it over the raw request bytes, not re-serialised JSON. Compare in constant
+time, and reject a `t` older than a few minutes to limit replay.
 
 ### Node.js
 
@@ -88,11 +78,13 @@ function verify(secret, header, rawBody, toleranceSec = 300) {
     .createHmac("sha256", secret)
     .update(`${parts.t}.${rawBody}`)
     .digest("hex");
-  const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1));
+  const a = Buffer.from(expected);
+  const b = Buffer.from(parts.v1 ?? "");
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
   const fresh = Math.abs(Date.now() / 1000 - Number(parts.t)) < toleranceSec;
   return ok && fresh;
 }
-// Express: use express.raw({ type: "application/json" }) so req.body is the raw bytes.
+// With Express, use express.raw({ type: "application/json" }) so req.body holds the raw bytes.
 ```
 
 ### Python
@@ -100,11 +92,11 @@ function verify(secret, header, rawBody, toleranceSec = 300) {
 ```python
 import hashlib, hmac, time
 
-def verify(secret: str, header: str, raw_body: bytes, tolerance=300) -> bool:
+def verify(secret: str, header: str, raw_body: bytes, tolerance: int = 300) -> bool:
     parts = dict(kv.split("=", 1) for kv in header.split(","))
     expected = hmac.new(secret.encode(), f"{parts['t']}.".encode() + raw_body,
                         hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, parts["v1"]):
+    if not hmac.compare_digest(expected, parts.get("v1", "")):
         return False
     return abs(time.time() - int(parts["t"])) < tolerance
 ```
@@ -126,35 +118,36 @@ func Verify(secret, header string, rawBody []byte, tolerance time.Duration) bool
     if !hmac.Equal([]byte(expected), []byte(parts["v1"])) {
         return false
     }
-    ts, _ := strconv.ParseInt(parts["t"], 10, 64)
+    ts, err := strconv.ParseInt(parts["t"], 10, 64)
+    if err != nil {
+        return false
+    }
     return time.Since(time.Unix(ts, 0)).Abs() < tolerance
 }
 ```
 
----
+## Delivery behaviour
 
-## Delivery semantics
+| Behaviour | Detail |
+|---|---|
+| Queueing | Deliveries are queued right after the passport change commits. If the node stops between the commit and the queueing, that event's deliveries are not sent |
+| Retries | Any non-`2xx` answer or connection error is retried with exponential backoff (2, 4, 8 … seconds, capped at one hour, with ±25% jitter) |
+| Attempt limit | 8 attempts, after which the delivery is marked `exhausted` |
+| Duplicates | Possible, for example when the node stops after your `2xx` but before recording it. De-duplicate on `X-Odal-Delivery` |
+| Order | Not guaranteed; retries reorder. Use the envelope's `timestamp` |
+| Redirects | Not followed. A `3xx` counts as a failed attempt, because the redirect target was never checked. Subscribe the final URL |
 
-- **At-least-once.** On a crash between your `2xx` and the node recording success,
-  a delivery may repeat. **De-duplicate on `X-Odal-Delivery`** — the id is stable
-  across retries of the same delivery.
-- **Retries with backoff.** Any non-`2xx` response (or a connection error) is
-  retried with exponential backoff and jitter, up to a fixed attempt cap, after
-  which the delivery is marked `exhausted` and stops. Return `2xx` promptly
-  (ideally after enqueuing the work, not after processing it).
-- **Redirects are not followed.** A `3xx` is a non-`2xx` answer like any other,
-  so it is retried and then exhausted. Subscribe the URL your receiver answers
-  on directly, not one that redirects to it: following a redirect would take a
-  delivery to an address the node never checked.
-- **Order is not guaranteed.** Backoff can reorder deliveries; use the event
-  `timestamp` if ordering matters.
-- **Removing a subscription** stops new deliveries; already-queued ones still drain.
+Answer `2xx` as soon as the delivery is stored on your side, and process it
+afterwards.
 
-## Security notes
+## Security
 
-- Receiver URLs must be **https** and resolve to a **public** address. A
-  self-hosted node delivering to its own internal network can opt out with
-  `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` (this also permits plain http) — never set
-  this on a node reachable from untrusted networks.
-- The signing secret is stored by the node so it can sign every delivery.
-  Encrypt your database at rest.
+- Receiver URLs must use `https` and resolve to a public address. The host is
+  re-resolved at every delivery and the connection is pinned to the approved
+  addresses, so a name that later points at an internal address (including through
+  DNS rebinding) is refused.
+- `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` allows private addresses and plain `http`, for
+  a self-hosted node delivering inside its own network. Do not set it on a node that
+  untrusted users can configure.
+- The node stores the signing secrets in order to sign deliveries. Encrypt the
+  database and its backups at rest.

@@ -1,171 +1,128 @@
-# `api/` — the HTTP API description
+# `api/`: the HTTP API description
 
-**Author multi-file. Ship single-file.**
+The OpenAPI 3.1 description of every route the node, the resolver and the
+standalone identity service serve. It is written as many small files and shipped
+as one.
 
-- `openapi.yaml` — the root. Holds `info`, `servers`, `securitySchemes`, `tags`,
-  `x-tagGroups`, a `$ref` per path, and a `$ref` per schema. Nothing else
-  belongs here. The order of those last two blocks is the order the rendered
-  reference shows — see *Ordering* below.
-- `paths/<service>/` — one file per URL path, named for the path with `/`
-  written as `_`, in the directory of the service that serves it.
-- `components/schemas/<group>/` — one file per named schema, in the directory of
-  the model group it renders under. `components/responses/` is flat.
-- `openapi.bundled.yaml` — **generated, committed, never hand-edited.** The
-  single-file form every consumer reads.
-- `openapi.bundled.json` — the same document in JSON, for the contract test
-  below. Also generated and committed; also never hand-edited.
+| Path | What it is |
+|---|---|
+| `openapi.yaml` | The root: `info`, `servers`, `securitySchemes`, `tags`, one `$ref` per path and one `$ref` per schema. Nothing else |
+| `paths/<service>/` | One file per URL path, named for the path with `/` written as `_`, in the directory of the service that serves it |
+| `components/schemas/<group>/` | One file per named schema, in the directory of its model group. `components/responses/` is flat |
+| `openapi.bundled.yaml` | Generated and committed. The single file every consumer reads, and the one [docs.odal-node.io/api](https://docs.odal-node.io/api/) renders. Never edit it by hand |
+| `openapi.bundled.json` | The same document as JSON, read by the contract test below. Also generated and committed |
 
-```
+```bash
 just openapi-bundle    # regenerate both bundles from the tree
-just openapi-check     # diff the bundles, then lint the YAML one
-just openapi-html      # regenerate the browsable spec (git-ignored)
+just openapi-check     # regenerate, fail if the committed bundles differ, then lint
+just openapi-html      # build a local browsable copy (git-ignored)
 ```
 
-## The spec is checked against the code, not just against itself
+These recipes need Node.js (they run `@redocly/cli` through `npx`), so
+`openapi-check` is not part of `just check`. CI runs it on every push.
 
-`crates/dpp-node/tests/openapi_contract.rs` runs in the ordinary `just check`
-gate and fails when this description and the Rust types disagree:
+## The contract test
 
-- **every named schema** is compared against the keys `serde` emits for a
-  maximally-populated instance of the type behind it — a field the server sends
-  and the spec omits fails, and so does a property the spec promises and the
-  server never sends;
-- **every enum schema** is compared against the wire strings the Rust enum
-  actually serialises to;
-- **every route** registered by each of the three deployables this document
-  describes — the node, the resolver, and the standalone identity service that
-  `servers` names as host of the mTLS signing surface — is compared against the
-  paths documented here, in both directions, with no exception list;
-- **every schema in this directory** must be registered in that test or listed
-  in its `UNCHECKED` table with a reason. A new schema nothing checks fails the
-  build rather than passing quietly.
+`crates/dpp-node/tests/openapi_contract.rs` runs in `just check` and fails when the
+description and the Rust types disagree:
 
-This exists because `openapi-check` reads only the spec. Redocly can prove this
-description is *valid*; it cannot prove it is *true*. Before the contract test,
-nothing in CI opened a `.rs` file on the spec's behalf, and the two had drifted
-apart in fourteen schemas, one enum and two routes — including a required
-property no endpoint ever returned, and two lifecycle states the server emits
-that the spec did not list.
+- **Schemas.** Each named schema is compared with the keys `serde` emits for a
+  fully populated instance of the type behind it. A field the server sends and the
+  spec omits fails, and so does a property the spec lists that the server never
+  sends.
+- **Enums.** Each enum schema is compared with the strings the Rust enum
+  serialises to.
+- **Routes.** The routes registered by the node, the resolver and the standalone
+  identity service are compared with the documented paths, in both directions,
+  with no exception list.
+- **Coverage.** Every schema file must be registered in the test or listed in its
+  `UNCHECKED` table with a reason, so a new schema cannot go unchecked by default.
 
-**Known limit: the contract test compares property *names*, not their types.**
-A property documented as `type: string` whose field is an object still passes.
-That gap is real — `co2ePerUnit` and `repairabilityScore` were both documented
-as bare numbers long after they became objects. Check the type when you touch a
-schema; the gate will not do it for you.
+`openapi-check` proves the description is valid OpenAPI; this test checks it
+against the code.
 
-When it fails, fix the spec or fix the type. Do not edit the test's fixtures to
-agree with a wrong spec — the fixtures are the statement of what the server
-sends.
+**Limit:** the test compares property names, not types. A property documented as
+`type: string` whose field is an object still passes. Check the type yourself when
+you change a schema.
 
-## Why the bundle is committed rather than built on demand
+When the test fails, fix the spec or fix the type. Do not edit the test's fixtures
+to match a wrong spec: the fixtures describe what the server sends.
 
-The documentation site vendors this spec and verifies its copy against the
-version at a recorded commit — `git show <commit>:<path>`. That reads one blob
-out of git history, which works for a committed file and cannot work for an
-artefact that only exists after a build step. Committing the bundle is what
-keeps that check deterministic and self-contained.
+## Why the bundle is committed
 
-CI regenerates the bundle and fails if the committed one differs, so it cannot
-drift from the tree it came from.
+The documentation site vendors this spec and checks its copy against the bundle at
+a recorded commit with `git show <commit>:<path>`. That only works for a committed
+file. `redocly bundle` is byte-deterministic, so `openapi-check` can prove with a
+plain diff that the committed bundle matches the tree.
 
 ## Authoring rules
 
-**This is OpenAPI 3.1.** `nullable: true` is not a keyword in 3.1 and is
-rejected by the linter. A nullable value is a type union:
+**OpenAPI 3.1 has no `nullable` keyword**, and the linter rejects it. Write a
+nullable value as a type union:
 
 ```yaml
 # a nullable scalar
 type: [string, "null"]
 
-# a nullable $ref — a union with the null type, not allOf + nullable
+# a nullable $ref
 anyOf:
   - $ref: "#/components/schemas/TreeReport"
   - type: "null"
 ```
 
-This defect has reached `main` twice. `just openapi-check` runs in CI on every
-push specifically to stop a third time.
+**`.redocly.lint-ignore.yaml` is a baseline** of the lint findings that existed
+when the lint was introduced, so the lint fails only on new ones. Remove entries as
+you fix them; never regenerate the file. It is keyed by file name and names
+`openapi.bundled.yaml`, the file CI lints.
 
-**`.redocly.lint-ignore.yaml` baselines the problems the spec has today**, so the
-lint passes now and fails on new ones. Shrink that file; never regenerate it, or
-the gate stops meaning anything. It is keyed by *filename* — it names
-`openapi.bundled.yaml`, which is what CI lints.
-
-**Comments do not survive.** `redocly split` and `redocly bundle` both discard
-YAML comments. Anything worth keeping goes in a `description` field, a tag
-description, or this file — never in a `#` comment.
+**YAML comments are lost.** `redocly bundle` and `redocly split` both drop them. Put
+anything worth keeping in a `description` field, a tag description or this file.
 
 ## Layout
 
-**One rule: a file lives in the directory of the thing it belongs to.**
+A file lives in the directory of the thing it belongs to: `paths/` has one directory
+per service (`vault/`, `integrator/`, `identity/`, `resolver/`, `health/`), and
+`components/schemas/` has one per model group.
 
-`paths/` has one directory per service — `vault/`, `integrator/`, `identity/`,
-`resolver/`, `health/`. `components/schemas/` has one per model group, and a
-schema's directory is also the value of its `x-tags`, so those fourteen names
-appear twice and cannot drift apart unnoticed.
+File names follow `redocly split`'s convention (`/` written as `_`), but the
+directories do not: `split` writes one flat `paths/` directory. **The tree is
+maintained by hand**; running `redocly split` would flatten it.
 
-The four `x-tagGroups` are not quite the five service directories: `Integrator &
-Identity` and `Resolver & Health` each cover two, because a group whose only
-child repeats its own name renders as a heading above one identically-named
-entry. Group names must therefore differ from every tag name — check that before
-adding one.
-
-Filenames keep `redocly split`'s URL-derived convention (`/` written as `_`), but
-the directories do not: `split` writes one flat `paths/` directory, so **this
-tree is maintained by hand and cannot be regenerated by the tool.** That is the
-price of the rule above, and it is worth stating plainly rather than discovering
-by running `split` and losing the grouping. A hundred and seven schemas in one
-flat directory had no navigable order and no relationship to how they are read.
-
-The move that introduced this layout rewrote 373 `$ref`s across 180 files and
-left `openapi.bundled.yaml` **byte-identical** — which is the check to repeat if
-the tree is ever restructured again. A reorganisation that changes the bundle
-changed the API.
+When you restructure the tree, regenerate the bundle and check that it is
+byte-identical. A reorganisation that changes the bundle has changed the API.
 
 ## Ordering
 
-**Three blocks in `openapi.yaml` decide what the rendered reference looks like,
-and nothing else does.**
+Three blocks in `openapi.yaml` decide how the rendered reference is ordered:
 
-| block | controls |
+| Block | Controls |
 |---|---|
-| `tags:` | the order of the sections |
-| `paths:` | the order of operations *within* a section |
-| `components.schemas:` | the order of the models |
+| `tags:` | The order of the sections |
+| `paths:` | The order of operations within a section |
+| `components.schemas:` | The order of the models |
 
-That third one is the reason it exists. `components.schemas` holds no shapes —
-every entry is a `$ref` — and the bundler would happily assemble the same
-document without it. Without it, though, the models come out in whatever order
-redocly's traversal happened to reach them, which is neither alphabetical nor
-meaningful, and there is no file you can edit to change it. Declaring the refs
-in the root is what makes the order a decision rather than an accident.
-
-A schema listed nowhere in that block still bundles — it is reachable through the
-paths — but it lands *after* the declared ones. So a new schema that is not added
-here is not an error, it is a straggler at the end of the Models list. Add it in
-the group it belongs to.
+Every entry in `components.schemas` is a `$ref`, so the bundler could assemble the
+document without it. The block exists to fix the model order; without it, models
+appear in whatever order the bundler reaches them. A schema missing from the block
+still bundles, through the paths that use it, but it is listed after all the
+declared ones. Add a new schema to the block, in its group.
 
 ## Naming
 
-**A schema's name must stand alone, because it has to.** Rust disambiguates with
-module paths — `handlers::sign::SignRequest` and `handlers::create::CreateRequest`
-each read clearly where they are declared. OpenAPI has no such thing: these 107
-schemas share one flat namespace and are read as one flat list, where
-`SignRequest` and `CreateRequest` say nothing about what is signed or created.
-So the qualification that Rust gets from the module path is written into the name
-here: `InternalSignRequest`, `CreatePassportRequest`.
+**A schema name must be unambiguous on its own.** Rust qualifies a name with its
+module path (`handlers::sign::SignRequest`); OpenAPI schemas share one flat
+namespace. Put the qualifier in the name: `InternalSignRequest`,
+`CreatePassportRequest`.
 
-**The Rust type carries the same name.** The alternative — a qualified schema
-name over an unqualified struct — buys a shorter struct name and pays for it with
-a permanent translation step in `openapi_contract.rs` and two names for one thing.
-The gate binds them by string, so a divergence is silent.
+**The Rust type has the same name as its schema.** The contract test binds the two
+by string, so a type named differently from its schema needs a translation entry,
+and a mismatch is easy to miss.
 
-Two pairs are worth copying, because they were the ambiguity that prompted this:
+Name request and response bodies by direction:
 
 | Direction | Shape | Example |
 |---|---|---|
-| request body | `Create<Thing>Request` | `CreateApiKeyRequest`, `CreateWebhookRequest` |
-| response carrying a one-time secret | `Created<Thing>Response` | `CreatedApiKeyResponse`, `CreatedWebhookResponse` |
+| Request body | `Create<Thing>Request` | `CreateApiKeyRequest`, `CreateWebhookRequest` |
+| Response carrying a one-time secret | `Created<Thing>Response` | `CreatedApiKeyResponse`, `CreatedWebhookResponse` |
 
-`New*` previously meant *response* for API keys and *request* for webhooks. Do
-not reintroduce a prefix that does not name a direction.
+Do not use a prefix such as `New*` that does not say which direction it is.

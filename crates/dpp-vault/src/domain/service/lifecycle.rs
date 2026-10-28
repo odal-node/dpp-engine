@@ -15,7 +15,10 @@ use dpp_domain::{
     status::PassportStatus,
 };
 use dpp_types::{
-    audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
+    audit::PassportAuditEntry,
+    auth::AuthContext,
+    registry_sync::RegistryStatusIntent,
+    state_change::{PassportWrite, StateChange},
 };
 
 use super::{PassportService, retention_deadline, retention_years_for};
@@ -44,13 +47,8 @@ impl PassportService {
             });
         }
 
-        let updated = self
-            .repo
-            .update_status(id, PassportStatus::Suspended)
-            .await?;
-
         let mut entry = PassportAuditEntry::new(
-            &updated.id.to_string(),
+            &id.to_string(),
             "suspended",
             &auth.user_id,
             Some(&PassportStatus::Published.to_string()),
@@ -59,31 +57,23 @@ impl PassportService {
         if let Some(r) = reason {
             entry = entry.with_metadata(serde_json::json!({"reason": r}));
         }
-        self.audit.append(entry).await?;
-
-        // Record the suspended status intent in the registry outbox (drained to
-        // the EU registry once its status-push API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Suspended)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue suspended status to registry outbox (non-fatal)"
-            );
-        }
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_SUSPENDED,
             serde_json::json!({
-                "passportId": updated.id.to_string(),
+                "passportId": id.to_string(),
                 "status": "suspended",
             }),
-        )
-        .await;
+        );
+        let updated = self
+            .commit_passport_change(
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Suspended)),
+                    RegistryStatusIntent::Suspended,
+                ),
+                event,
+            )
+            .await?;
 
         // Reconcile the continuity tier: a suspended passport must not keep
         // being served as `active` from the static tier (non-fatal).
@@ -234,41 +224,31 @@ impl PassportService {
         }
 
         let prev_status = passport.status.to_string();
-        let updated = self.repo.update_status(id, PassportStatus::Retired).await?;
-
         let entry = PassportAuditEntry::new(
-            &updated.id.to_string(),
+            &id.to_string(),
             "retired",
             &auth.user_id,
             Some(&prev_status),
             Some(&PassportStatus::Retired.to_string()),
         );
-        self.audit.append(entry).await?;
-
-        // Record the deactivated status intent in the registry outbox (drained
-        // to the EU registry once its status-push API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Deactivated)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue deactivated status to registry outbox (non-fatal)"
-            );
-        }
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_RETIRED,
             serde_json::json!({
-                "passportId": updated.id.to_string(),
+                "passportId": id.to_string(),
                 "status": "retired",
                 "previousStatus": prev_status,
             }),
-        )
-        .await;
+        );
+        let updated = self
+            .commit_passport_change(
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Retired)),
+                    RegistryStatusIntent::Deactivated,
+                ),
+                event,
+            )
+            .await?;
 
         // Reconcile the continuity tier — a retired passport keeps serving,
         // so its snapshot is refreshed rather than withdrawn (non-fatal).

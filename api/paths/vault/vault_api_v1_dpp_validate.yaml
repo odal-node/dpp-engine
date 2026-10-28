@@ -7,8 +7,8 @@ post:
     cannot disagree.
 
     **Two verdicts, because create and publish deliberately differ.** Create is
-    lenient about a product group with no resolvable JSON Schema — a draft is allowed
-    to be incomplete — while publish fails closed on it, since a signed
+    lenient about a product group with no resolvable JSON Schema (a draft is allowed
+    to be incomplete) while publish fails closed on it, since a signed
     passport must have passed a real schema check. A body can therefore be
     creatable but not yet clear the publish-time schema gate, and that gap is
     reported rather than hidden until publish is attempted.
@@ -27,7 +27,7 @@ post:
     field says.
 
     **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
-    preconditions — the product group-data gates — and publish applies others this
+    preconditions (the product group-data gates) and publish applies others this
     route does not run:
 
     - the **registry identity** requirement (a default facility and a primary

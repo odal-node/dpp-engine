@@ -49,6 +49,9 @@ pub struct DbComponents {
     pub transfer_outbox: Arc<dyn RegistryTransferOutbox>,
     pub evidence_store: Arc<dyn EvidenceDossierRepository>,
     pub webhook_outbox: Arc<dyn WebhookOutbox>,
+    /// Commits each state change in one transaction, archived version, audit
+    /// entry, registry rows and webhook deliveries included.
+    pub state_changes: Arc<dyn dpp_types::StateChangeLog>,
     pub webhook_store: Arc<dyn WebhookSubscriptionStore>,
     pub snapshot_outbox: Arc<dyn SnapshotOutbox>,
     pub seal_outbox: Arc<dyn SealOutbox>,
@@ -146,6 +149,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         transfer_outbox: Arc::new(PgRegistryTransferRepo::new(dal.clone())),
         evidence_store: Arc::new(PgEvidenceDossierRepo::new(dal.clone())),
         webhook_outbox: Arc::new(PgWebhookRepo::new(dal.clone())),
+        state_changes: Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())),
         webhook_store: Arc::new(PgWebhookRepo::new(dal.clone())),
         snapshot_outbox: Arc::new(PgSnapshotOutboxRepo::new(dal.clone())),
         seal_outbox: Arc::new(PgSealOutboxRepo::new(dal.clone())),

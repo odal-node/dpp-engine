@@ -1,220 +1,300 @@
-# Odal Node Engine
+# dpp-engine
 
-**Sovereign, self-hostable Digital Product Passport infrastructure**
+The self-hostable node for EU Digital Product Passports (DPPs): an HTTP API that
+validates, signs, versions, stores and serves passports from your own
+infrastructure. It is source-available under the Business Source License 1.1, and
+running it in production for your own organisation's products and compliance
+obligations is free. It is built on [`dpp-core`](https://github.com/odal-node/dpp-core),
+the Apache-2.0 Rust library that holds the data model, schemas and regulatory rules.
 
-[![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
 [![CI](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/odal-node/dpp-engine/actions/workflows/ci.yml)
-[![Rust 1.96+](https://img.shields.io/badge/Rust-1.96%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status: Active Development](https://img.shields.io/badge/Status-Active%20Development-green.svg)]()
+[![Advisories](https://img.shields.io/github/actions/workflow/status/odal-node/dpp-engine/advisories.yml?branch=main&label=advisories)](https://github.com/odal-node/dpp-engine/actions/workflows/advisories.yml)
+[![Fuzzing](https://img.shields.io/github/actions/workflow/status/odal-node/dpp-engine/fuzz.yml?branch=main&label=fuzzing)](https://github.com/odal-node/dpp-engine/actions/workflows/fuzz.yml)
+[![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.package%5B'rust-version'%5D&label=MSRV&prefix=Rust%20&logo=rust)](Cargo.toml)
+[![Docs](https://img.shields.io/badge/docs-docs.odal--node.io-blue)](https://docs.odal-node.io)
+[![Status: pre-production](https://img.shields.io/badge/status-pre--production-yellow)](#dpp-engine)
 
-The self-hostable runtime for Odal Node — HTTP services, PostgreSQL persistence, auth, telemetry, and the operational trust layer: everything an operator needs to issue, sign, serve, and *prove* EU-compliant Digital Product Passports on their own infrastructure. Self-hosting for your own compliance is permitted at no charge (see [LICENSE](LICENSE)).
+[![dpp-core](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies%5B'dpp-domain'%5D&label=dpp-core&logo=rust)](https://github.com/odal-node/dpp-core)
+[![Docker Compose](https://img.shields.io/badge/runs%20on-Docker%20Compose-2496ED?logo=docker&logoColor=white)](docker/)
+[![PostgreSQL](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2Fdocker%2Fdocker-compose.yml&query=%24.services.postgres.image&label=database&logo=postgresql&logoColor=white)](docker/docker-compose.yml)
+[![OpenAPI](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2Fapi%2Fopenapi.yaml&query=%24.openapi&label=OpenAPI&logo=openapiinitiative)](https://docs.odal-node.io/api/)
+[![Wasm plugins](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies.wasmtime.version&label=plugins%20on%20wasmtime&logo=webassembly)](crates/dpp-plugin-host)
 
-Consumes [dpp-core](https://github.com/odal-node/dpp-core) (Apache-2.0) for domain types, crypto, and schema validation.
+> [!NOTE]
+> **Status: pre-production.** CI runs the full passport lifecycle against PostgreSQL
+> on every change, but no operator runs a node against real product data yet. The
+> HTTP API and the database schema still change between minor versions.
 
----
+## Quick start
 
-## The Golden Rule
+From `git clone` to a signed battery passport that resolves from its digital link. Most of
+the time goes into the first build: about 2 minutes for the CLI and 15 to 20 minutes
+for the two container images on a 6-core machine. Later starts take seconds.
 
-> If code changes because of **how the system is deployed, run, or operated**, it belongs here.
-> If code changes because an **EU regulation** changed, it belongs in dpp-core.
+**You need:** Docker 24+ with Compose v2, Rust ([rustup](https://rustup.rs) installs the
+version pinned in `rust-toolchain.toml`),
+`git`, `curl` and `openssl`. Ports 8001 and 8003 must be free.
 
----
+> [!NOTE]
+> Prebuilt images are not public yet, so the stack is built from source. Keep the
+> clone's directory name `dpp-engine`: the Compose build context is its parent
+> directory.
+
+### 1. Build the CLI
+
+```bash
+git clone https://github.com/odal-node/dpp-engine
+cd dpp-engine
+cargo build -p dpp-cli --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+### 2. Configure
+
+```bash
+cp .env.example .env
+openssl rand -base64 32    # paste as KEY_STORE_PASSPHRASE
+openssl rand -hex 16       # paste as ADMIN_PASSWORD
+```
+
+In `.env`, set `KEY_STORE_PASSPHRASE`, then uncomment `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` and give them values. The example database passwords are accepted
+on a local `dev` profile; a `prod` profile refuses them.
+
+### 3. Start the stack
+
+```bash
+odal up
+odal status
+```
+
+```text
+SERVICE      URL                                    STATUS   LATENCY
+────────────────────────────────────────────────────────────────────────
+vault        http://localhost:8001/vault/health     OK       2ms
+identity     http://localhost:8001/identity/health  OK       0ms
+resolver     http://localhost:8003/health           OK       0ms
+```
+
+### 4. Register the operator
+
+`odal` does not read `.env`, so export the admin credentials first. EU registry
+registration needs the operator's legal name, and product groups whose passport
+obligation is in force also need a default facility and a primary operator
+identifier before they publish. The values below are valid test values.
+
+```bash
+set -a; . ./.env; set +a
+odal bootstrap --legal-name "Example Batteries GmbH" --country DE \
+  --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
+odal facility add --name "Berlin plant" --value 4012345000009 --country DE --default
+odal operator-id add --scheme vat --value DE123456789 --primary
+```
+
+`bootstrap` prints an API key once and saves it to `~/.config/odal/credentials.toml`.
+Export it for the `curl` calls below:
+
+```bash
+export ODAL_API_KEY=odal_sk_...
+```
+
+With a key configured, `odal status` also lists the trust adapters. On a laptop every
+one is a stand-in, reported as `ghost`: the passports work end to end, and nothing the
+node signs is fit for compliance use. A `production` profile refuses to start this way.
+
+```text
+TRUST
+profile             development
+backup              ghost
+compliance          ghost
+credential_issuers  ghost
+registry_sync       ghost
+seal                ghost
+...
+```
+
+### 5. Create and publish a battery passport over REST
+
+[`ops/demo/samples/battery-full.json`](ops/demo/samples/battery-full.json) is an
+industrial LFP battery with its performance, durability, recycled-content,
+hazardous-substance, dismantling and conformity data filled in. The battery passport
+has an obligation in force, which is why step 4 registered a facility and an operator
+identifier. Post the sample as the create body:
+
+```bash
+curl -s -X POST http://localhost:8001/vault/api/v1/dpp \
+  -H "Authorization: Bearer $ODAL_API_KEY" -H 'Content-Type: application/json' \
+  -d @ops/demo/samples/battery-full.json
+```
+
+The response is the draft, with a server-assigned UUID v7 `id`, `"status":"draft"`
+and the newest battery `schemaVersion`. Publish it:
+
+```bash
+export DPP_ID=<id from the response>
+curl -s -X POST "http://localhost:8001/vault/api/v1/dpp/$DPP_ID/publish" \
+  -H "Authorization: Bearer $ODAL_API_KEY"
+```
+
+The passport is now `"status":"active"`, carries an Ed25519 `jwsSignature`, and has a
+`qrCodeUrl` of the form `http://localhost:8003/01/09506000134352/21/<serial>`: the
+digital link printed on the battery. The battery has a GTIN, so its digital link is a
+GS1 Digital Link. The smoke test `the_quick_start_battery_sample_creates_and_publishes`
+runs this step against a real node, so the sample cannot stop publishing unnoticed.
+
+### 6. Resolve it like a scanner
+
+```bash
+curl -si http://localhost:8003/01/09506000134352 | head -n 3
+curl -s -H 'Accept: application/ld+json' "http://localhost:8003/dpp/$DPP_ID"
+curl -s http://localhost:8001/.well-known/did.json
+```
+
+The GS1 route answers `307` with a redirect to `/dpp/<id>`. The resolver serves
+the public view as JSON-LD, as HTML (open `http://localhost:8003/dpp/<id>` in a
+browser), or as an Asset Administration Shell environment, depending on `Accept`.
+The DID document holds the public key that verifies the signature.
+
+### 7. Generate and verify the evidence dossier
+
+```bash
+odal passport evidence "$DPP_ID"   # prints the stored dossier; its "id" is the last field
+odal verify <dossier-id>
+```
+
+```text
+  [PASS] manifest_signature
+  [PASS] content_integrity
+  [PASS] full_view_signature
+  [PASS] public_view_signature
+  [PASS] audit_chain
+  [N/A ] transfer_chain — no transfer chain on this passport
+  ...
+VERIFIED — every check passed.
+```
+
+`odal down` stops the stack. Data, including the signing key, stays in Docker
+volumes until you remove them.
+
+## How a passport moves through the node
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client (odal, ERP, curl)
+    participant N as dpp-node
+    participant P as PostgreSQL
+    participant R as dpp-resolver
+    participant S as Scanner or verifier
+    C->>N: POST /vault/api/v1/dpp (API key)
+    N->>N: validate against the product group schema and rules (dpp-core)
+    N->>P: insert draft, append audit entry
+    C->>N: POST /vault/api/v1/dpp/{id}/publish
+    N->>N: sign JWS with the operator's Ed25519 key
+    N->>P: one transaction: passport row + EU registry outbox row
+    N-->>C: active passport, jwsSignature, qrCodeUrl
+    Note over N,P: background drainer submits outbox rows with retry and backoff
+    S->>R: GET /01/{gtin}/21/{serial}
+    R-->>S: 307 to /dpp/{id}
+    S->>R: GET /dpp/{id} (Accept: HTML, JSON-LD or AAS)
+    R->>N: public view and DID document
+    R->>R: verify the JWS against the DID document
+    R-->>S: verified public view
+```
 
 ## Architecture
 
-The engine ships as a **single binary** (`dpp-node`) that fuses all services under one Axum router, plus a separately deployed public resolver.
+Two binaries, both compiled with `dpp-core`:
 
-```
-+---------------------------------------------------+
-|              dpp-node (port 8001)                 |
-|  +-----------+  +-------------+  +--------------+ |
-|  |   vault   |  |  identity   |  |  integrator  | |
-|  | /vault/*  |  | /identity/* |  | /integrator/*| |
-|  +-----------+  +-------------+  +--------------+ |
-|  +---------------------------------------------+  |
-|  |         dpp-plugin-host (wasmtime)          |  |
-|  +---------------------------------------------+  |
-|  +---------------------------------------------+  |
-|  |         dpp-dal (PostgreSQL)                |  |
-|  +---------------------------------------------+  |
-+---------------------------------------------------+
-
-+---------------------------------------------------+
-|       dpp-resolver (standalone, port 8003)        |
-|   public QR / Digital Link resolver (JWS-verified)|
-+---------------------------------------------------+
-```
-
----
-
-## Crate Map
-
-| Crate | Type | Description |
+| Binary | Port | What it does |
 |---|---|---|
-| `dpp-types` | lib | Platform-wide types — operator config, auth, audit, API keys |
-| `dpp-dal` | lib | PostgreSQL DAL — passport repo, migrations (single-tenant; no RLS) |
-| `dpp-vault` | bin+lib | DPP write engine — create, versioned lifecycle (publish / suspend / retire / end-of-life), transfer-of-responsibility handshake, hash-chained audit, evidence-dossier generation + verification |
-| `dpp-identity` | bin+lib | `did:web` identity HTTP service — signing, key rotation |
-| `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
-| `dpp-render` | lib | Shared HTML rendering of the public passport view. Extracted from `dpp-resolver` so the live read and the continuity tier's pre-rendered snapshot go through **one** renderer — a second implementation is precisely how the static tier would drift from what the resolver serves |
-| `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-product group templates |
-| `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 9457 HTTP errors |
-| `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
-| `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |
-| `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence dossier generation and verification |
-| `dpp-seal` | lib | eIDAS qualified-seal adapter over one `SealBackend`, chosen by `SEAL_PROVIDER`: a hosted QTSP, a local development sealer (real CMS, no legal weight), or a clearly-marked Ghost when unset. Only the first carries legal weight — a production-profile node **refuses to boot** on the others |
-| `dpp-factor-data` | lib | Licensed LCI factor store — ghost provider until a dataset licence is signed; any ghost-derived result is marked `dataset_id="ghost"` |
+| `dpp-node` | 8001 | One Axum process with three route groups: `/vault/*` (passport write engine and lifecycle), `/identity/*` (`did:web` document and signing), `/integrator/*` (CSV/XLSX bulk import). Hosts the Wasm plugin sandbox and the outbox drainers. |
+| `dpp-resolver` | 8003 | Public, read-only. Resolves each passport's digital link (GS1 Digital Link routes for a product with a GTIN, `/dpp/{id}` for every passport) and serves the content-negotiated public view, verifying the signature before it answers. Deployed separately. |
+| `odal` | none | The operator CLI: stack lifecycle, onboarding, passports, keys, webhooks, plugins, dossiers. Calls the node's HTTP API. |
 
-### Dependencies on dpp-core
+| Infrastructure | Port | Role |
+|---|---|---|
+| PostgreSQL 17 | 5432 | Primary datastore. The app role cannot run DDL, the audit table is append-only (database trigger) and hash-chained |
+| Redis 7 | 6379 | Resolver response cache |
+| NATS JetStream | 4222 | Event bus. Optional: without `NATS_URL`, events are discarded |
 
-All core crates are consumed from crates.io — dpp-core is published independently, and the pinned version lives in the workspace `Cargo.toml` under `[workspace.dependencies]`. It is deliberately not repeated here: this line asked three places to be kept in agreement on every core bump, and it still said `^0.12.0` while the workspace was on `0.14.1`. Local dev can override to a sibling checkout via `.cargo/config.toml` (see `.cargo/config.toml.example`).
+Design points an integrator will meet:
 
-| Core Crate | Used For |
+- **Single tenant.** One operator per node, one database, one signing key. Isolation
+  between operators is a deployment boundary, not row-level security.
+- **Transactional outbox.** The EU registry submission is written in the same
+  transaction as the publish, then drained with retry and backoff, so a crash
+  between the two loses nothing.
+- **Fail-fast startup.** The node refuses to start on sample credentials in any
+  profile. Under `NODE_PROFILE=production` it also refuses while a required adapter
+  (compliance, seal, EU registry) is a stub. Each adapter's mode is reported on the
+  authenticated `GET /vault/api/v1/node/state` and as a `trust_mode` gauge on the
+  private metrics listener; the public `/health` reports liveness only.
+- **Wasm plugin sandbox.** Product group plugins run under wasmtime with fuel
+  metering, a memory cap and no WASI capabilities. Plugins must be signed unless
+  `ALLOW_UNSIGNED_PLUGINS=true` under a development profile. A plugin that declares
+  the schema versions it supports never receives data outside that range.
+- **Errors** are RFC 9457 problem documents on every HTTP surface. IDs are UUID v7.
+- **Observability.** Structured logs through `tracing`, Prometheus metrics on a
+  private listener (`127.0.0.1:9100` for the node, `9101` for the resolver). There is
+  no OpenTelemetry export.
+
+### Crates
+
+| Crate | Kind | Description |
+|---|---|---|
+| `dpp-node` | bin | The node binary: router, boot checks, outbox drainers, ruleset channel |
+| `dpp-vault` | lib, bin | Passport lifecycle (publish, amend, supersede, suspend, retire, end of life), transfer of responsibility, hash-chained audit, evidence dossiers |
+| `dpp-identity` | lib, bin | `did:web` documents, signing and key rotation |
+| `dpp-resolver` | lib, bin | Public resolver for each passport's digital link |
+| `dpp-render` | lib | The single HTML renderer for the public passport page, shared by the resolver and the pre-rendered continuity snapshot |
+| `dpp-integrator` | lib, bin | CSV/XLSX import with per-product-group templates |
+| `dpp-dal` | lib | PostgreSQL access through `sqlx`, and the migrations runner |
+| `dpp-types` | lib | Operator configuration, auth, audit and API-key types |
+| `dpp-common` | lib | Event bus, RFC 9457 errors, metrics, idempotency, outbound URL guard |
+| `dpp-plugin-host` | lib | The wasmtime sandbox for product group plugins |
+| `dpp-seal` | lib | eIDAS seals behind one port: an experimental local development sealer, or a stub. Also reads stored seals back and checks their issuers against the EU Trusted Lists |
+| `dpp-factor-data` | lib | Licensed LCI factor store. Only a stub provider exists; no dataset is licensed |
+| `dpp-cli` (`cli/`) | bin | The `odal` CLI |
+
+`dpp-core` crates come from crates.io at the version pinned in the root `Cargo.toml`.
+To build against a local `dpp-core` checkout, copy `.cargo/config.toml.example` to
+`.cargo/config.toml` (or run `just core-local`).
+
+## Reference
+
+| Topic | Where |
 |---|---|
-| `dpp-domain` | Domain types, port traits, schema validation |
-| `dpp-crypto` | Ed25519 key management, JWS, encrypted key store |
-| `dpp-vc` | W3C Verifiable Credentials, `did:web` documents, status lists, `LocalIdentityService`, JSON-LD context |
-| `dpp-digital-link` | GS1 Digital Link parser and link-type negotiation |
-| `dpp-calc` | EU-methodology calculators (CO2e, repairability) |
-| `dpp-plugin-traits` | Wasm plugin ABI |
-| `dpp-aas` | Asset Administration Shell projection — the resolver's `Accept`-negotiated AAS Environment |
-| `dpp-rules` | Cross-field regulatory rules, taken with `features = ["bundle"]` — the signed-ruleset format the node verifies fail-closed |
-| `dpp-registry` | EU registry interface types |
+| HTTP API (OpenAPI 3.1) | [`api/openapi.bundled.yaml`](api/openapi.bundled.yaml), browsable at [docs.odal-node.io/api](https://docs.odal-node.io/api/) |
+| CLI | [`cli/README.md`](cli/README.md), and `odal <command> --help` |
+| Configuration | [`.env.example`](.env.example): every variable, grouped by binary |
+| Operating a node | [`docs/guides/OPERATOR-SETUP.md`](docs/guides/OPERATOR-SETUP.md), [`docs/ops/PRODUCTION-RUNBOOK.md`](docs/ops/PRODUCTION-RUNBOOK.md) |
+| Developing the engine | [`docs/guides/DEVELOPER-GUIDE.md`](docs/guides/DEVELOPER-GUIDE.md), [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| All engine documents | [`docs/README.md`](docs/README.md) |
+| Guides, concepts and regulation | [docs.odal-node.io](https://docs.odal-node.io) |
 
-**Dependency direction**: dpp-engine -> dpp-core (one-way). dpp-core has zero knowledge of this repo.
-
----
-
-## Quick Start
-
-**Requirements:** Rust 1.96+, Docker 24+, [just](https://github.com/casey/just)
+## Develop
 
 ```bash
-git clone https://github.com/odal-node/dpp-engine.git
-cd dpp-engine
-
-# Start infrastructure (PostgreSQL, Redis, NATS)
-docker compose -f docker/docker-compose.dev.yml up -d
-
-# Build everything
-cargo build --workspace
-
-# Run the MVP node
+just infra                  # PostgreSQL, Redis and NATS only
+cp .env.example .env
 cargo run -p dpp-node
-
-# Run tests
-cargo nextest run --workspace
+just check                  # the CI gate: format, clippy, guard scripts, unit tests, audit
+just test-integration       # the Docker-backed integration tiers
 ```
 
-The node starts on port **8001**. The resolver runs separately on port **8003**.
+## Licence
 
-**Environment**: Copy the single root template — `cp .env.example .env`. It documents every backend var, grouped by deployable (node + resolver), including the trust-layer surface: `NODE_PROFILE` (a `production` node refuses to boot on placeholder trust adapters), `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` (signed compliance-ruleset channel), and the optional `EU_REGISTRY_*` / `BACKUP_S3_*` / `QTSP_*` adapter blocks.
-
-### Operate it with the `odal` CLI
-
-The CLI is the operator control plane — onboarding through the full passport
-lifecycle, all over the node's HTTP API:
-
-```bash
-cargo build -p dpp-cli                          # builds target/debug/odal
-./target/debug/odal bootstrap                   # onboard operator + mint first API key
-./target/debug/odal passport import ops/demo/datasets/09-battery-valid.csv
-./target/debug/odal passport validate && ./target/debug/odal passport publish
-```
-
-```bash
-# Generate a signed evidence dossier and verify it against the node
-./target/debug/odal passport evidence <dpp-id>   # generates + stores a dossier
-./target/debug/odal verify <dossier-id>          # 8+ independent checks, exit 0 = verified
-```
-
-Full command reference: **[cli/README.md](cli/README.md)**.
-
----
-
-
-### Resolver (port 8003, standalone)
-
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/health` | None |
-| GET | `/ready` | None |
-| GET | `/dpp/{id}` | None — content-negotiated (HTML, JSON-LD, or AAS Environment via `Accept`) |
-| GET | `/dpp/{id}/qr` | None |
-| GET | `/01/{gtin}` | None — GS1 Digital Link resolution; the carrier of a model-level passport |
-| GET | `/01/{gtin}/21/{serial}` | None — the carrier of an item-level passport, or one stating no level; the serial selects the passport |
-| GET | `/01/{gtin}/10/{batch}` | None — the carrier of a batch-level passport; the lot selects it |
-| GET | `/01/{gtin}/10/{batch}/21/{serial}` | None — the shape carriers printed before they followed the passport's level; the serial selects the passport |
-| GET | `/01/{gtin}/22/{variant}[/10/{batch}][/21/{serial}]` | None — a label printed elsewhere that carries a consumer product variant (AI 22); the variant is accepted and takes no part in the lookup |
-| GET | `/01/{gtin}/235/{extension}` | None — a label printed elsewhere that carries a third-party extension (AI 235); accepted, and resolves as the bare GTIN does |
-
----
-
-## Infrastructure
-
-| Service | Port | Purpose |
-|---|---|---|
-| PostgreSQL | 5432 | Primary datastore (passports, audit; single-tenant, no RLS) |
-| Redis | 6379 | Resolver response cache |
-| NATS | 4222 | Event bus (optional — active when `NATS_URL` is set, NoOp otherwise) |
-
-Docker Compose: `docker/docker-compose.dev.yml`
-
-Migrations: `ops/pg/0001_extensions_roles_schemas.sql` onward (see the directory for the current range; new migrations are only ever added, never renumbered) — applied via `PgDal::migrate` at startup if `DATABASE_MIGRATE_URL` is set. The audit table is append-only (DB trigger) and hash-chained (`0015`); the registry outbox (`0006`) is written inside the publish transaction and drained with backoff; evidence dossiers are append-only (`0021`).
-
----
-
-## What Makes This Node Different (the trust layer, shipped)
-
-**Honesty is enforced, not promised.** Every trust-critical port reports its tier (`ghost` / `sandbox` / `live`) on the authenticated `/vault/api/v1/node/state` and as a `trust_mode` gauge on the private `/metrics` listener — never on the public `/health`, which answers liveness and nothing else, because which ports are degraded is a targeting signal. Under `NODE_PROFILE=production` the node **refuses to start** while any required port resolves to a placeholder — a node cannot claim trust services it doesn't have. **History is tamper-evident:** every audit entry is hash-chained; a superuser edit is detected at the exact index. **Registration is never lost:** EU-registry intent is committed to a durable outbox in the same transaction as publish, then drained with retry/backoff — kill the node mid-publish and nothing is lost (tested). **Regulation ships as signed data:** compliance rulesets arrive as Ed25519-signed bundles, verified fail-closed and hot-swapped atomically — the node re-reads its channel on a timer and on `odal ruleset reload`, so adopting a published correction needs no restart. A bundle that is not yet effective, or older than the one in force, is refused. The active version is on the authenticated `/vault/api/v1/node/state`. **Evidence is generated and verified, not just claimed:** a signed dossier (passport, JWS, DID document, audit chain, transfer chain) is generated and stored in one call, then checked against its own signatures and hash chains via `odal verify` or the evidence API — see [docs/architecture/EVIDENCE-DOSSIER.md](docs/architecture/EVIDENCE-DOSSIER.md). **A compliance gate that cannot run refuses the publish:** the check that blocks a passport carrying binding violations used to read `&& let Ok(determination) = compute(…)`, so an evaluator that *failed* was indistinguishable from one that found nothing — no log, no metric, and nothing on the passport to tell them apart. A `compute` error is now a refusal under its own `compliance_unavailable` reason, distinct from `compliance_violations`, because a determination that never came back is not a determination that came back clean. The one permissive case is named rather than assumed: `UnknownProductGroup` means nothing is registered to evaluate that group, which is a deployment shape and not a broken evaluator, so it publishes and is logged. **A plugin is never handed data it has not claimed to understand:** every plugin declares a supported schema range, and `compute` checks it against the catalog's current version before dispatch — refusing with `plugin_schema_unsupported_total` and an error-level log rather than passing the record in and hoping. An *undeclared* range (a plugin with no `describe` export) is dispatched with a warning, not refused: that is "declared nothing", not "supports nothing", and conflating the two would break every plugin built before ranges existed while catching nothing that matters.
-
----
-
-## Open-Core Boundary
-
-| Tier | Repository | License | Contents |
-|---|---|---|---|
-| **Odal Core** | [dpp-core](https://github.com/odal-node/dpp-core) | Apache-2.0 | Domain types, crypto, schemas, plugin ABI, port traits |
-| **Odal Engine** | dpp-engine (this repo) | BSL-1.1 | HTTP services, database, auth, telemetry, calculators |
-
-The `ComplianceRegistry` trait in `dpp-domain::ports` is a technical extension seam. Compliance calculation is open: the Wasm plugin registry and the `dpp-calc` calculators (CO2e, repairability) are all Apache-2.0 in dpp-core.
-
----
-
-## Documentation
-
-**Start with the guided index: [docs/README.md](docs/README.md)** — grouped by question, with a three-document reading path for newcomers.
-
-| Document | Description |
-|---|---|
-| [cli/README.md](cli/README.md) | `odal` CLI reference — the operator control plane |
-| [docs/guides/DEVELOPER-GUIDE.md](docs/guides/DEVELOPER-GUIDE.md) | Run, test, and extend the engine |
-| [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md) | Service topology and request flow |
-| [docs/architecture/DATA-MODEL.md](docs/architecture/DATA-MODEL.md) | Tables, migrations, and bootstrap |
-| [docs/architecture/AUTH.md](docs/architecture/AUTH.md) | Authentication and authorisation |
-| [docs/ops/PRODUCTION-RUNBOOK.md](docs/ops/PRODUCTION-RUNBOOK.md) | Running Odal Node for real operators — topology, hardening, backups, upgrades |
-| [api/openapi.bundled.yaml](api/openapi.bundled.yaml) | HTTP surface specification — the single-file form to read or feed to a tool |
-| [api/README.md](api/README.md) | How that file is produced: the spec is authored multi-file under `api/` and bundled |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Repo layout and contribution flow |
-| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy |
-| [GOVERNANCE.md](GOVERNANCE.md) | Decision-making structure and maintainer authority |
-| [CHANGELOG.md](CHANGELOG.md) | Release history, one entry per version |
-| [docs/legal/LICENSING.md](docs/legal/LICENSING.md) | BSL-1.1 terms and the open-core boundary |
-
-Architecture and design docs live in [dpp-core/docs/](https://github.com/odal-node/dpp-core/tree/main/docs) since they describe the standard, not the engine.
-
----
-
-## Legal
-
-- **License**: [Business Source License 1.1](LICENSE) (BSL-1.1)
-
----
+[Business Source License 1.1](LICENSE). The Additional Use Grant permits production
+use to issue, sign, store and serve passports for your own organisation's products and
+compliance obligations. Offering the engine to third parties as a hosted or managed
+service, or embedding it in a competing product, needs a commercial licence. Each
+release converts to Apache-2.0 four years after its release date.
+[`docs/legal/LICENSING.md`](docs/legal/LICENSING.md) summarises the terms; the
+`LICENSE` file is authoritative.
 
 ## Security
 
-Do **not** open public issues for security vulnerabilities. Report privately to **security@odal-node.io** — see [SECURITY.md](SECURITY.md) for full disclosure policy.
-
----
-
-*Odal Node — built by [Odal Node](https://odal-node.io)
+Report vulnerabilities privately through **Report a vulnerability** on this
+repository's Security tab, or to **security@odal-node.io**. See [SECURITY.md](SECURITY.md).

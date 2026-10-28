@@ -19,12 +19,12 @@ get:
     its own records: `sealedPayloadHash` is the digest it asked the backend
     to seal, so a passport re-published after sealing shows as `superseded`
     without any AdES tooling. That is a record of what was requested, not
-    proof of what the CAdES covers — the validator's extracted message
+    proof of what the CAdES covers: the validator's extracted message
     digest is the cross-check. A `superseded` seal remains valid for the
     signature it does cover; a seal over the new signature has not landed
     yet.
 
-    `404` when the passport has no seal — it may be unpublished, its seal may
+    `404` when the passport has no seal: it may be unpublished, its seal may
     still be queued, or the node may have no QTSP configured. An unsealed
     passport has no seal resource rather than an empty one.
   tags:

@@ -1,19 +1,19 @@
 # dpp-engine fuzz targets
 
 libFuzzer targets for the engine's hostile-input byte frontiers. Requires
-**nightly + Linux** (libFuzzer is not available on the Windows dev box), so these
-run in the nightly CI job — not in the stable `just check` gate.
+**nightly + Linux** (libFuzzer is not available on Windows), so these
+run in the nightly CI job, not in the stable `just check` gate.
 
 ## Targets
 
 | Target | Fuzzes |
 |---|---|
-| `parse_csv` | `dpp_integrator::domain::csv_parser::parse_csv` — bulk-import CSV bytes |
-| `verify_dossier_json` | `dpp_vault::domain::verify::verify_dossier_json` — evidence-dossier JSON |
+| `parse_csv` | `dpp_integrator::domain::csv_parser::parse_csv`: bulk-import CSV bytes |
+| `verify_dossier_json` | `dpp_vault::domain::verify::verify_dossier_json`: evidence-dossier JSON |
 
 ## Run locally (Linux)
 
-```sh
+```bash
 cargo install cargo-fuzz
 cargo +nightly fuzz run parse_csv -- -max_total_time=60
 cargo +nightly fuzz run verify_dossier_json -- -max_total_time=60
@@ -28,11 +28,11 @@ cargo +nightly fuzz run verify_dossier_json -- -max_total_time=60
 
 Seed corpora from existing fixtures (e.g. `ops/demo/*` CSVs, generated dossiers):
 
-```sh
+```bash
 mkdir -p corpus/parse_csv corpus/verify_dossier_json
 cp ops/demo/datasets/*.csv corpus/parse_csv/            2>/dev/null || true
 ```
 
 A crash writes a reproducer to `artifacts/`. Minimize it (`cargo +nightly fuzz
 tmin`) and commit the input as a named regression **unit test** in the crate it
-broke — the corpus feeds the ordinary test suite.
+broke; the corpus feeds the ordinary test suite.

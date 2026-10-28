@@ -1,7 +1,7 @@
 type: object
 description: >-
   Per-passport scan aggregates over a trailing window. `totalScans` and
-  `qrRenders` sit side by side and are never combined — a QR render is label
+  `qrRenders` sit side by side and are never combined: a QR render is label
   production, not a resolution. Nothing about the scanner (IP, agent, session)
   is collected or returned; the counters carry no such fields.
 required:
@@ -34,7 +34,7 @@ properties:
       Whether scan telemetry is actually reaching this node.
 
       `false` alongside `totalScans: 0` means the number is **unmeasured**, not
-      zero — and that is the shipped default, since `SCAN_INGEST_URL` is unset
+      zero, and that is the shipped default, since `SCAN_INGEST_URL` is unset
       unless an operator configures it.
 
       The node cannot answer this from its own configuration: `SCAN_INGEST_URL`
@@ -44,14 +44,14 @@ properties:
 
       It goes false again when a resolver stops reporting: the resolver declares
       its own flush cadence in every batch, and telemetry is called stale after
-      three of those intervals — enough to absorb the dropped heartbeats the
+      three of those intervals: enough to absorb the dropped heartbeats the
       sender never retries, since holding an empty batch would starve its
       counter. A resolver too old to declare a cadence leaves no window to be
       outside of, and this then reports only that one ever flushed; `lastIngestAt`
       is on the wire either way, so a caller who knows their own deployment can
       judge for themselves.
 
-      Resets on restart — this is liveness, not history — so a freshly booted
+      Resets on restart (this is liveness, not history) so a freshly booted
       node reports `false` until the next flush, at most one interval.
   lastIngestAt:
     type: string

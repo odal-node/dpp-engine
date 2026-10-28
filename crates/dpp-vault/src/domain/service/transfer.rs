@@ -10,7 +10,7 @@ use dpp_domain::{
     status::PassportStatus,
     transfer::{TransferChain, TransferError, TransferReason, TransferRecord, TransferStatus},
 };
-use dpp_types::{audit::PassportAuditEntry, auth::AuthContext};
+use dpp_types::{audit::PassportAuditEntry, auth::AuthContext, state_change::StateChange};
 use uuid::Uuid;
 
 use super::PassportService;
@@ -70,7 +70,6 @@ impl PassportService {
         chain
             .initiate_transfer(record.clone())
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
-        store.save_chain(&chain).await?;
 
         let entry =
             PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
@@ -79,9 +78,7 @@ impl PassportService {
                     "transferId": record.transfer_id,
                     "toOperator": record.to_operator.did,
                 }));
-        self.audit.append(entry).await?;
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_TRANSFERRED,
             serde_json::json!({
                 "passportId": id.to_string(),
@@ -89,8 +86,9 @@ impl PassportService {
                 "transferId": record.transfer_id.to_string(),
                 "toOperator": record.to_operator.did,
             }),
-        )
-        .await;
+        );
+        self.commit_change(StateChange::new(entry).with_transfer_chain(chain), event)
+            .await?;
 
         Ok(record)
     }
@@ -151,22 +149,6 @@ impl PassportService {
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
         let record = chain.transfers[idx].clone();
 
-        // Persist the completed handover and enqueue the registry notification.
-        // With the outbox present these commit atomically, so an accepted
-        // transfer can never exist without a queued notification — the same
-        // guarantee publish gets for registration. Without one (in-memory test
-        // doubles), fall back to a plain chain write.
-        match &self.transfer_outbox {
-            Some(outbox) => {
-                let payload = serde_json::to_value(&record)
-                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
-                outbox
-                    .commit_accept(&chain, record.transfer_id, payload)
-                    .await?;
-            }
-            None => store.save_chain(&chain).await?,
-        }
-
         let entry =
             PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
                 .with_metadata(serde_json::json!({
@@ -174,9 +156,7 @@ impl PassportService {
                     "transferId": record.transfer_id,
                     "toOperator": record.to_operator.did,
                 }));
-        self.audit.append(entry).await?;
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_TRANSFERRED,
             serde_json::json!({
                 "passportId": id.to_string(),
@@ -184,8 +164,20 @@ impl PassportService {
                 "transferId": record.transfer_id.to_string(),
                 "toOperator": record.to_operator.did,
             }),
-        )
-        .await;
+        );
+
+        // Persist the completed handover with the registry notification it
+        // owes. With the outbox present these commit together, so an accepted
+        // transfer can never exist without a queued notification — the same
+        // guarantee publish gets for registration. Without one (in-memory test
+        // doubles), the chain alone.
+        let mut change = StateChange::new(entry).with_transfer_chain(chain);
+        if self.transfer_outbox.is_some() {
+            let payload = serde_json::to_value(&record)
+                .map_err(|e| DppError::Serialisation(e.to_string()))?;
+            change = change.with_transfer_notice(record.transfer_id, payload);
+        }
+        self.commit_change(change, event).await?;
 
         Ok(record)
     }
@@ -301,7 +293,6 @@ impl PassportService {
         how.apply(&mut chain.transfers[idx])
             .map_err(|e| DppError::Validation(e.to_string().into()))?;
         let record = chain.transfers[idx].clone();
-        store.save_chain(&chain).await?;
 
         let entry =
             PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
@@ -310,9 +301,7 @@ impl PassportService {
                     "transferId": record.transfer_id,
                     "toOperator": record.to_operator.did,
                 }));
-        self.audit.append(entry).await?;
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_TRANSFERRED,
             serde_json::json!({
                 "passportId": id.to_string(),
@@ -320,8 +309,9 @@ impl PassportService {
                 "transferId": record.transfer_id.to_string(),
                 "toOperator": record.to_operator.did,
             }),
-        )
-        .await;
+        );
+        self.commit_change(StateChange::new(entry).with_transfer_chain(chain), event)
+            .await?;
 
         Ok(record)
     }

@@ -10,7 +10,7 @@ post:
     in the handler, and the `404` body names every accepted key. This sentence
     listed five product groups long after the importer reached more.
 
-    A battery **template** key is accepted here too — `battery-ev`,
+    A battery **template** key is accepted here too: `battery-ev`,
     `battery-lmt` and `battery-industrial` all import as `battery`, since the
     category is carried by the row's own `batteryType` column rather than being
     a product group of its own. An operator who downloads `battery-ev` can post
@@ -20,7 +20,7 @@ post:
     - `> 100` valid rows → an async job is queued, `202` with a `jobId`.
     - `mode=dry_run` → validate only, `200` with the would-be results.
 
-    Every import — dry-run or apply, sync or async — mints a job id and
+    Every import (dry-run or apply, sync or async) mints a job id and
     persists a row-addressed report retrievable via the job-status
     endpoint, even when this endpoint's own response is synchronous.
   tags:
@@ -61,7 +61,7 @@ post:
           schema:
             $ref: ../../components/schemas/import/ImportSyncResponse.yaml
     '202':
-      description: Async import job accepted — poll the job-status endpoint.
+      description: Async import job accepted. Poll the job-status endpoint.
       content:
         application/json:
           schema:

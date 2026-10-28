@@ -7,7 +7,7 @@ description: >-
   the product, and under which law.
 
   A snapshot, not a live pointer. A published passport is signed, so the
-  operator recorded in it is the one that version was issued under — a later
+  operator recorded in it is the one that version was issued under: a later
   transfer of responsibility mints a new version rather than rewriting this.
 properties:
   operator:

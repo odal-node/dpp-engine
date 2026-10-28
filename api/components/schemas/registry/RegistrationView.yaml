@@ -19,7 +19,7 @@ properties:
   stalled:
     type: boolean
     description: >-
-      True once `attempts` reaches the drain threshold — the row is not going to
+      True once `attempts` reaches the drain threshold: the row is not going to
       succeed without someone looking at it.
   statusIntent:
     type: string

@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::batch_runner::BatchResult;
 use crate::domain::import_report::ImportReport;
+use dpp_types::state_change::WebhookEvent;
 
 // ─── Job model ────────────────────────────────────────────────────────────────
 
@@ -77,7 +78,25 @@ pub trait JobStore: Send + Sync {
     /// Transition a job to a new status (e.g. `Queued` → `Processing`).
     async fn set_status(&self, id: Uuid, status: JobStatus) -> anyhow::Result<()>;
     /// Mark the job `Completed` and store the final batch result.
-    async fn complete(&self, id: Uuid, result: BatchResult) -> anyhow::Result<()>;
+    ///
+    /// `notify` is the event webhook subscribers are sent about it. A store
+    /// that has webhook subscriptions queues the deliveries in the same write,
+    /// so a job that completes cannot lose them; one that has none (the
+    /// in-memory store) ignores it.
+    async fn complete(
+        &self,
+        id: Uuid,
+        result: BatchResult,
+        notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()>;
+    /// Mark the job `Failed` with `reason`: it could not finish. `notify` is
+    /// handled as by [`Self::complete`].
+    async fn fail(
+        &self,
+        id: Uuid,
+        reason: String,
+        notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()>;
     /// Attach the row-addressed findings report to a job. Independent of
     /// `complete`/`result` — set for dry-run jobs (which never call
     /// `complete`, since there is no `BatchResult` without a vault call) and
@@ -144,7 +163,12 @@ impl JobStore for InMemoryJobStore {
         Ok(())
     }
 
-    async fn complete(&self, id: Uuid, result: BatchResult) -> anyhow::Result<()> {
+    async fn complete(
+        &self,
+        id: Uuid,
+        result: BatchResult,
+        _notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()> {
         if let Some(job) = self
             .jobs
             .write()
@@ -154,6 +178,23 @@ impl JobStore for InMemoryJobStore {
             job.processed = job.total_rows;
             job.result = Some(result);
             job.status = JobStatus::Completed;
+        }
+        Ok(())
+    }
+
+    async fn fail(
+        &self,
+        id: Uuid,
+        reason: String,
+        _notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()> {
+        if let Some(job) = self
+            .jobs
+            .write()
+            .expect("job store write lock poisoned")
+            .get_mut(&id)
+        {
+            job.status = JobStatus::Failed(reason);
         }
         Ok(())
     }
@@ -250,7 +291,7 @@ mod tests {
         let id = Uuid::now_v7();
         store.insert(ImportJob::new(id, 5)).await.unwrap();
 
-        store.complete(id, sample_result()).await.unwrap();
+        store.complete(id, sample_result(), None).await.unwrap();
 
         let job = store.get(id).await.unwrap();
         assert!(matches!(job.status, JobStatus::Completed));
@@ -270,7 +311,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .complete(old_completed, sample_result())
+            .complete(old_completed, sample_result(), None)
             .await
             .unwrap();
         // Backdate creation so it's older than the cleanup cutoff.
@@ -286,7 +327,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .complete(recent_completed, sample_result())
+            .complete(recent_completed, sample_result(), None)
             .await
             .unwrap();
 

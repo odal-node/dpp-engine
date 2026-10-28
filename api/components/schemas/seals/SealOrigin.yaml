@@ -1,6 +1,6 @@
 type: object
 description: >-
-  What a stored seal's own certificate says about who issued it — read out of
+  What a stored seal's own certificate says about who issued it: read out of
   the seal's bytes, never from this node's configuration. The two are different
   facts: configuration records what the operator intended, and a seal restored
   from a backup or made before a backend change was not produced by whatever is
@@ -27,7 +27,7 @@ properties:
   selfIssued:
     type: boolean
     description: >-
-      Whether issuer and subject are the same name — the structural test for
+      Whether issuer and subject are the same name: the structural test for
       "nobody issued this to us", and a property of the certificate that no
       environment variable can change. True means the seal attests that a key
       this node holds signed a digest and **nothing else**: it carries no legal

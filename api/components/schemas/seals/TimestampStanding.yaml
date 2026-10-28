@@ -1,7 +1,7 @@
 type: object
 description: >-
-  What the EU Trusted Lists say about the authority that stamped the seal's time
-  — Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
+  What the EU Trusted Lists say about the authority that stamped the seal's time:
+  Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
   service type.
 
 
@@ -42,7 +42,7 @@ properties:
       - qualifiedAtStamping
     description: >-
       `noAttestedTime`: the seal carries no timestamp that survived its own
-      checks — a `B-B` seal has none, and so does one whose token failed its
+      checks: a `B-B` seal has none, and so does one whose token failed its
       signature, its imprint or its authority's validity window. A finding, not
       a failure to read.
 
@@ -54,8 +54,8 @@ properties:
 
 
       `notListed`: some provider issued the authority's certificate, and no list
-      consulted names that authority or its CA under `TSA/QTST`. 🚨 The only
-      standing claiming an **absence** — read `consulted` and `unchecked` before
+      consulted names that authority or its CA under `TSA/QTST`. The only
+      standing claiming an **absence**: read `consulted` and `unchecked` before
       acting on it.
 
 
@@ -70,7 +70,7 @@ properties:
 
 
       `pathUnverifiable`: a listed CA carries the claimed name and the signature
-      could not be checked — usually a key algorithm this build does not verify.
+      could not be checked: usually a key algorithm this build does not verify.
       **Not an accusation, and never to be read as one.**
 
 
@@ -84,7 +84,7 @@ properties:
   subject:
     type: string
     description: >-
-      `selfIssued` only — the authority's subject name, which is also its issuer
+      `selfIssued` only: the authority's subject name, which is also its issuer
       name.
   authority:
     type: string
@@ -92,7 +92,7 @@ properties:
   claimedIssuer:
     type: string
     description: >-
-      `signatureNotFromListedAuthority` and `pathUnverifiable` only — the issuer
+      `signatureNotFromListedAuthority` and `pathUnverifiable` only: the issuer
       name the authority's certificate claims.
   consulted:
     type: integer
@@ -100,7 +100,7 @@ properties:
       `notListed` only. How many territories' verified lists were searched.
 
 
-      🚨 `0` means **nothing was looked at**: the answer is about nothing, and it
+      `0` means **nothing was looked at**: the answer is about nothing, and it
       is what a node with no trusted lists loaded reports for every provider's
       timestamps, qualified or not.
   unchecked:
@@ -128,7 +128,7 @@ properties:
     allOf:
       - $ref: ./TrustServiceStatus.yaml
     description: >-
-      `notQualifiedAtStamping` only — the status in force when the authority
+      `notQualifiedAtStamping` only: the status in force when the authority
       stamped.
 
 
@@ -137,13 +137,13 @@ properties:
       silent about that moment rather than negative about it.
 
 
-      🚨 **Three shapes, not two** — see `IssuerStanding.status`. A client that
+      **Three shapes, not two**: see `IssuerStanding.status`. A client that
       assumes a string here will break on the first list entry that is neither
       granted nor withdrawn.
   reason:
     type: string
     description: >-
-      `pathUnverifiable` only — why the signature could not be checked.
+      `pathUnverifiable` only: why the signature could not be checked.
 
 
-      🚨 Read it as a limit of the reader, never as a finding about the seal.
+      Read it as a limit of the reader, never as a finding about the seal.

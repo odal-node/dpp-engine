@@ -6,8 +6,8 @@ delete:
     is set to false. Subsequent auth attempts with this key will fail.
 
     **A key cannot revoke itself.** Revoking the credential this very request
-    authenticated with would lock the caller — and everything sharing that key
-    — out of every authenticated route, so it is refused with `409`.
+    authenticated with would lock the caller (and everything sharing that key)
+    out of every authenticated route, so it is refused with `409`.
     Authenticate with a different key, or with the operator's Basic credential,
     which carries no key id and is therefore the lockout-recovery path.
 

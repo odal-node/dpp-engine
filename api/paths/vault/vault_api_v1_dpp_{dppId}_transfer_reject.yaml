@@ -12,7 +12,7 @@ post:
     counterparty went silent could never be transferred again.
 
     **This records an outcome, not who caused it.** A node serves one operator,
-    and the only credentials it accepts are that operator's — the incoming
+    and the only credentials it accepts are that operator's: the incoming
     operator holds no key here and cannot call this route. So reject and cancel
     are both initiated by *this* node's operator; they differ in the outcome
     written to the record and in the states core permits them from, not in who
@@ -39,7 +39,7 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       description: |
-        This DPP has no transfer chain at all — no handover has ever been
+        This DPP has no transfer chain at all: no handover has ever been
         initiated for it. A chain that exists but carries nothing pending is a
         `422`, not this.
       content:

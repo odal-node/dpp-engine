@@ -1,88 +1,82 @@
-# Project Governance
+# Governance
 
-This document describes the decision-making structure for dpp-engine and
-how it is expected to evolve.
+How decisions are made for `dpp-engine`, and how that is expected to change.
 
-## Current Model: BDFL (Benevolent Dictator For Life)
+## Current model: single maintainer
 
-dpp-engine is maintained by a single author and the project is in its early
-pre-1.0 phase. All design decisions, release approvals, and merge authority
-rest with:
+The project is pre-1.0 and has one maintainer, who holds all design, release and merge
+authority:
 
-- **Maintainer**: Aleksandar Temelkov (LKSNDRTMLKV)
-- **Organisation**: Odal Node
-- **Contact**: https://github.com/LKSNDRTMLKV
+- **Maintainer:** Aleksandar Temelkov ([@LKSNDRTMLKV](https://github.com/LKSNDRTMLKV))
+- **Organisation:** Odal Node
 
-This model is appropriate for the current stage. It allows fast iteration
-while the EU regulatory landscape (ESPR delegated acts, EU Registry API) is
-still evolving.
+One decision-maker keeps iteration fast while the regulation (ESPR delegated acts, the EU
+registry API) is still moving.
 
 ## Relationship to dpp-core
 
-dpp-engine consumes dpp-core (Apache-2.0) as a dependency. The platform
-never modifies core types or traits — it only implements them. Decisions
-affecting the core/platform boundary (new port traits, type changes) are
-made in the dpp-core repo first.
+`dpp-engine` uses `dpp-core` (Apache-2.0) as a dependency. The engine implements core's
+traits and never modifies its types or traits. Decisions that affect the boundary between
+the two (new port traits, type changes) are made in the `dpp-core` repository first.
 
-**Core Purity Rule**: No platform concerns (auth, audit, API keys, operator
-management) may be pushed into dpp-core. The platform adapts to core, not
-the reverse.
+Engine concerns (auth, audit, API keys, operator management) are never pushed into
+`dpp-core`. The engine adapts to core, not the reverse.
 
-## Decision Records
+## Where decisions are recorded
 
-Significant technical decisions are recorded in the architecture docs under
-`docs/architecture/`. Key decisions include:
+Significant technical decisions are recorded in the documents under
+[`docs/architecture/`](docs/architecture/), including:
 
-- Composite auth provider pattern
-- Fire-after-commit event semantics
-- Operator model (not tenant model)
-- Single-tenant persistence — no Row-Level Security; operator isolation is an infrastructure boundary, one node per operator
+- the composite auth provider pattern;
+- fire-after-commit event semantics;
+- the operator model (rather than a tenant model);
+- single-tenant persistence with no row-level security: isolation between operators is an
+  infrastructure boundary, one node per operator.
 
-## Contribution Governance
+## Contributions
 
-All contributions follow the process described in [CONTRIBUTING.md](CONTRIBUTING.md):
+Every contribution follows [CONTRIBUTING.md](CONTRIBUTING.md):
 
-1. Open an issue describing the proposed change.
-2. Fork, implement, and submit a pull request.
-3. CI must pass (fmt, clippy, test).
+1. Open an issue describing the change.
+2. Fork, implement, and open a pull request.
+3. CI passes (format, clippy, guard scripts, tests, integration tiers).
 4. The maintainer reviews and merges.
 
-No pull request is merged without maintainer approval. Force-pushes to `main`
-are prohibited.
+Nothing merges without maintainer approval. Force-pushes to `main` are blocked.
 
-## Security Decisions
+## Security-sensitive changes
 
-Security-sensitive changes (anything touching authentication, API key hashing,
-or identity service integration) require:
+A change to authentication, API key hashing, signing or identity needs:
 
-1. A dedicated review focusing on the security implications.
-2. Explicit sign-off in the PR description noting what changed and why.
-3. An update to [SECURITY.md](SECURITY.md) if the change affects
-   the threat model.
+1. A review focused on its security implications.
+2. A statement in the pull request description of what changed and why.
+3. An update to [SECURITY.md](SECURITY.md) if it changes the threat model.
 
 ## Licensing
 
-dpp-engine is licensed under BSL-1.1 (Business Source License 1.1).
+`dpp-engine` is licensed under the Business Source License 1.1. The [LICENSE](LICENSE) file
+is authoritative; in summary:
 
-- **Change Date**: 4 years from each version's release date.
-- **Change License**: Apache-2.0 (same as dpp-core).
-- **Additional Use Grant**: Self-hosting for internal business use is permitted.
-  Offering the software as a hosted service to third parties requires a
-  commercial license.
+- **Additional Use Grant:** production use to issue, sign, store and serve passports for
+  your own organisation's products and compliance obligations is permitted at no charge.
+- **Not covered:** offering the engine to third parties as a hosted or managed service, or
+  embedding it in a competing product. Both need a commercial licence.
+- **Change date:** four years from each release's date.
+- **Change licence:** Apache-2.0, the same as `dpp-core`.
 
-The maintainer holds copyright. Contributors retain copyright over their
-contributions and grant the license via PR submission.
+The maintainer holds copyright in the original work. Contributors keep copyright in their
+contributions and license them under the repository's licence through the DCO sign-off.
 
-## Evolution Path
+## How the model will change
 
-| Contributors | Model | Change |
+| Contributors | Model | What changes |
 |---|---|---|
-| 1 (current) | BDFL | All authority with maintainer |
-| 2 - 5 | BDFL + Trusted Committers | Named individuals gain merge rights |
-| 5+ | Maintainer Council | Formal RFC process for breaking changes |
+| 1 (today) | Single maintainer | All authority with the maintainer |
+| 2 to 5 | Maintainer and trusted committers | Named people gain merge rights |
+| More than 5 | Maintainer council | A written RFC process for breaking changes |
 
 ## References
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [SECURITY.md](SECURITY.md)
-- [Architecture docs](docs/architecture/)
+- [Architecture documents](docs/architecture/)
