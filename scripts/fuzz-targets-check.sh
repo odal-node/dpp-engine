@@ -89,9 +89,11 @@ for file in fuzz/fuzz_targets/*.rs; do
   fi
 done
 
+# A row of the targets table, whose first cell is the name. A mention anywhere
+# else in the README does not count: the corpus section names two targets.
 while IFS= read -r name; do
-  if ! grep -qF "\`$name\`" "$README"; then
-    echo "ERROR: $README does not name fuzz target \`$name\`; add it to the table of targets." >&2
+  if ! grep -qE "^\|[[:space:]]*\`${name}\`[[:space:]]*\|" "$README"; then
+    echo "ERROR: $README has no row for fuzz target \`$name\` in its table of targets." >&2
     status=1
   fi
 done <<< "$built"

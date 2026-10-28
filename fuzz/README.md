@@ -49,8 +49,12 @@ resolves the fuzz crate afresh.
 ## Corpus and regressions
 
 The nightly job keeps each target's corpus in the Actions cache and restores the
-newest one on the next run, so coverage builds up rather than starting over. It seeds
-`parse_csv` and `import_rows` from the committed spreadsheets. To do the same locally:
+newest one on the next run, so coverage builds up rather than starting over. It also
+seeds two pairs of targets from files the repository already keeps: `parse_csv` and
+`import_rows` from the committed spreadsheets, and `create_request_validate` and
+`public_page_render` from the stored passport documents in
+`crates/dpp-dal/tests/fixtures/passport_docs`, minified, leaving out any longer than the
+input limit. To seed a corpus locally:
 
 ```bash
 mkdir -p fuzz/corpus/parse_csv

@@ -18,6 +18,25 @@ use dpp_seal::CadesInspector;
 use dpp_types::SealInspector;
 use libfuzzer_sys::fuzz_target;
 
+/// A self-signed P-256 certificate, subject `CN=dpp-engine fuzz anchor`, DER in
+/// base64. Generated for this target with `openssl req -x509 -newkey ec
+/// -keyout /dev/null`, so its private key was never written anywhere.
+///
+/// `check_path_to` parses its anchor before it walks anything, and gives up on
+/// one that is not a certificate. A real one is what lets the walk up the
+/// seal's embedded chain run; the fuzzer reaches it by naming this subject as
+/// an issuer.
+const ANCHOR: &str = "MIIBmDCCAT+gAwIBAgIUes/2oSnPWUiIiQK83c9e7zQnkg4wCgYIKoZIzj0EAwIwITEfMB0GA1UEAwwWZHBwLWVuZ2luZSBmdXp6IGFuY2hvcjAgFw0yNjEwMjgyMzQyMTdaGA8yMTI2MTAwNDIzNDIxN1owITEfMB0GA1UEAwwWZHBwLWVuZ2luZSBmdXp6IGFuY2hvcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABNpX4zE0tWjzLSekYgwslG2W3E34tJekbqdV/Txscz5K0ZeoDRumK5FZoXEY7XR5JQ8TsO/XjafLGVfxnHuTjpqjUzBRMB0GA1UdDgQWBBRuMuCym8mMMKaQkIIgTV1Z+KSsUzAfBgNVHSMEGDAWgBRuMuCym8mMMKaQkIIgTV1Z+KSsUzAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIGRpl5tWyc92FMPGqWIEgFkqONLrXPOAQF3XVFxzCq7WAiB90lmBXFgOT5y/m8GgkJL5JY0sKN52e+ecws7SvD8k9g==";
+
+fn anchor() -> &'static [u8] {
+    static DER: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    DER.get_or_init(|| {
+        base64::engine::general_purpose::STANDARD
+            .decode(ANCHOR)
+            .expect("the anchor is valid base64")
+    })
+}
+
 /// A fixed instant, so a finding reproduces whatever day it is replayed.
 fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 7, 19, 12, 0, 0)
@@ -60,9 +79,7 @@ fuzz_target!(|der: &[u8]| {
     let _ = cades::certificate_standing(der, now(), attested);
     let _ = cades::chain_issuer_names(der);
     let _ = cades::chain_terminus(der);
-    // The input as its own anchor, so the anchor's certificate parse is fuzzed
-    // as well as the seal's.
-    let _ = cades::check_path_to(der, der);
+    let _ = cades::check_path_to(der, anchor());
 
     let envelope = SealedEnvelope {
         format: SealFormat::Cades,

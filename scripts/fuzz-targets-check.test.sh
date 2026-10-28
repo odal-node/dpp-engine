@@ -95,11 +95,15 @@ run_case "a_bin_whose_path_is_missing_is_refused" reject \
 run_case "an_undocumented_target_is_refused" reject \
     "sed -i '/second/d' fuzz/README.md"
 
-# 6. The inline form reads as no list at all, and an empty list never agrees.
+# 6. Named in the README, but not as a row of the table.
+run_case "a_target_named_only_outside_the_table_is_refused" reject \
+    "sed -i 's/^| \`second\` | two |\$/Seed \`second\` from the CSVs./' fuzz/README.md"
+
+# 7. The inline form reads as no list at all, and an empty list never agrees.
 run_case "an_inline_matrix_list_is_refused" reject \
     "sed -i '/target:/,/- second/c\\        target: [first, second]' .github/workflows/fuzz.yml"
 
-# 7. A manifest with no [[bin]] reads as no targets, which is refused rather
+# 8. A manifest with no [[bin]] reads as no targets, which is refused rather
 #    than compared.
 run_case "a_manifest_with_no_bins_is_refused" reject \
     "sed -i 's/\[\[bin\]\]/[[example]]/' fuzz/Cargo.toml"

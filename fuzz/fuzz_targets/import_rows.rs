@@ -24,11 +24,19 @@ fuzz_target!(|data: &[u8]| {
             .enumerate()
             .filter_map(|(i, row)| validate_row(key, row, i + 1).ok().map(|req| (i + 1, req)))
             .collect();
-        let count = valid.len();
+        let mut expected: Vec<usize> = valid.iter().map(|(row, _)| *row).collect();
+        expected.sort_unstable();
         let (kept, refused) = refuse_repeated_carrier_serials(valid);
+        // The row numbers, not only how many: a count would pass with one row
+        // dropped and another kept twice.
+        let mut accounted: Vec<usize> = kept
+            .iter()
+            .map(|(row, _)| *row)
+            .chain(refused.iter().map(|error| error.row))
+            .collect();
+        accounted.sort_unstable();
         assert_eq!(
-            kept.len() + refused.len(),
-            count,
+            accounted, expected,
             "the repeated-serial check lost or duplicated a row under `{key}`"
         );
     }

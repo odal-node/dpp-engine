@@ -16,6 +16,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # libFuzzer's input size limit, which the seed step also reads.
+  MAX_LEN: 8192
 
 jobs:
   fuzz:
@@ -66,19 +68,38 @@ jobs:
       # A minute a night from an empty corpus starts over every night. The
       # corpus each run grows is saved under a key of its own, and the next run
       # restores the newest, so coverage builds up across runs. Not saved when
-      # the run fails: the crash is in the artifact below.
+      # the run fails: the crash is in the artifact below. The attempt is in
+      # the key because a cache entry cannot be overwritten, and a rerun keeps
+      # its run id: without it, a rerun could not save what it grew.
       - name: Restore the corpus earlier runs grew
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: dpp-engine/fuzz/corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-
-      - name: Seed from the committed spreadsheets
-        if: matrix.target == 'parse_csv' || matrix.target == 'import_rows'
+      # Seeds from files the repository already keeps, for the targets whose
+      # input random bytes rarely reach. The stored passport documents read as
+      # create bodies (unknown fields are ignored) and carry the fields the
+      # page renders. They are minified, and one longer than MAX_LEN is left
+      # out: libFuzzer would cut it short, and cut JSON does not parse.
+      - name: Seed from committed files
         working-directory: dpp-engine
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          mkdir -p "fuzz/corpus/${{ matrix.target }}"
-          cp crates/dpp-integrator/templates/*.csv ops/demo/datasets/*.csv "fuzz/corpus/${{ matrix.target }}/"
+          corpus="fuzz/corpus/$TARGET"
+          mkdir -p "$corpus"
+          case "$TARGET" in
+            parse_csv|import_rows)
+              cp crates/dpp-integrator/templates/*.csv ops/demo/datasets/*.csv "$corpus/" ;;
+            create_request_validate|public_page_render)
+              for doc in crates/dpp-dal/tests/fixtures/passport_docs/*/*.json; do
+                seed="$corpus/seed-$(basename "$(dirname "$doc")")-$(basename "$doc")"
+                jq -c . "$doc" > "$seed"
+                if [ "$(wc -c < "$seed")" -gt "$MAX_LEN" ]; then rm "$seed"; fi
+              done ;;
+          esac
+          ls "$corpus" | wc -l
       # `-timeout=10` reports any single input that takes ten seconds as a
       # finding, rather than libFuzzer's default of twenty minutes: the import
       # parsers' bomb guards exist to bound exactly that.
@@ -86,7 +107,7 @@ jobs:
         working-directory: dpp-engine
         run: >-
           cargo +nightly fuzz run ${{ matrix.target }} --
-          -max_total_time=60 -max_len=8192 -timeout=10 -print_final_stats=1
+          -max_total_time=60 -max_len=${{ env.MAX_LEN }} -timeout=10 -print_final_stats=1
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
