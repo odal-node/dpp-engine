@@ -71,7 +71,7 @@ async fn published_passport_is_served_as_the_payload_its_proof_signed() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "E2E Cycle Pack",
-                "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
                 "batchId": "LOT-2026-07",
                 "productGroupData": {

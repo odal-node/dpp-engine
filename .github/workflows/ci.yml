@@ -60,6 +60,18 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Every cargo command below that resolves the workspace passes `--locked`.
+#
+# `Cargo.lock` is committed so that `cargo audit` and the images read the graph
+# that ships. Without the flag a build that finds the lock out of step with the
+# manifests quietly re-resolves in the runner and discards the result: every
+# check passes, and the file in the repository stays wrong. With it that same
+# situation is a failure that names the file. A new step that resolves the
+# workspace needs the flag too; nothing enforces it.
+#
+# Left without it on purpose: `cargo audit` (reads the lock, resolves nothing),
+# `cargo fmt`, and the wasm ABI fixture, whose own lock is git-ignored.
+
 jobs:
   fmt:
     name: Format check
@@ -87,7 +99,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine
       # The command lives in the justfile, once: `just lint` is what `just check`
@@ -97,7 +109,7 @@ jobs:
       # Why the features are on, and how they are named, is on the recipe, next to
       # the command it explains.
       - name: Install just
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just
       - name: just lint
@@ -114,11 +126,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
       # Run first, and as its own step, so "the API description no longer
@@ -134,14 +146,14 @@ jobs:
       # while the API and the code disagree.
       - name: OpenAPI contract — spec vs. the types and routes
         working-directory: dpp-engine
-        run: cargo nextest run -p dpp-node --test openapi_contract --no-tests=fail
+        run: cargo nextest run --locked -p dpp-node --test openapi_contract --no-tests=fail
       # `--workspace` (no integration feature) runs every non-Docker test:
       # lib tests, the `odal` CLI binary tests, and the resolver e2e / JWS
       # verification + security-regression tests. The feature-gated
       # testcontainer tests run in the `test-integration` job below.
       - name: Unit + CLI + resolver tests
         working-directory: dpp-engine
-        run: cargo nextest run --workspace --no-tests=fail
+        run: cargo nextest run --locked --workspace --no-tests=fail
 
   test-integration:
     name: Integration tests (testcontainers)
@@ -184,11 +196,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
       - name: Create results dir
@@ -255,7 +267,7 @@ jobs:
         working-directory: dpp-engine
         run: |
           set +e
-          cargo nextest run -p dpp-dal --features integration-tests --no-tests=fail
+          cargo nextest run --locked -p dpp-dal --features integration-tests --no-tests=fail
           test_exit=$?
           set -e
           cp target/nextest/default/junit.xml results/dal.xml
@@ -264,7 +276,7 @@ jobs:
         working-directory: dpp-engine
         run: |
           set +e
-          cargo nextest run -p dpp-vault --features integration-tests --no-tests=fail
+          cargo nextest run --locked -p dpp-vault --features integration-tests --no-tests=fail
           test_exit=$?
           set -e
           cp target/nextest/default/junit.xml results/vault.xml
@@ -289,7 +301,7 @@ jobs:
         working-directory: dpp-engine
         run: |
           set +e
-          cargo nextest run -p dpp-plugin-host --features integration-tests,wasm-fixture-tests --no-tests=fail
+          cargo nextest run --locked -p dpp-plugin-host --features integration-tests,wasm-fixture-tests --no-tests=fail
           test_exit=$?
           set -e
           cp target/nextest/default/junit.xml results/plugin-host.xml
@@ -298,7 +310,7 @@ jobs:
         working-directory: dpp-engine
         run: |
           set +e
-          cargo nextest run -p dpp-node --features integration-tests --no-tests=fail
+          cargo nextest run --locked -p dpp-node --features integration-tests --no-tests=fail
           test_exit=$?
           set -e
           cp target/nextest/default/junit.xml results/node.xml
@@ -591,7 +603,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-audit
@@ -606,14 +618,14 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
         working-directory: dpp-engine
         # advisories deliberately excluded — cargo-audit + the register above
         # already own that check; see deny.toml's [advisories] comment.
-        run: cargo deny check bans licenses sources
+        run: cargo deny --locked check bans licenses sources
 
   test-postgres:
     name: Postgres integration tests
@@ -653,20 +665,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)
         working-directory: dpp-engine
         run: |
-          cargo check -p dpp-dal
-          cargo check -p dpp-node
-          cargo clippy -p dpp-dal -p dpp-node -- -D warnings
-          cargo nextest run -p dpp-dal --features integration-tests --no-tests=fail --test pg_integration
+          cargo check --locked -p dpp-dal
+          cargo check --locked -p dpp-node
+          cargo clippy --locked -p dpp-dal -p dpp-node -- -D warnings
+          cargo nextest run --locked -p dpp-dal --features integration-tests --no-tests=fail --test pg_integration
 
   # 🚨 Until this job existed, nothing built either container image until a
   # `v*` tag was pushed — and that push *publishes*. `release.yml` is the only
