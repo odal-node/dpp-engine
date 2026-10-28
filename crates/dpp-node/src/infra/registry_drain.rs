@@ -306,6 +306,26 @@ async fn recover_with_request(
             correlation_id,
             report,
         }) => {
+            // Not recovered until it is written down. A failed write is backed off
+            // like any transient failure, and the next pass finds it again; the
+            // row's message names the handle for a person who needs it now.
+            if let Err(e) = outbox.mark_submitted(pid, correlation_id.clone()).await {
+                tracing::error!(
+                    passport_id = %pid,
+                    correlation_id = %correlation_id,
+                    error = %e,
+                    "found the correlation identifier of a submission the registry held and \
+                     could not record it — looking again on the next pass"
+                );
+                let _ = outbox
+                    .mark_attempt_failed(
+                        pid,
+                        format!("could not record correlation identifier {correlation_id}: {e}"),
+                    )
+                    .await;
+                stats.retried += 1;
+                return;
+            }
             tracing::info!(
                 passport_id = %pid,
                 correlation_id = %correlation_id,
@@ -313,7 +333,6 @@ async fn recover_with_request(
             );
             metrics::counter!("registry_outbox_recovered_total").increment(1);
             stats.recovered += 1;
-            let _ = outbox.mark_submitted(pid, correlation_id).await;
             if report.is_terminal() {
                 apply_report(outbox, pid, Ok(report), stats).await;
             } else {

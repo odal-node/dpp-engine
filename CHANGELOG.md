@@ -254,9 +254,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   submitted under its predecessor's, so more than one submission reporting it is
   `Ambiguous`, listed for a person, and a task still being checked reports no
   passport, so not finding one while any is on the list is never read as the
-  registry holding none. A row that is not found is backed off and counted as an
-  attempt, so it reaches the stalled count instead of sorting to the head of the
-  queue. Finished tasks' results are kept in a bounded cache, because they do not
+  registry holding none, and a single match is taken only from a search that read
+  every task. A row that is not found is backed off and counted as an attempt, so
+  it reaches the stalled count instead of sorting to the head of the queue, and so
+  is one whose recovered handle could not be written down. Finished tasks' results are kept in a bounded cache, because they do not
   change and the lookup repeats every pass.
 
   *Where the task is.* The dashboard's list was read from the front for twenty
