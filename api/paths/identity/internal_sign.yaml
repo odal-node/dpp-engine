@@ -7,7 +7,7 @@ post:
   description: |
     Signs a base64-encoded canonical-JSON payload with the operator's
     Ed25519 key (auto-provisioned on first use). Returns a compact JWS.
-    Service-to-service only — gated by mTLS (`CN=odal-vault`).
+    Service-to-service only: gated by mTLS (`CN=odal-vault`).
   tags:
     - Identity (internal)
   security:

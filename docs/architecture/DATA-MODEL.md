@@ -1,286 +1,93 @@
-# Platform Data Model
+# Data model
 
-This document describes the **PostgreSQL** schema used by dpp-engine: all tables, their fields, indexes, and triggers. Authoritative DDL: `ops/pg/0001_extensions_roles_schemas.sql` through `0017_passport_transfer.sql` (including the hash-chained audit columns in `0015`, the end-of-life status in `0016`, and the transfer chain in `0017`).
+How the node stores its data in PostgreSQL. The SQL files in
+[`ops/pg/`](../../ops/pg/) are the definition: this page explains the layout and the
+invariants, and indexes which migration creates what. For column lists, read the
+migration.
 
----
+## Storage model
 
-## 1. Schema Layout
+- **Two schemas.** `odal` holds every engine table. `identity` holds the node's
+  `did:web` document and key metadata.
+- **Documents plus query columns.** Each record's full `serde` JSON lives in a
+  `doc JSONB` column with camelCase keys, exactly as the API returns it. Fields that
+  queries, constraints or indexes need (id, product group, status, version chain,
+  timestamps) are also real snake_case columns.
+- **The component graph is in the document.** A passport's components are
+  `componentRefs` inside `doc`, walked by `dpp-vault`'s `verify_tree`. There are no
+  component, material or supplier tables.
+- **Single tenant.** One operator per node, so there is no row-level security.
+  `operator_id` columns, where they exist, record the node's constant identity for
+  provenance.
+- **Least-privilege application role.** The node connects as `odal_app`, which cannot
+  run DDL and can `DELETE` only from the tables in
+  [the DELETE set](../../ops/pg/README.md#the-delete-set): counters and queues, never
+  passport, audit, evidence, seal or registry-identity data.
 
-PostgreSQL organises the platform into two schemas:
+## Invariants enforced by the database
 
-| Schema | Purpose |
-|---|---|
-| `odal` | All platform tables (passports, config, keys, facilities, audit, import jobs, registry outbox) |
-| `identity` | DID documents and key pairs for the identity service |
-
-Storage model is **document-style**: the full serde JSON of a passport lives in a `doc JSONB` column; query/constraint-bearing fields (operator, product group, status, retention lock, version-chain columns) are real columns. The node is **single-tenant**, so there is **no Row-Level Security**: the app connects as the least-privilege `odal_app` role (no DDL, no DELETE bar one sanctioned exception), and `operator_id` columns persist only as the node's constant identity for provenance. Two database-level invariants back the domain rules: a **retention trigger** (locked passports reject content changes outside the mutable-field whitelist shared with the resolver) and an **append-only trigger** on the audit table.
-
----
-
-## 2. Migration System
-
-Migrations are SQL files in `ops/pg/`, applied apply-once with checksums via `sqlx::migrate!` (a tracking table replaces the old re-run-on-every-boot model — schema *changes*, not just additions, are now expressible). DDL runs under a privileged role (`DATABASE_MIGRATE_URL` or pre-applied by ops); the app role cannot run DDL.
-
-**Current migrations (12 files, FK-ordered):**
-
-| File | Creates | Schema |
+| Invariant | Mechanism | Migration |
 |---|---|---|
-| `0001_extensions_roles_schemas.sql` | extensions, roles, schemas (`odal`, `identity`) | — |
-| `0002_operator.sql` | `operator_config`, `operator_identifier`, `facility` | `odal` |
-| `0003_api_key.sql` | `api_key` | `odal` |
-| `0004_passport.sql` | `passport` (+ retention trigger) | `odal` |
-| `0005_passport_audit.sql` | `passport_audit` (+ append-only trigger) | `odal` |
-| `0006_registry_sync.sql` | `registry_sync` (outbox) | `odal` |
-| `0007_import_job.sql` | `import_job` | `odal` |
-| `0008_unsold_goods_report.sql` | `unsold_goods_report` | `odal` |
-| `0009_identity.sql` | `did_document`, `key_pair` | `identity` |
-| `0010_grants.sql` | role grants for `odal_app` | — |
-| `0011_public_jws_mutable.sql` | adds `publicJwsSignature` to the retention guard's mutable-field whitelist | `odal` |
-| `0012_registry_identity_grants.sql` | `DELETE` grants for `facility` / `operator_identifier` (control-plane management) | `odal` |
-| `0013_facility_retire.sql` | facility soft-delete (`retiredAt` + partial unique), revoke facility `DELETE`, append-only `registry_identity_audit` | `odal` |
-| `0014_operator_identifier_retire.sql` | operator-identifier soft-delete (`retiredAt` + partial unique), revoke its `DELETE` | `odal` |
+| A published passport's content cannot change | Retention trigger on `passport`: once `retention_locked` is set, an update may only touch an allow-list of keys (status, signatures, carrier URLs, lint result, seal) | `0004`, extended by `0011`, `0018`, `0027`, `0028` |
+| Audit trails and version history are append-only | Triggers refusing `UPDATE` and `DELETE` on `passport_audit`, `registry_identity_audit` and `passport_version` | `0005`, `0013`, `0040` |
+| The audit trail is tamper-evident | Each entry stores a SHA-256 hash over its canonical (JCS) content and the previous entry's hash | `0015` |
+| Facilities and operator identifiers are retired, never deleted | `retired_at` column, partial unique index on live rows, `DELETE` revoked | `0013`, `0014` |
+| Every past version of a live passport is kept | `passport_version` rows written on every change, readable with `GET /dpp/{id}/versions?asOf=` | `0040` |
 
-Graph tables (component/material/supplier modelling) are deliberately absent — Phase 2, when that model is designed.
+## Tables
 
----
-
-## 3. Table Definitions
-
-### 3.1 operator_config
-
-Operator profile and branding. One record per deployment (single-operator MVP).
-
-| Field | Type | Notes |
+| Table | Holds | Created in |
 |---|---|---|
-| `operatorId` | string | UNIQUE index; node's constant provenance identity (single-tenant — not a scoping key) |
-| `legalName` | string | Registered company name |
-| `tradeName` | string | Trading/display name |
-| `address` | string | Registered address |
-| `country` | string | ISO 3166-1 alpha-2 |
-| `contactEmail` | string | Operator contact email |
-| `didWebUrl` | string | did:web identifier |
-| `productCategories` | array | Supported product groups (BATTERY, TEXTILE, etc.) |
-| `brandPrimary` | string | Primary brand colour (hex) |
-| `brandSecondary` | string | Secondary brand colour (hex) |
-| `brandLogoUrl` | string | Logo URL |
-| `customDomain` | string | Custom resolver domain |
-| `dataResidency` | string | DEFAULT "EU" |
-| `retentionPolicyDays` | int | DEFAULT 3650 (10 years) |
-| `featureFlags` | object | Feature toggles |
-| `createdAt` | datetime | |
-| `updatedAt` | datetime | |
+| `operator_config` | The operator's identity: legal name, address, country, contact, retention policy, registry verification | `0002`, `0031` |
+| `operator_identifier` | Economic operator identifiers (VAT, LEI, EORI, DUNS) under ESPR Art. 13; one is primary | `0002` |
+| `facility` | Facilities under ESPR Annex III; one is the default | `0002` |
+| `registry_identity_audit` | Append-only history of facility and identifier changes | `0013` |
+| `api_key` | API keys: SHA-256 hash, 12-character prefix for lookup, scope | `0003` |
+| `passport` | Passports. Status is one of `draft`, `active`, `suspended`, `superseded`, `retired`, `deactivated` | `0004`, renamed columns in `0032`, `0041` |
+| `passport_version` | Historical versions of a passport (EN 18221 clause 4.2 archiving) | `0040` |
+| `passport_audit` | Hash-chained audit trail per passport, including credentialed reads | `0005`, `0015`, `0026`, `0034` |
+| `passport_transfer` | The dual-signed transfer-of-responsibility chain | `0017` |
+| `evidence_dossier` | Stored, immutable evidence dossiers | `0021` |
+| `personal_data_record` | Personal data a passport statement names, held outside the passport so it can be erased | `0043` |
+| `unsold_goods_report` | ESPR Art. 24 disclosure lines (units and weight) | `0008`, `0037` |
+| `import_job` | Import jobs and their row-addressed reports | `0007`, `0020` |
+| `idempotency_key` | Replayable answers to client requests sent with `Idempotency-Key` | `0036` |
+| `scan_telemetry`, `qr_render` | Aggregate resolution and QR-render counts per passport and day. No IP, agent or session columns | `0025` |
+| `registry_sync` | Outbox: EU registry registration per passport | `0006`, `0024`, `0030` |
+| `registry_transfer` | Outbox: registry notification of a transfer of responsibility | `0029` |
+| `seal_outbox`, `seal_audit_state` | Outbox for eIDAS sealing, and the position of the stored-seal audit | `0028`, `0038` |
+| `snapshot_outbox` | Outbox for the static continuity tier | `0023`, `0033` |
+| `webhook_subscription`, `webhook_delivery` | Webhook receivers and the delivery outbox | `0022` |
+| `trusted_list_cache` | EU Trusted Lists the node has verified | `0039` |
+| `identity.did_document`, `identity.key_pair` | The node's DID document and key metadata (snake_case `doc` keys, unlike the rest) | `0009` |
 
-**Indexes:** `idx_opconf_operator` UNIQUE on `operatorId`.
+`0001` creates the schemas, extensions and roles; `0010` holds the initial grants.
+Every later migration that creates a table ships its own grant, and a test in
+`dpp-dal` checks that `odal_app` can read every table.
 
-### 3.2 operator_identifier
+## Outboxes
 
-Normalised economic operator identifiers (VAT, EORI, LEI). One operator can have multiple identifiers across different schemes.
+Side effects that leave the node (EU registry registration, transfer notification,
+sealing, snapshot publishing, webhook delivery) are queued as outbox rows and
+delivered by drainers in `dpp-node` with retry and backoff. The two registry outboxes
+are written in the same transaction as the passport change, so a crash loses
+nothing. Seal, snapshot and webhook rows are queued just after commit; seals and
+snapshots also have a periodic sweep that queues anything missed. Outbox rows are
+only written for backends that are configured, so no backlog builds up for a backend
+the node does not use. [DESIGN-PATTERNS.md](DESIGN-PATTERNS.md#4-outboxes) has the
+details.
 
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | FK to operator_config |
-| `scheme` | string | Identifier scheme (vat, eori, lei, duns, gln) |
-| `value` | string | Identifier value |
-| `label` | string | Human-readable label |
-| `isPrimary` | bool | Whether this is the primary identifier |
-| `createdAt` | datetime | |
-| `retiredAt` | datetime | nullable; set = soft-deleted. Like facilities, the value is stamped by value onto immutable passports (Art. 13), so the row is never hard-deleted. `DELETE` is revoked for the app role (0014). |
+## Migrations
 
-**Indexes:** `uq_operator_identifier_live` UNIQUE on `(operatorId, scheme, value)` **where `retiredAt IS NULL`** — a retired identifier can be re-registered.
+- Migrations are applied by `sqlx::migrate!` with a privileged role
+  (`DATABASE_MIGRATE_URL`), at node start-up or ahead of time by your tooling.
+- Files are append-only and never renumbered or edited: sqlx records a checksum of
+  each applied file, and a node whose recorded checksum disagrees refuses to start.
+  `just migrations-check` fails on any edit to an existing migration. To change what
+  a migration did, add a new one. See [`ops/pg/README.md`](../../ops/pg/README.md).
 
-### 3.3 facility
+## Initial data
 
-ESPR Annex III facility records (first paragraph, point (i): unique facility identifier; point (c): identifier standards, e.g. GS1 GLN). Each facility is a physical manufacturing or processing site.
-
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | FK to operator_config |
-| `name` | string | Facility name |
-| `identifierScheme` | string | national, gln, internal |
-| `identifierValue` | string | Facility identifier |
-| `country` | string | ISO 3166-1 alpha-2 |
-| `address` | string | Full address |
-| `isDefault` | bool | Default facility for new passports |
-| `createdAt` | datetime | |
-| `updatedAt` | datetime | |
-| `retiredAt` | datetime | nullable; set = soft-deleted. Facilities are **never** hard-deleted — their identifier is stamped by value onto immutable passports, so the row is kept as Annex III provenance. `DELETE` is revoked for the app role (0013). |
-
-**Indexes:** `uq_facility_identifier_live` UNIQUE on `(identifierScheme, identifierValue)` **where `retiredAt IS NULL`** — two *live* facilities cannot share an identifier, but a retired one can be re-registered.
-
-### 3.3a registry_identity_audit
-
-Append-only trail of facility (Annex III) and operator-identifier (Art. 13) mutations, so the operator can prove what their registry-identity set was when any passport was published. Immutable by trigger (`ODAL_AUDIT`), like `passport_audit`.
-
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | node provenance identity |
-| `entityType` | string | `facility` \| `operator_identifier` |
-| `entityId` | uuid | the facility / identifier acted on |
-| `action` | string | `added` \| `retired` \| `set_default` \| `set_primary` |
-| `actor` | string | `user_id` from the auth context |
-| `snapshot` | object | nullable, the full record at the time of the action |
-| `ts` | datetime | |
-
-### 3.4 api_key
-
-API key records for Bearer authentication. Keys are stored as SHA-256 hashes.
-
-| Field | Type | Notes |
-|---|---|---|
-| `name` | string | Human-readable key name |
-| `keyHash` | string | SHA-256 hash of the full key |
-| `keyPrefix` | string | First 12 chars of the key (for lookup) |
-| `scopes` | array | Permission scopes (["*"] for full access) |
-| `isActive` | bool | Whether the key is usable |
-| `createdAt` | datetime | |
-| `lastUsedAt` | datetime | nullable |
-| `expiresAt` | datetime | nullable |
-
-No operator scoping on this table — the node is single-tenant; isolation is an infrastructure boundary (one node per operator).
-
-### 3.5 passport
-
-The core DPP record. Contains all product data, product-group-specific extensions, and lifecycle state.
-
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | Owner operator |
-| `schemaVersion` | string | Semver schema version |
-| `status` | string | draft, active, suspended, retired |
-| `productName` | string | Product display name |
-| `productCategory` | string | BATTERY, TEXTILE, STEEL |
-| `manufacturer` | object | { name, address } |
-| `materials` | array | Material composition entries |
-| `co2ePerUnit` | float | nullable |
-| `repairabilityScore` | float | nullable |
-| `productGroupData` | object | Product group-specific extension data |
-| `batchId` | string | nullable |
-| `facility` | object | nullable, a self-contained **snapshot** `{ scheme, value, name, country, address }` of the Annex III facility, copied by value from the `isDefault` facility on create — **not** a row FK. The passport carries the full descriptor permanently, so a published DPP stays complete even if the source facility row is later retired. The `facilityId` list/count filter matches `facility.value`. |
-| `digitalLinkUrl` | string | nullable, GS1 Digital Link |
-| `complianceResult` | object | nullable, compliance check output |
-| `retentionLocked` | bool | Set true on publish, never cleared |
-| `jwsSignature` | string | nullable, JWS compact serialisation |
-| `qrCodeUrl` | string | nullable, resolver URL |
-| `publishedAt` | datetime | nullable |
-| `createdAt` | datetime | |
-| `updatedAt` | datetime | |
-
-**Indexes:**
-- `idx_passport_operator` on `operatorId`
-- `idx_passport_status` on `status`
-- `idx_passport_category` on `productCategory`
-- `idx_passport_created` on `createdAt`
-
-### 3.6 passport_audit
-
-Append-only audit trail for passport lifecycle events.
-
-| Field | Type | Notes |
-|---|---|---|
-| `passportId` | string | FK to passport |
-| `operatorId` | string | Operator who owns the passport |
-| `actor` | string | Who performed the action (key name or user) |
-| `action` | string | created, updated, published, suspended, retired |
-| `previousStatus` | string | nullable |
-| `newStatus` | string | |
-| `timestamp` | datetime | |
-
-### 3.7 unsold_goods_report
-
-ESPR unsold goods destruction reporting. Tracks exemptions and validated destruction events.
-
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | |
-| `passportId` | string | FK to passport |
-| `productCategory` | string | |
-| `destination` | string | recycling, donation, discountSale, other |
-| `reason` | string | safetyHazard, regulatory, expiry, other |
-| `quantity` | int | |
-| `reportingPeriod` | string | |
-| `exemptDestruction` | bool | |
-| `createdAt` | datetime | |
-
-### 3.8 import_job
-
-Async bulk import job tracking for CSV/XLSX uploads.
-
-| Field | Type | Notes |
-|---|---|---|
-| `operatorId` | string | |
-| `status` | string | queued, processing, completed, failed |
-| `product group` | string | Target product group |
-| `totalRows` | int | |
-| `processed` | int | |
-| `succeeded` | int | |
-| `failed` | int | |
-| `errors` | array | Per-row error details |
-| `createdAt` | datetime | |
-| `completedAt` | datetime | nullable |
-
-**Indexes:** `idx_importjob_operator` on `operatorId`.
-
-### 3.9 registry_sync
-
-EU Central Registry synchronisation status per passport.
-
-| Field | Type | Notes |
-|---|---|---|
-| `passportId` | string | FK to passport |
-| `registryId` | string | nullable, ID assigned by EU registry |
-| `status` | string | pending, synced, failed |
-| `attempts` | int | DEFAULT 0 |
-| `lastAttemptAt` | datetime | nullable |
-| `registeredAt` | datetime | nullable |
-
-**Indexes:**
-- `idx_regsync_passport` UNIQUE on `passportId`
-- `idx_regsync_status` on `status`
-
-### 3.10 Identity Tables (odal_identity/identity)
-
-#### did_document
-
-| Field | Type | Notes |
-|---|---|---|
-| `operator_id` | string | Node's own DID-owner identity (provenance, snake_case) — not a tenant key |
-| `did` | string | did:web identifier |
-| `document` | object | Full W3C DID document JSON |
-| `created_at` | datetime | |
-| `updated_at` | datetime | |
-
-#### key_pair
-
-| Field | Type | Notes |
-|---|---|---|
-| `operator_id` | string | Node's own DID-owner identity (provenance, snake_case) — not a tenant key |
-| `key_id` | string | did:web#key-N identifier |
-| `public_key_jwk` | object | Public key in JWK format |
-| `private_key_enc` | string | Encrypted private key |
-| `algorithm` | string | EdDSA |
-| `is_active` | bool | |
-| `created_at` | datetime | |
-
----
-
-## 4. Naming Conventions
-
-| Namespace | Convention | Reason |
-|---|---|---|
-| `odal/dev` | camelCase | Matches Rust serde output and API JSON keys |
-| `odal_identity/identity` | snake_case | Legacy — left as-is for MVP to avoid identity service churn |
-
-All new tables and fields use camelCase. The identity namespace exception is documented and accepted for the MVP release.
-
----
-
-## 5. Bootstrap Data
-
-Bootstrap is **not** a migration — migrations define schema only. A fresh node's
-initial records are created through the `dpp` CLI (`odal bootstrap`), which uses
-the node's HTTP API authenticated with the local admin credential:
-
-1. **operator_config** — the operator's real identity, collected by `dpp init`
-   (legal name, address, country, identifiers), `PATCH`ed onto the default
-   `operatorId = "self_hosted"` row the node seeds on first boot.
-2. **
+No migration seeds operator data. `odal bootstrap` mints the first API key over the
+API, and `odal operator set`, `odal facility add` and `odal operator-id add` fill in
+the operator's identity. See the [CLI reference](../../cli/README.md).

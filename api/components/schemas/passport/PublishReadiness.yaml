@@ -6,12 +6,12 @@ description: |
 
   Deliberately not the whole of publish. The registry-identity requirement is
   operator state rather than passport state, and the binding-compliance gate
-  needs a determination this route does not run — so `ready: true` means "these
+  needs a determination this route does not run, so `ready: true` means "these
   gates pass", not "publish will certainly succeed".
 
   The mandatory-content half is the reason this exists. It is the gate that most
-  often refuses a battery — 41 data points for an electric-vehicle one, 40 for
-  an LMT battery, 33 for an industrial one — and it could not previously be
+  often refuses a battery (41 data points for an electric-vehicle one, 40 for
+  an LMT battery, 33 for an industrial one) and it could not previously be
   previewed anywhere: it is reachable only from a stored passport, and the only
   dry-run the API offered takes an unsaved request body.
 required:

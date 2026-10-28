@@ -6,7 +6,7 @@ get:
     service internally. Returns 404 for drafts, 410 for suspended.
 
     A passport that has been superseded serves the record that replaced it,
-    so the body's `id` is not always `dppId` — see the 200 below.
+    so the body's `id` is not always `dppId`: see the 200 below.
   tags:
     - Public (Vault)
   security: []
@@ -21,8 +21,8 @@ get:
       required: false
       description: >-
         Request a read-time schema-upcast view. Set to a newer product group schema
-        version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }`
-        — the canonical signed passport plus the derived view with lens
+        version (e.g. `2.0.0`); the response becomes `{ passport, schemaView }`:
+        the canonical signed passport plus the derived view with lens
         provenance. The original is never re-signed.
       schema:
         type: string
@@ -34,11 +34,11 @@ get:
         passport, schemaView }`.
 
 
-        🚨 **The body's `id` is not always the `dppId` that was asked for.** A
+        **The body's `id` is not always the `dppId` that was asked for.** A
         passport in the `superseded` status serves the published record that
         replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport
         for the product, and a carrier is printed on a physical thing and cannot
-        be recalled — so this door has to keep landing on whichever record is
+        be recalled, so this door has to keep landing on whichever record is
         current, which is what `/01/{gtin}` beside it has always done.
 
 
@@ -55,7 +55,7 @@ get:
         because the body is the payload `publicJwsSignature` was computed over.
 
 
-        When — and only when — the body is a different record from the one
+        When (and only when) the body is a different record from the one
         asked for, the response carries `Content-Location` naming where that
         record lives (RFC 9110 §8.7). Its **presence** is the signal: a client
         can tell "this is your record" from "this is the record that replaced

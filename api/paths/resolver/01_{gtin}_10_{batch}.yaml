@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinBatch
-  summary: GS1 Digital Link resolver — GTIN + batch/lot
+  summary: GS1 Digital Link resolver (GTIN + batch/lot)
   description: |
     The carrier this node prints for a batch-level passport. **The batch is a
     resolution key**: it resolves to the batch-level passport for that lot,

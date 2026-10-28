@@ -1,76 +1,73 @@
 # dpp-integrator
 
-CSV/Excel-to-DPP inbound adapter for [Odal Node](https://odal-node.io) —
-manufacturers upload spreadsheets; the integrator parses them, validates each row,
-and creates draft passports in the vault asynchronously.
+Bulk import for manufacturers who keep product data in spreadsheets: it parses a
+CSV, TSV or XLSX upload, validates each row against its product group, and creates
+draft passports in the vault. It also serves the import templates, product group
+list and JSON Schemas. Part of [dpp-engine](../../README.md), under the Business
+Source License 1.1.
 
-This is the high-throughput alternative to the CLI's `odal import` command. While
-the CLI posts records one-at-a-time for immediate per-row feedback, the integrator
-handles arbitrarily large files as background batch jobs and exposes a polling endpoint
-for status.
+The node mounts this crate's router under `/integrator`.
 
----
+## Try it
 
-## HTTP API
+```bash
+curl -s http://localhost:8001/integrator/api/v1/templates/battery-industrial > battery.csv
+# fill in rows, then:
+curl -s -X POST http://localhost:8001/integrator/api/v1/import/battery-industrial \
+  -H "Authorization: Bearer $ODAL_API_KEY" -F file=@battery.csv
+```
 
-All endpoints except `/health` require `Authorization: Bearer odal_sk_…`.
+Batteries are served per category: `battery-ev`, `battery-lmt` and
+`battery-industrial`. An unknown key returns `404` listing the valid ones.
 
-| Method | Path | Description |
+## Routes
+
+| Route | Auth | What it does |
 |---|---|---|
-| `GET` | `/health` | Liveness probe |
-| `GET` | `/api/v1/templates/{productGroup}` | Download a pre-filled CSV template for a product group |
-| `POST` | `/api/v1/import/{productGroup}` | Upload a CSV or Excel file; returns a `job_id` |
-| `GET` | `/api/v1/imports/{job_id}` | Poll job status and per-row results |
+| `GET /api/v1/templates/{productGroup}` | none | The CSV header row the importer expects |
+| `GET /api/v1/product-groups`, `/product-groups/{productGroup}` | none | Product groups and their passport obligations |
+| `GET /api/v1/schemas`, `/schemas/{productGroup}[/{version}]` | none | JSON Schemas, current or pinned to a version |
+| `POST /api/v1/import/{productGroup}` | Bearer, write | Upload a file (5 MiB limit) |
+| `GET /api/v1/imports/{job_id}` | Bearer | Poll an asynchronous import |
 
-### Product group dispatch
+The integrator does not check keys itself: it forwards the caller's `Bearer` token
+on each row it posts to the vault, so the vault's scope checks apply.
 
-The `productGroup` path parameter (`battery`, `textile`, `electronics`, …) is passed to
-the parser so product-group-specific column mappings and validation rules are applied.
-The product group key must match a key in `dpp-domain`'s `ProductGroupCatalog`.
+## Synchronous and asynchronous imports
 
-### Job lifecycle
+An upload of up to 100 valid rows is processed in the request and the per-row report
+is returned directly. A larger upload returns a job id at once and runs in the
+background; poll `GET /api/v1/imports/{job_id}` for `queued`, `processing`,
+`completed` or `failed` and the per-row results. Rows are submitted with bounded
+concurrency (`BATCH_CONCURRENCY`, default 20).
 
-`POST /import` returns `{ "job_id": "<uuid>" }` immediately. The batch runs in the
-background; `GET /imports/{job_id}` reports `pending → running → done | failed` and
-a per-row breakdown of successes and errors. Jobs are held in an `InMemoryJobStore`
-(node restart clears them; a persistent store is the Phase 2 plan).
+In the node, jobs are stored in PostgreSQL (`PgJobStore` in `dpp-node`), so they
+survive a restart. A clean-up task removes finished jobs after 30 days. The
+standalone binary uses an in-memory store.
 
----
+Each row is matched against existing passports by product group, product identifier
+and batch, and classified as `create`, `update_draft`, `unchanged` or
+`conflict_published`. Re-uploading a sheet therefore updates the drafts that
+changed, skips the rows that did not, and reports rows whose passport is already
+published instead of duplicating them. Send the multipart field `mode=dry_run` to
+get the classified report without writing anything. Every import, dry run or not,
+gets a job id and a stored report.
 
-## Module structure
+## Modules
 
-```
+```text
 src/
-├── config.rs               Config (vault URL, batch concurrency)
+├── router.rs
+├── handlers/      import, job status, templates, product groups, schemas, health
 ├── domain/
-│   ├── csv_parser.rs       CSV + TSV row → DPP create request
-│   ├── xlsx_parser.rs      Excel (.xlsx) row → DPP create request
-│   ├── validator.rs        Per-row field validation before vault submission
-│   └── batch_runner.rs     Async batch executor (bounded concurrency via semaphore)
-├── handlers/
-│   ├── import.rs           Multipart file upload handler
-│   ├── job_status.rs       Job polling handler
-│   └── templates.rs        CSV template download
-├── infra/
-│   ├── job_store.rs        InMemoryJobStore (UUID-keyed, Arc<Mutex<…>>)
-│   └── vault_client.rs     VaultHttpClient — POST to vault /api/v1/dpp per row
-├── router.rs               Route table
-└── state.rs                AppState (vault client, job store, batch concurrency)
+│   ├── csv_parser.rs, xlsx_parser.rs   row parsing
+│   ├── validate/                        per-product-group column checks
+│   ├── matcher.rs                       match rows to existing passports
+│   ├── battery_template.rs              per-category battery templates
+│   └── batch_runner.rs                  bounded-concurrency submission
+└── infra/         job store, vault HTTP client
 ```
 
----
+## Licence
 
-## Relationship to other crates
-
-| Crate | Role |
-|---|---|
-| `dpp-domain` | `Passport` shape and `ProductGroupCatalog` for product group validation |
-| `dpp-vault` | Receives the per-row `POST /api/v1/dpp` calls from `VaultHttpClient` |
-| `dpp-node` | Mounts this crate's router under `/integrator` |
-| `dpp-cli` | `dpp import` uses the vault endpoint directly; for large async loads use this service |
-
----
-
-## License
-
-BSL-1.1 — see [LICENSE](../../LICENSE)
+[Business Source License 1.1](../../LICENSE).

@@ -1,7 +1,7 @@
 type: object
 description: >-
   A single compliance finding. Severity is encoded by which array it lands in
-  on `ComplianceResult` — `violations` bind, `warnings` advise — so there is no
+  on `ComplianceResult` (`violations` bind, `warnings` advise) so there is no
   separate severity field.
 required:
   - code

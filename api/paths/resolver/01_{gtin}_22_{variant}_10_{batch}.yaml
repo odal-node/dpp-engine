@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinVariantBatch
-  summary: GS1 Digital Link resolver — GTIN + consumer product variant + batch/lot
+  summary: GS1 Digital Link resolver (GTIN + consumer product variant + batch/lot)
   description: |
     A label that carries a consumer product variant (AI 22) and a batch or lot
     (AI 10). **The variant takes no part in the lookup**: the node holds no

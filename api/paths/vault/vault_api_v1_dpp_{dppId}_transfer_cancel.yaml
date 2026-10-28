@@ -6,7 +6,7 @@ post:
     becomes terminal and the passport's transfer chain is free to carry a new
     handover.
 
-    **This records an outcome, not who caused it** — see reject, which is the
+    **This records an outcome, not who caused it**: see reject, which is the
     same call with a different outcome written to the record.
 
     Core permits a cancel from one state more than a reject: `Accepted` as well
@@ -37,7 +37,7 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       description: |
-        This DPP has no transfer chain at all — no handover has ever been
+        This DPP has no transfer chain at all: no handover has ever been
         initiated for it. A chain that exists but carries nothing pending is a
         `422`, not this.
       content:

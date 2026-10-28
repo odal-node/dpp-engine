@@ -22,7 +22,7 @@ properties:
       - 'null'
     format: int64
     description: |
-      Null only for a row written before the count had a column — the write path
+      Null only for a row written before the count had a column: the write path
       requires it, so anything recorded through this API carries one.
   volumeKg:
     type: number
@@ -47,7 +47,7 @@ properties:
       - string
       - 'null'
     description: |
-      The operator the disclosure is about — this node's own legal name at the
+      The operator the disclosure is about: this node's own legal name at the
       time the line was recorded. Report content, not a tenant key.
   createdAt:
     type: string

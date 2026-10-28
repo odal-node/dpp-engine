@@ -5,7 +5,7 @@ description: |
 
   A disclosure is many of these, not one row. Art. 24(1) asks for the figures
   "differentiated per type or category of products", and separately per reason
-  and destination — which a single aggregate cannot express.
+  and destination, which a single aggregate cannot express.
 
   The operator is **not** part of the request. The report is about this node's
   own operator, taken from its operator config; there is no second operator on a
@@ -68,6 +68,6 @@ properties:
       Either case is accepted and the stored value is upper-cased. The pattern
       is what makes the description enforceable: a length bound alone admits
       `1?`, which satisfies the published contract and is then refused by the
-      handler — a contract looser than the implementation is the kind a
+      handler: a contract looser than the implementation is the kind a
       generated client trusts.
     example: DE

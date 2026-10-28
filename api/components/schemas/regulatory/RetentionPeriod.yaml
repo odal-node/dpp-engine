@@ -5,7 +5,7 @@ description: |
   The figure is the maximum across every act reaching the product group, because
   retention periods are floors and a record kept long enough for the longest
   satisfies them all. The basis is `sourced` only when every contributing figure
-  is sourced — one assumption anywhere makes the compound figure an assumption,
+  is sourced: one assumption anywhere makes the compound figure an assumption,
   whichever act supplied the maximum.
 properties:
   years:

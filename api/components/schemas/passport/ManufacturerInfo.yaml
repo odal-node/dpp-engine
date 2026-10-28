@@ -15,8 +15,8 @@ properties:
       - 'null'
     description: >-
       Registered trade name or trade mark, where it differs from `name`.
-      Art. 27(6) names it separately from the legal name — "name, registered
-      trade name or registered trade mark" — because the two routinely differ,
+      Art. 27(6) names it separately from the legal name ("name, registered
+      trade name or registered trade mark") because the two routinely differ,
       and the one a reader holding the product sees is the trading one. Absent
       means not stated, including the common case where the legal name is the
       trading name.
@@ -26,7 +26,7 @@ properties:
       - string
       - 'null'
     description: >-
-      Electronic means of contact — an email address or a contact URL. Not
+      Electronic means of contact: an email address or a contact URL. Not
       `didWebUrl`: a DID document resolves keys, and nothing in it need be a
       mailbox or a form, so treating it as one would satisfy Art. 27(6) on paper
       while leaving a reader with no way to reach anybody.
@@ -42,7 +42,7 @@ properties:
       separates a manufacturer from an importer or an authorised representative,
       and that decides who carries the passport obligation. Before this field
       existed the country was written into `address`, where nothing downstream
-      could tell it apart from a postal address. Absent means not stated — never
+      could tell it apart from a postal address. Absent means not stated, never
       stateless.
     example: DE
   didWebUrl:

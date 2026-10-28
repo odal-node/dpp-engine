@@ -15,7 +15,7 @@ properties:
     type: string
     description: |
       EU ESPR product group (the dispatch key), e.g. `battery`, `textile`,
-      `electronics`. Optional — derived from `productGroupData` when omitted.
+      `electronics`. Optional: derived from `productGroupData` when omitted.
     example: battery
   manufacturer:
     $ref: ../passport/ManufacturerInfo.yaml
@@ -41,7 +41,7 @@ properties:
     maximum: 10
     description: >-
       Non-regulatory repairability heuristic, **0–10**. Not EN 45554 or EU
-      2023/1669 — those have prescribed methodologies this does not implement.
+      2023/1669: those have prescribed methodologies this does not implement.
       Anything outside 0–10 is rejected with `422`.
 
       Supplied here as a scalar and stored as a `RepairabilityScore` object, so
@@ -63,7 +63,7 @@ properties:
     type: string
     format: date
     description: |
-      The date this product was placed on the EU market — the regulated
+      The date this product was placed on the EU market: the regulated
       triggering event that fixes which law governs it.
 
       Optional, and omitting it is not neutral. A compliance determination
@@ -77,7 +77,7 @@ properties:
     type: string
     description: |
       Product group schema version. Optional, and the only accepted value is the
-      product group's **current** version — omitting it is equivalent. Any other
+      product group's **current** version: omitting it is equivalent. Any other
       value is rejected with `422`.
 
       It is not the caller's to choose: the stored version selects the
@@ -100,13 +100,13 @@ properties:
     allOf:
       - $ref: ./CreateLifeStatus.yaml
     description: >-
-      Where this unit sits in its **product** life — Annex XIII point 4(c) of
+      Where this unit sits in its **product** life: Annex XIII point 4(c) of
       Regulation (EU) 2023/1542.
 
 
       Orthogonal to `status`, which is the *publication* lifecycle: a
       `repurposed` unit's passport is `active` like any other. Omit it for any
-      product group but battery — only Reg. (EU) 2023/1542 defines this
+      product group but battery: only Reg. (EU) 2023/1542 defines this
       vocabulary, and a textile passport asserting `original` would be borrowing
       a battery term for a question its own instrument does not ask. Sending it
       for another product group is refused.
@@ -117,8 +117,8 @@ properties:
       after publication would change what a proof covers.
 
 
-      🚨 **`waste` is refused here.** The other four describe how a unit came to
-      be, and Art. 77(7) makes each operation produce a *new* passport — so a
+      **`waste` is refused here.** The other four describe how a unit came to
+      be, and Art. 77(7) makes each operation produce a *new* passport, so a
       repurposed unit is created as `repurposed`. `waste` is the one value that
       happens to a record which continues, and under that article's second
       subparagraph it moves responsibility as well, so it belongs to a versioning
@@ -127,7 +127,7 @@ properties:
 
 
       Omitting it is lawful everywhere. For a battery it reads as *not stated*
-      rather than *not applicable*, and publish does not refuse it — the lint
+      rather than *not applicable*, and publish does not refuse it: the lint
       result says so instead, because a default would put a claim about a unit
       onto a record that is about to be signed.
   personalData:
@@ -155,7 +155,7 @@ properties:
   commodityCode:
     type: string
     description: >-
-      Customs tariff classification — HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits,
+      Customs tariff classification: HS-6, CN-8 or TARIC-10 (6, 8 or 10 digits,
       no separators). Registration data the EU registry verifies against the
       ranges its product group permits.
     example: '85076000'
@@ -168,7 +168,7 @@ properties:
 
       Declared here because `supersedesId` is protected: it is set by the write
       that creates the whole record, never by a field patch. Recording the link
-      retires nothing — the predecessor is retired by
+      retires nothing: the predecessor is retired by
       `POST /dpp/{dppId}/supersede` once this successor is published, and that
       route checks the two agree.
 

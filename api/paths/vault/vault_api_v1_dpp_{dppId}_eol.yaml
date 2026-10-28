@@ -3,7 +3,7 @@ post:
   summary: Declare a DPP end-of-life
   description: |
     Transition a `published` or `suspended` DPP to `deactivated`
-    (terminal). The record is retained, never deleted — the passport
+    (terminal). The record is retained, never deleted: the passport
     outlives the product. Destruction (`reason.kind: destroyed`) is only
     lawful with a recognised derogation from the unsold-goods destruction
     ban (ESPR Art. 25 delegated act).

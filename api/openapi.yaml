@@ -3,27 +3,26 @@ info:
   title: Odal Node API
   version: 0.14.0
   description: |
-    **Sovereign Digital Product Passport Infrastructure**
+    The HTTP API of a self-hosted Odal Node: create, validate, sign, publish and
+    serve EU Digital Product Passports. Pre-production: the API can still change
+    between minor versions.
 
-    The Odal API is split across two deployable services:
+    Two deployables serve it:
 
-    - **Node** (`http://localhost:8001`) — the MVP service that bundles vault,
-      identity, and integrator on a single port with sub-path routing:
-      `/vault/*`, `/identity/*`, `/integrator/*`.
-    - **Resolver** (`http://localhost:8003`) — standalone public resolver for
-      QR code scans and supply-chain integrations. Unauthenticated.
+    - **Node** (`http://localhost:8001`): one process with three route groups,
+      `/vault/*` (passport lifecycle), `/identity/*` (`did:web` document) and
+      `/integrator/*` (CSV/XLSX import).
+    - **Resolver** (`http://localhost:8003`): the public, unauthenticated reader
+      that GS1 Digital Link scans land on.
 
-    All authenticated vault endpoints are versioned under `/vault/api/v1/`.
-    Path parameters use OpenAPI 3.1 `{id}` brace syntax (aligned with
-    Axum 0.8 routing).
+    Authenticated vault routes are under `/vault/api/v1/`. Send an API key as
+    `Authorization: Bearer odal_sk_...`; each key has the scope `read`, `write`
+    or `admin`. The local admin credential (HTTP Basic) exists to mint the first
+    key. Errors are RFC 9457 problem documents.
 
-    Authentication uses `Authorization: Bearer odal_sk_...` API keys (SHA-256
-    hashed, prefix-indexed) or HTTP Basic auth for local development.
-
-    Regulation references:
-    - EU Ecodesign for Sustainable Products Regulation (ESPR) 2024/1781
-    - EU Battery Regulation 2023/1542
-    - W3C DID Core Spec 1.0 / W3C VC Data Model 2.0
+    Regulations implemented: Regulation (EU) 2024/1781 (ESPR) and Regulation
+    (EU) 2023/1542 (batteries). Identity follows W3C DID Core 1.0 and the W3C
+    Verifiable Credentials Data Model 2.0.
   contact:
     name: Odal Support
     email: contact@odal-node.io
@@ -34,13 +33,13 @@ info:
   x-legal-entity: Odal Node
 servers:
   - url: http://localhost:8001
-    description: Local development — odal-node (vault + identity public + integrator)
+    description: "Local development: the node (vault, public identity routes, integrator)"
   - url: http://localhost:8002
     description: >-
-      Local development — odal-identity (standalone; hosts the mTLS internal
+      Local development: the standalone identity service (hosts the mTLS internal
       signing surface)
   - url: http://localhost:8003
-    description: Local development — odal-resolver (public)
+    description: "Local development: the public resolver"
 components:
   securitySchemes:
     BearerApiKey:
@@ -59,7 +58,7 @@ components:
       description: |
         The operator's own bootstrap credential, from the `ADMIN_USERNAME` and
         `ADMIN_PASSWORD` environment variables. It mints the first API key on a
-        fresh node — before any key exists — and is the lockout-recovery path
+        fresh node, before any key exists, and is the lockout-recovery path
         afterwards, since it carries no `keyId` and so can revoke any key.
 
         Active in every environment where both variables are set; there is no
@@ -74,7 +73,7 @@ components:
         Client-certificate (mTLS) authentication for service-to-service calls.
         The standalone identity service accepts the internal `/internal/*`
         endpoints only from a client presenting `CN=odal-vault`. The fused
-        `dpp-node` never exposes these over the network — it signs in-process.
+        `dpp-node` never exposes these over the network; it signs in-process.
   schemas:
     Problem:
       $ref: components/schemas/errors/Problem.yaml
@@ -512,19 +511,19 @@ tags:
     description: Create, read, update, list, and audit Digital Product Passports.
   - name: DPP Lifecycle
     description: >-
-      Lifecycle transitions — publish, suspend, retire, end-of-life, and
+      Lifecycle transitions: publish, suspend, retire, end of life, and
       transfer of responsibility.
   - name: Evidence Dossiers
     description: >-
-      Signed, self-contained evidence dossiers — generate, fetch, and verify
+      Signed, self-contained evidence dossiers: generate, fetch and verify
       (stored or uploaded) offline, with zero trust in the issuing node.
   - name: Registry
     description: >-
-      EU-registry registration state — per-passport and operator-wide, plus the
+      EU registry registration state, per passport and operator-wide, plus the
       operator's verified-registry standing.
   - name: Scan Telemetry
     description: >-
-      Aggregate, privacy-safe resolution counts — per-passport and operator-wide
+      Aggregate resolution counts with no per-person data, per passport and operator-wide
       rollups.
   - name: Operator
     description: Operator configuration (branding, legal info, retention policy).
@@ -535,20 +534,20 @@ tags:
   - name: Operator Identifiers
     description: Economic-operator identifiers (ESPR Art. 13) stamped onto new passports.
   - name: API Keys
-    description: API key management — create, list, revoke.
+    description: "API key management: create, list, revoke."
   - name: Webhooks
-    description: Signed outbound event delivery — subscribe, list, remove, test.
+    description: "Signed outbound event delivery: subscribe, list, remove, test."
   - name: Personal Data
     description: >-
       Erasing the records a passport's `personalData` statements name. A record
       is held outside the passport so it can be erased, and no route reads one.
   - name: Plugins
     description: >-
-      Signed product-group plugin hot-install — verify, persist, hot-swap
+      Signed product group plugin installation: verify, persist, hot-swap
       (admin-only).
   - name: Ruleset
     description: >-
-      Compliance Current — the signed, versioned ruleset channel. Re-read it and
+      The signed, versioned ruleset channel. Re-read it and
       hot-swap a verified bundle without a node restart (admin-only).
   - name: Node
     description: >-
@@ -559,7 +558,7 @@ tags:
   - name: Credentialed Access
     description: >-
       Audience-scoped passport reads authenticated by a verifiable credential
-      rather than an API key — repairers, market-surveillance authorities.
+      rather than an API key: repairers, market surveillance authorities.
       Deliberately outside both `/public` (a public URL whose body varies by
       caller breaks caching and the meaning of `publicJwsSignature`) and
       `/api/v1` (API keys are the operator's own machine access; a repairer or
@@ -568,23 +567,23 @@ tags:
     description: mTLS service-to-service telemetry ingestion (resolver → vault only).
   - name: Integrator
     description: >-
-      CSV/XLSX bulk import — product groups, their versioned JSON Schemas,
+      CSV/XLSX bulk import: product groups, their versioned JSON Schemas,
       templates, upload, and async job polling.
   - name: Identity
     description: >-
-      Public did:web identity — DID document, health, readiness. On the fused
+      Public did:web identity: DID document, health, readiness. On the fused
       node these are served under `/identity/*`, and the DID document also at
       the root, `/.well-known/did.json`, where the did:web method resolves the
       node's DID. The standalone identity service (:8002) serves them at the
-      root — `/health`, `/ready`, `/.well-known/did.json`.
+      root: `/health`, `/ready`, `/.well-known/did.json`.
   - name: Identity (internal)
     description: >-
       mTLS service-to-service signing/rotation. **Not exposed by the fused
-      node**, which signs in-process — reachable only on the standalone identity
+      node**, which signs in-process. Reachable only on the standalone identity
       service, and only from a client presenting `CN=odal-vault`.
   - name: Public Resolver
     description: Unauthenticated public endpoints for QR scan resolution.
   - name: Health
     description: >-
-      Health and readiness probes, plus the vault's build metadata — every
+      Health and readiness probes, plus the vault's build metadata: every
       deployable's unauthenticated liveness surface in one place.
