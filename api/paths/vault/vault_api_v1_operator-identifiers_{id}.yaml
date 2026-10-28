@@ -3,7 +3,7 @@ delete:
   summary: Remove an operator identifier
   description: >-
     Retires the identifier (soft-delete): the row is kept as Art. 13 provenance
-    for passports that already stamped its value — never hard-deleted. Requires
+    for passports that already stamped its value, never hard-deleted. Requires
     an admin-scoped key.
   tags:
     - Operator Identifiers

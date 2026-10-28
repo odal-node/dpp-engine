@@ -3,16 +3,16 @@ post:
   summary: Re-check plausibility-lint findings
   description: |
     Recomputes the plausibility lint and persists the refreshed `lintResult`
-    (pack version, findings, assessed-at timestamp). Findings are non-binding —
-    arithmetic and physical-plausibility checks distinct from binding
-    compliance rules — and never gate publish or any other transition.
+    (pack version, findings, assessed-at timestamp). Findings are non-binding
+    (arithmetic and physical-plausibility checks distinct from binding
+    compliance rules) and never gate publish or any other transition.
 
     Two sets of checks run. The `dpp-rules` plausibility **pack** runs against
     the DPP's current product group data, and `packVersion` names its version.
     The **envelope** checks run against fields every product group carries, so
     they apply to a DPP with no product group data at all: today that is
     `lineage.life_status_unsupported`, which reports a `lifeStatus` that the
-    record's own `derivedFrom` edges do not support — a unit claiming
+    record's own `derivedFrom` edges do not support: a unit claiming
     `remanufactured` whose only edge says `repurposing`, or an `original` that
     claims a predecessor at all.
 
@@ -36,7 +36,7 @@ post:
     `publishReadiness.passportScope` answers a different question from the
     blockers: whether Art. 77(1) requires a battery passport for this record at
     all. The Regulation defines five battery categories and that article reaches
-    three — LMT, electric-vehicle, and industrial above 2 kWh — so a portable or
+    three (LMT, electric-vehicle, and industrial above 2 kWh) so a portable or
     SLI passport is voluntary. This node applies the content gate either way,
     which for a voluntary passport is stricter than the article requires; the
     `note` says so rather than leaving the caller to wonder why they are being
@@ -56,7 +56,7 @@ post:
     '200':
       description: |
         Lint findings refreshed. Returns the full passport record, plus
-        `publishReadiness` — whether this passport would clear the publish gates
+        `publishReadiness`: whether this passport would clear the publish gates
         that can be answered without attempting the transition.
       content:
         application/json:

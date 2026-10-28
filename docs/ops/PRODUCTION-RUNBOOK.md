@@ -1,118 +1,260 @@
-# Production Runbook — running Odal Node for real operators
+# Production runbook
 
-**Date:** 2026-07-03 · **Grounded in:** `docker/docker-compose.yml` (the `odal up` stack), `NodeConfig::from_env()` (`dpp-node/src/config.rs`), the trust-mode boot guard, the registry outbox, the signed ruleset channel.
-**Substrate this encodes:** a strictly single-tenant node, one plain dedicated VM per operator — no Kubernetes, and no microVM isolation until operator count forces it.
+Running an Odal Node for a real operator: topology, hardening, configuration, go-live
+checks, backups, monitoring and upgrades. It assumes the
+[operator setup](../guides/OPERATOR-SETUP.md) is understood.
 
----
+> [!NOTE]
+> Pre-production. No node runs against real product data yet, and the schema and API
+> still change between minor versions. Treat this as the intended production shape.
 
-## 0. What "production" means today — three tiers, one blocker (read first)
+## What "production" means today
 
-| Tier | Profile | What it honestly claims | Available |
-|---|---|---|---|
-| **T1 Pilot-grade** | default (`NODE_PROFILE` unset) | Full lifecycle, signed + verified passports, hash-chained audit, outbox-durable registry intent; **trust ports run Ghost and say so** on `/vault/api/v1/node/state` (`trustMode`) and the `trust_mode` gauge | **Now** |
-| **T2 Sealed-grade** | `NODE_PROFILE=production` | Everything above + real qualified seals from a hosted QTSP | After a QTSP credential exists — the adapter is wired, the account is not |
-| **T3 Registry-grade** | `NODE_PROFILE=production` | + real EU registry registration | After the Commission publishes its registry spec |
+The node runs under one of three profiles (`NODE_PROFILE`):
 
-**The blocker — deliberate:** `NODE_PROFILE=production` **refuses to boot** while seal/registry resolve to Ghost (the honesty invariant working as designed). So every deployment today is **T1 by definition**: run the default profile, point monitoring at `/health`, and make no sealed/registered claims. Do not weaken the guard to "get to production" — the guard *is* the product's credibility.
-
-**`NODE_PROFILE=sandbox`** is the third profile, and it is a property of the *deployment*, not a tier a production node may quietly carry. It is a full node in every respect except that the authorities behind it are test ones: ghosts on required ports are a hard boot failure exactly as in production, but `Sandbox` tiers are accepted, so the environment can be exercised end to end without a production credential. Run it as its own environment — it is the closest rehearsal of production available, and keeping the two profiles apart is what stops a test certificate ever sealing a passport that claims to be real. A `production` node refuses a sandbox tier for that reason.
-
-**Images — how a deploy stays reproducible:** every dpp-core version the engine pins is published on crates.io, so both compose modes build from public sources. `docker compose up -d` runs the images `release.yml` publishes for each release tag (`ghcr.io/odal-node/dpp-node`, `ghcr.io/odal-node/dpp-resolver`); plain `--build` compiles the same `Dockerfile` from the checked-out source. Pin `ODAL_VERSION` to a release number **without** the git tag's leading `v` (tag `v0.14.0` is image `0.14.0`), never `latest`, and record the image digest you deployed. The local-core overlay (`--build` + `-f docker/docker-compose.local.yml`, i.e. `just up-local`) is for developing against an unreleased core only, never for an operator deploy.
-
----
-
-## 1. Reference topology — one VM per operator, and why it's the efficient answer
-
-```
-            Internet
-               │ :443 (TLS)
-        ┌──────▼──────┐          One VM = one operator (isolation boundary)
-        │ Caddy proxy │          Hetzner/OVH-class, EU region, ~€10–25/mo [E]
-        └──┬───────┬──┘          2 vCPU / 4 GB / 40 GB is ample [E]
-   api.<op-domain> dpp.<op-domain>
-           │           │
-     ┌─────▼───┐ ┌─────▼─────┐   docker compose (the shipped stack):
-     │ dpp-node│ │dpp-resolver│  postgres:17 · redis · nats · node · resolver
-     │  :8000  │ │   :8003   │   volumes: pg-data · node-data(keystore!) ·
-     └────┬────┘ └───────────┘            node-plugins · redis · nats
-          └── postgres · nats · redis (internal only, no host ports)
-```
-
-**Why this beats the alternatives:**
-- **It matches the architecture.** The node is strictly single-tenant; an orchestrator's whole value is multiplexing tenants onto shared machines — the thing this design deliberately forbids. One VM per operator makes "your own isolated node, zero shared data paths" *physically true* with zero additional code.
-- **It's the smallest ops surface a single administrator can carry.** The compose stack already exists and is `odal up`; systemd + docker + caddy is knowledge you keep for a decade. Kubernetes would add a control plane to operate, YAML to drift, and failure modes you'd learn during an incident — an ops tax with no payer.
-- **It keeps the deployment legible.** A dedicated VM keeps the data path, and the disk your keystore lives on, visible and under your control. PaaS platforms (Fly/Render/Heroku-class) complicate the EU-data-residency story and abstract away the storage your keys sit on.
-- **It scales by addition, not redesign.** A second operator is a second VM, the same compose file, and about thirty minutes. Automation only pays for itself once operator count or a provisioning commitment forces it.
-- **Failure isolation is absolute.** One operator's disk filling cannot touch another operator. For a compliance product, blast-radius honesty is a feature you can sell.
-
----
-
-## 2. Bring-up, step by step (T1 pilot-grade)
-
-**2.1 DNS + naming (decide once per operator).** Two hostnames on the *operator's* domain (the "your DID, our ops" posture): `api.<operator-domain>` → node (private API, operator-only), `dpp.<operator-domain>` (or `id.`) → resolver (public QR target). `DID_WEB_BASE_URL` **must equal the public HTTPS origin that serves `/.well-known/did.json`** — the DID document route the node exposes; if the DID is `did:web:api.<operator-domain>`, then `https://api.<operator-domain>/.well-known/did.json` must resolve through the proxy. Changing this later invalidates the DID — decide before first publish.
-
-**2.2 VM hardening (30 min, once per VM).** SSH keys only (`PasswordAuthentication no`); `ufw`: allow 22+443 (and 80 for ACME), deny rest; `fail2ban`; unattended security upgrades; separate non-root user with docker group. **Change the compose port mappings to loopback** — `127.0.0.1:8001:8000` and `127.0.0.1:8003:8003` — so node/resolver are reachable only via Caddy. [The shipped compose maps to all interfaces; this one-line change per service is the single most important hardening step.]
-
-**2.3 TLS proxy.** Caddy (host package or a fourth compose service), minimal config:
-```
-api.<operator-domain> {  reverse_proxy 127.0.0.1:8001 }
-dpp.<operator-domain> {  reverse_proxy 127.0.0.1:8003 }
-```
-Auto-HTTPS, zero certificate ops. (Traefik equivalent if preferred; Caddy is less config.)
-
-**2.4 The `.env` (the whole contract).** From `NodeConfig::from_env()` + compose + the trust-mode/ruleset config — every name below is real:
-
-| Var | Req | Value guidance |
+| Profile | Starts when | Use it for |
 |---|---|---|
-| `DATABASE_POSTGRES_PASS` / `DATABASE_APP_PASS` | ✔ | 32+ random chars each; compose fails closed without them |
-| `KEY_STORE_PASSPHRASE` | ✔ | Generated, stored in the password manager **and** printed/sealed offline (§4 custody); loss = loss of signing identity |
-| `DID_WEB_BASE_URL` | ✔ | `https://api.<operator-domain>` (see 2.1) |
-| `KEY_STORE_PATH` | ✔ (compose pins it) | Leave as compose sets it — on the `node-data` volume; the inline warning about the throwaway layer is real |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | opt | Set for bootstrap, then prefer API keys; rotate after onboarding |
-| `CORS_ALLOWED_ORIGINS` | opt | The dashboard origin only, when it exists |
-| `NATS_URL` | opt | Compose provides it; unset ⇒ NoOp bus (acceptable for pilot if you drop the service) |
-| `METRICS_ADDR` | opt | `127.0.0.1:9464` — never public (RT2-7) |
-| `PLUGINS_DIR` | ✔ (compose: `/plugins`) | Mount the product group `.wasm` files into the `node-plugins` volume |
-| `RULESET_BUNDLE_PATH` + `RULESET_PUBLISHER_PUBKEY` | opt | Wire when the first Compliance Current bundle ships — both or neither. Bad bundle ⇒ last-good + `ruleset_load_failures_total`. Drop a new bundle at the path and the node takes it within `RULESET_POLL_INTERVAL_SECS`, or at once on `odal ruleset reload`; no restart |
-| `RULESET_POLL_INTERVAL_SECS` | opt | Default `300`. `0` polls never, leaving `POST /vault/api/v1/ruleset/reload` as the only trigger |
-| `NODE_PROFILE` | opt | **Leave unset** (T1). Set `production` only at T2 — it will refuse ghosts, correctly |
-| `DATABASE_MIGRATE_URL` | opt | Keep for pilot (idempotent sqlx migrations at boot); the least-privilege upgrade (external `just migrate`, app role only at runtime) is a later hardening |
-| `EU_REGISTRY_CLIENT_ID/SECRET`, `BACKUP_S3_BUCKET`… | opt | T3 / back-up-copy tier — leave unset until real |
-| `ODAL_VERSION` | ✔ | **Pin a tag/digest. Never `latest` in production.** Same for the `postgres:17` image (pin digest — the compose header says so itself) |
+| `development` (default) | Always. Stub trust ports are allowed and reported | Pilots and any deployment without a qualified seal provider and EU registry access |
+| `sandbox` | No required trust port is a stub; sandbox adapters are accepted | A full rehearsal environment against test authorities |
+| `production` | Every required port (compliance, seal, registry sync) is live | Passports that are sealed and registered for real |
 
-`chmod 600 .env`; it is a secret.
+`production` refuses to start while the seal or registry adapter is a stub, and the EU
+registry is not yet available to connect to. Until it is, every deployment runs the
+`development` profile, reports its stubs on `GET /vault/api/v1/node/state` and the
+`trust_mode` gauge, and should make no claim of sealed or registered passports. Do not
+weaken the start-up check to get to `production`.
 
-**2.5 First boot.** `docker compose up -d` (with `ODAL_VERSION` pinned; see §0) → postgres init runs `bootstrap.sql` (creates `odal_app`) → node applies `ops/pg` migrations via `DATABASE_MIGRATE_URL` → healthchecks green.
+Keep `sandbox` as a separate environment, never a mode a production node switches into,
+so a test certificate can never seal a passport presented as real.
 
-**2.6 Go-live smoke (the gate — do not skip).** (1) `curl` the **authenticated** `/vault/api/v1/node/state` with an API key and confirm expected `profile`, `trustMode` per port, and `rulesetVersion` — the public `/health` answers `{"status":"ok"}` and nothing else, so a probe pointed there passes without checking anything; (2) create → publish a test passport via API key; (3) resolve it: JSON *and* HTML on `dpp.<operator-domain>`, signature verifies (fail-closed path); (4) scan the QR from a phone on mobile data (not the VM's network); (5) tamper test: flip a field in `psql` → resolver returns 409; (6) `verify_chain` on the audit trail returns intact; (7) kill the node mid-publish, restart → outbox row survives (the chaos case, once per deployment). Record all seven in the operator's onboarding record — this doubles as your SLA evidence baseline.
+## Reference topology: one VM per operator
 
----
+```mermaid
+flowchart TB
+    I((Internet)) -->|443| P[TLS proxy: Caddy or Nginx]
+    P -->|api.operator.example| N[dpp-node 127.0.0.1:8001]
+    P -->|dpp.operator.example| R[dpp-resolver 127.0.0.1:8003]
+    N --- DB[(PostgreSQL 17)]
+    N --- Q[NATS]
+    R --- C[(Redis)]
+    R -->|cache miss| N
+    subgraph VM["One VM per operator (Docker Compose)"]
+        P
+        N
+        R
+        DB
+        Q
+        C
+    end
+```
 
-## 3. Day-2 operations
+- **The node is single-tenant.** One VM per operator puts the isolation boundary at the
+  machine, with no shared data path. A second operator is a second VM with the same
+  Compose file.
+- **The stack is the shipped `docker/docker-compose.yml`:** PostgreSQL 17, Redis, NATS,
+  node and resolver, with volumes `pg-data`, `node-data` (the signing key),
+  `node-plugins`, `redis-data` and `nats-data`.
+- **Sizing:** a small VM (2 vCPU, 4 GB RAM, 40 GB disk) is a reasonable starting
+  point for one operator. Measure before you scale.
+- **Region:** place the VM and its backups in the EU if data residency matters to the
+  operator.
 
-**Backups — the only thing that can actually kill you.** Nightly `pg_dump -Fc` + copy of `keystore.enc` (it's on `node-data`) → **off-VM** object storage (EU region, versioned bucket, 30-day retention) — a 10-line cron script; the passphrase is *not* stored beside the dump. Redis/NATS are cache/replayable — exclude. **Monthly restore drill** on a scratch VM: restore dump + keystore → boot → old passport still resolves + verifies; target <1h (the S-4 gate). An untested backup is a hypothesis.
+An orchestrator such as Kubernetes adds little here: its value is packing tenants onto
+shared machines, which this design rules out.
 
-**Monitoring (pilot-appropriate, ~€0).** Split it by what each probe can actually see.
+## Bring-up
 
-*External* (UptimeRobot-class free tier), on `https://dpp.<domain>/health` + the resolver of a known passport: **liveness only** — 200 and `{"status":"ok"}`. It cannot assert trust tiers. That endpoint deliberately carries nothing else (which ports are degraded is a targeting signal), and the endpoint that does carry them needs a credential — which is not something to hand a third-party uptime SaaS, since even a read-scoped key reads every passport.
+### 1. Names
 
-*On-VM*, where a credential never leaves the box, is where the honesty invariant is monitored — and it needs no credential at all, because **`trust_mode` is already a labelled gauge on the metrics listener** (`0` ghost, `1` sandbox, `2` live, one series per port). Prometheus scrape of `127.0.0.1:9464`, or simpler for one VM, a cron that greps the metrics endpoint and mails on: any `trust_mode{port=…}` **below its expected value** — *a config regression that silently flips a port's trust tier must page you* — plus `signing_failures_total > 0`, `registry_outbox_stalled > 0`, `ruleset_load_failures_total > 0`, disk >80%. Full Grafana/Loki stack is H3 — do not build it for one operator.
+Use two hostnames on the operator's domain:
 
-**A stalled registry row (`registry_outbox_stalled > 0`).** A row is stalled once it has been attempted eight times without settling, and the node keeps trying it with backoff; the alert says a person should look, not that anything is lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands. A **`pending`** row is one the registry has not taken: the registry is unreachable or refusing the payload, and the row's `message` says which. A **`submitted`** row is one the registry holds and has not ruled on, and the node polls it by the correlation identifier it was given. If a crash or a failed write meant the node never recorded that identifier, it looks the submission up by the unique product identifier the passport was submitted under, and logs *recovered the correlation identifier* when it finds it: nothing to do. Two log lines mean a person is needed. *More than one registry submission reports this passport's unique product identifier* lists the candidates: a successor can be submitted under its predecessor's identifier, so the node does not choose between them. *Not found among the tasks read* is retried on every attempt, and a row that never finds it stalls. There is **no node-side way yet to record a correlation identifier by hand**, so compare the candidates with the registry's own dashboard and raise it; the row stays where it is and loses nothing. A stalled **transfer notification** is one the registry answered with something the node could not read as accepted or refused (still processing, or an unrecognised state, which the row's `message` quotes). It is sent again under the same idempotency key each time. Whether the registry's transfer route de-duplicates on that key has not been observed, so a notification that stalls may have been taken more than once: check the registry's own record of the handover before treating repeats as harmless, and raise a state that never settles with the registry.
+| Host | Serves | Public |
+|---|---|---|
+| `api.operator.example` | The node: the operator API and `/.well-known/did.json` | The DID document must be public; restrict the API by network if you can |
+| `dpp.operator.example` | The resolver, which QR codes point at | Yes |
 
-**Upgrades — the ritual.** (1) backup first; (2) bump the pinned `ODAL_VERSION` on the **staging** VM (your own demo VM is staging), run §2.6 smoke; (3) same on prod; (4) migrations apply at boot (forward-only — **rollback = restore from backup**, so step 1 is the rollback plan); (5) post-deploy: §2.6 items 1–3 minimum + diff `rulesetVersion` on `/vault/api/v1/node/state`. Log every upgrade in the operator record (BUILD-LOG habit, operator-facing).
+`DID_WEB_BASE_URL` is the origin that serves `/.well-known/did.json`, and
+`RESOLVER_BASE_URL` is the QR code origin. Both are effectively permanent: the DID
+identifies the signer, and the resolver URL is signed into every passport. Decide them
+before the first publish.
 
-**Key rotation.** The identity service supports rotation. A key is named by its own thumbprint, so rotating never renames another key, and a token's `kid` is the absolute URL of the verification method that signed it (`dpp-crypto::jws::resolve_verification_key` resolves any archived key by it, not just the primary, and refuses a token that names none). That has a green rotation regression test (`dpp-identity::handlers::rotate_key::tests::signature_signed_before_rotation_still_verifies_after`) confirming a JWS signed before rotation still verifies afterwards. Follow `rotate_key_handler`'s doc comment for the archive-then-generate ordering.
+### 2. Harden the VM
 
-**Key custody (managed mode).** Two documented modes, chosen per contract: (a) Odal-held passphrase (full managed; passphrase in your vault + sealed offline copy), or (b) operator-held (they enter it at provisioning; you cannot sign without them — the deepest sovereignty tier). Either way the *custody statement* is part of the managed contract (pack 04 §3.7).
+- SSH keys only (`PasswordAuthentication no`), a non-root user in the `docker` group.
+- Firewall: allow 22, 80 (ACME) and 443; deny the rest.
+- `fail2ban` and unattended security upgrades.
+- **Bind the containers to loopback**, so only the proxy reaches them. The shipped
+  Compose file publishes on all interfaces; change the two mappings:
 
----
+  ```yaml
+  node:
+    ports: ["127.0.0.1:${NODE_PORT:-8001}:8000"]
+  resolver:
+    ports: ["127.0.0.1:${RESOLVER_PORT:-8003}:8003"]
+  ```
 
-## 4. Efficiency summary (the direct answer)
+### 3. TLS proxy
 
-The most efficient production shape for Odal today is **the shipped compose stack, one dedicated EU VM per operator, loopback-bound services behind Caddy, pinned image versions, nightly off-VM backups with a monthly restore drill, and `/health`-asserting monitoring** — because it is the only shape that simultaneously (a) keeps the isolation claim physically true, (b) adds zero new operational technology for a single administrator, (c) runs on commodity VM hardware, (d) already exists in the repo (`odal up`), and (e) leaves the honesty invariant intact — a "production" that can't lie about its trust tier. Efficiency here is not throughput (a single node trivially serves early workloads); it is **administrator-hours per operator per month**, and this shape minimizes exactly that.
+```caddyfile
+api.operator.example {
+    reverse_proxy 127.0.0.1:8001
+}
+dpp.operator.example {
+    reverse_proxy 127.0.0.1:8003
+}
+```
 
-**Do-next order:** provision a demo VM as the permanent staging environment (§2 end-to-end, once) → after that, each operator VM is a 30-minute repeat with a filled-in checklist.
+Caddy obtains and renews the certificates.
 
-## 5. Go-live checklist (print per operator)
-DNS + DID origin decided ✚ VM hardened, loopback bindings ✚ TLS live ✚ `.env` complete, `chmod 600`, secrets in manager + sealed copy ✚ versions pinned (ODAL_VERSION + postgres digest) ✚ first boot green ✚ §2.6 smoke ×7 recorded ✚ backup cron live + first restore drill dated ✚ external probe on `/health` for liveness + on-VM alarm on the `trust_mode` gauge ✚ upgrade ritual + custody mode written into the operator record.
+### 4. Configuration
+
+`.env` is the contract between you and the node. Set `chmod 600 .env`.
+
+| Variable | Required | Guidance |
+|---|---|---|
+| `DATABASE_POSTGRES_PASS`, `DATABASE_APP_PASS` | Yes | 32+ random characters each |
+| `KEY_STORE_PASSPHRASE` | Yes | Generated; kept in a password manager and in a sealed offline copy. Losing it loses the signing identity |
+| `DID_WEB_BASE_URL` | Yes | `https://api.operator.example` |
+| `RESOLVER_BASE_URL` | Yes | `https://dpp.operator.example` |
+| `KEY_STORE_PATH` | Set by Compose | Leave it on the `node-data` volume; anywhere else, a container recreate generates a new key |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
+| `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
+| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live |
+| `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
+| `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
+| `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |
+| `DATABASE_MIGRATE_URL` | No | With it, migrations run at every start. For a stricter setup, start once with it set to apply migrations, then remove it so the long-running node holds only the application role |
+| `CORS_ALLOWED_ORIGINS` | No | Only a browser front end's origin |
+| `SEAL_*` | No | Sealing is experimental. Leave it unset, or use `SEAL_PROVIDER=local` to exercise the seal paths with clearly unqualified seals |
+| `EU_REGISTRY_*`, `BACKUP_S3_*`, `SNAPSHOT_*` | No | Leave unset until the service exists; see `.env.example` |
+
+### 5. First start
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+With `ODAL_VERSION` pinned this runs the published images; add `--build` to compile the
+same Dockerfiles from the checked-out source. On first start PostgreSQL runs
+`ops/bootstrap/` (which creates the `odal_app` role), the node applies the migrations,
+and the health checks turn green. Then onboard as in the
+[operator setup](../guides/OPERATOR-SETUP.md#3-onboard).
+
+### 6. Go-live checks
+
+Do all seven and record the results. They are also the baseline for later incidents.
+
+1. Call the authenticated `GET /vault/api/v1/node/state` and confirm `profile`, each
+   port's `trustMode`, and `rulesetVersion`. The public `/health` only answers
+   `{"status":"ok"}`, so a probe there checks nothing else.
+2. Create and publish a test passport with an API key.
+3. Resolve it on the resolver host as JSON-LD and as HTML; the signature must verify.
+4. Scan its QR code with a phone on mobile data, not the VM's network.
+5. Tamper test: change a field of the published passport directly in PostgreSQL. The
+   resolver must answer `409`.
+6. Verify the audit trail is intact (generate a dossier and `odal verify` it).
+7. Stop the node during a publish and restart it. The registry outbox row must still be
+   there.
+
+## Day-2 operations
+
+### Backups
+
+Back up two things, together and off the VM:
+
+- `pg_dump -Fc` of the `odal` database, nightly.
+- `keystore.enc` from the `node-data` volume.
+
+Send both to versioned object storage with a retention period. Never store
+`KEY_STORE_PASSPHRASE` beside them. Redis and NATS hold caches and replayable events;
+leave them out.
+
+**Restore monthly** on a scratch VM: restore the dump and the key store, start the node,
+and check that an old passport still resolves and verifies. Aim for under an hour. An
+untested backup is not a backup.
+
+### Monitoring
+
+| Probe | Where it runs | What it can check |
+|---|---|---|
+| External uptime check on `https://dpp.operator.example/health` and one known passport | Any uptime service | Liveness only. Do not give an external service an API key: even a `read` key reads every passport |
+| `trust_mode` and the other series on the metrics listener | On the VM (Prometheus, or a cron job reading `/metrics`) | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
+
+Alert at least on: `trust_mode` below its expected value for any port,
+`signing_failures_total` increasing, `registry_outbox_stalled > 0`,
+`ruleset_load_failures_total` increasing, and disk above 80%. Rules are in
+[METRICS-PLAN.md](METRICS-PLAN.md#starter-alert-rules).
+
+#### A stalled registry row
+
+A row is stalled once it has been tried eight times without settling. The node keeps
+trying it with backoff, so the alert says a person should look, not that anything is
+lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands.
+
+- A **`pending`** row is one the registry has not taken: it is unreachable or refuses
+  the payload, and the row's `message` says which.
+- A **`submitted`** row is one the registry holds and has not ruled on, and the node
+  polls it by the correlation identifier it was given. If a crash or a failed write
+  lost that identifier, the node looks the submission up by the unique product
+  identifier the passport was submitted under, and logs *recovered the correlation
+  identifier* when it finds it. Nothing more is needed then.
+
+Two log lines mean a person is needed:
+
+- *More than one registry submission reports this passport's unique product
+  identifier* lists the candidates. A successor can be submitted under its
+  predecessor's identifier, so the node does not choose between them.
+- *Not found among the tasks read* is retried on every attempt, and a row that never
+  finds it stalls.
+
+There is no node-side way yet to record a correlation identifier by hand. Compare the
+candidates with the registry's own dashboard and raise it with the registry; the row
+stays where it is and loses nothing.
+
+A stalled **transfer notification** is one the registry answered with something the
+node could not read as accepted or refused: still processing, or a state the row's
+`message` quotes. It is sent again under the same idempotency key each time. Whether
+the registry's transfer route de-duplicates on that key has not been observed, so a
+notification that stalls may have been taken more than once: check the registry's own
+record of the handover before treating repeats as harmless, and raise a state that never
+settles with the registry.
+
+### Upgrades
+
+1. Back up. Migrations only go forward, so the backup is the rollback.
+2. Bump `ODAL_VERSION` on a staging VM and run go-live checks 1 to 3.
+3. Repeat on production.
+4. Compare `rulesetVersion` on `/vault/api/v1/node/state` before and after.
+5. Record the upgrade (version, digest, date, result) for the operator.
+
+### Signing key rotation
+
+The identity service rotates keys without breaking old signatures. Each key is named by
+its own thumbprint, and a JWS's `kid` is the absolute URL of the verification method that
+signed it, so `dpp-crypto` resolves archived keys by `kid` as well as the current one.
+The test `signature_signed_before_rotation_still_verifies_after` in `dpp-identity`
+covers this. Follow the archive-then-generate order documented on
+`rotate_key_handler`.
+
+### Key custody
+
+Decide and write down who holds `KEY_STORE_PASSPHRASE`:
+
+- **The operator holds it** and enters it at provisioning. Whoever runs the VM cannot
+  sign without them.
+- **The administrator holds it** in a password manager, with a sealed offline copy.
+
+Either way, the custody arrangement belongs in the operator's records.
+
+## Go-live checklist
+
+- [ ] Hostnames and the DID origin decided
+- [ ] VM hardened; node and resolver bound to loopback
+- [ ] TLS live on both hosts; `/.well-known/did.json` reachable publicly
+- [ ] `.env` complete, `chmod 600`, secrets in a manager with a sealed offline copy
+- [ ] `ODAL_VERSION` and the PostgreSQL image pinned; digests recorded
+- [ ] First start green
+- [ ] All seven go-live checks recorded
+- [ ] Backup job running, first restore drill done and dated
+- [ ] External liveness probe and on-VM `trust_mode` alerting in place
+- [ ] Upgrade procedure and key custody written into the operator's records

@@ -1,13 +1,13 @@
-# `ops/pg` — the migration set
+# `ops/pg`: the migration set
 
-Append-only, FK-ordered, never renumbered, and — the part that was not written
-down — **never edited once it exists on `main`**.
+Append-only, FK-ordered, never renumbered, and **never edited once it exists on
+`main`**.
 
 ## Why "never edited" is a separate rule from "never renumbered"
 
 `PgDal::migrate` runs `sqlx::migrate!`, which stores a **checksum** of each
-migration file in `_sqlx_migrations`. Editing an applied file — one character of
-one comment is enough — makes the recorded checksum disagree, and sqlx aborts.
+migration file in `_sqlx_migrations`. Editing an applied file (one character of
+one comment is enough) makes the recorded checksum disagree, and sqlx aborts.
 On a node that has already applied it, the effect is that the node **refuses to
 boot**.
 
@@ -17,7 +17,7 @@ while breaking the checksum, and that is exactly what happened to
 header line. It is the only migration in the set with two commits.
 
 `just reset-db` exists as the development workaround. There is no production
-equivalent — the remedy on a live node is a manual `_sqlx_migrations` update.
+equivalent: the remedy on a live node is a manual `_sqlx_migrations` update.
 
 `just migrations-check` fails the gate on any change to a file that already
 exists on the base branch. To change what a migration did, add a new numbered
@@ -45,7 +45,7 @@ and that is the property the shorter sentence elsewhere is protecting.
 `idempotency_key` is a queue by that test, and it is worth saying why rather
 than leaving it to be inferred. A row records that one client request was
 answered, so that resending it replays the answer instead of creating a second
-resource. It is evidence of nothing once the client's retry budget is spent —
+resource. It is evidence of nothing once the client's retry budget is spent;
 the *outcome* it protects is already in `passport_audit`, which has no DELETE
 grant and never will. Keeping the key rows instead would be an unbounded store
 of request bodies and response bodies, which is a slow leak and a larger
@@ -53,7 +53,7 @@ disclosure surface, not a stronger record.
 
 This list lives here, not in a migration, precisely because of the rule above:
 it has to be editable when a grant changes, and a migration is not. `CLAUDE.md`
-and `.env.example` point here rather than restating a count — both of them said
+and `.env.example` point here rather than restating a count. Both of them said
 "one sanctioned exception" long after there were three, which is how the claim
 was found to have drifted.
 
@@ -64,8 +64,8 @@ was found to have drifted.
 
 `0010`'s `GRANT … ON ALL TABLES` is a one-time snapshot: it covers the tables
 that existed when it ran and nothing after. **Every migration that creates a
-table must ship its own grant.** Every one since `0010` does — checked
-table-by-table — but this holds by discipline rather than by construction, since
+table must ship its own grant.** Every one since `0010` does (checked
+table by table), but this holds by discipline rather than by construction, since
 there is no `ALTER DEFAULT PRIVILEGES`. `dal/tests/pg_integration.rs` carries a
 parity test asserting `odal_app` can read every table, which is the mechanical
 half of the same rule.

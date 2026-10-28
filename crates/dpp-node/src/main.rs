@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
         compliance,
         db.audit_repo.clone(),
-        event_bus,
+        event_bus.clone(),
         registry_sync,
         backup,
         operator,
@@ -271,7 +271,8 @@ async fn main() -> anyhow::Result<()> {
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
-    .with_webhooks(db.webhook_outbox.clone());
+    .with_webhooks(db.webhook_outbox.clone())
+    .with_state_changes(db.state_changes.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
@@ -418,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        events: event_bus,
         idempotency: Some(db.idempotency.clone()),
     };
 

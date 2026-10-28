@@ -2,7 +2,7 @@ get:
   operationId: getEvidenceDossier
   summary: Fetch one stored dossier's document
   description: >-
-    Returns the dossier document itself — the same shape `POST .../evidence`
+    Returns the dossier document itself: the same shape `POST .../evidence`
     returns on generation, not the summary wrapper the list endpoint shows.
   tags:
     - Evidence Dossiers

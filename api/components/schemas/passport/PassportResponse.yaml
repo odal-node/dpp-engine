@@ -28,7 +28,7 @@ properties:
       - 'null'
     description: >-
       The serial of the physical unit this passport covers, as the manufacturer
-      stamps or records it. Meaningful where `granularity` is `item` — "one
+      stamps or records it. Meaningful where `granularity` is `item`: "one
       passport per physical unit".
 
       **Not the serial in the resolver URL.** A GS1 Digital Link carrier is
@@ -39,7 +39,7 @@ properties:
       manufacturer records it; `carrierSerial` identifies what the *label*
       names.
 
-      Absent means not stated — and today it is always absent: no route accepts
+      Absent means not stated, and today it is always absent: no route accepts
       one until an adopted delegated act makes a passport cover a single unit.
     example: NW-48V-000123
   productName:
@@ -48,7 +48,7 @@ properties:
   productGroup:
     type: string
     description: >-
-      EU ESPR product group — the delegated-act bucket selecting the applicable schema
+      EU ESPR product group: the delegated-act bucket selecting the applicable schema
       and plugin. Deliberately an open string, not a closed enum: adding a
       product group is a catalog manifest plus a schema, not a release, and a
       product group this build does not know still round-trips its wire tag verbatim.
@@ -68,7 +68,7 @@ properties:
 
       Not derivable from `productGroup`. A horizontal act can reach a product
       whose product group is not one the catalog models, so an entry may be
-      asserted by the economic operator rather than resolved from the catalog —
+      asserted by the economic operator rather than resolved from the catalog,
       which `recorded` distinguishes. Read it as who asserted the entry, not as
       how much to trust it.
     items:
@@ -77,7 +77,7 @@ properties:
     $ref: ./Granularity.yaml
     description: >-
       The level this passport describes. Omitted entirely while no adopted act
-      has fixed one — see `Granularity` for why omitted is not `item`.
+      has fixed one: see `Granularity` for why omitted is not `item`.
   manufacturer:
     $ref: ./ManufacturerInfo.yaml
   materials:
@@ -86,14 +86,14 @@ properties:
       $ref: ./MaterialEntry.yaml
   co2ePerUnit:
     description: >-
-      CO₂e per unit — manufacturer-supplied or engine-calculated. An object, not
+      CO₂e per unit: manufacturer-supplied or engine-calculated. An object, not
       a bare number: a figure without its lifecycle stage and system boundary is
       not comparable to another product's.
     anyOf:
       - $ref: ./CarbonFootprint.yaml
       - type: 'null'
   repairabilityScore:
-    description: Non-regulatory repairability heuristic — see the schema's own note.
+    description: Non-regulatory repairability heuristic. See the schema's own note.
     anyOf:
       - $ref: ./RepairabilityScore.yaml
       - type: 'null'
@@ -109,15 +109,15 @@ properties:
       - $ref: ./LintResult.yaml
     description: >-
       Advisory plausibility findings. Absent until a lint pass has run, and
-      recomputable after publish — unlike `complianceResult`.
+      recomputable after publish, unlike `complianceResult`.
   productGroupData:
     description: >-
       On an **authenticated full read**, explicitly `null` rather than omitted for a
       passport whose product group data has not been supplied yet, which is every
       draft created without it: the field has no `skip_serializing_if`.
 
-      On a **redacted read** — the public routes, the resolver, and an
-      audience-scoped credential read — the key is **absent** instead. A view
+      On a **redacted read** (the public routes, the resolver, and an
+      audience-scoped credential read) the key is **absent** instead. A view
       should not carry a key whose value says "there is nothing here", so the
       redaction drops it. Read an absent key and a `null` as the same answer;
       neither is in `required`, and which one arrives depends on the route.
@@ -156,7 +156,7 @@ properties:
     type: string
     description: >-
       Compact JWS over the **public (redacted) view**, so anyone can verify the
-      public passport independently — the resolver checks this on the
+      public passport independently: the resolver checks this on the
       unauthenticated public route. Set at publish; absent for drafts.
   disclosureSignatures:
     type: object
@@ -185,7 +185,7 @@ properties:
     type: string
     format: date
     description: >-
-      The date the product was placed on the EU market — the regulated
+      The date the product was placed on the EU market: the regulated
       triggering event fixing **which law governs it**, distinct from the three
       lifecycle dates above, none of which selects a rule. Staged EU obligations
       attach at placing on the market and do not move afterwards. Absence means
@@ -195,7 +195,7 @@ properties:
     type: string
     description: >-
       Semantic version of the **product group** schema `productGroupData` was validated
-      against. Scoped to `productGroupData` only — the envelope fields have no
+      against. Scoped to `productGroupData` only: the envelope fields have no
       equivalent version and never will, because they are shared by every
       product group's stored documents. The envelope's compatibility rule is additive
       only, permanently.
@@ -223,8 +223,8 @@ properties:
       this unit from it.
 
       A list rather than the single `parentPassportRef` it replaces:
-      Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides — "linked to
-      the battery passport or passports of the original battery or batteries" —
+      Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides ("linked to
+      the battery passport or passports of the original battery or batteries")
       so one second-life unit may derive from several predecessors.
     items:
       $ref: ./DerivationRef.yaml
@@ -242,7 +242,7 @@ properties:
     type: array
     description: >-
       Cross-operator references to the constituent passports this product is
-      assembled from — its bill of materials, each qualified by how much and in
+      assembled from: its bill of materials, each qualified by how much and in
       what role. The inverse edge of `derivedFrom`: these point down to the
       constituents, those point up to the predecessors.
 
@@ -271,7 +271,7 @@ properties:
   commodityCode:
     type: string
     description: >-
-      Customs tariff classification — HS-6, CN-8 or TARIC-10. Absent where the
+      Customs tariff classification: HS-6, CN-8 or TARIC-10. Absent where the
       product group does not call for one; this node will not invent a
       classification it cannot derive.
     example: '85076000'
@@ -280,7 +280,7 @@ properties:
     description: >-
       EORI or national economic-operator identifier for the responsible party
       (Regulation (EU) 2024/1781 Annex III(k); issuance mechanics in Art. 12).
-      **Frozen at publish — this is the operator that published the passport,
+      **Frozen at publish: this is the operator that published the passport,
       not necessarily the one responsible for it now.** A transfer of
       responsibility does not rewrite it and cannot: published content is
       immutable and covered by the signature over it. For current

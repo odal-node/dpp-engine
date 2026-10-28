@@ -10,7 +10,7 @@ properties:
   value:
     type: string
     description: >-
-      Validated by scheme — LEI uses ISO 7064 MOD 97-10; DUNS is 9 digits;
+      Validated by scheme: LEI uses ISO 7064 MOD 97-10; DUNS is 9 digits;
       EORI/VAT require a 2-letter country prefix. Unknown schemes are accepted
       without structural verification.
     example: 5493001KJTIIGC8Y1R12

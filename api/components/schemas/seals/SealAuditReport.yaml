@@ -4,7 +4,7 @@ description: >-
 
 
   The counts beside this describe outbox rows and passports carrying *no* seal.
-  This describes seals that exist and do not stand up — a condition neither can
+  This describes seals that exist and do not stand up: a condition neither can
   see, because both ask the database whether the seal member is absent, and a
   worthless seal is present.
 
@@ -34,7 +34,7 @@ properties:
     format: date-time
     description: >-
       When the pass finished. The age of this is the age of every number below
-      it — a pass takes as long as the estate divided by the audit's throughput,
+      it: a pass takes as long as the estate divided by the audit's throughput,
       so on a large deployment these are hours old by construction. Fine for a
       condition that does not appear suddenly, and stated rather than implied.
   checked:
@@ -54,7 +54,7 @@ properties:
     type: integer
     description: >-
       Seals over a different digest. Ordinarily a passport re-published after
-      sealing, which is **not** a defect — the seal remains a valid attestation
+      sealing, which is **not** a defect: the seal remains a valid attestation
       of the signature it covers, and `GET /api/v1/dpp/{dppId}/seal` reports it
       per passport as `coverage`.
 
@@ -65,19 +65,19 @@ properties:
     type: integer
     description: >-
       Seals whose own signature does not verify. **The finding.** Those passports
-      are published and, in substance, unsealed — and invisible to
+      are published and, in substance, unsealed, and invisible to
       `unsealedPublished`, which asks only whether a seal is present.
 
 
       `totalFailed` / `sigCryptoFailure`, and EN 319 102-1 makes that verdict
       stable: no additional validation data can lift it. That is what makes a
-      replacement seal worth buying for these and for nothing else here —
+      replacement seal worth buying for these and for nothing else here:
       `POST /api/v1/dpp/{dppId}/seal/repair`.
   certificateFailed:
     type: integer
     description: >-
       Seals whose signature is sound and whose **certificate** was not, at the
-      moment they were made — revoked before sealing, or outside its validity
+      moment they were made: revoked before sealing, or outside its validity
       window, with an attested time to prove the order. `totalFailed` with a
       certificate sub-indication.
 
@@ -94,7 +94,7 @@ properties:
   unreadable:
     type: integer
     description: >-
-      Seals this node could not read — a placeholder, or a format it does not
+      Seals this node could not read: a placeholder, or a format it does not
       parse. **Not a finding.** Treating "cannot check" as "broken" would make
       every seal from a backend emitting an unparsed format look like corruption.
 
@@ -104,7 +104,7 @@ properties:
   archivalLapsed:
     type: integer
     description: >-
-      `B-LTA` seals whose archival protection has already gone — the archive
+      `B-LTA` seals whose archival protection has already gone: the archive
       timestamp's own authority certificate has expired.
 
 
@@ -123,13 +123,13 @@ properties:
 
 
       On a node with a timestamp source configured, the pass that finds a seal due
-      **renews** it, and a seal renewed there is not counted — what remains here
+      **renews** it, and a seal renewed there is not counted: what remains here
       is what still needs attention. On a node with none, this is simply what is
       due, and nothing is bought.
   archivalUnverifiable:
     type: integer
     description: >-
-      `B-LTA` seals carrying an archive timestamp this node cannot use — either
+      `B-LTA` seals carrying an archive timestamp this node cannot use: either
       it does not parse, or it is not a timestamp of *this* seal.
 
 
@@ -143,7 +143,7 @@ properties:
       format: uuid
     description: >-
       The passports carrying a broken seal, so an operator can act rather than
-      search a log. Capped — see `truncated`. A node with thousands of broken
+      search a log. Capped: see `truncated`. A node with thousands of broken
       seals has one problem, not thousands; `broken` states its size, and a list
       long enough to prove that is a list nobody reads.
   renewalPassports:
@@ -156,7 +156,7 @@ properties:
       same way `brokenPassports` is.
 
 
-      Lapsed and due share one list because they share one action — renew — and
+      Lapsed and due share one list because they share one action (renew) and
       `archivalLapsed` and `archivalDue` already say how many are in each state.
   truncated:
     type: boolean
@@ -170,7 +170,7 @@ properties:
       True when `renewalPassports` was cut short.
 
 
-      🚨 A separate flag from `truncated`, not a shared one. Two capped lists
+      A separate flag from `truncated`, not a shared one. Two capped lists
       fill independently: a pass can name every renewal candidate while cutting
       the broken list short, or the reverse. One flag covering both would report
-      a complete list as truncated, or — worse — a truncated one as complete.
+      a complete list as truncated, or (worse) a truncated one as complete.

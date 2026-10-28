@@ -20,14 +20,14 @@ properties:
       type: string
       enum: [ghost, sandbox, live]
     description: |
-      Each resolved trust port and the tier it operates at — `ghost` is a
+      Each resolved trust port and the tier it operates at: `ghost` is a
       placeholder with no real authority behind it, `sandbox` a real but
       non-production service, `live` a production one.
 
-      This is the ghost-honesty signal: no surface may present a placeholder as
-      real. It is reported here rather than on the unauthenticated `/health`
-      because which ports are degraded, and how, is a targeting signal — the
-      same reasoning that keeps `/metrics` off the public router.
+      A production profile refuses to start while a required port is a
+      placeholder. The modes are reported here rather than on the unauthenticated
+      `/health` because which ports are degraded, and how, is useful to an
+      attacker; the same reasoning keeps `/metrics` off the public router.
 
       Absent on a standalone vault, which resolves no trust ports.
     example:

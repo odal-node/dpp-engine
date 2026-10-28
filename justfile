@@ -514,14 +514,16 @@ core-published:
     rm -f .cargo/config.toml
     @echo "dpp-core -> published registry versions (Cargo.toml)."
 
-# Build sector Wasm plugin(s) from the sibling ../dpp-core checkout and copy
-# them into ./plugins (gitignored). Dev convenience for the `core-local` flow.
-# Auto-discovers sector-* crates so it can't drift from dpp-core's plugin list.
+# Build product group Wasm plugin(s) from the sibling ../dpp-core checkout and
+# copy them into ./plugins (gitignored). Dev convenience for the `core-local` flow.
+# Auto-discovers product-group-* crates so it can't drift from dpp-core's plugin
+# list, and installs each as product-group-<name>.wasm, the only file name the
+# plugin loader accepts (dpp-plugin-host `loader::discover`).
 # NOTE: these artifacts are UNSIGNED — fine for local `just node` with
 # ALLOW_UNSIGNED_PLUGINS=true. Production plugins must come signed from the
 # dpp-core release pipeline (see dpp-core PLUGIN-HOST.md §7), not from here.
-# Usage:  just build-plugins            # all sectors
-#         just build-plugins battery    # one or more ("battery" or "sector-battery")
+# Usage:  just build-plugins            # every product group
+#         just build-plugins battery    # one or more ("battery" or "product-group-battery")
 build-plugins *PLUGINS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -533,23 +535,24 @@ build-plugins *PLUGINS:
     fi
     DEST="$(pwd)/plugins"
     mkdir -p "$DEST"
-    SECTORS="{{PLUGINS}}"
-    if [ -z "$SECTORS" ]; then
-        SECTORS="$(ls -d "$CORE_DIR"/plugins/sector-* | xargs -n1 basename)"
+    SELECTED="{{PLUGINS}}"
+    if [ -z "$SELECTED" ]; then
+        SELECTED="$(ls -d "$CORE_DIR"/plugins/product-group-* | xargs -n1 basename)"
     fi
-    for raw in $SECTORS; do
-        name="${raw#sector-}"
-        dir="$CORE_DIR/plugins/sector-${name}"
+    for raw in $SELECTED; do
+        name="${raw#product-group-}"
+        dir="$CORE_DIR/plugins/product-group-${name}"
         if [ ! -d "$dir" ]; then echo "skip: no such plugin '$dir'"; continue; fi
-        echo "Building sector-${name}..."
+        echo "Building product-group-${name}..."
         ( cd "$dir" && cargo build --target wasm32-wasip1 --release )
-        # The sector plugins share ONE cargo workspace, so cargo writes to
-        # plugins/target — not plugins/sector-<name>/target. This read the
+        # The plugins share ONE cargo workspace, so cargo writes to
+        # plugins/target — not plugins/product-group-<name>/target. This read the
         # per-crate path, which stale target dirs from an older layout still
         # populate, so `ls | head -n1` found a months-old binary, `cp` succeeded,
         # and the recipe reported success while shipping it. Name the artifact
         # instead of globbing, so a miss is an error rather than a wrong file.
-        art="$CORE_DIR/plugins/target/wasm32-wasip1/release/sector_${name}.wasm"
+        # cargo turns the crate name's hyphens into underscores.
+        art="$CORE_DIR/plugins/target/wasm32-wasip1/release/product_group_${name//-/_}.wasm"
         if [ ! -f "$art" ]; then
             echo "ERROR: cargo reported success but $art does not exist."
             exit 1
@@ -560,8 +563,8 @@ build-plugins *PLUGINS:
             echo "ERROR: $art is older than its own source — the build did not run."
             exit 1
         fi
-        cp "$art" "$DEST/sector-${name}.wasm"
-        echo "  -> plugins/sector-${name}.wasm"
+        cp "$art" "$DEST/product-group-${name}.wasm"
+        echo "  -> plugins/product-group-${name}.wasm"
     done
     echo "Done. Unsigned; set ALLOW_UNSIGNED_PLUGINS=true for local 'just node'."
 
@@ -569,6 +572,13 @@ build-plugins *PLUGINS:
 # from. `build-plugins` copies unsigned dev artifacts in, and nothing else
 # notices when one goes stale — the battery plugin ran two months behind its
 # source because the copy step read a directory cargo had stopped writing to.
+#
+# Every binary is accounted for; none is skipped. This recipe used to skip any
+# binary whose source it could not find, and it looked for `sector-<name>`
+# after dpp-core had renamed its plugins `product-group-<name>`, so it skipped
+# all of them and reported every one current. The binaries were the old
+# `sector-<name>.wasm`, which the loader refuses by name, so the node ran with
+# no plugins while this said all was well.
 #
 # Skips cleanly when the sibling checkout is absent, so CI (which has no
 # ../dpp-core and loads signed artifacts anyway) stays green.
@@ -581,18 +591,34 @@ check-plugins:
         exit 0
     fi
     shopt -s nullglob
-    stale=0
+    bad=0
+    checked=0
     for art in plugins/*.wasm; do
-        name="$(basename "$art" .wasm)"; name="${name#sector-}"
-        dir="$CORE_DIR/plugins/sector-${name}"
-        [ -d "$dir" ] || continue
+        stem="$(basename "$art" .wasm)"
+        name="${stem#product-group-}"
+        if [ "$name" = "$stem" ]; then
+            echo "UNLOADABLE: $art — the node loads only product-group-<name>.wasm; delete it and run 'just build-plugins'"
+            bad=1
+            continue
+        fi
+        dir="$CORE_DIR/plugins/product-group-${name}"
+        if [ ! -d "$dir" ]; then
+            echo "NO SOURCE: $art has no $dir to compare against — delete it, or build it with 'just build-plugins'"
+            bad=1
+            continue
+        fi
         if [ -n "$(find "$dir/src" "$dir/Cargo.toml" -newer "$art" | head -n1)" ]; then
             echo "STALE: $art is older than $dir/src — run 'just build-plugins ${name}'"
-            stale=1
+            bad=1
         fi
+        checked=$((checked + 1))
     done
-    if [ "$stale" -ne 0 ]; then exit 1; fi
-    echo "check-plugins: all installed plugin binaries are newer than their sources."
+    if [ "$bad" -ne 0 ]; then exit 1; fi
+    if [ "$checked" -eq 0 ]; then
+        echo "check-plugins: no plugin binaries installed."
+    else
+        echo "check-plugins: all $checked installed plugin binaries are newer than their sources."
+    fi
 
 # ---------------------------------------------------------------------------
 # Cleanup

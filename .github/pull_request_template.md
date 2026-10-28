@@ -1,22 +1,21 @@
 ## Summary
 
-<!-- What does this PR do? One paragraph. -->
+<!-- What this change does and why, in one paragraph. -->
 
 ## Related issue
 
-<!-- e.g. Closes #123, or a gaps-register ID like B-02 -->
+<!-- "Closes #123", or "none" and the reason. -->
 
 ## Changes
 
-<!-- Bullet list of the main changes. -->
+<!-- The main changes, as bullets. -->
 
 ## Checklist
 
-- [ ] Tests added or updated for new behaviour
-- [ ] `just lint` passes locally (clippy over every target, the Docker-gated suites included — the same command CI runs)
-- [ ] `just fmt` applied (`cargo fmt --all`)
-- [ ] `just test` passes (unit); `just test-integration` run if persistence/lifecycle/auth changed (needs Docker)
-- [ ] No `println!`/`eprintln!`/`dbg!` in service-crate `src/` (use `tracing::`) — `just debug-check`
-- [ ] No secrets, credentials, or `.env` files in the diff
-- [ ] Docs updated if a public API, endpoint, or CLI command changed
-- [ ] If the DB schema changed: `ops/pg/0001_init.sql` updated and still idempotent
+- [ ] Tests added or updated for the new behaviour
+- [ ] `just check` passes locally (format, clippy over every target including the Docker-gated suites, guard scripts, unit tests, audit)
+- [ ] `just test-integration` run if persistence, lifecycle or auth changed (needs Docker)
+- [ ] No `println!`, `eprintln!` or `dbg!` in service-crate `src/`; use `tracing` (`just debug-check`)
+- [ ] No secrets, credentials or `.env` files in the diff
+- [ ] Docs updated if a public API, endpoint or CLI command changed; `just openapi-check` passes if `api/` changed
+- [ ] Database change: a new migration under `ops/pg/` (an applied migration is never edited), and `just migrations-check` passes

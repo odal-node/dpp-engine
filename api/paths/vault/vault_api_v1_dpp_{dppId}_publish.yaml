@@ -5,11 +5,11 @@ post:
     Transition a DPP from `draft` to `active`.
 
     On success:
-    1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier —
+    1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier:
        `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else
        `{resolverBase}/dpp/{id}`
     2. The identity service signs the VC payload with Ed25519 (best-effort;
-       signing failure does not block publish — `jwsSignature` may be null)
+       signing failure does not block publish: `jwsSignature` may be null)
     3. `retentionLocked` is set to `true` permanently
     4. `status` = `active`, `publishedAt` = now
     5. A `dpp.published` NATS event is emitted (fire-after-commit)

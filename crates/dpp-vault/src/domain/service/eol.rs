@@ -1,7 +1,7 @@
 //! `declare_eol` — end-of-life declaration (recycled, destroyed, exported, or
 //! lost), transitioning a passport to the terminal `Deactivated` status.
 
-use dpp_common::{event, event_codes};
+use dpp_common::event;
 use dpp_domain::{
     eol::EolEvent,
     error::DppError,
@@ -9,7 +9,10 @@ use dpp_domain::{
     status::PassportStatus,
 };
 use dpp_types::{
-    audit::PassportAuditEntry, auth::AuthContext, registry_sync::RegistryStatusIntent,
+    audit::PassportAuditEntry,
+    auth::AuthContext,
+    registry_sync::RegistryStatusIntent,
+    state_change::{PassportWrite, StateChange},
 };
 
 use super::PassportService;
@@ -40,49 +43,37 @@ impl PassportService {
         }
 
         let prev_status = passport.status.to_string();
-        let updated = self
-            .repo
-            .update_status(id, PassportStatus::Deactivated)
-            .await?;
 
         // The typed EOL reason rides in the audit entry's metadata — it becomes
         // part of the tamper-evident chain.
         let eol_meta =
             serde_json::to_value(&eol).map_err(|e| DppError::Serialisation(e.to_string()))?;
         let entry = PassportAuditEntry::new(
-            &updated.id.to_string(),
+            &id.to_string(),
             "deactivated",
             &auth.user_id,
             Some(&prev_status),
             Some(&PassportStatus::Deactivated.to_string()),
         )
         .with_metadata(eol_meta);
-        self.audit.append(entry).await?;
-
-        // Registry outbox: record the deactivated status intent (pushed to the
-        // EU registry once its status API exists). Non-fatal.
-        if let Some(outbox) = &self.registry_outbox
-            && let Err(e) = outbox
-                .enqueue_status(id, RegistryStatusIntent::Deactivated)
-                .await
-        {
-            tracing::warn!(
-                code = event_codes::REGISTRY_SYNC_FAILED,
-                passport_id = %id,
-                error = %e,
-                "failed to enqueue deactivated status to registry outbox (non-fatal)"
-            );
-        }
-
-        self.emit(
+        let event = Self::event(
             event::subjects::PASSPORT_DEACTIVATED,
             serde_json::json!({
-                "passportId": updated.id.to_string(),
+                "passportId": id.to_string(),
                 "status": "deactivated",
                 "previousStatus": prev_status,
             }),
-        )
-        .await;
+        );
+        let updated = self
+            .commit_passport_change(
+                self.owing_registry_status(
+                    StateChange::new(entry)
+                        .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated)),
+                    RegistryStatusIntent::Deactivated,
+                ),
+                event,
+            )
+            .await?;
 
         // Reconcile the continuity tier: the live public read serves only
         // `Published`, so a deactivated passport must stop being served from the

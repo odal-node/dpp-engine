@@ -1,116 +1,78 @@
-# Odal Node Engine — Blueprint
+# Scope and principles
 
-## Vision
+What `dpp-engine` is for, the rules its design follows, what is built, and what it will
+not do. Feature status uses the labels of the public
+[roadmap](https://odal-node.io/roadmap), which is the place to follow what changes.
 
-dpp-engine is the production layer that turns dpp-core into a deployable
-Digital Product Passport system. It provides everything an economic operator
-needs to create, sign, publish, and serve DPPs in compliance with EU ESPR
-requirements — with zero shared infrastructure between operators.
+## Purpose
 
----
+`dpp-engine` turns the `dpp-core` library into a node an economic operator runs on its
+own infrastructure to create, validate, sign, publish, version and serve EU Digital
+Product Passports. Supplier and bill-of-materials data stays on the operator's servers;
+no third party sees it.
 
-## Guiding Principles
+## Principles
 
-### 1. Operator Isolation
+1. **One operator per node.** Each operator runs its own node and its own PostgreSQL.
+   Isolation between operators is a deployment boundary; there is no in-process tenant
+   scoping and no row-level security. ("Operator" is the economic operator of ESPR
+   Art. 2, who is responsible for the passport.)
+2. **The engine adapts to `dpp-core`, never the reverse.** Authentication, audit, API
+   keys and operator administration stay in the engine. If a domain type must change,
+   it changes in `dpp-core` first. Code that changes because a regulation changed
+   belongs in `dpp-core`; code that changes because of how the node is deployed or
+   operated belongs here.
+3. **One process to run.** `dpp-node` combines the vault, identity and integrator
+   services in one binary, started with `docker compose` or `odal up`. Each service
+   keeps its own router and binary, so it can be split out later.
+4. **Open standards first.** Digital links for carriers (GS1 Digital Link where there
+   is a GTIN), `did:web` and W3C Verifiable Credentials for identity and access, JWS
+   for signatures, OpenAPI 3.1 for the HTTP contract, PostgreSQL and NATS JetStream for
+   storage and events.
+5. **The database is the source of truth.** Obligations that must not be lost (EU
+   registry registration) are written to an outbox in the same transaction as the
+   change. Events and webhooks are sent after commit and never fail the operation.
+6. **Report what is not real.** Every trust adapter reports whether it is live, a
+   sandbox or a stub, and a production profile refuses to start on a stub.
 
-Every deployment is single-operator. There are no shared clusters, no
-cross-operator data paths. Each operator runs their own node with their own
-PostgreSQL instance. Isolation is an infrastructure boundary (one node per
-operator), not an application concern — there is no Row-Level Security.
-Multi-operator hosting is provided by the Control Plane at the
-infrastructure layer, never inside a node process.
+## What is built
 
-This is an architectural invariant, not a configuration option. The term
-"operator" comes from EU ESPR Article 2(17): the economic operator who
-places a product on the EU market is responsible for its DPP.
+**Available** (on `main`, tested):
 
-### 2. Core Purity
+| Area | What exists |
+|---|---|
+| Passport lifecycle | Create, validate (dry run), update drafts, publish, amend (successor), supersede, suspend, retire, end of life, transfer of responsibility |
+| Signing and identity | Ed25519 JWS on publish, `did:web` document, key rotation that keeps old signatures valid |
+| Disclosure | Per-field public, legitimate-interest and authority views; access credentials for legitimate-interest roles |
+| History | Hash-chained append-only audit trail, version history per passport, evidence dossiers verifiable offline |
+| Import | CSV and XLSX with templates per product group, row-level reports, dry run, delta matching |
+| Compliance | Signed Wasm plugins per product group, plausibility lint, signed ruleset channel with hot swap |
+| Regulatory catalog | Which product groups need a passport, from when, under which acts |
+| Resolver | Digital link resolution (GS1 Digital Link and by passport id), HTML, JSON-LD and AAS views, QR codes, signature verification on every read |
+| Operator administration | API keys with scopes, facilities, operator identifiers, webhooks, unsold-goods disclosure lines |
+| Continuity | Signed pre-rendered snapshots of public pages in object storage |
+| Operations | `odal` CLI and console, Prometheus metrics, trust mode reporting |
 
-The platform adapts to dpp-core, never the reverse. No platform concerns
-(authentication, audit logging, API keys, operator management) may be pushed
-into the core library. If a type or trait needs to change, it changes in
-dpp-core first. The platform then updates its adapter implementations.
+**Built, waiting on a legal step:**
 
-### 3. Self-Contained Binary
+| Item | Waiting on |
+|---|---|
+| Qualified electronic seals | A qualified seal certificate issued to the operator; sealing works end to end today with a self-generated, clearly unqualified certificate |
+| EU registry registration | The registry's official interface; the outbox already records every registration |
 
-The MVP ships as a single binary (`dpp-node`) that fuses all services into
-one process. No Kubernetes required. No service mesh. An operator can run
-the entire system with `docker compose up` and a single Rust binary.
+**In progress, planned and considered:** see the [roadmap](https://odal-node.io/roadmap).
+In short: more product identifier schemes, carbon and repairability figures in the
+passport, import for the remaining product groups, selective disclosure credentials
+(in progress); public container images and a one-command install, JavaScript and
+TypeScript packages, a web dashboard (planned).
 
-This does not prevent future decomposition — each service is already a
-separate Axum router with its own state, communicating via localhost HTTP.
+## Non-goals
 
-### 4. Standards Over Features
-
-Technical decisions start from open standards:
-- GS1 Digital Link for product identification and QR resolution
-- W3C Verifiable Credentials for access control and manufacturer identity
-- did:web for decentralised manufacturer identity
-- NATS JetStream for event streaming (open-source, no vendor lock-in)
-- PostgreSQL for persistence (open-source, self-hostable, single-tenant — no RLS)
-
-### 5. Fire-After-Commit
-
-The database is the source of truth. Events, webhooks, and external
-notifications are published after the database write succeeds. If publishing
-fails, the operation still succeeds. Consumers must be idempotent.
-
----
-
-## MVP Scope (v0.1.0)
-
-| Feature | Status | Notes |
-|---|---|---|
-| Passport CRUD (create, read, update, list) | Done | 7 endpoints |
-| Passport lifecycle (publish, suspend, retire) | Done | State machine enforcement |
-| Ed25519 signing on publish | Done | JWS compact serialisation via identity service |
-| did:web DID document serving | Done | `/.well-known/did.json` |
-| Key rotation | Done | Non-destructive, old signatures remain valid |
-| API key authentication | Done | SHA-256 hash, prefix lookup |
-| Local admin authentication | Done | HTTP Basic auth from env vars |
-| Operator config management | Done | GET/PATCH endpoints |
-| Operator identifiers (VAT, EORI, LEI) | Done | Database tables and seed data |
-| Facility records | Done | ESPR Annex III (point (i)) |
-| Audit trail | Done | Append-only, per-passport |
-| CSV/XLSX bulk import | Done | Per-product group templates, async jobs |
-| Event bus (NATS JetStream) | Done | Fire-after-commit, NoOp fallback |
-| Wasm plugin compliance | Done | Sandboxed product group plugins |
-| EU Central Registry sync | **Outbox done**; adapter ghost until spec | Registration intent committed in the publish transaction to the durable `registry_sync` outbox; background drain with backoff; `EuRegistrySync` HTTP adapter activates when the Commission publishes the Art. 13 API |
-| Unsold goods reporting | Done | ESPR Arts. 24 (disclosure) / 25 (destruction ban, 19 Jul 2026); standardised disclosure format (implementing act of 9 Feb 2026) applies Q1 2027 — conformance pass pending (implementation plan 07) |
-| End-of-life & transfer of responsibility | Done | Typed EOL declaration; dual-signed transfer handshake (initiate/accept, fail-closed verify); hash-chained audit |
-| Evidence dossier generation + verification | Done | `POST/GET …/dpp/{id}/evidence`, `POST …/evidence/{id}/verify`, `odal verify` |
-| Trust-mode honesty (`NODE_PROFILE`) | Done | Per-port `trustMode` on the authenticated `/vault/api/v1/node/state`, plus a `trust_mode` gauge on `/metrics`; production profile refuses to boot on ghost trust adapters |
-| Signed compliance-ruleset channel | Done | Ed25519-signed bundles, fail-closed verify, atomic hot-swap; re-read at boot, on a timer, and on `POST /vault/api/v1/ruleset/reload`; active version on `/vault/api/v1/node/state` |
-| Public passport resolver | Done | Content-negotiated (JSON/HTML) |
-| QR code generation | Done | Resolver endpoint |
-
----
-
-## Post-MVP Roadmap
-
-| Feature | Priority | Notes |
-|---|---|---|
-| Graph tables (component, material, supplier) | Phase 2 | Migration 007 is commented out |
-| OAuth/OIDC authentication | Phase 2 | Add to composite auth chain |
-| CO2e calculator (PEFCR depth + licensed factors) | Phase 2 | Baseline methodology **is implemented** in Apache `dpp-calc` (cradle-to-gate CO2e, repairability); Phase 2 = PEFCR-precise rulesets + real LCI factors via `dpp-factor-data` (licence-gated) |
-| Repairability calculator (EU-methodology depth) | Phase 2 | Same: `dpp-calc` baseline shipped; Phase 2 deepens against the final delegated-act methodology |
-| EU Central Registry integration | When API published | Replace GhostRegistrySync |
-| Dashboard (Next.js) | Parallel | Separate directory, consumes vault API |
-| Managed hosting (Control Plane) | v1.0.0 | One isolated node per operator; no in-engine multi-tenancy |
-| Kubernetes deployment templates | Post-MVP | Helm charts |
-
----
-
-## Non-Goals
-
-The following are explicitly out of scope:
-
-- Shared-cluster multi-tenancy (violates operator isolation principle)
-- Application-level multi-operator support / in-process operator scoping — the node is permanently single-tenant; there is no multi-operator phase
-- Blockchain anchoring
-- Native mobile app
-- IoT sensor integration
-- AI/ML features
-- Direct ERP connectors (CSV import is the integration strategy)
-- Consumer tracking analytics
-- Any code that requires dpp-core to know about the platform
+- Shared clusters or multi-tenancy inside a node. The node is permanently single-tenant.
+- Blockchain anchoring.
+- A native mobile app.
+- IoT sensor integration.
+- Direct ERP connectors. Integration is through the HTTP API, webhooks and file import.
+- Tracking of the people who scan a passport. Scan counts are aggregates with no
+  per-person data.
+- Anything that requires `dpp-core` to know about the engine.

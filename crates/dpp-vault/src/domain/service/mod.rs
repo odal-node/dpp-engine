@@ -1,11 +1,11 @@
 //! Core domain service for the passport lifecycle (create → publish → suspend → retire).
 //!
 //! Split by lifecycle stage — each sibling file is one or more `impl
-//! PassportService` blocks for the same type. Every method here owes the
-//! same two side-effects unless its own doc says otherwise: an audit entry
-//! (`self.audit.append`, always awaited — a failure propagates) and a
-//! best-effort event (`self.emit`, fire-after-commit — a failure is logged,
-//! never propagated, since the DB write is the source of truth).
+//! PassportService` blocks for the same type. Every method that changes state
+//! commits it through `commit_change`: the write, its audit entry and its
+//! webhook deliveries commit together, and the event bus publish follows the
+//! commit, best effort — a failure is logged, never propagated, since the DB
+//! write is the source of truth.
 //!
 //! - `query` — read paths: `find_*`, `list`, `count`, `history`
 //! - `create` — `create`, `update`, and their helpers `apply_patch`/`apply_compliance`/`apply_lint`
@@ -52,17 +52,24 @@ mod transfer;
 use std::sync::Arc;
 
 use dpp_common::event::{DppEvent, EventBus};
-use dpp_domain::passport::PassportId;
+use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::{
-    ports::backup::BackupCopyPort, ports::compliance::ComplianceRegistry,
+    DppError, ports::backup::BackupCopyPort, ports::compliance::ComplianceRegistry,
     ports::identity::IdentityPort, ports::passport_repo::PassportRepository,
     ports::registry_sync::RegistrySyncPort,
 };
 use dpp_types::{
-    STANDALONE_OPERATOR_ID, audit::AuditRepository, evidence::EvidenceDossierRepository,
-    operator::OperatorConfigRepository, registry_sync::RegistrySyncOutbox,
-    registry_transfer::RegistryTransferOutbox, seal::SealOutbox, snapshot::SnapshotOutbox,
-    transfer::TransferStore, webhook::WebhookOutbox,
+    STANDALONE_OPERATOR_ID,
+    audit::AuditRepository,
+    evidence::EvidenceDossierRepository,
+    operator::OperatorConfigRepository,
+    registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
+    registry_transfer::RegistryTransferOutbox,
+    seal::SealOutbox,
+    snapshot::SnapshotOutbox,
+    state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent},
+    transfer::TransferStore,
+    webhook::WebhookOutbox,
 };
 
 /// This node's operator, as the EU registry needs to see it.
@@ -154,6 +161,13 @@ pub struct PassportService {
     /// the node's drain task performs the signed HTTP POST. `None` (test doubles
     /// / deployments without webhooks) simply skips enqueue.
     pub webhooks: Option<Arc<dyn WebhookOutbox>>,
+    /// Commits a state change in one transaction: the passport write and the
+    /// version it archives, the transfer chain, the registry rows, the audit
+    /// entry and the webhook deliveries. When present (the Postgres node), no
+    /// part of a change is written without the rest. `None` (test doubles over
+    /// in-memory ports) writes the parts one after another through the separate
+    /// ports above, with webhook deliveries enqueued after the passport write.
+    pub changes: Option<Arc<dyn StateChangeLog>>,
     /// Durable reconcile queue for the static continuity tier. When present,
     /// every change to a passport's public state (publish, suspend, retire,
     /// end-of-life) enqueues a reconcile row after commit; the node's drain task
@@ -236,6 +250,7 @@ impl PassportService {
             operator,
             registry_reader: None,
             webhooks: None,
+            changes: None,
             snapshot_outbox: None,
             seal_outbox: None,
             seal_inspector: None,
@@ -338,6 +353,14 @@ impl PassportService {
         self
     }
 
+    /// Provide the state-change log, so every change commits in one transaction
+    /// with its audit entry, registry rows and webhook deliveries.
+    #[must_use]
+    pub fn with_state_changes(mut self, log: Arc<dyn StateChangeLog>) -> Self {
+        self.changes = Some(log);
+        self
+    }
+
     /// Provide the continuity-snapshot reconcile outbox, enabling the static
     /// public tier: every change to a passport's public state queues a reconcile
     /// that the node's drain task converges against object storage.
@@ -365,11 +388,134 @@ impl PassportService {
         self
     }
 
-    /// Emit an event after a successful commit. Failures are logged, never
-    /// propagated — the DB write is the source of truth.
-    async fn emit(&self, event_type: &str, data: serde_json::Value) {
-        let event = DppEvent::v1(event_type, STANDALONE_OPERATOR_ID, data);
-        if let Err(e) = self.events.publish(&event).await {
+    /// The event a state change publishes, in the envelope every consumer reads.
+    fn event(event_type: &str, data: serde_json::Value) -> DppEvent {
+        DppEvent::v1(event_type, STANDALONE_OPERATOR_ID, data)
+    }
+
+    /// Commit `change`, then publish `event` on the event bus.
+    ///
+    /// Webhook subscribers are sent `event` too, as the same envelope with the
+    /// same id. With a state-change log their deliveries are queued in the
+    /// change's own transaction, so a change that commits cannot lose them.
+    /// Without one (test doubles), the parts are written one after another and
+    /// the deliveries enqueued after them, best effort.
+    ///
+    /// The bus publish always follows the commit: it leaves the database, so it
+    /// cannot join the transaction. A failure is logged and never propagated,
+    /// since the database is the source of truth.
+    ///
+    /// Returns the passport as written, when the change wrote one.
+    async fn commit_change(
+        &self,
+        change: StateChange,
+        event: DppEvent,
+    ) -> Result<Option<Passport>, DppError> {
+        let written = match &self.changes {
+            Some(log) => {
+                let body = serde_json::to_string(&event)
+                    .map_err(|e| DppError::Serialisation(e.to_string()))?;
+                let mut change = change.with_webhook(WebhookEvent {
+                    event_type: event.event_type.clone(),
+                    body,
+                });
+                // What `RequestStampedAudit` does for the separate path.
+                change.audit = change
+                    .audit
+                    .with_request_id(dpp_common::request_id::current());
+                log.commit(change).await?
+            }
+            None => {
+                let written = self.commit_separately(change).await?;
+                self.enqueue_webhooks(&event).await;
+                written
+            }
+        };
+        self.publish_event(&event).await;
+        Ok(written)
+    }
+
+    /// `change`, recording the status the EU registry is owed when this node
+    /// registers passports at all. A node with no registry outbox owes the
+    /// registry nothing, so nothing is recorded.
+    fn owing_registry_status(
+        &self,
+        change: StateChange,
+        intent: RegistryStatusIntent,
+    ) -> StateChange {
+        if self.registry_outbox.is_some() {
+            change.with_registry_intent(intent)
+        } else {
+            change
+        }
+    }
+
+    /// [`Self::commit_change`] for a change that writes the passport, returning
+    /// it as written.
+    async fn commit_passport_change(
+        &self,
+        change: StateChange,
+        event: DppEvent,
+    ) -> Result<Passport, DppError> {
+        self.commit_change(change, event)
+            .await?
+            .ok_or_else(|| DppError::Internal("a passport change wrote no passport".into()))
+    }
+
+    /// The parts of `change` written one after another through the separate
+    /// ports, for a service with no state-change log.
+    async fn commit_separately(&self, change: StateChange) -> Result<Option<Passport>, DppError> {
+        let StateChange {
+            passport,
+            transfer_chain,
+            registration,
+            transfer_notice,
+            registry_intent,
+            audit,
+            webhook: _,
+        } = change;
+
+        let written = match passport {
+            None => None,
+            Some(PassportWrite::Insert(p)) => Some(self.repo.create(p).await?),
+            Some(PassportWrite::Replace(p)) => Some(match (registration, &self.registry_outbox) {
+                (Some(payload), Some(outbox)) => {
+                    outbox.commit_publish(&p, payload).await?;
+                    p
+                }
+                _ => self.repo.update(p).await?,
+            }),
+            Some(PassportWrite::Status(id, status)) => {
+                Some(self.repo.update_status(id, status).await?)
+            }
+            Some(PassportWrite::Patch(id, delta)) => Some(self.repo.patch_fields(id, delta).await?),
+        };
+        if let (Some(intent), Some(outbox), Some(p)) =
+            (registry_intent, &self.registry_outbox, &written)
+        {
+            outbox.enqueue_status(p.id, intent).await?;
+        }
+        if let Some(chain) = transfer_chain {
+            match (transfer_notice, &self.transfer_outbox) {
+                (Some((transfer_id, payload)), Some(outbox)) => {
+                    outbox.commit_accept(&chain, transfer_id, payload).await?;
+                }
+                _ => {
+                    self.transfer_store
+                        .as_ref()
+                        .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?
+                        .save_chain(&chain)
+                        .await?;
+                }
+            }
+        }
+        self.audit.append(audit).await?;
+        Ok(written)
+    }
+
+    /// Publish `event` on the event bus. A failure is logged, never propagated.
+    async fn publish_event(&self, event: &DppEvent) {
+        if let Err(e) = self.events.publish(event).await {
             tracing::warn!(
                 event_type = %event.event_type,
                 event_id = %event.event_id,
@@ -377,10 +523,13 @@ impl PassportService {
                 "failed to publish event (non-fatal)"
             );
         }
-        // Fan the same event out to signed outbound webhooks. After-commit and
-        // best-effort, exactly like the NATS publish above: an enqueue failure is
-        // logged, never propagated. Once a delivery row exists the node's drain
-        // task owns retry/backoff.
+    }
+
+    /// Fan `event` out to signed outbound webhooks, for a service with no
+    /// state-change log: after the passport write and best effort, so a failure
+    /// is logged, never propagated. Once a delivery row exists the node's drain
+    /// task owns retry and backoff.
+    async fn enqueue_webhooks(&self, event: &DppEvent) {
         if let Some(webhooks) = &self.webhooks {
             match serde_json::to_string(&event) {
                 Ok(body) => {
@@ -410,7 +559,7 @@ impl PassportService {
     /// status, so a retried or out-of-order reconcile converges instead of
     /// racing (an explicit `put` could otherwise land after a `remove` and
     /// resurrect a suspended passport's snapshot). Enqueue is after-commit and
-    /// best-effort — the same posture as [`Self::emit`] — but once the row
+    /// best-effort — the same posture as the event bus publish — but once the row
     /// exists the node's drain task owns retry/backoff, so the object-storage
     /// write no longer sits on the response path. A no-op when no outbox is
     /// wired.

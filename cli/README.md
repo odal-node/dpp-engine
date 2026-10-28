@@ -1,383 +1,289 @@
-# `odal` CLI Reference
+# `odal` CLI
 
-The `odal` CLI is the **single control plane** for operating a self-hosted Odal
-Node. Everything an operator needs — install, onboarding, auth, the full passport
-lifecycle — is a CLI command. No hand-run scripts.
+`odal` is the operator CLI for a self-hosted Odal Node: it starts and stops the
+stack, onboards the operator, manages keys, and drives the passport lifecycle over
+the node's HTTP API. Every command calls the same API documented in
+[`api/openapi.bundled.yaml`](../api/openapi.bundled.yaml), so anything `odal` does
+can also be scripted with `curl`.
 
-- **Binary:** `odal` (crate `dpp-cli`). Build: `cargo build -p dpp-cli`.
-- **CLI config (non-secret):** `~/.config/odal/config.toml` — named **profiles**,
-  each holding service URLs + an environment kind (`dev`/`prod`), plus the active
-  profile. No secrets here.
-- **CLI credentials (secret):** `~/.config/odal/credentials.toml` — API keys
-  keyed by profile, written owner-only (0600 on Unix). Split out from the config
-  so the connection settings are never co-located with secrets (the AWS CLI
-  `config`/`credentials` model).
-- **Node runtime config** lives in the operator's `.env`; the CLI never creates
-  or modifies it.
-- **Env overrides (12-factor):** `ODAL_PROFILE`, `ODAL_VAULT_URL`, `ODAL_API_KEY`
-  take precedence over the files — so CI never needs anything written to disk.
-- **Defaults:** vault `http://localhost:8001/vault`, identity
-  `http://localhost:8001/identity`, resolver `http://localhost:8003`.
-- **Operator runbook:** `docs/guides/OPERATOR-SETUP.md` — full production setup,
-  environment variables, key management, backup, and troubleshooting.
-
-## Profiles & environments (dev vs prod)
-
-`odal` holds multiple node targets side by side as **named profiles** — like
-`kubectl` contexts or AWS CLI profiles. Each profile records its service URLs and
-a `kind` (`dev` or `prod`); the active profile is shown in a banner on every
-console screen so you always know which node you're operating on (prod is
-rendered loudly).
-
-- **Active profile selection** (highest precedence first): `--profile <name>` →
-  `ODAL_PROFILE` → the saved current profile → `default`.
-- **`kind` drives the preflight, not the build:** `odal up`/`down`/`update`
-  always operate the full self-host stack (`docker-compose.yml` — node +
-  resolver + infra). `dev` (localhost) tolerates dev-default secrets; `prod`
-  (remote) runs a `.env` secret preflight first. Whether the node image is
-  **built** or **pulled** is decided by the install, not the kind: inside a
-  clone of the engine it is built from source, anywhere else the published
-  image runs. The kind also sets the banner colour.
-  (The infra-only `docker-compose.dev.yml` is for engine development —
-  `just infra` + `cargo run` — and is not driven by `odal`.)
-
-```sh
-odal profile list                          # all profiles (active marked *)
-odal profile create prod --node-url https://node.acme.example \
-    --resolver-url https://dpp.acme.example
-odal profile use prod                      # switch the active profile
-odal --profile dev status                  # one-off override
-odal profile show                          # active profile (api key masked)
+```bash
+cargo build -p dpp-cli --release     # binary: target/release/odal
+odal --help
+odal <command> --help                # the authoritative flag reference
 ```
 
----
+There are no prebuilt binaries yet; build from a clone of this repository. The
+[engine README](../README.md#quick-start) walks through a full first run.
 
-## Dual-mode operation
+## Configuration
 
-`odal` has two modes depending on how it is invoked:
+`odal` keeps two files, split the way the AWS CLI splits `config` and
+`credentials`:
 
-| Invocation | Mode | Use case |
-|---|---|---|
-| `odal` (no arguments, interactive terminal) | **Console** | Day-to-day operation; guided, menu-driven |
-| `odal <command> [flags]` | **Stateless / scripting** | CI/CD, automation, one-shot ops |
+| File | Holds |
+|---|---|
+| `~/.config/odal/config.toml` | Named profiles: the vault, identity and resolver URLs and an environment kind (`dev` or `prod`), plus the active profile. No secrets |
+| `~/.config/odal/credentials.toml` | One API key per profile. Written with mode `0600` on Unix |
 
-Both modes call the same action core — behavior and output are identical; only
-the input-gathering layer differs.
+The node's own runtime configuration is the deployment's `.env` file. `odal` never
+writes it, and it does not read it either: export the variables you need (for
+example `ADMIN_USERNAME` and `ADMIN_PASSWORD` before `odal bootstrap`).
 
-### Console
+Environment variables override the files, so a CI runner needs nothing on disk:
 
-Running `odal` with no arguments and a TTY launches the **Console**: a persistent
-menu-driven REPL with a top-level menu of grouped actions that stays open until
-you quit. It is the recommended interface for operators.
+| Variable | Overrides |
+|---|---|
+| `ODAL_PROFILE` | The active profile. `--profile <name>` overrides it in turn |
+| `ODAL_VAULT_URL` | The vault URL of the active profile |
+| `ODAL_API_KEY` | The API key of the active profile |
+| `ODAL_API_SECRET` | The secret `odal key use` adopts, so it stays out of shell history |
+| `ODAL_VERSION` | The image tag `odal update` pulls on a packaged install (`latest` when unset) |
 
-```
-  ⬢  Odal Node — Management Console           v0.1.0
-  http://localhost:8001/vault
+Defaults, when no profile sets them: vault `http://localhost:8001/vault`, identity
+`http://localhost:8001/identity`, resolver `http://localhost:8003`.
 
-  ? What would you like to do?  (↑↓ · ⏎ select · Esc to quit)
+### Profiles
 
-  ❯ Infrastructure      start · stop · status · update images
-    Passports           import · validate · publish · export
-    Operator            view · edit configuration
-    API keys            create · list · revoke
-    Schema              check for updates
-    Quit
-```
+A profile is one node target, like a `kubectl` context. The active profile is
+chosen by `--profile`, then `ODAL_PROFILE`, then the saved current profile, then
+`default`.
 
-Key behaviours:
-
-- **Guided forms** — each action prompts for its inputs with help text and
-  sensible defaults; Esc at any prompt cancels back to the submenu.
-- **Confirmation before irreversible actions** — Suspend, Retire, and bulk
-  Publish each show a plain-language consequence statement before proceeding.
-- **Suggested next steps** — after a successful Import the console offers to
-  Validate immediately; after a clean Validate it offers to Publish.
-- **Stateless hint** — after each action the equivalent `odal` flag command is
-  shown (`≡ odal passport import …`) so operators learn the scriptable form.
-- **Remote-node awareness** — when `vault_url` points at a non-localhost address
-  (managed microVM), Start / Stop / Update images are hidden from the
-  Infrastructure submenu; those commands are meaningless when the platform owns
-  the infrastructure.
-- **First-run setup** — if no API key is configured, the Console automatically
-  launches guided setup on first run. Re-enter any time via "Setup / Reconfigure"
-  in the menu, or run `odal --reconfigure` from the shell.
-- **Non-TTY guard** — if stdin is not a terminal or `CI=true` is set, running
-  `odal` without a subcommand prints help and exits with code 2 instead of
-  hanging on a prompt. (`--reconfigure` bypasses the guard since it is a
-  deliberate invocation.)
-
-### Stateless / scripting mode
-
-Pass any subcommand to bypass the Console entirely. Exit codes and
-stdout are suitable for CI/CD pipelines. All flags are documented below.
-
----
-
-## Quick start (fresh node → first passport)
-
-Run `odal` with no arguments to launch the guided setup — connect, start, and
-configure your node without leaving the Console.
-
-For scripting and CI, all steps are also available as subcommands:
-
-```sh
-odal profile create prod --node-url https://node.acme.example \
-    --resolver-url https://dpp.acme.example
+```bash
+odal profile create prod --node-url https://node.example.com \
+  --resolver-url https://dpp.example.com
 odal profile use prod
-odal init                            # scaffold the compose file, its bootstrap hook and .env.example
-# copy .env.example to .env in the deployment root and set DATABASE_POSTGRES_PASS,
-# DATABASE_APP_PASS, KEY_STORE_PASSPHRASE, DID_WEB_BASE_URL, RESOLVER_BASE_URL,
-# ADMIN_USERNAME and ADMIN_PASSWORD
-odal up                              # build/pull + start the full stack (node + resolver + infra)
-odal status                          # verify services healthy
-odal bootstrap                       # mint the first API key (idempotent — refuses if already done)
-odal operator set \
-  --legal-name "Acme GmbH" --country DE \
-  --address "1 Allee, Berlin" \
-  --contact-email ops@acme.example   # set the legal operator identity (required before publish)
-odal passport import products.csv    # create draft passports
-odal passport validate               # check stored drafts against the product-group schema
-odal passport validate body.json     # dry-run one body, creating nothing
-odal passport publish                # sign + publish (mints GS1 Digital Link / QR)
+odal profile list                    # the active profile is marked *
+odal --profile dev status            # one command against another profile
 ```
 
-> **Bootstrap mints the first key and nothing more.** The legal operator identity
-> is set separately (`odal operator set`) and is **enforced at publish time**, not
-> at key-mint — so onboarding the technical key and the legal identity are
-> decoupled. Re-running `bootstrap` on an already-claimed node is **refused**
-> (use `odal key create` for additional keys).
+`--node-url` sets the vault and identity URLs together, because the node serves
+both on one origin. The resolver is a separate deployment, so it always needs its
+own `--resolver-url`. `--kind` is inferred from the URL when omitted.
 
----
+The kind controls the start-up checks, not what is started:
+
+- `dev` accepts the example database passwords from `.env.example`.
+- `prod` runs a `.env` secret preflight before `odal up` and refuses those values.
+
+## Interactive console and scripting mode
+
+| Invocation | Mode |
+|---|---|
+| `odal` with no arguments, in a terminal | Interactive console: a menu of grouped actions with guided forms |
+| `odal <command> [flags]` | Scripting: one command, a meaningful exit code, no prompts |
+
+Both modes call the same functions, so behaviour and output match. In the console:
+
+- Suspend, retire and bulk publish ask for confirmation and state the consequence first.
+- After each action the console prints the equivalent command (`≡ odal passport import …`).
+- When the active profile points at a non-local node, the start, stop and update
+  actions are hidden: the CLI cannot manage containers on another host.
+- With no API key configured, the console opens guided setup. `odal --reconfigure`
+  reopens it later.
+
+When stdin is not a terminal, or `CI` is set, `odal` with no subcommand prints help
+and exits with code 2 instead of waiting for input.
+
+## Scripted first run
+
+```bash
+odal init                            # scaffold docker/docker-compose.yml, ops/bootstrap/ and .env.example
+cp .env.example .env                 # then set the secrets it marks as required
+odal up                              # start node, resolver, PostgreSQL, Redis and NATS
+odal status
+
+set -a; . ./.env; set +a             # odal reads ADMIN_USERNAME / ADMIN_PASSWORD from the environment
+odal bootstrap --legal-name "Example GmbH" --country DE \
+  --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
+odal facility add --name "Main plant" --value 4012345000009 --country DE --default
+odal operator-id add --scheme vat --value DE123456789 --primary
+
+odal passport import ops/demo/samples/battery-full.json  # creates a battery draft
+odal passport validate                                # checks the stored drafts
+odal passport publish                                 # signs and publishes every draft
+odal template battery-industrial -o battery.csv       # the CSV columns for your own data
+```
+
+`bootstrap` mints the first API key and saves it under the active profile. It
+refuses on a node that already has an active key; use `odal key create` for more
+keys, or `bootstrap --force` to mint one anyway. The operator identity flags are
+optional at bootstrap and can be set later with `odal operator set`. Set them
+before publishing: without a legal name, every EU registry registration the node
+builds fails validation. For a product group whose passport obligation is already in
+force, publish is refused until a default facility and a primary operator
+identifier are configured.
 
 ## Command reference
 
-### Infrastructure
+The **Scope** column is the API key scope the node requires: `read`, `write` or
+`admin` (each includes the ones before it). `none` means the command needs no key.
+`odal <command> --help` lists every flag.
 
-| Command | Purpose | Auth |
+### Stack
+
+| Command | What it does | Scope |
 |---|---|---|
-| `odal init` | Scaffold `docker/docker-compose.yml`, `ops/bootstrap/` and `.env.example`; save connection config | none |
-| `odal up` | Start the full stack (node + resolver + infra); builds from source inside a clone of the engine, otherwise runs the published images; prod also runs a `.env` secret preflight | none |
-| `odal down` | Stop the full stack | none |
-| `odal update` | Pull the published images for the pinned `ODAL_VERSION`; inside a clone, rebuild from source and restart instead | none |
-| `odal status` | Health of vault, identity, resolver, containers, and the node's trust posture | none (trust posture needs an API key) |
-| `odal whoami` | What the configured API key is: identity, scope, key id | API key |
+| `odal init` | Save the connection settings and scaffold `docker/docker-compose.yml`, `ops/bootstrap/` and `.env.example` in the current directory. Never overwrites a file and never writes `.env` | none |
+| `odal up` | Start the full stack with Docker Compose. Inside a clone of this repository it builds the images from source; elsewhere it runs the published images | none |
+| `odal down` | Stop the stack. Volumes, including the signing key, are kept | none |
+| `odal update` | Inside a clone, rebuild from source and restart. Elsewhere, pull the images tagged `ODAL_VERSION` and restart | none |
+| `odal status` | Health of the vault, identity service, resolver and containers. With a key configured, also each trust adapter's mode | none |
+| `odal whoami` | The configured key's user, scope and key id | read |
 
-### Onboarding & auth
+`odal up`, `down` and `update` look for `docker/docker-compose.yml` in the current
+directory and each parent, so they work from anywhere inside the deployment.
 
-| Command | Purpose | Auth |
+> [!NOTE]
+> The published images on `ghcr.io/odal-node` are not public yet. Until they are,
+> run `odal up` from a clone so the stack is built from source.
+
+### Onboarding and keys
+
+| Command | What it does | Scope |
 |---|---|---|
-| `odal bootstrap` | Mint the first API key (idempotent; refuses if claimed) | local admin |
-| `odal operator show` | Print current operator config | API key |
-| `odal operator set [--field value …]` | Update operator fields | API key |
-| `odal key create <name>` | Mint API key (secret shown once) | API key |
-| `odal key list` | List API keys (prefix only) | API key |
-| `odal key revoke <id>` | Deactivate an API key | API key |
-| `odal key use <secret>` | Adopt an existing `odal_sk_…` secret as this profile's credential | none |
+| `odal bootstrap [--legal-name …] [--force]` | Mint the first API key with the local admin credential (HTTP Basic, from `ADMIN_USERNAME` / `ADMIN_PASSWORD`) | local admin |
+| `odal operator show` | Print the operator configuration | read |
+| `odal operator set [--legal-name …] [--retention-policy-days …]` | Update operator fields | admin |
+| `odal key create <name> [--use]` | Mint an API key. The secret is printed once | admin |
+| `odal key list` | List API keys by prefix | admin |
+| `odal key revoke <id>` | Revoke an API key | admin |
+| `odal key use [<secret> \| -]` | Save an existing `odal_sk_…` secret as this profile's key. Reads stdin for `-`, else `ODAL_API_SECRET`, else prompts | none |
 
-### Facilities & operator identifiers
+### Facilities and operator identifiers
 
-Facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13) are
-stamped onto new passports live from whichever is marked default/primary — no
-node restart needed after a change. Management is admin-scoped (a
-least-privilege key cannot mutate the operator's registry identity).
+New passports are stamped with the default facility (ESPR Annex III) and the
+primary operator identifier (ESPR Art. 13) at the moment they are created, so a
+change applies without a restart. Both are retired rather than deleted, and each
+keeps an append-only history.
 
-| Command | Purpose | Auth |
+| Command | What it does | Scope |
 |---|---|---|
-| `odal facility list` | List configured facilities (default marked `*`) | API key (Admin) |
-| `odal facility add --name --scheme --value --country [--address] [--default]` | Add a facility (e.g. a GLN) | API key (Admin) |
-| `odal facility set-default <id>` | Make a facility the default (stamped on new passports) | API key (Admin) |
-| `odal facility remove <id>` | Remove a facility | API key (Admin) |
-| `odal operator-id list` | List configured operator identifiers (primary marked `*`) | API key (Admin) |
-| `odal operator-id add --scheme --value [--label] [--primary]` | Add an operator identifier (e.g. VAT, LEI) | API key (Admin) |
-| `odal operator-id set-primary <id>` | Make an identifier the primary (stamped on new passports) | API key (Admin) |
-| `odal operator-id remove <id>` | Remove an operator identifier | API key (Admin) |
+| `odal facility list` | List facilities; the default is marked `*` | admin |
+| `odal facility add --name --value --country [--scheme gln] [--address] [--default]` | Add a facility. The identifier is validated (GLN check digit, ISO 3166 country) | admin |
+| `odal facility set-default <id>` | Make a facility the default | admin |
+| `odal facility remove <id>` | Retire a facility | admin |
+| `odal facility audit <id>` | Show a facility's history | admin |
+| `odal operator-id list` | List identifiers; the primary is marked `*` | admin |
+| `odal operator-id add --scheme --value [--label] [--primary]` | Add an identifier: `vat`, `lei`, `eori` or `duns`, validated per scheme | admin |
+| `odal operator-id set-primary <id>` | Make an identifier the primary | admin |
+| `odal operator-id remove <id>` | Retire an identifier | admin |
+| `odal operator-id audit <id>` | Show an identifier's history | admin |
 
-### Profiles / environments
+### Passports
 
-| Command | Purpose | Auth |
+| Command | What it does | Scope |
 |---|---|---|
-| `odal profile list` | List profiles (active marked `*`) | none |
-| `odal profile show [name]` | Show a profile (API key masked) | none |
-| `odal profile use <name>` | Switch the active profile | none |
-| `odal profile create <name> [--node-url \| --vault-url] [--resolver-url] [--kind] [--force]` | Add a profile | none |
-| `odal profile remove <name>` | Delete a profile (+ its credential) | none |
-| `odal profile rename <old> <new>` | Rename a profile (+ its credential) | none |
+| `odal passport list [--status] [--q] [--facility-id] [--limit] [--json]` | List or search passports | read |
+| `odal passport import <file>` | Create drafts from CSV, TSV or JSON. Results are reported per row | write |
+| `odal passport validate` | Check the stored drafts for missing required fields | read |
+| `odal passport validate <file>` | Dry-run one JSON body through the create and publish checks. Creates nothing | write |
+| `odal passport publish [id]` | Sign and publish one draft, or every draft | write |
+| `odal passport suspend <id>` | Suspend a published passport. Its public URL answers `410 Gone` | write |
+| `odal passport retire <id>` | Move a passport to the terminal `retired` state. The public page keeps serving | write |
+| `odal passport eol <id> --reason [--derogation …]` | Declare end of life (terminal). `--reason destroyed` requires a `--derogation`, because ESPR Art. 25 otherwise bans destruction | write |
+| `odal passport amend <id> --patch <file> [--reason]` | Correct a published passport by issuing a successor. Returns the successor, which has a new id; the original moves to `superseded` | write |
+| `odal passport supersede <id> --superseded-by <id>` | Supersede a passport with one that already exists and already names it in `supersedesId` | write |
+| `odal passport lint <id>` | Re-run the advisory plausibility checks and store the findings. Also reports publish readiness | write |
+| `odal passport history <id>` | Show the hash-chained audit trail | read |
+| `odal passport stats <id> [--days 30]` | Scan and QR-render counts for one passport | read |
+| `odal passport tree <id>` | Walk the component (BOM) tree and check each node against the hash its parent pinned. An integrity check, not a signature check | read |
+| `odal passport find --product-group --identifier [--batch]` | Look a passport up by product identifier (GTIN-14, identification link or DID) and batch | read |
+| `odal passport export [--format json\|csv] [--status] [-o]` | Export every matching passport | read |
+| `odal passport evidence <id> [-o]` | Generate and store a signed evidence dossier | write |
 
-### Passport lifecycle
-
-| Command | Purpose | Auth |
-|---|---|---|
-| `odal passport list [--status] [--q] [--facility-id] [--limit] [--json]` | List/search passports (optionally filtered to one facility) | API key |
-| `odal passport import <file>` | Create draft passports from CSV/TSV/JSON | API key |
-| `odal passport validate` | Check stored drafts for required fields | API key |
-| `odal passport validate <file>` | Dry-run a passport body — would create accept it, and does it pass the publish schema gate. Persists nothing | API key (write) |
-| `odal passport publish [id]` | Sign + publish all drafts (or one) | API key |
-| `odal passport suspend <id>` | Suspend a published passport (serves 410) | API key |
-| `odal passport retire <id>` | Retire (terminal state; the public page keeps serving) | API key |
-| `odal passport history <id>` | Passport audit trail | API key |
-| `odal passport export [--format] [--status] [-o]` | Export passports (JSON/CSV) | API key |
-| `odal passport find --product-group --identifier [--batch] [--json]` | Look a passport up by its business identity instead of its ID: the product identifier is the GTIN-14 for a GS1 identifier, else the identification link or DID. The batch is part of that identity, not a filter on it | API key |
-| `odal passport lint <id> [--json]` | Re-run the plausibility lint pack and store the findings. Advisory — they never gate publish. Also reports **publish readiness**: the blocking fields, and whether Art. 77(1) requires a battery passport for this record at all | API key (write) |
-| `odal passport amend <id> --patch <file> [--reason] [--json]` | Correct a published passport by issuing a **successor**. The passport named moves to the terminal `superseded` state and a new record is returned — a different id from the one passed. Only the patchable content fields take effect | API key (write) |
-| `odal passport supersede <id> --superseded-by <id> [--reason] [--json]` | Supersede a published passport with one that **already exists**. The successor must already carry `supersedesId` back to it — declared when the successor was created, and only checked here. Use `amend` when the replacement is a correction rather than an independently created passport | API key (write) |
-| `odal passport tree <id> [--json]` | Walk the component (BOM) tree, checking each node against the hash its parent pinned. Integrity only, not a signature check | API key |
-| `odal passport eol <id> --reason [--derogation] [--derogation-citation] [--notes]` | Declare end of life (terminal). The record is retained. `--reason destroyed` requires a `--derogation` — the ESPR Art. 25 ban | API key (write) |
+`export` neutralises spreadsheet formulas in CSV cells. A bare file name
+(`-o report.csv`) is written to `~/.config/odal/exports/`; a path with a directory
+(`-o ./report.csv`) is written exactly there.
 
 ### Transfer of responsibility
 
-A handover is two steps with three terminal outcomes, so each is its own verb.
-Only a published passport can be transferred.
+A handover has two steps and three terminal outcomes. Only a published passport can
+be transferred.
 
-| Command | Purpose | Auth |
+| Command | What it does | Scope |
 |---|---|---|
-| `odal passport transfer initiate <id> --from-… --to-… --reason [--notes]` | Sign a pending handover onto the transfer chain | API key (write) |
-| `odal passport transfer accept <id>` | Countersign and complete it | API key (write) |
-| `odal passport transfer reject <id>` | End it as refused — frees the chain | API key (write) |
-| `odal passport transfer cancel <id>` | End it as withdrawn — frees the chain | API key (write) |
+| `odal passport transfer initiate <id> --from-did … --to-did … --reason …` | Sign a pending handover onto the transfer chain. `--help` lists the eleven required fields and their allowed values | write |
+| `odal passport transfer accept <id>` | Countersign and complete it | write |
+| `odal passport transfer reject <id>` | End it as refused | write |
+| `odal passport transfer cancel <id>` | End it as withdrawn | write |
 
-### Regulatory catalog
+### Verification
 
-Unauthenticated: "does my product need a passport" is a question asked before
-anyone has a node, let alone a key.
-
-| Command | Purpose | Auth |
+| Command | What it does | Scope |
 |---|---|---|
-| `odal product-group list [--required] [--json]` | Every product group an act reaches — whether a passport is required, from when, and whether this build can bindingly determine it | none |
-| `odal product-group show <group> [--json]` | One group in full, including the acts behind it and their status | none |
-| `odal schema check` | The node build, core version, and active ruleset it applies | none |
-| `odal schema list [--json]` | Product groups with a schema, the current version, and the older ones the upcast lens chain still reads | none |
+| `odal verify <dossier-id \| file>` | Verify an evidence dossier's signatures and hash chains. Exit 0 verified, 1 a check failed, 2 the dossier could not be read | read |
+| `odal snapshot verify <path \| url> (--key <base64> \| --did-url <url>)` | Check a continuity snapshot's signed freshness bound. Needs no node and no key. Exit 0 proven and current, 1 expired, stripped or unproven, 2 the check could not be made | none |
+| `odal seal status [id]` | Sealing state, operator-wide or for one passport | read |
+| `odal seal repair <id>` | Queue a replacement for a stored seal that no longer verifies. Refused unless the seal is broken, because a replacement costs a seal | admin |
+
+`snapshot verify` takes the key as an argument because it is meant for the case
+where the node is down, and on a single-binary deployment the node also serves the
+DID document. Use `--did-url` only when the DID document is hosted elsewhere; it
+must be HTTPS on every redirect, or loopback. A snapshot with no
+`snapshotJwsSignature` is reported as unverifiable, never as current. The command
+checks the outer snapshot proof only; the passport's own `publicJwsSignature` is a
+separate check.
+
+### Registry, telemetry and regulatory catalog
+
+| Command | What it does | Scope |
+|---|---|---|
+| `odal registry [id] [--json]` | EU registry submission status: the rollup, or one passport | read |
+| `odal stats [--days 30] [--json]` | Operator-wide scan counts | read |
+| `odal product-group list [--required] [--json]` | Every product group an act reaches: whether a passport is required, and from when | none |
+| `odal product-group show <group>` | One product group, with the acts behind it and their status | none |
+| `odal schema list` | Product groups with a schema, the current version, and the older versions still readable | none |
 | `odal schema show <group> [version] [-o]` | Print a product group's JSON Schema | none |
-| `odal template <key> [-o]` | The CSV header row `odal passport import` expects. The served set is not restated here — a `404` from this command lists it, which is what keeps the list from going stale. Batteries are served **per category** (`battery-ev`, `battery-lmt`, `battery-industrial`); there is no bare `battery` template, because what a battery must carry depends on its category | none |
+| `odal schema check` | The node build, `dpp-core` version and ruleset in force | none |
+| `odal template <key> [-o]` | The CSV header row `odal passport import` expects. Batteries are served per category (`battery-ev`, `battery-lmt`, `battery-industrial`). An unknown key returns `404` with the list of valid keys | none |
 
-### EU registry & provenance
+The catalog commands need no key because "does my product need a passport?" is
+asked before anyone runs a node.
 
-| Command | Purpose | Auth |
+### Access credentials and unsold goods
+
+| Command | What it does | Scope |
 |---|---|---|
-| `odal registry [id] [--json]` | Registry sync rollup, or one passport's record | API key |
-| `odal facility audit <id>` | A facility's append-only trail (facilities are retired, never deleted) | API key (Admin) |
-| `odal operator-id audit <id>` | An operator identifier's append-only trail | API key (Admin) |
+| `odal credential issue <holder-did> --name --country [--role] [--product-groups] [--valid-for-days]` | Issue a credential the holder sends as `X-DPP-Credential` to read restricted fields | admin |
+| `odal unsold-goods record --period --units --kg --category --reason --destination --country [--justification]` | Record one line of the ESPR Art. 24 disclosure of discarded unsold products | write |
+| `odal unsold-goods list [--period] [--json]` | List recorded lines, newest first | admin |
 
-### Access credentials
+`credential issue` covers legitimate-interest roles (repairers, recyclers,
+remanufacturers and similar). Authority roles are refused, because a member state
+confers that standing, not the operator. The node publishes no revocation list, so
+a credential lives at most 90 days.
 
-| Command | Purpose | Auth |
+`unsold-goods` lines are not passports: Art. 24 reports on the operator over a
+financial year. Both `--units` and `--kg` are required because Art. 24(1)(a) asks
+for the number and the weight. `--destination exemptDestruction` requires a
+`--justification` naming the Art. 25 exemption, and every other destination
+refuses one.
+
+### Webhooks, plugins and rulesets
+
+| Command | What it does | Scope |
 |---|---|---|
-| `odal credential issue <holder-did> --name --role --country [--product-groups] [--valid-for-days]` | Mint a DPP access credential the holder presents as `X-DPP-Credential`. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. Nothing can withdraw a credential once issued, so the lifetime is capped at 90 days and is the only control there is | API key (Admin) |
+| `odal webhook add <https-url> [--events a,b] [--description]` | Subscribe a receiver to passport events; all events when `--events` is omitted. The signing secret is printed once | admin |
+| `odal webhook list` | List subscriptions | admin |
+| `odal webhook test <id>` | Send a signed test delivery | admin |
+| `odal webhook remove <id>` | Remove a subscription | admin |
+| `odal plugin install <file>` | Upload a product group plugin and the detached signature beside it (`plugin.wasm` needs `plugin.wasm.sig`). The node checks the signature against its pinned publisher key, checks the ABI, stores it and swaps it in without a restart | admin |
+| `odal ruleset reload` | Re-read the signed ruleset channel now instead of waiting for the next poll | admin |
 
-### Unsold goods (ESPR Art. 24)
+See [`docs/guides/WEBHOOKS.md`](../docs/guides/WEBHOOKS.md) for the delivery format
+and signature check.
 
-Not a passport. Art. 24's subject is an **operator over a financial year** — the
-figures go on the operator's own website and the trigger is discarding unsold
-stock, none of which is a product placed on the market.
+## Global options
 
-| Command | Purpose | Auth |
-|---|---|---|
-| `odal unsold-goods record --period --units --kg --category --reason --destination [--justification] --country` | Record one disclosure line. Art. 24(1)(a) asks for the number **and** the weight, so both are required. `--destination exemptDestruction` requires a `--justification` — Art. 25 bans the destruction outright from 19 July 2026 — and every other destination refuses one | API key (write) |
-| `odal unsold-goods list [--period] [--json]` | The recorded lines, newest first, optionally for one financial year. Admin rather than write: reading the operator's own annual figures back is an administrative act, not part of producing passports | API key (Admin) |
+| Option | Effect |
+|---|---|
+| `--profile <name>` | Run one command against another profile |
+| `--idempotency-key <key>` | Sent as `Idempotency-Key` on commands that create something. Re-running the same command with the same key returns the first result instead of creating a second resource. Use it when retrying after a network error |
+| `--reconfigure` | Reopen guided setup |
 
-### Continuity snapshots
+## See also
 
-The static tier a passport is served from when the node is not there. This is
-the one check in the CLI that needs **no node and no credential** — which is the
-point, since the node being unreachable is the situation the tier exists for.
-
-| Command | Purpose | Auth |
-|---|---|---|
-| `odal snapshot verify <path\|url> (--key <b64> \| --did-url <url>) [--json]` | Check a snapshot's signed freshness bound. Exit 0 the bound is proven and current, 1 it is not (expired, stripped, or the claim does not hold), 2 the check could not be made. Verifies the **outer** proof only | none |
-
-**Why the key is an argument.** The obvious design reads it from the `did:web`
-document at the configured identity URL. On the single-binary node that document
-is served *by the node*, so discovery fails in exactly the outage this command is
-for. `--did-url` is there for a deployment where identity really is hosted
-separately; otherwise pass `--key`.
-
-**`--did-url` must be HTTPS** (on every redirect hop), unless it is loopback. The
-DID document *is* the trust anchor: over plaintext, anyone able to rewrite that
-response supplies the key, signs a forged snapshot with it, and this command
-prints `CURRENT`. The snapshot's own URL is deliberately unrestricted — its bytes
-are checked against a key from elsewhere, so tampering there fails the check.
-
-**A missing proof is not a pass.** A copy off the static tier carrying no
-`snapshotJwsSignature` has had its bound removed — the `asOf` and `validUntil`
-still on it are text anyone could have written. The command reports that as
-unverifiable, never as current. (A *live* read legitimately carries no bound;
-this command is never pointed at one.)
-
----
-
-## Detailed usage
-
-### `odal init`
-
-Saves connection config for the active profile to `~/.config/odal/config.toml`
-and scaffolds, in the current directory, whichever of `docker/docker-compose.yml`,
-`ops/bootstrap/` and `.env.example` do not already exist. Never overwrites an
-existing file, and never writes `.env`: copy `.env.example` to `.env` and set its
-values yourself. Intended for scripting — interactive operators should run `odal`
-instead.
-
-### `odal bootstrap`
-
-Authenticates with the node's local admin (`ADMIN_USERNAME`/`ADMIN_PASSWORD`),
-mints the **first** API key, and saves it to `~/.config/odal/credentials.toml`
-under the active profile.
-
-**Idempotent and guarded:** before minting, it checks `GET /api/v1/node/state`.
-If the node is already claimed (an active key exists) it **refuses** rather than
-silently minting a duplicate — pass `--force` to mint an additional key anyway,
-or use `odal key create <name>`.
-
-The legal operator identity is *not* required here — bootstrap only handles the
-technical key. Set the identity with `odal operator set` (or pass the same flags
-to bootstrap as a convenience); it is **enforced at publish time**. Optional
-identity flags:
-
-```sh
-odal bootstrap \
-  --legal-name "Acme GmbH" --country DE \
-  --address "1 Allee, Berlin" --contact-email ops@acme.example \
-  --did-web-url https://acme.example/.well-known/did.json
-```
-
-### `odal passport import <file>`
-
-One passport per record. `.csv`/`.tsv`: `productGroupData` is built from headers,
-and the product group comes from a `productGroup` column (`productCategory` is
-still read for older files). `odal template <group>` prints the header row this
-expects.
-`.json`: a single object or array, posted verbatim. Each record is created as a
-**draft** and validated server-side; results are reported per row.
-
-### `odal passport publish [id]`
-
-Signs each draft with Ed25519 (using the operator key stored in the key store),
-publishes it, retention-locks it, and mints its GS1 Digital Link. Pass an ID to
-publish a single draft; omit to publish all.
-
-### `odal passport export`
-
-Walks the full set (paginated) and writes JSON (default) or CSV to a file
-(`-o file`) or stdout. Filter with `--status draft|active|suspended|retired`.
-CSV cells are formula-injection-neutralised.
-
-A bare filename (`-o report.csv`) is written to `~/.config/odal/exports/`, so
-exports never land in — or get committed from — the working directory. Pass a
-path with a directory component (`-o ./report.csv`, `-o /tmp/report.csv`) to
-write exactly there.
-
----
-
-## Notes
-
-- **What's stored where & why.** The CLI is a remote client, so — like `kubectl`
-  or `aws` — it must persist *where* the node is and *how* to authenticate.
-  Connection settings (non-secret) live per-profile in `config.toml`; API keys
-  (secret) live in `credentials.toml` (0600). Both can be overridden from the
-  environment (`ODAL_VAULT_URL` / `ODAL_API_KEY` / `ODAL_PROFILE`) so a CI runner
-  needs nothing on disk.
-- Auth: API-key commands send `Authorization: Bearer odal_sk_…`. `bootstrap` uses
-  the local admin credential (`Bearer base64(user:pass)`) because no key exists yet.
-- The node applies all migrations automatically on every boot; no manual migration
-  step is needed.
-- `odal up`/`down`/`update` pick the compose file by the active profile's kind
-  (dev → `docker-compose.dev.yml`, prod → `docker-compose.yml`) and search the
-  current directory and its parents. Run from anywhere inside your deployment tree.
+- [`docs/guides/OPERATOR-SETUP.md`](../docs/guides/OPERATOR-SETUP.md): production
+  setup, environment variables, key management, backups and troubleshooting.
+- The node applies database migrations on every start; there is no separate
+  migration command.

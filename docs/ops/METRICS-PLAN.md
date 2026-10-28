@@ -1,254 +1,276 @@
-# Metrics & Observability — Odal Node Engine
+# Metrics and alerting
 
-Operational telemetry for the node (`dpp-node`) and the public resolver (`dpp-resolver`).
-Stack: the [`metrics`](https://docs.rs/metrics) facade + `metrics-exporter-prometheus`.
-Last updated: 2026-09-08.
+Prometheus metrics for `dpp-node` and `dpp-resolver`: where they are served, every
+series the code emits, and starter alert rules. The binaries use the
+[`metrics`](https://docs.rs/metrics) facade with `metrics-exporter-prometheus`. There is
+no OpenTelemetry export.
 
-This document is the source of truth for **what is measured, how it is exposed, and what to
-alert on**. It also records the gaps still open (see [Roadmap](#roadmap)).
+## Where metrics are served
 
----
+`/metrics` is never on the public API port. Each binary serves it on a separate
+listener:
 
-## 1. Exposure model (security)
-
-`/metrics` is **never** served on the public API port. Each binary installs a Prometheus
-recorder at startup and serves `GET /metrics` on a **separate, private listener**:
-
-| Binary | API port (public) | Metrics listener (private, default) | Env override |
-|--------|-------------------|-------------------------------------|--------------|
+| Binary | API listener | Metrics listener (default) | Override |
+|---|---|---|---|
 | `dpp-node` | `0.0.0.0:8001` | `127.0.0.1:9100` | `METRICS_ADDR` |
 | `dpp-resolver` | `0.0.0.0:8003` | `127.0.0.1:9101` | `METRICS_ADDR` |
 
-- **Loopback by default.** A scraper in the same pod/host reaches it; the public internet does
-  not. To scrape across the network, set `METRICS_ADDR` to a private interface (e.g. behind a
-  k8s NetworkPolicy) — do **not** bind it to a routable address without a network boundary.
-- **Disable** with `METRICS_ADDR=` (empty).
-- A bind/serve failure on the metrics listener is logged but never takes the service down.
-
-> Rationale: exposing `passport_publish_total`, `signing_failures_total`, JWS tamper counts and
-> per-route latencies to anyone who can reach the API port is free reconnaissance (finding RT2-7).
-> Putting `/metrics` on its own listener is the same fail-closed posture as keeping the internal
-> signing routes off the public surface.
-
-### Recorder requirement (RT2-6)
-
-`metrics::counter!(…)` is a **silent no-op unless a recorder is installed in that process**. Both
-binaries install one at startup. The resolver previously did not — so `jws_verify_total` (the
-public-facing tamper signal) was dropped on the floor. If you add a new deployable that emits
-metrics, it **must** install a recorder or the data is lost with no error.
-
----
-
-## 2. Metric catalog
-
-`route`/`method`/`status` on the HTTP metrics use the **matched path template** (e.g.
-`/vault/dpp/{dppId}`), never the resolved URL — so high-cardinality IDs do not explode the label
-space. Keep that discipline (see [Label policy](#3-label--cardinality-policy)).
-
-### HTTP (all services, via `dpp_common::http_metrics_middleware`)
-
-| Metric | Type | Labels | Meaning |
-|--------|------|--------|---------|
-| `http_requests_total` | counter | `route`, `method`, `status` | Every request, by outcome |
-| `http_request_duration_seconds` | histogram | `route`, `method` | Request latency |
-
-### Vault / signing
-
-| Metric | Type | Labels | Meaning |
-|--------|------|--------|---------|
-| `passport_publish_total` | counter | `outcome` = `success` \| `error` | Publish attempts |
-| `signing_failures_total` | counter | — | In-process JWS signing failures |
-| `auth_failures_total` | counter | `reason` = `missing` \| `suspended` \| `invalid` | Rejected auth — **attack signal** |
-| `label_inherited_total` | counter | `requested` = `serial` \| `batch`, `resolved` = `batch` \| `model` | A printed label resolved to a level above the one it named. Exact answers are not counted. A forged or mistyped serial lands here, resolving to the genuine model record |
-| `db_ping_total` | counter | `result` = `ok` \| `error` | Readiness DB pings |
-| `db_ping_duration_seconds` | histogram | — | DB ping latency |
-
-### Trust posture (the ghost-honesty invariant)
-
-| Metric | Type | Labels | Meaning |
-|--------|------|--------|---------|
-| `trust_mode` | gauge | `port` | Tier the adapter behind each trust port resolved to: **`0` ghost** (placeholder), **`1` sandbox** (real service, non-production), **`2` live**. One series per port. |
-
-Set once per port during boot, from the same `NodeTrustReport` the `/vault/api/v1/node/state`
-response is built from — so the gauge and the API answer cannot disagree. `port` values come
-from the report's list, which is the whole reason the invariant is list-driven: a trust port that
-is never registered there is invisible to the boot guard *and* absent from this gauge.
-
-A `production` profile refuses to boot while a required port is a ghost, so `trust_mode == 0`
-on a production node means either a **non-required** port degraded, or the boot guard did not see
-that port at all. Both are worth waking up for — see the alert rules in §4.
-
-### Resolver (public-facing)
-
-| Metric | Type | Labels | Meaning |
-|--------|------|--------|---------|
-| `jws_verify_total` | counter | `outcome` = `ok` \| `tampered` \| `disabled` | Signature verification — **`tampered` is the headline security signal** |
-| `cache_requests_total` | counter | `result` = `hit` \| `miss` | Resolver response cache |
-| `rate_limit_rejections_total` | counter | — | Per-IP 429s — **flood signal** |
-
-### Integrator (bulk import)
-
-| Metric | Type | Labels | Meaning |
-|--------|------|--------|---------|
-| `import_rows_total` | counter | — | Rows accepted for processing (volume baseline) |
-| `import_rejections_total` | counter | `reason` = `unknown_product_group` \| `auth` \| `parse` | Rejected uploads — **RT2-1 parser-probing signal** |
-
----
-
-## 3. Label / cardinality policy
-
-- **Never** use an unbounded value as a label: no `dpp_id`, no client `ip`, no `operator_id`
-  (a constant provenance stamp — the node is single-tenant), no free-text error strings.
-- Label values must come from a **fixed, small enum** (the `reason`/`outcome`/`result` sets above).
-- HTTP route labels must stay on the **matched-path template**, not the resolved path.
-
-A label-space blow-up degrades Prometheus for everyone and can be triggered by an attacker if a
-caller-controlled value ever reaches a label — treat new labels as a review checklist item.
-
----
-
-## 4. Starter alert rules
-
-PromQL sketches — tune thresholds to traffic. The first four are pages, the rest are warnings.
-
-```yaml
-# Someone is serving tampered passports against the public resolver. PAGE.
-- alert: DppTamperedSignatures
-  expr: rate(jws_verify_total{outcome="tampered"}[5m]) > 0
-  for: 0m
-  labels: { severity: page }
-
-# Signing is broken — publishes will fail. PAGE.
-- alert: DppSigningFailures
-  expr: rate(signing_failures_total[5m]) > 0
-  for: 5m
-  labels: { severity: page }
-
-# A trust port is serving placeholder trust. PAGE.
-# On a `production` profile this should be unreachable — the node refuses to
-# boot on a ghost *required* port — so it firing means either a non-required
-# port degraded, or that port never reached the trust report at all and the
-# boot guard could not see it. Both need a human.
-- alert: DppTrustModeGhost
-  expr: trust_mode == 0
-  for: 0m
-  labels: { severity: page }
-  annotations:
-    summary: "trust port {{ $labels.port }} is serving ghost (placeholder) trust"
-
-# A port's trust tier fell without a deliberate redeploy — the silent config
-# regression the honesty invariant exists to catch. PAGE.
-# Written as a *drop* rather than a floor on purpose: the expected value is a
-# property of the deployment (a sandbox node legitimately sits at 1), so no
-# fleet-wide rule can hardcode one. The 24h window also means a deliberate
-# downgrade stops alerting a day after it is made, instead of forever.
-- alert: DppTrustModeRegressed
-  expr: trust_mode < max_over_time(trust_mode[24h])
-  for: 5m
-  labels: { severity: page }
-  annotations:
-    summary: "trust port {{ $labels.port }} dropped below the tier it was serving"
-
-# Credential attack / a client broke after key rotation.
-- alert: DppAuthFailureSpike
-  expr: rate(auth_failures_total[5m]) > 1
-  for: 10m
-  labels: { severity: warning }
-
-# Resolver flood (incl. X-Forwarded-For spoof attempts, RT2-3).
-- alert: DppResolverRateLimited
-  expr: rate(rate_limit_rejections_total[5m]) > 1
-  for: 10m
-  labels: { severity: warning }
-
-# Someone probing the import parser with bad/oversized files (RT2-1).
-- alert: DppImportRejectionSpike
-  expr: rate(import_rejections_total[5m]) > 1
-  for: 10m
-  labels: { severity: warning }
-
-# Liveness: DB unreachable, or 5xx ratio elevated.
-- alert: DppDbPingFailing
-  expr: rate(db_ping_total{result="error"}[5m]) > 0
-  for: 5m
-  labels: { severity: warning }
-- alert: DppHigh5xxRatio
-  expr: |
-    sum(rate(http_requests_total{status=~"5.."}[5m]))
-      / sum(rate(http_requests_total[5m])) > 0.05
-  for: 10m
-  labels: { severity: warning }
+```bash
+curl -s http://127.0.0.1:9100/metrics | grep -E '^(trust_mode|passport_publish_total)'
 ```
 
-## 5. Scrape configuration
+- `METRICS_ADDR=` (empty) disables the listener.
+- A failure to bind the metrics listener is logged and does not stop the service.
+- Keeping metrics off the API port means publish counts, signing failures and tamper
+  counts are not visible to anyone who can reach the API.
 
-Point Prometheus at the **private** metrics listeners (sidecar / same-host / in-cluster):
+**Containers:** `127.0.0.1` in `METRICS_ADDR` is the container's own loopback, not the
+host's. A scraper must run on the same container network (a sidecar, or a service on
+the same Compose network addressing the target by service name). Do not set
+`METRICS_ADDR` to a routable address to reach it from outside; if a scraper must cross
+a network, use a private interface behind a network boundary, or put TLS and
+authentication in front of the listener.
+
+**A new binary must install a recorder.** `metrics::counter!` is a silent no-op in a
+process with no recorder installed. Both binaries install one at start-up.
+
+## Catalog
+
+All series below are emitted by the current code. HTTP route labels use the matched
+path template (for example `/vault/api/v1/dpp/{dppId}`), never the requested URL.
+
+### HTTP (every service, `dpp_common::metrics`)
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | `route`, `method`, `status` |
+| `http_request_duration_seconds` | histogram | `route`, `method` |
+
+### Trust
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `trust_mode` | gauge | `port` = `compliance`, `seal`, `registry_sync`, `backup`, `credential_issuers` | Mode the port resolved to at start-up: `0` stub (`ghost`), `1` sandbox, `2` live. Built from the same report as `GET /vault/api/v1/node/state` |
+
+### Passport publishing and auth (`dpp-vault`)
+
+| Metric | Type | Labels |
+|---|---|---|
+| `passport_publish_total` | counter | `outcome` = `success`, `error` |
+| `passport_publish_rejected_total` | counter | `reason` = `invalid_transition`, `missing_registry_identity`, `product_group_data_invalid`, `schema_invalid`, `mandatory_content`, `compliance_violations`, `compliance_unavailable`, `carrier_invalid`, `carrier_taken`, `signing_failed` |
+| `publish_schema_unresolved_total` | counter | `productGroup` |
+| `signing_failures_total` | counter | |
+| `auth_failures_total` | counter | `reason` = `missing`, `invalid`, `suspended` |
+| `label_inherited_total` | counter | `requested` = `serial`, `batch`; `resolved` = `batch`, `model`. A printed label resolved to a level above the one it named, for example a mistyped or forged serial resolving to the model record |
+| `db_ping_total` | counter | `result` = `ok`, `error` |
+| `db_ping_duration_seconds` | histogram | |
+
+### Plugins (`dpp-plugin-host`)
+
+| Metric | Type | Labels |
+|---|---|---|
+| `plugin_invocations_total` | counter | `productGroup`, `outcome` = `ok`, `error` |
+| `plugin_fuel_exhausted_total` | counter | `productGroup` |
+| `plugin_mem_capped_total` | counter | `productGroup` |
+| `plugin_schema_unsupported_total` | counter | `productGroup` |
+
+### Rulesets
+
+| Metric | Type | Labels |
+|---|---|---|
+| `ruleset_swaps_total` | counter | |
+| `ruleset_load_failures_total` | counter | |
+
+### EU registry outboxes
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `registry_outbox_pending` | gauge | | Registrations waiting to be submitted |
+| `registry_outbox_submitted` | gauge | | Submitted, awaiting the registry's asynchronous validation |
+| `registry_outbox_stalled` | gauge | | Rows that keep failing |
+| `registry_outbox_rejected` | gauge | | Rows the registry rejected |
+| `registry_outbox_deactivated` | gauge | | |
+| `registry_outbox_rejected_total` | counter | | |
+| `registry_outbox_held_unverified_total` | counter | | Rows held because the operator is not verified for the registry |
+| `registry_payload_rejected_total` | counter | | Payloads that failed local validation before submission |
+| `registry_outbox_drain_seconds` | histogram | | Duration of a drain pass |
+| `registry_transfer_outbox_pending` | gauge | | |
+| `registry_transfer_outbox_stalled` | gauge | | |
+| `registry_transfer_outbox_rejected` | gauge | | |
+| `registry_transfer_rejected_total` | counter | | |
+| `registry_transfer_drain_seconds` | histogram | | |
+
+### Seals
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `seal_total` | counter | `outcome` = `sealed`, `retried`, `exhausted`, `misbound` | Seal requests processed by the drainer |
+| `seal_seconds` | histogram | | Time per seal request |
+| `seal_downgraded_total` | counter | | Seals returned at a lower conformance level than requested |
+| `seal_outbox_pending`, `seal_outbox_exhausted` | gauge | | Seal queue depth and give-ups |
+| `seal_broken`, `seal_unreadable`, `seal_certificate_failed` | gauge | | Stored seals the audit found invalid, unparseable, or with a failing certificate |
+| `seal_archival_due`, `seal_archival_lapsed`, `seal_archival_unverifiable` | gauge | | Archive timestamps due for renewal, already lapsed, or not checkable |
+| `seal_archival_renewal_total` | counter | `outcome` = `renewed`, `raced`, `store_failed`, `authority_refused`, `no_gain`, `not_renewable`, `source_failed`, `unusable` | |
+| `trusted_list_verified`, `trusted_list_unavailable` | gauge | | EU Trusted Lists verified, and territories that could not be read |
+
+### Continuity snapshots
+
+| Metric | Type | Labels |
+|---|---|---|
+| `snapshot_reconcile_total` | counter | `outcome` = `stored`, `removed`, `retried`, `exhausted` |
+| `snapshot_reconcile_seconds` | histogram | |
+| `snapshot_outbox_pending`, `snapshot_outbox_exhausted` | gauge | |
+| `snapshot_sweep_requeued_total`, `snapshot_refresh_requeued_total` | counter | |
+| `snapshot_refresh_capacity` | gauge | |
+
+### Webhooks
+
+| Metric | Type | Labels |
+|---|---|---|
+| `webhook_delivery_total` | counter | `outcome` = `delivered`, `retried`, `exhausted`, `blocked` |
+| `webhook_delivery_seconds` | histogram | |
+| `webhook_outbox_pending`, `webhook_outbox_exhausted` | gauge | |
+
+### Import (`dpp-integrator`) and housekeeping
+
+| Metric | Type | Labels |
+|---|---|---|
+| `import_rows_total` | counter | |
+| `import_rejections_total` | counter | `reason` = `unknown_product_group`, `auth`, `parse` |
+| `idempotency_keys_purged_total` | counter | |
+
+### Resolver
+
+| Metric | Type | Labels |
+|---|---|---|
+| `jws_verify_total` | counter | `outcome` = `ok`, `tampered`, `disabled` |
+| `cache_requests_total` | counter | `result` = `hit`, `miss` |
+| `rate_limit_rejections_total` | counter | |
+
+## Label rules
+
+- Never label with an unbounded value: no passport id, client IP, operator id or error
+  text. A caller-controlled value in a label lets anyone inflate the series count.
+- Label values come from a small fixed set, as listed above. `productGroup` is bounded
+  by the product group catalog.
+- HTTP route labels stay on the matched path template.
+
+## Starter alert rules
+
+Adjust thresholds to your traffic. The first four page; the rest warn.
+
+```yaml
+groups:
+  - name: odal-node
+    rules:
+      # A passport served by the resolver failed signature verification.
+      - alert: DppTamperedSignatures
+        expr: rate(jws_verify_total{outcome="tampered"}[5m]) > 0
+        labels: { severity: page }
+
+      # Signing is failing, so publishes fail.
+      - alert: DppSigningFailures
+        expr: rate(signing_failures_total[5m]) > 0
+        for: 5m
+        labels: { severity: page }
+
+      # A trust port runs on a stub. Under a production profile a required port
+      # cannot, so this means an optional port degraded or a port is missing from
+      # the start-up check.
+      - alert: DppTrustModeStub
+        expr: trust_mode == 0
+        labels: { severity: page }
+        annotations:
+          summary: "trust port {{ $labels.port }} is running on a stub"
+
+      # A port's mode dropped without a deliberate change. Written as a drop, not a
+      # floor, because the expected mode differs per deployment (a sandbox node sits
+      # at 1). A deliberate downgrade stops alerting after 24 hours.
+      - alert: DppTrustModeRegressed
+        expr: trust_mode < max_over_time(trust_mode[24h])
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "trust port {{ $labels.port }} dropped below its previous mode"
+
+      - alert: DppAuthFailureSpike
+        expr: rate(auth_failures_total[5m]) > 1
+        for: 10m
+        labels: { severity: warning }
+
+      - alert: DppResolverRateLimited
+        expr: rate(rate_limit_rejections_total[5m]) > 1
+        for: 10m
+        labels: { severity: warning }
+
+      - alert: DppImportRejectionSpike
+        expr: rate(import_rejections_total[5m]) > 1
+        for: 10m
+        labels: { severity: warning }
+
+      - alert: DppDbPingFailing
+        expr: rate(db_ping_total{result="error"}[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+
+      - alert: DppHigh5xxRatio
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+
+      # Outbox rows that gave up need a person.
+      - alert: DppOutboxExhausted
+        expr: (seal_outbox_exhausted + snapshot_outbox_exhausted + webhook_outbox_exhausted) > 0
+        for: 15m
+        labels: { severity: warning }
+
+      - alert: DppRegistryOutboxStalled
+        expr: registry_outbox_stalled > 0 or registry_transfer_outbox_stalled > 0
+        for: 30m
+        labels: { severity: warning }
+
+      # Stored seals that no longer verify.
+      - alert: DppBrokenSeals
+        expr: seal_broken > 0 or seal_unreadable > 0 or seal_certificate_failed > 0
+        labels: { severity: warning }
+```
+
+## Scrape configuration
+
+Address each target by service name and take the port from that deployment's
+`METRICS_ADDR`:
 
 ```yaml
 scrape_configs:
-  # Address the target by SERVICE NAME, and take the port from that
-  # deployment's METRICS_ADDR. The ports below are the per-binary *defaults*;
-  # a deployment that sets one METRICS_ADDR for every service in a compose
-  # file gives them all the SAME port, which is legal — they are in separate
-  # network namespaces. Never assume the two services differ by port.
   - job_name: dpp-node
-    static_configs: [{ targets: ["dpp-node:9100"] }]
+    static_configs: [{ targets: ["node:9100"] }]
   - job_name: dpp-resolver
-    static_configs: [{ targets: ["dpp-resolver:9101"] }]
+    static_configs: [{ targets: ["resolver:9101"] }]
 ```
 
-### A loopback `METRICS_ADDR` binds the *container's* loopback
+The ports are the per-binary defaults. Two services in separate containers can use the
+same port, so do not assume they differ.
 
-This is the constraint that decides where a scraper can run, and it is easy to plan around
-wrongly. In a container deployment `METRICS_ADDR=127.0.0.1:<port>` is reachable **only from
-inside that container's own network namespace** — not from the host, and therefore not from
-anything that arrives at the host, including a tunnel or a bastion. Unless the port is
-explicitly published, `curl` on the host answers nothing, and a plan that assumes otherwise
-fails identically on every node.
+## Tests that pin metrics
 
-So a scraper must either **run on the same network** as the target (a sidecar, or a service on
-the same compose network, addressing it by service name as above), or the deployment must
-publish the metrics port deliberately and accept what that exposes.
-
-The tempting third option — setting `METRICS_ADDR` to a routable address so a host-side or
-remote scraper can reach it — **re-opens finding RT2-7**: it puts `passport_publish_total`,
-`signing_failures_total` and the JWS tamper counts back on the wire. Move the scraper onto the
-network; do not move the listener onto it. If a central scraper genuinely must cross a network,
-terminate that on a private interface with a network boundary (or front the listener with
-bearer/TLS) — never expose a raw `/metrics` publicly.
-
----
-
-## 6. Test coverage
-
-Integration-level **metric-presence** guards (so an emission can't be silently removed/renamed):
-
-| Metric | Guard test | File |
-|--------|-----------|------|
-| `passport_publish_total` | `publish_increments_passport_publish_total` | `dpp-node/tests/smoke.rs` (needs `--features integration-tests` + Docker) |
+| Metric | Test | File |
+|---|---|---|
+| `passport_publish_total` | `publish_increments_passport_publish_total` | `crates/dpp-node/tests/smoke.rs` (integration, Docker) |
 | `auth_failures_total` | `unauthenticated_request_increments_auth_failures_total` | same |
 | `import_rejections_total` | `unknown_product_group_import_increments_import_rejections_total` | same |
-| `jws_verify_total` | `resolve_records_jws_verify_total` | `dpp-resolver/tests/resolver_e2e.rs` (no Docker) |
-| `label_inherited_total` | `an_inherited_answer_is_counted_and_an_exact_one_is_not` | `dpp-vault/src/domain/service/query.rs` (no Docker) |
+| `jws_verify_total` | `resolve_records_jws_verify_total` | `crates/dpp-resolver/tests/resolver_e2e.rs` |
+| `label_inherited_total` | `an_inherited_answer_is_counted_and_an_exact_one_is_not` | `crates/dpp-vault/src/domain/service/query.rs` |
 
-**Known limitation:** these prove the counter *fires on the handler path*. They do **not** prove a
-binary's `main()` actually installs a recorder (RT2-6) — that wiring lives outside the router and
-isn't exercised by router-level tests. Treat "does the deployable install a recorder?" as a deploy
-smoke-check, not a unit test.
+These prove the counter fires on the handler path. They do not prove a binary's `main`
+installs a recorder; check that in a deployment smoke test.
 
----
+## Not yet measured
 
-## 7. Roadmap
-
-Implemented: exposure split (§1), resolver recorder (§1), and the attack-detection counters
-(`auth_failures_total`, `rate_limit_rejections_total`, `import_rejections_total`, `import_rows_total`).
-
-Deferred, in priority order:
-
-1. **`did_fetch_total{outcome}`** (resolver) — separate "can't verify right now" (503) from
-   "tampered" (409); today only the tamper/ok/disabled outcomes are counted.
-2. **`event_publish_failures_total{subject}`** (node) — fire-after-commit drops NATS events
-   silently; a counter makes that visible.
-3. **`build_info{version,git_sha}`** gauge (both) — version pinning on dashboards.
-4. **Explicit histogram buckets** — `http_request_duration_seconds` / `db_ping_duration_seconds`
-   use library defaults; set SLO-shaped buckets via `PrometheusBuilder::set_buckets_for_metric`.
+| Planned series | Purpose |
+|---|---|
+| `did_fetch_total{outcome}` (resolver) | Tell "could not fetch the DID document" (`503`) apart from "tampered" |
+| `event_publish_failures_total{subject}` (node) | Make dropped event-bus publishes visible |
+| `build_info{version,git_sha}` (both) | Version on dashboards |
+| Explicit histogram buckets | `http_request_duration_seconds` and `db_ping_duration_seconds` use library defaults |

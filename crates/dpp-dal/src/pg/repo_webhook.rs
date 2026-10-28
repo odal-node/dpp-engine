@@ -104,23 +104,35 @@ impl WebhookSubscriptionStore for PgWebhookRepo {
     }
 }
 
+/// Queue one delivery of `body` to every active subscription whose filter
+/// matches `event_type` (the exact subject, or `*`). Returns how many.
+///
+/// One statement for every caller: [`WebhookOutbox::enqueue`] on the pool, and
+/// the state-change log and the import job store inside the transaction that
+/// makes the change.
+/// Insert..select keeps it to one round-trip regardless of subscriber count.
+pub async fn fan_out<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    event_type: &str,
+    body: &str,
+) -> Result<u64, DppError> {
+    let res = sqlx::query(
+        r#"INSERT INTO odal.webhook_delivery (subscription_id, event_type, body)
+           SELECT id, $1, $2 FROM odal.webhook_subscription
+           WHERE active AND ($1 = ANY(events) OR '*' = ANY(events))"#,
+    )
+    .bind(event_type)
+    .bind(body)
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
+    Ok(res.rows_affected())
+}
+
 #[async_trait]
 impl WebhookOutbox for PgWebhookRepo {
     async fn enqueue(&self, event_type: &str, body: &str) -> Result<u64, DppError> {
-        // Fan out to every active subscription whose filter matches this event
-        // (exact subject or the `*` wildcard). Insert..select keeps it to one
-        // round-trip regardless of subscriber count.
-        let res = sqlx::query(
-            r#"INSERT INTO odal.webhook_delivery (subscription_id, event_type, body)
-               SELECT id, $1, $2 FROM odal.webhook_subscription
-               WHERE active AND ($1 = ANY(events) OR '*' = ANY(events))"#,
-        )
-        .bind(event_type)
-        .bind(body)
-        .execute(self.dal.pool())
-        .await
-        .map_err(db_err)?;
-        Ok(res.rows_affected())
+        fan_out(self.dal.pool(), event_type, body).await
     }
 
     async fn enqueue_for(

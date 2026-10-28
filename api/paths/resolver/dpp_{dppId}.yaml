@@ -30,7 +30,7 @@ get:
     success representation.
 
     **Serving is conditional on verification, so verification failures are
-    statuses of this route.** The resolver holds no passport data — it fetches
+    statuses of this route.** The resolver holds no passport data: it fetches
     from the vault's public tier and verifies the public signature against the
     operator's DID before building any representation. A passport it cannot
     verify is never served unmarked: `409` when the signature does not check
@@ -59,7 +59,7 @@ get:
           schema:
             type: object
             description: >
-              An IDTA Asset Administration Shell `Environment` — shells
+              An IDTA Asset Administration Shell `Environment`: shells
 
               and submodels in one self-contained document.
 
@@ -90,7 +90,7 @@ get:
 
               published AAS JSON Schemas for metamodel **3.0, 3.1 and
 
-              3.2**, and must satisfy all three — no single revision is
+              3.2**, and must satisfy all three: no single revision is
 
               the strictest, so the intersection is the only target that
 
@@ -151,11 +151,11 @@ get:
 
               required, no default). Error responses carry no
 
-              `Link` — an error is not a representation of the passport.
+              `Link`: an error is not a representation of the passport.
     '404':
       description: |
         No published passport with this identifier, or the identifier is not a
-        valid passport id — the resolver reports a malformed id as "not found"
+        valid passport id: the resolver reports a malformed id as "not found"
         rather than as a bad request, since to a consumer holding a data
         carrier the two are the same answer.
       content:
@@ -183,7 +183,7 @@ get:
             description: Consumer-facing error page.
     '410':
       description: |
-        The passport exists and has been withdrawn from public view — it is
+        The passport exists and has been withdrawn from public view: it is
         suspended. Distinct from `404`: the identifier is confirmed real and
         service is being declined, which is the signal a consumer scanning a
         recalled product needs.
@@ -206,7 +206,7 @@ get:
     '502':
       description: |
         The vault this resolver fronts could not be read. Deliberately not
-        `404` — the identifier may be perfectly good, so a consumer should
+        `404`: the identifier may be perfectly good, so a consumer should
         retry rather than conclude the product has no passport.
       content:
         application/problem+json:

@@ -1,6 +1,6 @@
 type: object
 description: >-
-  Non-binding plausibility findings — arithmetic and physical-plausibility
+  Non-binding plausibility findings: arithmetic and physical-plausibility
   checks, distinct from binding compliance rules. Never gates publish, and may
   be recomputed at any time after publish via `POST /dpp/{dppId}/lint` (unlike
   `complianceResult`, which is frozen into the signed payload).
