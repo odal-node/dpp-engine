@@ -1,7 +1,8 @@
 name: Fuzz (nightly)
 
 # cargo-fuzz needs nightly + Linux + libFuzzer, so it runs on a schedule rather
-# than per-commit (the stable `just check` gate does not build the fuzz crate).
+# than per-commit (the stable `just check` gate does not build the fuzz crate;
+# ci.yml's `fuzz-build` job only compiles and lints it).
 on:
   schedule:
     - cron: "0 3 * * *" # nightly 03:00 UTC
@@ -20,25 +21,72 @@ jobs:
   fuzz:
     name: cargo-fuzz smoke
     runs-on: ubuntu-latest
+    # A minute of fuzzing after the build. Without a ceiling, a hang outside
+    # libFuzzer's own per-input timeout would hold a runner for six hours.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        target: [parse_csv, verify_dossier_json]
+        # Every `[[bin]]` in fuzz/Cargo.toml, one per line:
+        # scripts/fuzz-targets-check.sh fails when the two lists differ.
+        target:
+          - parse_csv
+          - parse_xlsx
+          - import_rows
+          - create_request_validate
+          - credential_header
+          - verify_dossier_json
+          - cades_seal_inspect
+          - trusted_list_parse
+          - public_page_render
+          - url_guard
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # nightly
+          persist-credentials: false
+      # The channel is the `toolchain` input. The pinned commit is the action's
+      # `stable` branch, the pin ci.yml uses, and this line used to call it
+      # `nightly`: the job only ever fuzzed on nightly because the input says so.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch
         with:
           toolchain: nightly
+      # Fuzz the dependency graph that ships. The fuzz crate is its own
+      # workspace with no lock of its own in the repository, so it starts from
+      # the root's: every package the two share keeps the root's version, and
+      # cargo adds only what the fuzz crate alone needs.
+      - name: Start the fuzz lock from the workspace lock
+        working-directory: dpp-engine
+        run: cp Cargo.lock fuzz/Cargo.lock
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: dpp-engine/fuzz
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
+      # A minute a night from an empty corpus starts over every night. The
+      # corpus each run grows is saved under a key of its own, and the next run
+      # restores the newest, so coverage builds up across runs. Not saved when
+      # the run fails: the crash is in the artifact below.
+      - name: Restore the corpus earlier runs grew
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dpp-engine/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Seed from the committed spreadsheets
+        if: matrix.target == 'parse_csv' || matrix.target == 'import_rows'
+        working-directory: dpp-engine
+        run: |
+          mkdir -p "fuzz/corpus/${{ matrix.target }}"
+          cp crates/dpp-integrator/templates/*.csv ops/demo/datasets/*.csv "fuzz/corpus/${{ matrix.target }}/"
+      # `-timeout=10` reports any single input that takes ten seconds as a
+      # finding, rather than libFuzzer's default of twenty minutes: the import
+      # parsers' bomb guards exist to bound exactly that.
       - name: Fuzz ${{ matrix.target }} (60s smoke)
         working-directory: dpp-engine
-        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=60 -max_len=8192
+        run: >-
+          cargo +nightly fuzz run ${{ matrix.target }} --
+          -max_total_time=60 -max_len=8192 -timeout=10 -print_final_stats=1
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
