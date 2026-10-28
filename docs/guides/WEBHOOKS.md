@@ -36,7 +36,8 @@ A subscription receives the events in its filter, or every event when the filter
 `*` (the default). The subjects are listed in
 [EVENT-BUS.md](../architecture/EVENT-BUS.md#subjects): `dpp.passport.created`,
 `updated`, `published`, `suspended`, `superseded`, `retired`, `deactivated` and
-`transferred`, plus `dpp.webhook.test` for test deliveries.
+`transferred`; `dpp.import.completed` and `dpp.import.failed`; plus `dpp.webhook.test`
+for test deliveries.
 
 ## What the receiver gets
 

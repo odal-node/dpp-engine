@@ -35,9 +35,8 @@ For delivery to an HTTP endpoint instead, use signed webhooks
 | `dpp.passport.retired` | A passport is retired (terminal) |
 | `dpp.passport.deactivated` | End of life is declared (terminal) |
 | `dpp.passport.transferred` | A transfer of responsibility is initiated, accepted, rejected or cancelled. The payload's `phase` says which |
-
-`dpp_common::event::subjects` also defines `dpp.passport.failed`,
-`dpp.import.completed` and `dpp.import.failed`. Nothing publishes them yet.
+| `dpp.import.completed` | An apply import job finished. The payload carries `jobId`, `productGroup`, `totalRows` and the `created`, `updated` and `failedRows` counts. A dry run sends no event |
+| `dpp.import.failed` | An apply import job could not finish: its batch panicked, or its result could not be recorded. The payload carries `jobId`, `productGroup`, `totalRows` and `reason`. Rows a finished job rejected are counted in `dpp.import.completed`, not here |
 
 The constants in `dpp_common::event::subjects` are the authoritative list.
 `just subjects-check` fails the build when a service crate writes a subject as a
