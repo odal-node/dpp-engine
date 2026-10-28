@@ -374,7 +374,7 @@ async fn the_dry_run_refuses_a_draft_core_refuses() {
 
     let body = json!({
         "productName": "EcoBattery LFP 3000",
-        "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+        "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
         "placedOnMarketDate": "2026-07-15",
         "productGroupData": {
             "productGroup": "battery",
