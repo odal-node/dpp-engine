@@ -443,7 +443,11 @@ async fn start_vault_with_identity(
     // `false` passed because nothing *could* be recorded rather than
     // because nothing was.
     .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
-    .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())));
+    .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
+    // The node commits every state change through the state-change log, so a
+    // harness without it would write the parts one after another, a path no
+    // real deployment takes.
+    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())));
 
     // Wired after the chain rather than inside it, because unlike every port
     // above these two are what a test is *about* when it is about sealing: any

@@ -271,7 +271,8 @@ async fn main() -> anyhow::Result<()> {
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
-    .with_webhooks(db.webhook_outbox.clone());
+    .with_webhooks(db.webhook_outbox.clone())
+    .with_state_changes(db.state_changes.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
