@@ -300,7 +300,7 @@ mod tests {
             applicable_instruments: Vec::new(),
             granularity: None,
             manufacturer: dpp_domain::passport::ManufacturerInfo {
-                name: "GreenCell GmbH".into(),
+                name: "Example Batteries GmbH".into(),
                 address: "Berlin, DE".into(),
                 registered_trade_name: None,
                 electronic_address: None,
@@ -313,6 +313,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,

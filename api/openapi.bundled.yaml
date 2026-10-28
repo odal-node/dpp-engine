@@ -60,6 +60,8 @@ tags:
     description: API key management — create, list, revoke.
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Personal Data
+    description: Erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route reads one.
   - name: Plugins
     description: Signed product-group plugin hot-install — verify, persist, hot-swap (admin-only).
   - name: Ruleset
@@ -75,7 +77,7 @@ tags:
   - name: Integrator
     description: CSV/XLSX bulk import — product groups, their versioned JSON Schemas, templates, upload, and async job polling.
   - name: Identity
-    description: Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`.
+    description: Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`, and the DID document also at the root, `/.well-known/did.json`, where the did:web method resolves the node's DID. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`.
   - name: Identity (internal)
     description: mTLS service-to-service signing/rotation. **Not exposed by the fused node**, which signs in-process — reachable only on the standalone identity service, and only from a client presenting `CN=odal-vault`.
   - name: Public Resolver
@@ -184,6 +186,14 @@ paths:
         would have returned, not a paraphrase of it: a `422`, or a `409` for a
         `carrierSerial` another passport already holds. A body create would accept
         returns `200` with the two verdicts.
+
+        The `422` includes the personal-data check. A field the product group's
+        schema marks as able to hold personal data that has a value and no
+        `personalData` statement, a statement about a field that is not marked, an
+        `outside` statement naming no record, and a basis a governing act does not
+        admit are all refused here as they are on create, each naming its field. The
+        check reads no store, so it is part of the preview. It never reads what a
+        field says.
 
         **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
         preconditions — the product group-data gates — and publish applies others this
@@ -787,6 +797,12 @@ paths:
       description: |
         How many published passports carry no seal, plus the outbox totals
         behind that number.
+
+        `unsealedPublished` counts the live ones and `unsealedTerminal` the ones
+        that have since been retired, superseded or deactivated. Terminal
+        passports still serve publicly and still owe a seal, so the repair sweep
+        seals them; they are counted apart so that the number to act on is not
+        padded with records whose product ended long ago.
 
         `unsealedPublished` is the headline; the three row counts are context.
         They answer different questions and can legitimately disagree: the
@@ -2246,6 +2262,72 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /vault/api/v1/personal-data/{record}:
+    delete:
+      operationId: erasePersonalDataRecord
+      summary: Erase a record of personal data
+      description: |
+        Erases a record that a passport's `personalData` statement names
+        (`{"held": "outside", "record": "<id>"}`), keeping a tombstone. This is how
+        a withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is
+        signed, frozen, archived and copied to the back-up provider, so the personal
+        data is held in a record that can be erased instead.
+
+        **Erasing touches nothing else.** Not the passport, which is signed and
+        frozen. Not the statement in it, which keeps naming the record, so a reader
+        following the statement learns that the record is gone rather than that it
+        never existed. Not any other record.
+
+        **Idempotent.** Erasing a record that is already erased returns the receipt
+        it was given the first time, so a caller that lost the answer asks again. It
+        takes no `Idempotency-Key`.
+
+        **The tombstone is not free of personal data.** It keeps the identifier, the
+        passport and field the record belonged to, and when it was erased — none of
+        the content. A passport identifier can relate to whoever owns the item, and
+        information that can be linked to a person is personal data (GDPR Recital
+        26). The receipt is therefore as sensitive as the passport's individual-item
+        data, and the operator needs a basis for keeping the tombstone; to show that
+        it erased (Art. 5(2)) is one. Nothing in this node deletes it.
+
+        **No route reads a record.** A record is served by no resolver, public,
+        credentialed or authenticated view of a passport, and is never part of the
+        archive of past versions or of the back-up copy. Serving one is a disclosure
+        that needs a basis of its own, which only the controller can establish for
+        each purpose.
+
+        Admin-scoped, like every other route that removes something: the write scope
+        produces and moves passports, and none of that destroys anything.
+      tags:
+        - Personal Data
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: record
+          in: path
+          required: true
+          description: The record's identifier, as the passport's statement names it (`personalData.<field>.record`).
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: The record is erased. The same receipt on every call after the first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalDataErasureReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'This node never held a record with that identifier, which includes a string that could not have been one. A record that was held and is erased is not a `404`: it answers `200` with its receipt.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/unsold-goods:
     get:
       operationId: listUnsoldGoods
@@ -3149,8 +3231,8 @@ paths:
             nothing. Rows from all three import under the `battery` product group.
 
             The parameter keeps its name because renaming a path parameter renames
-            the method argument in every generated client, and for the eight
-            non-battery templates the two are still the same string.
+            the method argument in every generated client, and for every
+            non-battery template the two are still the same string.
           schema:
             type: string
             example: battery-ev
@@ -3186,9 +3268,13 @@ paths:
       operationId: importFile
       summary: Bulk-import passports from a file
       description: |
-        Upload a CSV or XLSX file to create draft passports for a product group
-        (`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's
-        `Authorization: Bearer` token is validated and forwarded to the vault.
+        Upload a CSV or XLSX file to create draft passports for a product group.
+        The caller's `Authorization: Bearer` token is validated and forwarded to
+        the vault.
+
+        The importable set is deliberately **not enumerated here**: it is one list
+        in the handler, and the `404` body names every accepted key. This sentence
+        listed five product groups long after the importer reached more.
 
         A battery **template** key is accepted here too — `battery-ev`,
         `battery-lmt` and `battery-industrial` all import as `battery`, since the
@@ -3291,6 +3377,29 @@ paths:
       summary: did:web DID document
       description: |
         Serves the operator's `did:web` DID document. Public, unauthenticated.
+      tags:
+        - Identity
+      security: []
+      responses:
+        '200':
+          description: The DID document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DidDocument'
+  /.well-known/did.json:
+    get:
+      operationId: getRootDidDocument
+      summary: did:web DID document, at the did:web resolution path
+      description: |
+        Serves the operator's `did:web` DID document at the path the did:web method
+        resolves a pathless DID to: `did:web:<host>` is looked up at
+        `https://<host>/.well-known/did.json`. The node's DID is pathless, so this
+        is where a verifier fetches it.
+
+        The same document as `/identity/.well-known/did.json`, which stays for
+        callers that already use it. The standalone identity service serves this
+        path too. Public, unauthenticated.
       tags:
         - Identity
       security: []
@@ -3676,9 +3785,10 @@ paths:
       operationId: resolveByGtin
       summary: GS1 Digital Link resolver
       description: |
-        GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node
-        prints for a model-level passport. Behaviour depends
-        on the `linkType` query / `Accept` header:
+        GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints
+        for a model-level passport. It has not been assessed against the GS1
+        Conformant Resolver Standard, and nothing here claims conformance. Behaviour
+        depends on the `linkType` query / `Accept` header:
         - default → `307` redirect to the HTML DPP page
         - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
         - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
@@ -4421,7 +4531,7 @@ components:
     Problem:
       type: object
       description: |
-        RFC 7807 / RFC 9457 problem details. The shape
+        RFC 9457 problem details. The shape
         `dpp-common::http_problem::Problem` produces, served as
         `application/problem+json`.
 
@@ -4458,7 +4568,7 @@ components:
           description: |
             The individual field failures behind this problem, when there are any.
 
-            An RFC 7807 §3.2 extension member. `detail` carries the same failures
+            An RFC 9457 §3.2 extension member. `detail` carries the same failures
             joined with `"; "` and is unaffected, so a client written before this
             member existed keeps working; `errors` is what lets a newer one address a
             single field. Publishing a battery that is missing its Annex XIII content
@@ -4635,6 +4745,11 @@ components:
             A list rather than the single `parentPassportRef` it replaces: Regulation (EU) 2023/1542 Art. 77(7) is plural on both sides — "linked to the battery passport or passports of the original battery or batteries" — so one second-life unit may derive from several predecessors.
           items:
             $ref: '#/components/schemas/DerivationRef'
+        personalData:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PersonalDataStatement'
+          description: 'What the operator states about personal data in the marked fields of `productGroupData`, keyed by dotted field path. Absent when it states nothing. On a **redacted read** the key is absent: a statement is shown only to an audience that sees the field it speaks about, and never to the public.'
         componentRefs:
           type: array
           description: |-
@@ -4939,6 +5054,60 @@ components:
           description: Where to fetch the predecessor's passport, and the hash pinning its signed public view.
         operation:
           $ref: '#/components/schemas/SecondLifeOperation'
+    PersonalDataStatement:
+      description: |-
+        What the operator states about the personal data related to one field of
+        `productGroupData` that the product group's schema marks as able to hold it
+        (`x-personal-data`). Either nothing related is held, or it is held outside the
+        passport in an erasable record.
+
+        Every statement asserts that the field's value carries no personal data beyond
+        what the governing act requires the passport to carry. The personal data
+        itself is never in the passport: a published passport is signed, frozen,
+        archived and copied to a back-up provider, so it cannot be erased from, and
+        withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)).
+
+        Where a governing act admits customer personal data only with explicit consent
+        (ESPR Art. 10(1)(e), Reg. (EU) 2025/2509 Art. 20(10), Reg. (EU) 2026/405
+        Art. 22(h)), a basis other than `consent` is refused. The record named by
+        `record` is not served by any route of this node.
+      oneOf:
+        - type: object
+          title: Nothing held
+          required:
+            - held
+          properties:
+            held:
+              type: string
+              enum:
+                - nothing
+          additionalProperties: false
+        - type: object
+          title: Held outside the passport
+          required:
+            - held
+            - lawfulBasis
+            - record
+          properties:
+            held:
+              type: string
+              enum:
+                - outside
+            lawfulBasis:
+              type: string
+              description: The ground of GDPR Art. 6(1) the data is held on.
+              enum:
+                - consent
+                - contract
+                - legalObligation
+                - vitalInterests
+                - publicTask
+                - legitimateInterests
+            record:
+              type: string
+              minLength: 1
+              description: The identifier of the erasable record holding the data. Required, and not blank.
+          additionalProperties: false
     LifeStatus:
       type: string
       description: |-
@@ -5320,6 +5489,11 @@ components:
             🚨 **`waste` is refused here.** The other four describe how a unit came to be, and Art. 77(7) makes each operation produce a *new* passport — so a repurposed unit is created as `repurposed`. `waste` is the one value that happens to a record which continues, and under that article's second subparagraph it moves responsibility as well, so it belongs to a versioning event on the passport becoming waste rather than to the creation of a new one.
 
             Omitting it is lawful everywhere. For a battery it reads as *not stated* rather than *not applicable*, and publish does not refuse it — the lint result says so instead, because a default would put a claim about a unit onto a record that is about to be signed.
+        personalData:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PersonalDataStatement'
+          description: What the operator states about personal data, keyed by the dotted path of each field of `productGroupData` the product group schema marks as able to hold it (for example `usageHistory.negativeEvents`). A marked field with a value is refused with a `422` naming it, on create and on every later write to the draft, unless it has an entry here. A statement about a field that is not marked, or an `outside` statement with a blank record, is refused too. Patchable on a draft, frozen at publish, and covered by the operator's signature. The personal data itself never goes in the passport.
         componentRefs:
           type: array
           items:
@@ -5522,6 +5696,38 @@ components:
         skip:
           type: integer
           description: The offset this page starts at.
+    PersonalDataErasureReceipt:
+      type: object
+      description: |-
+        What is left of an erased record of personal data: which record it was, which
+        passport and field it related to, and when it was erased. None of the erased
+        content.
+
+        The tombstone is not free of personal data. A passport identifier can relate to
+        whoever owns the item (GDPR Recital 26), so the receipt is as sensitive as the
+        passport's individual-item data and is kept only as long as the operator has a
+        basis to keep it.
+      required:
+        - record
+        - passportId
+        - field
+        - erasedAt
+      properties:
+        record:
+          type: string
+          description: The erased record's identifier, as the passport's statement names it.
+        passportId:
+          type: string
+          format: uuid
+          description: The passport the record related to.
+        field:
+          type: string
+          description: The marked field the record related to, as a dotted path inside `productGroupData`.
+          example: usageHistory.negativeEvents
+        erasedAt:
+          type: string
+          format: date-time
+          description: When the record's content was erased.
     ValidateResponse:
       type: object
       description: 'The dry-run verdict. Two booleans rather than one, because create and publish deliberately differ: a body can be creatable as a draft and not yet publishable, and collapsing that into a single flag would hide the gap until the caller tried to publish.'
@@ -5950,6 +6156,7 @@ components:
       description: 'Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.'
       required:
         - unsealedPublished
+        - unsealedTerminal
         - pending
         - sealed
         - exhausted
@@ -5957,7 +6164,16 @@ components:
       properties:
         unsealedPublished:
           type: integer
-          description: Published passports carrying no seal at all. `0` is the healthy state.
+          description: |-
+            Live published passports (`active` or `suspended`) carrying no seal at all. `0` is the healthy state.
+
+            Live only. A passport that was published unsealed and has since been retired, superseded or deactivated is counted in `unsealedTerminal`, so this is the number to act on without first working out which of the passports behind it still matter.
+        unsealedTerminal:
+          type: integer
+          description: |-
+            Retired, superseded or deactivated passports that were published and carry no seal. They still serve publicly and the obligation attached at publish, so the repair sweep seals them too: this is what is left of that, and it falls as the sweep works through them.
+
+            Unlike `unsealedPublished`, a non-zero value here is not by itself a call to act: the sweep is already working through it. A count that does not fall is a call to act: the seals the sweep asks for are failing, which `exhausted` counts and the node's log explains.
         pending:
           type: integer
         sealed:
@@ -7553,25 +7769,33 @@ components:
       type: object
       description: |
         A W3C DID Core `did:web` document. Lists the operator's Ed25519
-        verification methods; rotated keys are retained (so historical
-        signatures still verify) and revoked keys are omitted.
+        verification methods as `JsonWebKey`s (W3C Controlled Identifiers v1.0);
+        rotated keys are retained (so historical signatures still verify) and revoked
+        keys are omitted.
+
+        Each method is named by its key's own RFC 7638 thumbprint, in the URI form of
+        RFC 9278, so a name never moves to another key when the keys are rotated. A
+        token's `kid` is the absolute URL of the method that signed it. The first
+        entry of `authentication` is the current key.
       example:
         '@context':
           - https://www.w3.org/ns/did/v1
-          - https://w3id.org/security/suites/ed25519-2020/v1
+          - https://www.w3.org/ns/cid/v1
         id: did:web:id.odal-node.io
         verificationMethod:
-          - id: did:web:id.odal-node.io#key-1
-            type: JsonWebKey2020
+          - id: did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
+            type: JsonWebKey
             controller: did:web:id.odal-node.io
             publicKeyJwk:
               kty: OKP
               crv: Ed25519
               x: <base64url>
+              kid: urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
+              alg: EdDSA
         authentication:
-          - did:web:id.odal-node.io#key-1
+          - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
         assertionMethod:
-          - did:web:id.odal-node.io#key-1
+          - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
     InternalSignRequest:
       type: object
       required:
@@ -7644,7 +7868,7 @@ components:
           type: string
         new_key_id:
           type: string
-          example: did:web:id.odal-node.io#key-1
+          example: did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
         fingerprint:
           type: string
           description: SHA-256 fingerprint (hex) of the new public key.
@@ -8206,8 +8430,8 @@ components:
         gates pass", not "publish will certainly succeed".
 
         The mandatory-content half is the reason this exists. It is the gate that most
-        often refuses a battery — 45 data points for an electric-vehicle one, 44 for
-        an LMT battery, 37 for an industrial one — and it could not previously be
+        often refuses a battery — 41 data points for an electric-vehicle one, 40 for
+        an LMT battery, 33 for an industrial one — and it could not previously be
         previewed anywhere: it is reachable only from a stored passport, and the only
         dry-run the API offered takes an unsaved request body.
       required:
@@ -8839,7 +9063,8 @@ components:
           description: |
             The correction, in the same shape the draft-update body takes: only the
             patchable content fields (`productName`, `co2ePerUnit`,
-            `repairabilityScore`, `productGroupData`, `componentRefs`) take effect.
+            `repairabilityScore`, `productGroupData`, `componentRefs`, `personalData`) take
+            effect.
 
             Other keys are ignored rather than refused, so a client that sends a full
             create-shaped body still works and still cannot make a create-time field

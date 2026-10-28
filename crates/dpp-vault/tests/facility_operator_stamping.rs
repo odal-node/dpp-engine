@@ -54,7 +54,7 @@ async fn api_created_facility_and_operator_id_are_stamped_on_create() {
     // 3. Create a battery passport WITHOUT supplying facility/operator identifiers.
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
-        "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+        "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
         "productGroupData": {
             "productGroup": "battery",
             "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },

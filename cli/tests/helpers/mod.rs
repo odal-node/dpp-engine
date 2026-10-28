@@ -124,13 +124,23 @@ pub fn signed_snapshot(
         "asOf": rfc3339(as_of),
         "validUntil": rfc3339(valid_until),
     });
-    let proof = dpp_crypto::jws::sign(&store, "root", &document).expect("sign snapshot");
-    document["snapshotJwsSignature"] = serde_json::Value::String(proof);
+    // The node signs under the absolute DID URL of the key's verification method.
+    let thumbprint = store
+        .public_key("root")
+        .expect("key present")
+        .thumbprint_uri()
+        .expect("thumbprint");
+    let kid = format!(
+        "{}#{thumbprint}",
+        dpp_vc::did_for("snapshot-test.example.com")
+    );
+    let proof = dpp_crypto::jws::sign(&store, "root", &document, &kid).expect("sign snapshot");
+    document["snapshotJwsSignature"] = serde_json::Value::String(proof.clone());
 
     let did_document = dpp_vc::build_did_document(&store, "snapshot-test.example.com", "root")
         .expect("build did document");
-    let key_b64 = dpp_crypto::jws::extract_primary_public_key(&did_document)
-        .expect("did document carries a primary key");
+    let key_b64 = dpp_crypto::jws::resolve_verification_key(&did_document, &proof)
+        .expect("did document carries the signing key");
 
     SnapshotFixture {
         _dir: dir,
@@ -179,7 +189,7 @@ pub fn static_server(routes: Vec<(String, String)>) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Start a server that answers every request with one RFC 7807 problem body.
+/// Start a server that answers every request with one RFC 9457 problem body.
 ///
 /// Returns its origin. This is what lets the error-rendering suite stay in the
 /// default test lane: the behaviour under test is how the CLI renders a problem

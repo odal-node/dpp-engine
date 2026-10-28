@@ -53,7 +53,6 @@ use dpp_vault::domain::service::{declared_eol, published_views, stamp_publish_ob
 use dpp_vault::domain::verify::{acceptance_payload, verify_dossier_json};
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 const PID: &str = "0199a3c2-7b10-7e4a-9c3d-2f1e8b6a5d40";
 const TRANSFER_ID: &str = "0199a3c2-7b10-7e4a-9c3d-0000000000aa";
@@ -78,9 +77,13 @@ fn party(did: &str, seed: u8) -> Party {
     let public_key = key.verifying_key().to_bytes();
     Party {
         did: did.into(),
-        // The fingerprint `dpp-crypto`'s key store records, and the verifier
-        // matches the JWS `kid` against.
-        kid: hex::encode(Sha256::digest(public_key)),
+        // The absolute URL of the verification method, which is both the `kid`
+        // a signature names its key by and the `id` the DID document gives it:
+        // the DID, and the key's own RFC 7638 thumbprint in RFC 9278 URI form.
+        kid: format!(
+            "{did}#{}",
+            KeyAlgorithm::Ed25519.thumbprint_uri(&public_key)
+        ),
         public_key,
         key,
     }
@@ -88,15 +91,16 @@ fn party(did: &str, seed: u8) -> Party {
 
 fn did_doc(p: &Party) -> Value {
     json!({
-        "@context": ["https://www.w3.org/ns/did/v1"],
+        "@context": ["https://www.w3.org/ns/did/v1", "https://www.w3.org/ns/cid/v1"],
         "id": p.did,
         "verificationMethod": [{
-            "id": format!("{}#key-1", p.did),
-            "type": "JsonWebKey2020",
+            "id": p.kid,
+            "type": "JsonWebKey",
             "controller": p.did,
-            "publicKeyJwk": KeyAlgorithm::Ed25519.public_key_jwk(&p.public_key),
+            "publicKeyJwk": KeyAlgorithm::Ed25519.published_jwk(&p.public_key),
         }],
-        "assertionMethod": [format!("{}#key-1", p.did)],
+        "authentication": [p.kid],
+        "assertionMethod": [p.kid],
     })
 }
 
@@ -293,12 +297,7 @@ fn demo_passport() -> Passport {
             "originalPowerCapabilityW": 960.0,
             "powerLimitMinW": 20.0,
             "powerLimitMaxW": 1500.0,
-            "co2ePerUnitKg": 86.4,
             "renewableContentPct": 14.0,
-            "recycledContentCobaltPct": 12.0,
-            "recycledContentLithiumPct": 6.0,
-            "recycledContentNickelPct": 8.0,
-            "recycledContentLeadPct": 0.0,
             "expectedLifetimeCycles": 1200,
             "expectedLifetimeReferenceTest": "EN 50604-1:2016, 25 degC, 100% DoD",
             "initialRoundTripEfficiencyPct": 95.0,
@@ -365,7 +364,7 @@ fn demo_passport() -> Passport {
         "commodityCode": "85076000",
         // The battery schema this build publishes against. `demo_dossiers_verify`
         // validates the passport's product group data against it, strictly.
-        "schemaVersion": "2.7.0",
+        "schemaVersion": "2.8.0",
     }))
     .expect("demo passport");
 

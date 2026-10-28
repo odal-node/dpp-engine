@@ -116,10 +116,17 @@ impl IdentityPort for IdentityHttpClient {
         let canonical = dpp_crypto::jws::canonicalize(payload)
             .map_err(|e| DppError::Signing(format!("canonicalising payload: {e}")))?;
         let payload_hash = hex::encode(Sha256::digest(&canonical));
-        let issuer_did = format!(
-            "did:web:identity.odal-node.io:operators:{}",
-            self.operator_id
-        );
+        // The issuer is the DID the identity service signed under, read off the
+        // token's `kid`: the signing key's absolute DID URL, which that service
+        // builds from its own `DID_WEB_BASE_URL` with `dpp_vc::did_for`, as the
+        // in-process path does. The issuer is then the DID whose document holds
+        // the key, and this binary has no DID setting of its own to drift from it.
+        let issuer_did = dpp_crypto::jws::extract_kid_from_jws(&jws)
+            .and_then(|kid| kid.split_once('#').map(|(did, _)| did.to_owned()))
+            .filter(|did| did.starts_with("did:"))
+            .ok_or_else(|| {
+                DppError::Signing("identity service's JWS names no issuer DID".into())
+            })?;
         let credential = PassportCredential::new(
             issuer_did.clone(),
             PassportCredentialSubject {
@@ -212,8 +219,11 @@ mod tests {
 
     struct MockIdentity {
         store: dpp_crypto::keystore::KeyStore,
+        did_web_base_url: String,
     }
 
+    /// Mirrors `dpp-identity`'s real `/internal/sign`: the `kid` is the absolute
+    /// DID URL of the signing key, under the DID its `DID_WEB_BASE_URL` gives.
     async fn sign(
         State(mock): State<Arc<MockIdentity>>,
         body: axum::Json<serde_json::Value>,
@@ -223,7 +233,16 @@ mod tests {
             .decode(payload_b64)
             .unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).unwrap();
-        let jws = dpp_crypto::jws::sign(&mock.store, "root", &payload).unwrap();
+        let kid = format!(
+            "{}#{}",
+            dpp_vc::did_for(&mock.did_web_base_url),
+            mock.store
+                .public_key("root")
+                .unwrap()
+                .thumbprint_uri()
+                .unwrap()
+        );
+        let jws = dpp_crypto::jws::sign(&mock.store, "root", &payload, &kid).unwrap();
         (
             StatusCode::OK,
             Json(serde_json::json!({"jws_signature": jws})),
@@ -249,14 +268,17 @@ mod tests {
         (StatusCode::OK, Json(serde_json::json!({"valid": valid}))).into_response()
     }
 
-    async fn spawn_identity_mock() -> String {
+    async fn spawn_identity_mock(did_web_base_url: &str) -> String {
         let path = std::env::temp_dir().join(format!(
             "identity-client-test-{}.json",
             uuid::Uuid::now_v7()
         ));
         let store = dpp_crypto::keystore::KeyStore::open(path, "test").expect("open store");
         store.generate_key("root").expect("provision key");
-        let mock = Arc::new(MockIdentity { store });
+        let mock = Arc::new(MockIdentity {
+            store,
+            did_web_base_url: did_web_base_url.to_owned(),
+        });
         let app = Router::new()
             .route("/internal/sign", post(sign))
             .route("/internal/verify", post(verify))
@@ -275,7 +297,7 @@ mod tests {
     /// just because the payload doesn't happen to have that shape.
     #[tokio::test]
     async fn sign_passport_succeeds_for_a_non_credential_shaped_payload() {
-        let base_url = spawn_identity_mock().await;
+        let base_url = spawn_identity_mock("https://identity.example").await;
         let client = IdentityHttpClient::new(base_url);
         let passport_id = PassportId::new();
 
@@ -312,7 +334,7 @@ mod tests {
     /// a signature this same client produced moments earlier.
     #[tokio::test]
     async fn a_freshly_signed_payload_verifies_true() {
-        let base_url = spawn_identity_mock().await;
+        let base_url = spawn_identity_mock("https://identity.example").await;
         let client = IdentityHttpClient::new(base_url);
         let payload = serde_json::json!({"transferId": "abc-123"});
 
@@ -332,7 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_signature_over_different_content_fails_verification() {
-        let base_url = spawn_identity_mock().await;
+        let base_url = spawn_identity_mock("https://identity.example").await;
         let client = IdentityHttpClient::new(base_url);
 
         let signed = client
@@ -351,5 +373,25 @@ mod tests {
                 .expect("verify_signature must not error"),
             "a signature over different content must not verify"
         );
+    }
+
+    /// The credential's issuer is the DID the operator's identity service signs
+    /// under, whatever host that is. A verifier resolves the issuer to find the
+    /// signing key, so any other DID names a document that does not hold it.
+    #[tokio::test]
+    async fn the_wrapped_credential_names_the_operators_own_did() {
+        let base_url = spawn_identity_mock("https://passports.acme.example").await;
+        let client = IdentityHttpClient::new(base_url);
+
+        let signed = client
+            .sign_passport(
+                PassportId::new(),
+                &serde_json::json!({"transferId": "abc-123"}),
+            )
+            .await
+            .expect("sign");
+
+        assert_eq!(signed.issuer_did, "did:web:passports.acme.example");
+        assert_eq!(signed.credential.issuer, signed.issuer_did);
     }
 }

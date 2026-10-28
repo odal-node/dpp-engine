@@ -106,6 +106,8 @@ components:
       $ref: components/schemas/passport/SecondLifeOperation.yaml
     DerivationRef:
       $ref: components/schemas/passport/DerivationRef.yaml
+    PersonalDataStatement:
+      $ref: components/schemas/passport/PersonalDataStatement.yaml
     LifeStatus:
       $ref: components/schemas/passport/LifeStatus.yaml
     CarbonFootprint:
@@ -152,6 +154,8 @@ components:
       $ref: components/schemas/passport-requests/TransferReason.yaml
     PassportListResponse:
       $ref: components/schemas/passport-reports/PassportListResponse.yaml
+    PersonalDataErasureReceipt:
+      $ref: components/schemas/passport-reports/PersonalDataErasureReceipt.yaml
     ValidateResponse:
       $ref: components/schemas/passport-reports/ValidateResponse.yaml
     PassportAuditEntry:
@@ -413,6 +417,8 @@ paths:
     $ref: paths/vault/vault_api_v1_api-keys_{id}.yaml
   /vault/api/v1/credentials:
     $ref: paths/vault/vault_api_v1_credentials.yaml
+  /vault/api/v1/personal-data/{record}:
+    $ref: paths/vault/vault_api_v1_personal-data_{record}.yaml
   /vault/api/v1/unsold-goods:
     $ref: paths/vault/vault_api_v1_unsold-goods.yaml
   /vault/api/v1/webhooks:
@@ -455,6 +461,8 @@ paths:
     $ref: paths/integrator/integrator_api_v1_imports_{job_id}.yaml
   /identity/.well-known/did.json:
     $ref: paths/identity/identity_.well-known_did.json.yaml
+  /.well-known/did.json:
+    $ref: paths/identity/well-known_did.json.yaml
   /internal/sign:
     $ref: paths/identity/internal_sign.yaml
   /internal/verify:
@@ -530,6 +538,10 @@ tags:
     description: API key management — create, list, revoke.
   - name: Webhooks
     description: Signed outbound event delivery — subscribe, list, remove, test.
+  - name: Personal Data
+    description: >-
+      Erasing the records a passport's `personalData` statements name. A record
+      is held outside the passport so it can be erased, and no route reads one.
   - name: Plugins
     description: >-
       Signed product-group plugin hot-install — verify, persist, hot-swap
@@ -561,9 +573,10 @@ tags:
   - name: Identity
     description: >-
       Public did:web identity — DID document, health, readiness. On the fused
-      node these are served under `/identity/*`. The standalone identity service
-      (:8002) serves them at the root — `/health`, `/ready`,
-      `/.well-known/did.json`.
+      node these are served under `/identity/*`, and the DID document also at
+      the root, `/.well-known/did.json`, where the did:web method resolves the
+      node's DID. The standalone identity service (:8002) serves them at the
+      root — `/health`, `/ready`, `/.well-known/did.json`.
   - name: Identity (internal)
     description: >-
       mTLS service-to-service signing/rotation. **Not exposed by the fused

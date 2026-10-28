@@ -9,9 +9,11 @@
 //! Chosen over an embedded W3C Data Integrity `proof` member for four reasons,
 //! recorded here because it is a wire-format decision that binds every issuer:
 //!
-//! 1. It reuses the verification path this workspace already has —
-//!    [`extract_kid_from_jws`] → issuer DID document → [`extract_key_by_fingerprint`]
-//!    → [`verify_jws`], with EdDSA pinned and `alg:none` rejected.
+//! 1. It reuses the verification path core already has —
+//!    [`authenticate_access_credential`]: the `kid` names a verification method
+//!    in the issuer's DID document, the signature is checked against that key
+//!    with EdDSA pinned and `alg:none` rejected, and the token must be typed
+//!    `vc+jwt` so another signature of the same key cannot pass for a credential.
 //! 2. One canonicalisation scheme (JCS) rather than two. A second signing scheme
 //!    would be a permanent review burden on the most security-sensitive code here.
 //! 3. Header-safe by construction: base64url, no escaping.
@@ -41,11 +43,11 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use dpp_common::http_problem;
-use dpp_crypto::jws::verifier::{
-    extract_key_by_fingerprint, extract_kid_from_jws, extract_primary_public_key, verify_jws,
-};
 use dpp_domain::Audience;
-use dpp_vc::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
+use dpp_vc::{
+    DppAccessCredential, StatusList, TrustedIssuerRegistry,
+    credential::authenticate_access_credential,
+};
 
 /// The header a caller presents an access credential in.
 pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
@@ -99,66 +101,64 @@ impl VerifiedCredential {
     /// The Art. 77(2) audience this credential grants **before** it is scoped to
     /// a particular passport.
     ///
-    /// Prefer [`Self::audience_for_product_group`] at a read site: a credential issued
-    /// for one product group must not elevate a reader on another, and this method
-    /// cannot know which passport is being read.
+    /// Prefer [`Self::audience_for`] at a read site: a credential issued for one
+    /// product group or category must not elevate a reader on another, and this
+    /// method cannot know which passport is being read.
     #[must_use]
     pub fn audience(&self) -> Audience {
         self.0.credential_subject.role.audience()
     }
 
-    /// The audience this credential grants **over a passport in `product_group_key`**.
+    /// The audience this credential grants **over a passport in
+    /// `product_group_key` whose data states `passport_category`**.
     ///
-    /// A credential naming product groups grants nothing extra outside them, so an
-    /// out-of-scope credential resolves to [`Audience::Public`] rather than an
-    /// error: it is a valid credential that simply does not cover this product,
-    /// and public access is the baseline every caller already has. Denying
-    /// instead would also make the route a probe for which product group a passport is
-    /// in.
+    /// A credential naming product groups or product categories grants nothing
+    /// extra outside them, so an out-of-scope credential resolves to
+    /// [`Audience::Public`] rather than an error: it is a valid credential that
+    /// simply does not cover this product, and public access is the baseline
+    /// every caller already has. Denying instead would also make the route a
+    /// probe for which product group or category a passport is in.
     ///
-    /// The scope rule itself is core's — an empty `product_groups` list means unscoped,
-    /// a populated one must contain the product group — applied by re-running the pure
-    /// claims check with the product group now known. Nothing here re-implements it,
-    /// and nothing here touches the network: authentication, issuer trust and
-    /// revocation were all settled in [`read_and_verify`] before the database
-    /// was reached.
+    /// The scope rule itself is core's — an empty list means unscoped on that
+    /// axis, a populated one must contain the passport's value — applied by
+    /// re-running the pure claims check with both values now known. Nothing
+    /// here re-implements it, and nothing here touches the network:
+    /// authentication, issuer trust and revocation were all settled in
+    /// [`read_and_verify`] before the database was reached.
     ///
-    /// ## A product-category scope this node cannot evaluate grants nothing
+    /// ## A category the passport cannot state does not satisfy a category scope
     ///
-    /// `credential_subject` may carry free-string `product_categories`. There
-    /// is nothing to match them against: a passport has no product category.
-    /// The field that once held one was renamed `product_group` because it was
-    /// misnamed, and category is now a per-product group concept with a different
-    /// shape in each — a device type here, a plain string there, an Art. 8
-    /// scope bucket elsewhere that is explicitly not the passport's category.
+    /// `passport_category` is the passport's own
+    /// [`dpp_domain::product_group::ProductGroupData::product_category`]: the
+    /// group's category axis where its act defines one (a battery's
+    /// `batteryType`, an electronics `DeviceType`, …), and `None` for a group
+    /// with no such axis or a payload this build cannot interpret.
     ///
-    /// So this axis is not scoped, and the consequence used to be inverted:
-    /// passing `None` for the required category meant an issuer who narrowed a
-    /// credential to one category got a credential valid over **every** product
-    /// in its product groups. The restriction was read as its opposite.
-    ///
-    /// A restriction that cannot be evaluated is treated as unsatisfied, never
-    /// as satisfied: a credential naming any product category resolves to
-    /// [`Audience::Public`] here. That is the same downgrade an out-of-product group
-    /// credential gets — it is valid, it simply unlocks nothing on this node —
-    /// and it makes the gap loud for an issuer rather than silently generous.
-    ///
-    /// Enforcing the axis properly needs a decision about what a product
-    /// category *is* across product groups, which is not this layer's to invent.
+    /// `None` here does **not** mean what it means to core. Core reads a `None`
+    /// required category as "no requirement", which is right when the caller
+    /// is not asking about category at all. Passed through for a passport that
+    /// cannot answer, it would read an issuer's narrowing as its opposite: a
+    /// credential scoped to one category would unlock every product in its
+    /// groups that states none. So a credential naming any category resolves
+    /// to [`Audience::Public`] on such a passport — the same downgrade a
+    /// category mismatch gets — decided here, before core is asked. Core still
+    /// sees a `None` when the credential names no category, where "no
+    /// requirement" is the truth.
     #[must_use]
-    pub fn audience_for_product_group(
+    pub fn audience_for(
         &self,
         product_group_key: &str,
+        passport_category: Option<&str>,
         trust: &dyn TrustedIssuerRegistry,
     ) -> Audience {
-        if !self.0.credential_subject.product_categories.is_empty() {
+        if passport_category.is_none() && !self.0.credential_subject.product_categories.is_empty() {
             return Audience::Public;
         }
 
         let scoped = dpp_vc::verify_credential_claims_with_trust(
             &self.0,
             Some(product_group_key),
-            None,
+            passport_category,
             chrono::Utc::now(),
             trust,
         );
@@ -218,28 +218,26 @@ pub async fn read_and_verify(
         return CredentialOutcome::Rejected(reject("Credential header is not valid UTF-8."));
     };
 
-    let Some(credential) = decode_payload(jws) else {
+    let Some(unverified) = decode_payload(jws) else {
         return CredentialOutcome::Rejected(reject(
             "Credential is not a compact JWS carrying a DPP access credential.",
         ));
     };
 
     // Authenticate before doing anything with the claims: until the signature
-    // verifies, `issuer` is a string the caller chose.
-    let Some(did_doc) = directory.did_document(&credential.issuer).await else {
+    // verifies, `issuer` is a string the caller chose, and it is used only to
+    // find the document the signature is checked against.
+    let Some(did_doc) = directory.did_document(&unverified.issuer).await else {
         return CredentialOutcome::Rejected(reject("Credential issuer DID could not be resolved."));
     };
-    let key = extract_kid_from_jws(jws)
-        .and_then(|kid| extract_key_by_fingerprint(&did_doc, &kid))
-        .or_else(|| extract_primary_public_key(&did_doc));
-    let Some(key) = key else {
-        return CredentialOutcome::Rejected(reject(
-            "Credential issuer DID document has no matching verification key.",
-        ));
+    // Core's reading of the token: the key its `kid` names in the issuer's
+    // document, the signature, the `vc+jwt` type that keeps another signature of
+    // the same key from passing as a credential, and the issuer the document
+    // belongs to. A token with no `kid` names no key and is refused.
+    let credential = match authenticate_access_credential(jws, &did_doc) {
+        Ok(credential) => credential,
+        Err(result) => return CredentialOutcome::Rejected(reject(rejection_detail(&result))),
     };
-    if !verify_jws(jws, &key).unwrap_or(false) {
-        return CredentialOutcome::Rejected(reject("Credential signature did not verify."));
-    }
 
     // Only now that the signature holds is it worth spending a network round
     // trip on revocation: an unsigned document's status URL is attacker chosen.
@@ -249,8 +247,8 @@ pub async fn read_and_verify(
     // fail-closed revocation policy is applied where it is defined rather than
     // re-implemented here. `required_product_group`/`required_product_category` are
     // None because this layer does not know which passport is being read; the
-    // product group scope is applied afterwards by
-    // [`VerifiedCredential::audience_for_product_group`], once the row is loaded. That
+    // product group and category scope is applied afterwards by
+    // [`VerifiedCredential::audience_for`], once the row is loaded. That
     // split is deliberate: everything that can make a credential *invalid* is
     // settled here, before the database is touched, so a bad credential gets
     // the same 401 whether or not the passport exists. Scope is not validity —
@@ -297,18 +295,26 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
         V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
         V::UntrustedIssuer { .. } => "Credential issuer is not trusted by this node.",
         V::OutOfScope { .. } => "Credential does not cover the requested product.",
-        // Not reachable from here — the signature is verified against the
-        // issuer's published key before core is called, and that failure has its
-        // own message at the call site — but mapped rather than lumped in so a
-        // future reordering cannot silently produce a misleading detail.
-        V::InvalidSignature(_) => "Credential signature did not verify.",
+        // The authentication step's refusal: no key matching the `kid`, a
+        // signature that does not verify, a token that is not typed as a
+        // credential, or an issuer other than the document's. Core's text names
+        // the `kid` and the document, which came from the caller, so one fixed
+        // sentence stands for all of them. It says which things to check, so an
+        // issuer whose tooling does not yet set the type, or names its key by a
+        // bare fingerprint, is not sent to debug a signature that is sound. It
+        // opens with the sentence this refusal has always said.
+        V::InvalidSignature(_) => {
+            "Credential signature did not verify. Check that its `kid` names a method in the \
+             issuer's DID document, that it is typed `typ: vc+jwt` with `cty: vc`, and that its \
+             issuer is the document's."
+        }
         // `Valid` is unreachable — the caller checks `is_valid()` first — and
         // `MalformedCredential` carries text derived from the credential.
         V::MalformedCredential(_) | V::Valid { .. } => "Credential is not valid.",
     }
 }
 
-/// RFC 7807 rejection. 401 rather than 400: the request is well-formed HTTP; it
+/// RFC 9457 rejection. 401 rather than 400: the request is well-formed HTTP; it
 /// is the credential that failed, and the client's remedy is a different one.
 ///
 /// Details come from [`rejection_detail`] or are fixed strings at the call site;
@@ -341,9 +347,21 @@ mod tests {
         base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     /// Mint a compact JWS over the JCS-canonical credential, exactly as
-    /// `dpp_crypto::jws::sign` does — header `{alg,kid}`, JCS payload, EdDSA.
+    /// `dpp_vc::credential::sign_access_credential` does: the `kid` is the
+    /// absolute URL of the issuer's verification method, the token is typed as
+    /// a VC-JWT (`typ: vc+jwt`, `cty: vc`), the payload is JCS, the algorithm
+    /// EdDSA.
     fn sign_credential(key: &SigningKey, kid: &str, cred: &DppAccessCredential) -> String {
-        let header = B64.encode(format!(r#"{{"alg":"EdDSA","kid":"{kid}"}}"#).as_bytes());
+        sign_with_header(
+            key,
+            &format!(r#"{{"alg":"EdDSA","cty":"vc","kid":"{ISSUER}#{kid}","typ":"vc+jwt"}}"#),
+            cred,
+        )
+    }
+
+    /// The same, under whatever protected header the caller states.
+    fn sign_with_header(key: &SigningKey, header_json: &str, cred: &DppAccessCredential) -> String {
+        let header = B64.encode(header_json.as_bytes());
         let value = serde_json::to_value(cred).expect("to value");
         let canonical = dpp_crypto::jws::canonicalize(&value).expect("canonicalize");
         let payload = B64.encode(&canonical);
@@ -487,6 +505,51 @@ mod tests {
         assert!(matches!(out, CredentialOutcome::Rejected(_)));
     }
 
+    /// 🚨 A signature by the issuer's key is authentic whatever it signs, so a
+    /// passport proof or an SD-JWT VC from the same key could otherwise be
+    /// offered as a credential. The type is what says this token is one.
+    #[tokio::test]
+    async fn the_issuers_signature_over_a_credential_shaped_payload_must_be_typed_as_one() {
+        let (key, kid) = key_and_kid();
+        let cred = credential(CredentialRole::Recycler, 30);
+        let directory = Directory::with(Some(did_doc(&key, &kid)));
+
+        for header in [
+            // No type at all, as a passport proof is signed.
+            format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}"}}"#),
+            // The type of another credential format.
+            format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}","typ":"dc+sd-jwt"}}"#),
+            // The right type with the wrong content type.
+            format!(r#"{{"alg":"EdDSA","cty":"other","kid":"{ISSUER}#{kid}","typ":"vc+jwt"}}"#),
+        ] {
+            let jws = sign_with_header(&key, &header, &cred);
+            let out = read_and_verify(&headers_with(Some(&jws)), &directory, &trusting()).await;
+            assert!(
+                matches!(out, CredentialOutcome::Rejected(_)),
+                "{header} must not pass for a credential"
+            );
+        }
+    }
+
+    /// A token that names no key is not checked against the one the document
+    /// happens to publish.
+    #[tokio::test]
+    async fn a_credential_that_names_no_key_is_refused() {
+        let (key, kid) = key_and_kid();
+        let jws = sign_with_header(
+            &key,
+            r#"{"alg":"EdDSA","cty":"vc","typ":"vc+jwt"}"#,
+            &credential(CredentialRole::Recycler, 30),
+        );
+        let out = read_and_verify(
+            &headers_with(Some(&jws)),
+            &Directory::with(Some(did_doc(&key, &kid))),
+            &trusting(),
+        )
+        .await;
+        assert!(matches!(out, CredentialOutcome::Rejected(_)));
+    }
+
     #[tokio::test]
     async fn an_unresolvable_issuer_fails_closed() {
         let (key, kid) = key_and_kid();
@@ -592,6 +655,7 @@ mod tests {
         cred.credential_status = Some(dpp_vc::CredentialStatus {
             id: "https://issuer.example/status#4".to_owned(),
             status_type: "BitstringStatusListEntry".to_owned(),
+            status_purpose: "revocation".to_owned(),
             status_list_index: Some("4".to_owned()),
             status_list_credential: Some("https://issuer.example/status".to_owned()),
         });
@@ -633,12 +697,12 @@ mod tests {
             panic!("the credential itself is valid");
         };
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
+            c.audience_for("battery", Some("ev"), &trusting()),
             Audience::LegitimateInterest,
             "in scope: the credential names battery"
         );
         assert_eq!(
-            c.audience_for_product_group("textile", &trusting()),
+            c.audience_for("textile", None, &trusting()),
             Audience::Public,
             "out of scope: a battery credential must not unlock a textile passport"
         );
@@ -666,7 +730,7 @@ mod tests {
         };
         assert_eq!(c.audience(), Audience::Authority);
         assert_eq!(
-            c.audience_for_product_group("not-a-product_group", &trust),
+            c.audience_for("not-a-product_group", None, &trust),
             Audience::Public
         );
     }
@@ -691,25 +755,17 @@ mod tests {
             panic!("valid credential");
         };
         assert_eq!(
-            c.audience_for_product_group("textile", &trusting()),
+            c.audience_for("textile", None, &trusting()),
             Audience::LegitimateInterest
         );
     }
 
-    /// A credential naming a product category unlocks nothing, even where its
-    /// product group matches.
-    ///
-    /// There is nothing on a passport to match the category against, so the
-    /// restriction cannot be evaluated. Before this, the unevaluated axis was
-    /// passed as "no requirement" and the credential kept its full audience —
-    /// an issuer's narrowing read as its opposite. Failing closed is the only
-    /// direction that cannot over-grant.
-    #[tokio::test]
-    async fn a_product_category_scope_grants_nothing() {
+    /// Sign `cred`, run it through the real verification path, and return the
+    /// grant. A credential carrying a category list must still verify: scope
+    /// is not validity, and only [`VerifiedCredential::audience_for`] reads it.
+    async fn verified(cred: &DppAccessCredential) -> VerifiedCredential {
         let (key, kid) = key_and_kid();
-        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
-        cred.credential_subject.product_categories = vec!["smartphone".into()];
-        let jws = sign_credential(&key, &kid, &cred);
+        let jws = sign_credential(&key, &kid, cred);
         let out = read_and_verify(
             &headers_with(Some(&jws)),
             &Directory::with(Some(did_doc(&key, &kid))),
@@ -719,37 +775,91 @@ mod tests {
         let CredentialOutcome::Verified(c) = out else {
             panic!("the credential itself is valid");
         };
+        *c
+    }
 
-        // The credential is genuinely valid and its role is elevated …
-        assert_eq!(c.audience(), Audience::LegitimateInterest);
-        // … and it still unlocks nothing, in its own product group.
+    /// A credential narrowed to a category keeps its audience on a passport
+    /// that states that category — and only within its product groups, since
+    /// both axes must hold.
+    #[tokio::test]
+    async fn a_credential_naming_the_passports_category_keeps_its_audience() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
+            c.audience_for("battery", Some("ev"), &trusting()),
+            Audience::LegitimateInterest,
+            "in scope on both axes"
+        );
+        assert_eq!(
+            c.audience_for("electronics", Some("ev"), &trusting()),
             Audience::Public,
-            "an unevaluable restriction must not be read as no restriction"
+            "a matching category does not stand in for a matching product group"
         );
     }
 
-    /// The common case must stay unaffected: no product category named means no
-    /// restriction claimed, and product group scope alone decides.
+    /// A credential narrowed to EV batteries grants nothing extra on an LMT
+    /// battery. It stays valid, so the answer is a downgrade and not a 401.
     #[tokio::test]
-    async fn an_empty_product_category_list_changes_nothing() {
-        let (key, kid) = key_and_kid();
+    async fn a_credential_naming_another_category_grants_only_public() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
+        assert_eq!(c.audience(), Audience::LegitimateInterest);
+        assert_eq!(
+            c.audience_for("battery", Some("lmt"), &trusting()),
+            Audience::Public
+        );
+    }
+
+    /// No category named means no restriction claimed on that axis, whatever
+    /// the passport states — including nothing — and product group scope alone
+    /// decides.
+    #[tokio::test]
+    async fn an_empty_category_list_is_unscoped_on_that_axis() {
         let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
         cred.credential_subject.product_categories = Vec::new();
-        let jws = sign_credential(&key, &kid, &cred);
-        let out = read_and_verify(
-            &headers_with(Some(&jws)),
-            &Directory::with(Some(did_doc(&key, &kid))),
-            &trusting(),
-        )
-        .await;
-        let CredentialOutcome::Verified(c) = out else {
-            panic!("valid credential");
-        };
+        let c = verified(&cred).await;
+
+        for passport_category in [Some("ev"), Some("lmt"), None] {
+            assert_eq!(
+                c.audience_for("battery", passport_category, &trusting()),
+                Audience::LegitimateInterest,
+                "passport category {passport_category:?}"
+            );
+        }
+    }
+
+    /// A passport whose group has no category axis cannot satisfy a credential
+    /// narrowed to one. Core reads a `None` category as "no requirement", so
+    /// handing it the passport's `None` would grant a textile-scoped,
+    /// category-narrowed credential its full audience over every textile
+    /// passport — the restriction read as its opposite. It must land where a
+    /// mismatch lands, not where an unscoped credential does.
+    #[tokio::test]
+    async fn a_passport_stating_no_category_is_treated_as_a_mismatch() {
+        let mut narrowed = credential(CredentialRole::AuthorisedRepairer, 30);
+        narrowed.credential_subject.product_groups = vec!["textile".into()];
+        narrowed.credential_subject.product_categories = vec!["apparel".into()];
+        let narrowed = verified(&narrowed).await;
+
+        let mut unscoped = credential(CredentialRole::AuthorisedRepairer, 30);
+        unscoped.credential_subject.product_groups = vec!["textile".into()];
+        let unscoped = verified(&unscoped).await;
+
+        let cannot_answer = narrowed.audience_for("textile", None, &trusting());
+        assert_eq!(cannot_answer, Audience::Public);
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
-            Audience::LegitimateInterest
+            cannot_answer,
+            narrowed.audience_for("textile", Some("footwear"), &trusting()),
+            "same outcome as a category mismatch"
+        );
+        assert_ne!(
+            cannot_answer,
+            unscoped.audience_for("textile", None, &trusting()),
+            "not the outcome of a credential that names no category"
         );
     }
 

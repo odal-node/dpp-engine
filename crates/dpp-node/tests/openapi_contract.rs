@@ -274,6 +274,14 @@ const UNCHECKED: &[(&str, &str)] = &[
         "a bare `type: string, format: uuid`, not an object with properties",
     ),
     (
+        "PersonalDataStatement",
+        "an internally-tagged `oneOf` (`held`) of two objects, one of which \
+         carries a closed set of lawful bases — neither checker expresses a \
+         union, the same limit `DeactivationReason` runs into. The wire form of \
+         each variant is pinned instead by \
+         `every_personal_data_statement_serialises_as_documented`",
+    ),
+    (
         "DidDocument",
         "a W3C DID document passed through as opaque JSON; the node does not \
          model it as a struct and must not, since it round-trips documents it \
@@ -514,6 +522,10 @@ fn object_cases() -> Vec<ObjectCase> {
     // ── dpp-vault: request and response bodies ────────────────────────────
     case!("CreatePassportRequest", fixtures::create_request());
     case!("ValidateResponse", fixtures::validate_response());
+    case!(
+        "PersonalDataErasureReceipt",
+        fixtures::personal_data_erasure_receipt()
+    );
     case!("PassportListResponse", fixtures::passport_list_response());
     case!("WhoamiResponse", fixtures::whoami_response());
     case!("PassportScanStats", fixtures::passport_scan_stats());
@@ -849,7 +861,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.21.0";
+const CORE_VERSION_VERIFIED: &str = "0.22.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -869,6 +881,7 @@ const UNENUMERABLE_CORE_ENUMS: &[&str] = &[
     "RecordedBasis",
     "InstrumentStatus",
     "RegulatoryStatus",
+    "LawfulBasis",
 ];
 
 /// A `dpp-core` repin must not pass silently.
@@ -1147,6 +1160,82 @@ fn deactivation_reason_documents_every_kind() {
         joined(&documented),
         joined(&emitted)
     );
+}
+
+/// `PersonalDataStatement` is `UNCHECKED` above: it is an internally-tagged union,
+/// which neither checker expresses. This pins what they could not: the `held`
+/// value of each variant, the fields each emits, and the closed set of lawful
+/// bases the `outside` variant may name.
+#[test]
+fn every_personal_data_statement_serialises_as_documented() {
+    use dpp_domain::{HeldOutside, LawfulBasis, PersonalDataRecordId, PersonalDataStatement};
+
+    let spec = spec();
+    let arms = schemas(&spec)["PersonalDataStatement"]["oneOf"]
+        .as_array()
+        .expect("PersonalDataStatement is not a oneOf");
+    let arm_for = |held: &str| {
+        arms.iter()
+            .find(|arm| arm["properties"]["held"]["enum"][0].as_str() == Some(held))
+            .unwrap_or_else(|| panic!("no oneOf arm documents `held: {held}`"))
+    };
+    let keys = |arm: &Value| -> BTreeSet<String> {
+        arm["properties"]
+            .as_object()
+            .expect("an arm documents properties")
+            .keys()
+            .cloned()
+            .collect()
+    };
+
+    let nothing = serde_json::to_value(PersonalDataStatement::NothingHeld).unwrap();
+    assert_eq!(
+        nothing
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        keys(arm_for("nothing")),
+        "the `nothing` arm documents exactly what is emitted: {nothing}"
+    );
+
+    // The bases are listed by hand, as the other enums are: see the tripwire.
+    let bases = [
+        LawfulBasis::Consent,
+        LawfulBasis::Contract,
+        LawfulBasis::LegalObligation,
+        LawfulBasis::VitalInterests,
+        LawfulBasis::PublicTask,
+        LawfulBasis::LegitimateInterests,
+    ];
+    let mut emitted_bases = BTreeSet::new();
+    let outside_arm = arm_for("outside");
+    for basis in bases {
+        let outside = serde_json::to_value(PersonalDataStatement::HeldOutside(HeldOutside::new(
+            basis,
+            PersonalDataRecordId::new("record-1"),
+        )))
+        .unwrap();
+        assert_eq!(
+            outside
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            keys(outside_arm),
+            "the `outside` arm documents exactly what is emitted: {outside}"
+        );
+        emitted_bases.insert(outside["lawfulBasis"].as_str().unwrap().to_owned());
+    }
+    let documented_bases: BTreeSet<String> = outside_arm["properties"]["lawfulBasis"]["enum"]
+        .as_array()
+        .expect("lawfulBasis documents its values")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(documented_bases, emitted_bases, "lawful bases disagree");
 }
 
 /// `RevocationStanding` is `UNCHECKED` above: its variants carry three different
@@ -2278,6 +2367,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/list.rs"),
         include_str!("../../dpp-vault/src/handlers/node_state.rs"),
         include_str!("../../dpp-vault/src/handlers/operator.rs"),
+        include_str!("../../dpp-vault/src/handlers/personal_data.rs"),
         include_str!("../../dpp-vault/src/handlers/plugins.rs"),
         include_str!("../../dpp-vault/src/handlers/public_read.rs"),
         include_str!("../../dpp-vault/src/handlers/public_read_by_gtin.rs"),
@@ -2340,8 +2430,17 @@ const CODE_TOKENS: &[(&str, u64)] = &[
     ("validation_error(", 422),
     ("require_write(", 403),
     ("require_admin(", 403),
+    // The same refusal, reached as an extractor rather than a call. A scope
+    // gate in the signature runs before the body extractor, which is why the
+    // routes that take a body moved to this form — but the tokens above cannot
+    // see a type, so those routes stopped reporting `403` here the moment they
+    // converted. Nothing went red: this gate only fails on a code a handler
+    // emits and the spec omits, so the missing direction is silent. The scan
+    // starts at `fn <name>(`, so it reads the signature these sit in.
+    ("RequireWrite", 403),
+    ("RequireAdmin", 403),
     ("parse_passport_id(", 400),
-    // `dpp-common::http_problem`, the RFC 7807 constructors the integrator and
+    // `dpp-common::http_problem`, the RFC 9457 constructors the integrator and
     // resolver reach for directly.
     ("http_problem::not_found(", 404),
     ("http_problem::bad_request(", 400),
@@ -2773,6 +2872,7 @@ mod fixtures {
             info::VaultInfo,
             list::PassportListResponse,
             node_state::NodeState,
+            personal_data::PersonalDataErasureReceipt,
             registry_status::{
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
                 RegistryRollupView, RegistryVerificationView, TransferNotificationCounts,
@@ -3119,6 +3219,13 @@ mod fixtures {
             derived_from: vec![derivation_ref()],
             component_refs: vec![component_ref()],
             life_status: Some(LifeStatus::Repurposed),
+            // Populated, for the same rule as the fields around it: an empty map
+            // emits no key, and the schema check would pass without ever
+            // comparing the field.
+            personal_data: std::collections::BTreeMap::from([(
+                "usageHistory.negativeEvents".to_owned(),
+                dpp_domain::PersonalDataStatement::NothingHeld,
+            )]),
             retention_until: Some(ts()),
             product_id: Some(uuid()),
             commodity_code: Some(CommodityCode::parse("85076000").expect("valid CN-8")),
@@ -3551,6 +3658,13 @@ mod fixtures {
             // value against `LifeStatus.yaml`. `Repurposed` also matches the
             // derivation edge beside it, so the fixture is internally coherent.
             life_status: Some(dpp_domain::passport::LifeStatus::Repurposed),
+            // Populated, for the same rule as the fields around it: an empty map
+            // emits no key, and the schema check would pass without ever
+            // comparing the field.
+            personal_data: std::collections::BTreeMap::from([(
+                "usageHistory.negativeEvents".to_owned(),
+                dpp_domain::PersonalDataStatement::NothingHeld,
+            )]),
             // Populated, for the same rule: `None` emits no key, and the schema
             // check would pass without ever comparing the field.
             carrier_serial: Some("SN-2026-0001".into()),
@@ -3741,6 +3855,7 @@ mod fixtures {
             // Absent on purpose: this fixture exists to pin the *minimum* a create
             // body needs, and omitting the status is lawful for every product group.
             life_status: None,
+            personal_data: Default::default(),
             supersedes_id: None,
             manufacturer: manufacturer(),
             materials: None,
@@ -3755,6 +3870,15 @@ mod fixtures {
             component_refs: Vec::new(),
             // Absent on purpose, like every optional field here.
             carrier_serial: None,
+        }
+    }
+
+    pub fn personal_data_erasure_receipt() -> PersonalDataErasureReceipt {
+        PersonalDataErasureReceipt {
+            record: "0198f2c4-7a3e-7c1d-9b52-3e8f6a1d4c70".into(),
+            passport_id: uuid(),
+            field: "usageHistory.negativeEvents".into(),
+            erased_at: ts(),
         }
     }
 
@@ -4009,6 +4133,7 @@ mod fixtures {
     pub fn seal_summary_response() -> SealSummaryResponse {
         SealSummaryResponse {
             unsealed_published: 0,
+            unsealed_terminal: 0,
             pending: 2,
             sealed: 40,
             exhausted: 0,

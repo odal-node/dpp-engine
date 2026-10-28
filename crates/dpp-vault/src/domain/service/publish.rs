@@ -20,7 +20,7 @@ use dpp_types::{
     snapshot::snapshot_json_key,
 };
 
-use super::{PassportService, retention_years_for};
+use super::{PassportService, retention_deadline, retention_years_for};
 use super::{catalog, schema_registry};
 
 /// Why a publish was refused. One value per `return Err` in [`PassportService::publish`].
@@ -157,28 +157,20 @@ impl PassportService {
             ));
         }
 
-        // The label goes live here, so its serial is checked again here. Two
-        // creates that arrive together can both pass create's check, and two
-        // published holders of one label cannot be repaired afterwards. Refused,
-        // this one stays a draft, which answers no label.
+        // The label, or the identifier, goes live here, so what it claims is
+        // checked again here. Two creates that arrive together can both pass
+        // create's check, and two published holders of one label cannot be
+        // repaired afterwards. Refused, this one stays a draft, which answers no
+        // label.
         //
-        // Held until the write below, so two publishes of one label cannot both
+        // Held until the write below, so two publishes of one claim cannot both
         // ask before either has written. See `label_lock`.
         let label = super::label_lock::hold(&passport).await;
-        if super::query::carrier_serial_is_live_elsewhere(&*self.repo, &passport).await? {
-            let serial = passport.effective_carrier_serial();
+        if let Some(refusal) = super::query::held_elsewhere(&*self.repo, &passport).await? {
             return Err(reject(
                 REASON_CARRIER_TAKEN,
                 DppError::Validation(dpp_domain::ValidationErrors {
-                    errors: vec![dpp_domain::FieldError {
-                        field: "/carrierSerial".to_owned(),
-                        message: format!(
-                            "{serial:?} is already printed by another published passport under \
-                             this GTIN, and a label that names two passports resolves to \
-                             neither. This passport stays a draft; create one with another \
-                             serial, or one that names the holder in supersedesId."
-                        ),
-                    }],
+                    errors: vec![refusal],
                 }),
             ));
         }
@@ -737,8 +729,7 @@ pub fn stamp_publish_obligations(
         // by the operator before publishing.
         let published_at = passport.published_at.unwrap_or_else(Utc::now);
         let years = retention_years_for(&passport.product_group);
-        passport.retention_until =
-            Some(published_at + chrono::Duration::days(365 * i64::from(years)));
+        passport.retention_until = Some(retention_deadline(published_at, years));
     }
     passport.qr_code_url = Some(build_carrier_url(passport, resolver_base)?);
     Ok(())
@@ -862,6 +853,7 @@ mod tests {
             compliance_result: None,
             lint_result: None,
             product_group_data: None,
+            personal_data: Default::default(),
             status: PassportStatus::Draft,
             qr_code_url: None,
             jws_signature: None,
@@ -1030,6 +1022,8 @@ mod tests {
             commodity_code: None,
             backup_url: None,
             product_identifier: None,
+            batch_id: None,
+            item_serial: None,
             service_provider: None,
         }
     }

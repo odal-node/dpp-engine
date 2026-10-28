@@ -3,15 +3,15 @@
 //! types, and makes the actual REST calls via `EuRegistrySync`.
 
 use super::client::{EuRegistrySync, RetryableError};
+use super::dashboard::{TaskPage, TaskResult, report_for};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
     error::DppError,
     operator::ResponsibleOperator,
-    passport::PassportId,
     ports::registry_sync::{
-        RegistrationGranularity, RegistrationRequest, RegistryIdentifiers, RegistryRecord,
-        RegistryStatus, RegistrySyncPort, ServiceProviderRef,
+        RegistrationGranularity, RegistrationRequest, RegistryRecord, RegistryStatus,
+        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionReport,
     },
     transfer::TransferRecord,
 };
@@ -19,8 +19,9 @@ use dpp_registry::{
     EuRegistryEnvelope, EuRegistryResponse, FacilityIdentifier, Granularity,
     IDEMPOTENCY_KEY_HEADER, OperatorIdentifier, ProductIdentifier, ProductItemIdentifier,
     REGISTRATION_PATH, RegistrationLevel, RegistrationPayload, RegistrationSubmission,
-    RegistryErrorBody, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
-    ServiceProviderReference, StatusResponse, TRANSFER_PATH_TEMPLATE, TransferNotification,
+    RegistryErrorBody, RegistryStatusCode, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
+    ServiceProviderReference, StatusResponse, SubmissionOutcome, SubmissionReceipt,
+    TASK_RESULT_PATH_TEMPLATE, TASKS_PATH, TRANSFER_PATH_TEMPLATE, TransferNotification,
 };
 
 /// Map the port's service provider onto the registry's reference to one.
@@ -37,13 +38,35 @@ pub fn service_provider_reference(provider: &ServiceProviderRef) -> ServiceProvi
     }
 }
 
-/// The path beneath the base URL for one passport's status or transfer route.
+/// How many tasks one page of the dashboard list asks for.
+const TASK_PAGE_SIZE: usize = 50;
+
+/// How many pages of the dashboard list are read looking for a submission.
+pub(super) const MAX_TASK_PAGES: u32 = 20;
+
+/// The URL of one of the registry's routes beneath `base_url`, with `{id}`
+/// replaced by `id`.
 ///
-/// Both templates are core's, with `{id}` for the passport. Spelling them here
-/// as well is what let the registration path sit wrong for as long as it did:
-/// the adapter and its mock agreed with each other and with nothing else.
-fn path_for(template: &str, passport_id: PassportId) -> String {
-    template.replace("{id}", &passport_id.to_string())
+/// The templates are core's. Spelling them here as well is what let the
+/// registration path sit wrong for as long as it did: the adapter and its mock
+/// agreed with each other and with nothing else.
+///
+/// `id` is one the registry gave: a registration identifier, which its guide
+/// describes as a URI, or a task identifier. It is written as a single path
+/// segment and escaped, so a `/` in it cannot add segments to the route.
+fn url_for(base_url: &str, template: &str, id: &str) -> Result<String, DppError> {
+    let mut url = reqwest::Url::parse(base_url)
+        .map_err(|e| DppError::Internal(format!("registry base URL {base_url:?}: {e}")))?;
+    url.path_segments_mut()
+        .map_err(|()| DppError::Internal(format!("registry base URL {base_url:?} has no path")))?
+        .pop_if_empty()
+        .extend(
+            template
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .map(|segment| if segment == "{id}" { id } else { segment }),
+        );
+    Ok(url.into())
 }
 
 /// What the registry said about a refusal, worded for the operator.
@@ -55,7 +78,7 @@ fn path_for(template: &str, passport_id: PassportId) -> String {
 ///
 /// A body that is not that shape, or carries none of it, is returned as it
 /// came: reading it must never cost what the registry actually said.
-fn refusal_text(body: &str) -> String {
+pub(super) fn refusal_text(body: &str) -> String {
     let Ok(parsed) = serde_json::from_str::<RegistryErrorBody>(body) else {
         return body.to_owned();
     };
@@ -76,49 +99,26 @@ fn refusal_text(body: &str) -> String {
     }
 }
 
-impl EuRegistrySync {
-    /// A submission the registry already holds, whose verdict is outstanding.
-    ///
-    /// What a replayed idempotency key means: an earlier attempt reached the
-    /// registry and its answer never reached us. The registry acknowledges the
-    /// key and nothing else, so there is no record id to report and none is
-    /// made up — `registry_id` is empty, as the other identifiers are on a
-    /// record built from a response that did not carry them. The drain moves
-    /// the row to `submitted` and polls.
-    pub(super) fn held_by_registry() -> RegistryRecord {
-        RegistryRecord {
-            identifiers: RegistryIdentifiers {
-                product_id: String::new(),
-                operator_id: String::new(),
-                facility_id: String::new(),
-                registry_id: String::new(),
-            },
-            status: RegistryStatus::Pending,
-            registered_at: Utc::now(),
-            updated_at: Utc::now(),
-        }
+/// How a registered record stands, in the port's words.
+///
+/// `pending` and `rejected` were states of a submission, which the port reports
+/// as a [`SubmissionReport`]; a record that answers with one has a state the
+/// port has no name for, and carries it as the registry said it.
+fn record_status(code: &RegistryStatusCode) -> RegistryStatus {
+    match code {
+        RegistryStatusCode::Registered => RegistryStatus::Registered,
+        RegistryStatusCode::SuspendedByAuthority => RegistryStatus::SuspendedByAuthority,
+        RegistryStatusCode::Deactivated => RegistryStatus::Deactivated,
+        other => RegistryStatus::Unrecognised(other.wire_str().to_owned()),
     }
+}
 
+impl EuRegistrySync {
     /// Map a bridge `EuRegistryResponse` to a domain `RegistryRecord`.
     pub(super) fn response_to_record(resp: &EuRegistryResponse) -> RegistryRecord {
-        use dpp_registry::RegistryStatusCode;
-
-        let status = match resp.status {
-            RegistryStatusCode::Pending => RegistryStatus::Pending,
-            RegistryStatusCode::Registered => RegistryStatus::Registered,
-            RegistryStatusCode::Rejected => RegistryStatus::Rejected,
-            RegistryStatusCode::SuspendedByAuthority => RegistryStatus::SuspendedByAuthority,
-            RegistryStatusCode::Deactivated => RegistryStatus::Deactivated,
-        };
-
         RegistryRecord {
-            identifiers: RegistryIdentifiers {
-                product_id: resp.registry_id.clone(),
-                operator_id: String::new(), // populated from status endpoint
-                facility_id: String::new(),
-                registry_id: resp.registry_id.clone(),
-            },
-            status,
+            registration_id: resp.registry_id.clone(),
+            status: record_status(&resp.status),
             registered_at: resp.updated_at,
             updated_at: resp.updated_at,
         }
@@ -126,24 +126,9 @@ impl EuRegistrySync {
 
     /// Map a bridge `StatusResponse` to a domain `RegistryRecord`.
     pub(super) fn status_to_record(resp: &StatusResponse) -> RegistryRecord {
-        use dpp_registry::RegistryStatusCode;
-
-        let status = match resp.status {
-            RegistryStatusCode::Pending => RegistryStatus::Pending,
-            RegistryStatusCode::Registered => RegistryStatus::Registered,
-            RegistryStatusCode::Rejected => RegistryStatus::Rejected,
-            RegistryStatusCode::SuspendedByAuthority => RegistryStatus::SuspendedByAuthority,
-            RegistryStatusCode::Deactivated => RegistryStatus::Deactivated,
-        };
-
         RegistryRecord {
-            identifiers: RegistryIdentifiers {
-                product_id: String::new(),
-                operator_id: String::new(),
-                facility_id: String::new(),
-                registry_id: resp.registry_id.clone(),
-            },
-            status,
+            registration_id: resp.registry_id.clone(),
+            status: record_status(&resp.status),
             registered_at: resp.updated_at,
             updated_at: resp.updated_at,
         }
@@ -209,8 +194,9 @@ pub(super) fn operator_identifier_for(operator: &ResponsibleOperator) -> Operato
 /// Map the port's granularity and linked model onto the registry's registration
 /// level.
 ///
-/// The batch identifier is not linked here: the port carries no batch, and a
-/// linked-but-blank identifier is refused. Absence is the lawful encoding of
+/// The batch is linked when the request carries one, which core sets at batch
+/// and item level where IR (EU) 2026/1778 Art. 8(4) and 8(5) link it. A
+/// linked-but-blank identifier is refused; absence is the lawful encoding of
 /// "this product has no batch design".
 pub(super) fn level_for(request: &RegistrationRequest) -> RegistrationLevel {
     let granularity = match request.granularity {
@@ -218,24 +204,39 @@ pub(super) fn level_for(request: &RegistrationRequest) -> RegistrationLevel {
         RegistrationGranularity::Batch => Granularity::Batch,
         RegistrationGranularity::Item => Granularity::Item,
     };
-    let level = RegistrationLevel::new(granularity);
-    match &request.model_id {
-        Some(model_id) => level.with_model(model_id.clone()),
-        None => level,
+    let mut level = RegistrationLevel::new(granularity);
+    if let Some(model_id) = &request.model_id {
+        level = level.with_model(model_id.clone());
     }
+    if let Some(batch_id) = &request.batch_id {
+        level = level.with_batch(batch_id.clone());
+    }
+    level
 }
 
 /// The item identifier, which exists only at item level.
 ///
 /// A model- or batch-level registration covers every unit it groups, so naming
 /// one contradicts the level the registry validates on submission.
+///
+/// The serial is the one the passport's carrier prints. This used to be the
+/// passport's own id, which matches no label, so an item registered under it
+/// could not be found from the product. A request that reaches item level with
+/// no serial yields no item identifier and fails validation, rather than being
+/// completed with a value the product does not carry.
 pub(super) fn item_id_for(request: &RegistrationRequest) -> Option<ProductItemIdentifier> {
     match request.granularity {
-        RegistrationGranularity::Item => Some(ProductItemIdentifier {
-            scheme: "serial".into(),
-            value: request.passport_id.to_string(),
-            batch_id: None,
-        }),
+        RegistrationGranularity::Item => {
+            request
+                .item_serial
+                .as_ref()
+                .map(|serial| ProductItemIdentifier {
+                    scheme: "serial".into(),
+                    value: serial.clone(),
+                    // The batch is linked once, on the level.
+                    batch_id: None,
+                })
+        }
         RegistrationGranularity::Model | RegistrationGranularity::Batch => None,
     }
 }
@@ -271,7 +272,10 @@ pub(super) fn product_id_for(request: &RegistrationRequest) -> Result<ProductIde
 #[async_trait]
 impl RegistrySyncPort for EuRegistrySync {
     #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
-    async fn register(&self, request: RegistrationRequest) -> Result<RegistryRecord, DppError> {
+    async fn register(
+        &self,
+        request: RegistrationRequest,
+    ) -> Result<SubmissionAcknowledgement, DppError> {
         let base_url = &self.config.endpoint.base_url;
 
         let product_id = product_id_for(&request)?;
@@ -413,9 +417,10 @@ impl RegistrySyncPort for EuRegistrySync {
                                 passport_id = %passport_id,
                                 detail = %refusal_text(&body),
                                 "EU registry already holds this submission (idempotency key \
-                                 replayed) — polling for its verdict instead of resubmitting"
+                                 replayed) — not resubmitting; the correlation identifier to \
+                                 poll it by is not known"
                             );
-                            return Ok(Self::held_by_registry());
+                            return Ok(SubmissionAcknowledgement::AlreadyHeld);
                         }
                         return Err(RetryableError::Fatal(format!(
                             "registration rejected {status}: {}",
@@ -429,7 +434,7 @@ impl RegistrySyncPort for EuRegistrySync {
                     // error is safe because the retry carries the same key, which
                     // the registry answers with the replay above — whereas a
                     // retry without it would register the product twice.
-                    let eu_resp: EuRegistryResponse = resp.json().await.map_err(|e| {
+                    let receipt: SubmissionReceipt = resp.json().await.map_err(|e| {
                         RetryableError::Fatal(format!(
                             "the registry answered {status} with a body this node cannot read \
                              ({e}); the submission may have been accepted, and the retry \
@@ -438,20 +443,35 @@ impl RegistrySyncPort for EuRegistrySync {
                         ))
                     })?;
 
-                    Ok(Self::response_to_record(&eu_resp))
+                    // The acknowledgement is a handle, never a registration: the
+                    // registry rules on the submission afterwards, and only then
+                    // generates the registration identifier. One that answers
+                    // without a handle leaves nothing to poll, so it is treated
+                    // like a body that could not be read.
+                    if receipt.correlation_id.trim().is_empty() {
+                        return Err(RetryableError::Fatal(
+                            "the registry accepted the submission without a correlation \
+                             identifier; the retry carries the same Idempotency-Key so it is \
+                             recognised, not registered twice"
+                                .into(),
+                        ));
+                    }
+
+                    Ok(SubmissionAcknowledgement::Accepted {
+                        correlation_id: receipt.correlation_id,
+                    })
                 }
             })
             .await;
 
         match result {
-            Ok(record) => {
+            Ok(acknowledgement) => {
                 tracing::info!(
                     passport_id = %passport_id,
-                    registry_id = %record.identifiers.registry_id,
-                    status = ?record.status,
-                    "passport registered with EU registry"
+                    acknowledgement = ?acknowledgement,
+                    "passport submitted to the EU registry"
                 );
-                Ok(record)
+                Ok(acknowledgement)
             }
             // Unreachable/fatal/exhausted-retry all surface as real errors — the
             // outbox keeps the row `pending` and retries. Never fake success.
@@ -459,65 +479,84 @@ impl RegistrySyncPort for EuRegistrySync {
         }
     }
 
-    async fn check_status(&self, passport_id: PassportId) -> Result<RegistryRecord, DppError> {
-        let base_url = &self.config.endpoint.base_url;
+    #[tracing::instrument(skip(self))]
+    async fn check_submission(&self, correlation_id: &str) -> Result<SubmissionReport, DppError> {
+        let dashboard = &self.config.endpoint.dashboard_base_url;
+        let tasks_url = url_for(dashboard, TASKS_PATH, "")?;
 
-        self.with_retry(|| {
-            let url = format!("{base_url}{}", path_for(STATUS_PATH_TEMPLATE, passport_id));
-            async move {
-                let token = self
-                    .get_token()
-                    .await
-                    .map_err(|e| RetryableError::Fatal(format!("token acquisition failed: {e}")))?;
-
-                let resp = self
-                    .client
-                    .get(&url)
-                    .bearer_auth(&token)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        if e.is_connect() || e.is_timeout() {
-                            RetryableError::Unreachable(e.to_string())
-                        } else {
-                            RetryableError::Retryable(e.to_string())
-                        }
-                    })?;
-
-                let status_code = resp.status().as_u16();
-                if status_code == 404 {
-                    return Err(RetryableError::Fatal(format!(
-                        "passport {passport_id} not found in EU registry"
-                    )));
-                }
-                if status_code == 429 {
-                    return Err(RetryableError::Retryable("rate limited (429)".into()));
-                }
-                if (500..600).contains(&status_code) {
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(RetryableError::Retryable(format!(
-                        "server error {status_code}: {}",
-                        refusal_text(&body)
-                    )));
-                }
-                if !resp.status().is_success() {
-                    let body = resp.text().await.unwrap_or_default();
-                    return Err(RetryableError::Fatal(format!(
-                        "status check failed {status_code}: {}",
-                        refusal_text(&body)
-                    )));
-                }
-
-                let status_resp: StatusResponse = resp
-                    .json()
-                    .await
-                    .map_err(|e| RetryableError::Fatal(format!("invalid status response: {e}")))?;
-
-                Ok(Self::status_to_record(&status_resp))
+        // The registry's interface finds a submission's task by paging the
+        // operator's tasks: no route that takes a correlation identifier has
+        // been seen. The page cap bounds the walk for an operator with a long
+        // history. A walk that reaches it with every page full has not shown the
+        // task to be unlisted, only that the search ran out, and says so below.
+        let mut found = None;
+        let mut cut_short = false;
+        for page in 0..MAX_TASK_PAGES {
+            let query = [
+                ("page", page.to_string()),
+                ("size", TASK_PAGE_SIZE.to_string()),
+            ];
+            let tasks: TaskPage = self
+                .with_retry(|| self.get_json(&tasks_url, &query, "task list"))
+                .await
+                .map_err(RetryableError::into_dpp_error)?;
+            let listed = tasks.content.len();
+            found = tasks
+                .content
+                .into_iter()
+                .find(|task| task.is_submission(correlation_id));
+            if found.is_some() || listed < TASK_PAGE_SIZE {
+                break;
             }
-        })
-        .await
-        .map_err(|e| e.into_dpp_error())
+            cut_short = page + 1 == MAX_TASK_PAGES;
+        }
+        let Some(task) = found else {
+            // Not a verdict either way, so the poll goes on. A task the list does
+            // not show yet is `Processing`; one the search stopped short of is
+            // reported as that, so the operator is told why it is not resolving.
+            if cut_short {
+                return Ok(SubmissionReport::Unrecognised {
+                    state: format!(
+                        "not found within the {MAX_TASK_PAGES} pages of {TASK_PAGE_SIZE} \
+                         tasks the search reads; the dashboard may list it further on"
+                    ),
+                });
+            }
+            return Ok(SubmissionReport::Processing);
+        };
+
+        // A task the registry has not finished has no result worth reading, and
+        // one whose state this node cannot name is reported as it stands.
+        if !matches!(
+            task.status,
+            Some(SubmissionOutcome::Success | SubmissionOutcome::Failure)
+        ) {
+            return Ok(report_for(&task, None));
+        }
+        let Some(task_id) = task.id_segment() else {
+            return Ok(SubmissionReport::Unrecognised {
+                state: "a finished task with no identifier to read its result by".to_owned(),
+            });
+        };
+        let result_url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
+        let result: TaskResult = self
+            .with_retry(|| self.get_json(&result_url, &[], "task result"))
+            .await
+            .map_err(RetryableError::into_dpp_error)?;
+        Ok(report_for(&task, Some(&result)))
+    }
+
+    async fn check_status(&self, registration_id: &str) -> Result<RegistryRecord, DppError> {
+        let url = url_for(
+            &self.config.endpoint.base_url,
+            STATUS_PATH_TEMPLATE,
+            registration_id,
+        )?;
+        let status_resp: StatusResponse = self
+            .with_retry(|| self.get_json(&url, &[], "status check"))
+            .await
+            .map_err(RetryableError::into_dpp_error)?;
+        Ok(Self::status_to_record(&status_resp))
     }
 
     async fn notify_transfer(
@@ -582,11 +621,11 @@ impl RegistrySyncPort for EuRegistrySync {
             );
         }
 
+        // The route names the registered record, so it is built from the
+        // registration identifier, never from this node's passport id.
+        let url = url_for(base_url, TRANSFER_PATH_TEMPLATE, registry_id)?;
         self.with_retry(|| {
-            let url = format!(
-                "{base_url}{}",
-                path_for(TRANSFER_PATH_TEMPLATE, passport_id)
-            );
+            let url = url.clone();
             let notification = notification.clone();
             async move {
                 let token = self

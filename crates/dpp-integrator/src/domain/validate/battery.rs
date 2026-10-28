@@ -37,7 +37,7 @@ pub(super) const COLUMNS: &[Column] = &[
     Column::required("nominalVoltageV"),
     Column::required("nominalCapacityAh"),
     Column::required("expectedLifetimeCycles"),
-    Column::required("co2ePerUnitKg"),
+    Column::optional("co2ePerUnitKg"),
     // Per-metal, not aggregate. `recycledContentPct` stood here and was read by
     // nothing: the template advertised a column the importer silently ignored,
     // so an operator who filled it in lost the value with no error. Annex XIII
@@ -113,7 +113,7 @@ pub fn validate_battery_row(
     let nominal_voltage_v = require_f64(row, "nominalVoltageV", row_num, &mut errors);
     let nominal_capacity_ah = require_f64(row, "nominalCapacityAh", row_num, &mut errors);
     let expected_lifetime_cycles = require_u32(row, "expectedLifetimeCycles", row_num, &mut errors);
-    let co2e_per_unit_kg = require_f64(row, "co2ePerUnitKg", row_num, &mut errors);
+    let co2e_per_unit_kg = optional_f64(row, "co2ePerUnitKg", row_num, &mut errors);
 
     // Validate GTIN (14 digits, correct GS1 mod-10 check digit) if the value was present.
     let gtin = gtin_raw.and_then(|g| match Gtin::parse(&g) {
@@ -248,8 +248,7 @@ pub fn validate_battery_row(
         nominal_capacity_ah: nominal_capacity_ah
             .expect("field verified present by errors.is_empty() guard above"),
         expected_lifetime_cycles,
-        co2e_per_unit_kg: co2e_per_unit_kg
-            .expect("field verified present by errors.is_empty() guard above"),
+        co2e_per_unit_kg,
         recycled_content_cobalt_pct: recycled_cobalt,
         recycled_content_lithium_pct: recycled_lithium,
         recycled_content_nickel_pct: recycled_nickel,
@@ -389,6 +388,7 @@ pub fn validate_battery_row(
         // asks that a status be supported by a derivation edge — so an
         // imported `repurposed` would be exactly the defect that rule catches.
         life_status: None,
+        personal_data: Default::default(),
         component_refs: Vec::new(),
     })
 }
@@ -476,14 +476,14 @@ mod tests {
             ("productName".into(), "Odal Reference Battery LFP-48".into()),
             ("gtin".into(), "09506000134352".into()),
             ("batchId".into(), "BATCH-2026-Q2-007".into()),
-            ("manufacturer_name".into(), "GreenCell GmbH".into()),
+            ("manufacturer_name".into(), "Example Batteries GmbH".into()),
             (
                 "manufacturer_address".into(),
                 "Prenzlauer Berg 12, 10405 Berlin, DE".into(),
             ),
             (
                 "manufacturer_didWebUrl".into(),
-                "https://greencell.example/.well-known/did.json".into(),
+                "https://batteries.example/.well-known/did.json".into(),
             ),
             ("batteryChemistry".into(), "LFP".into()),
             ("batteryType".into(), "industrial".into()),
@@ -507,7 +507,7 @@ mod tests {
         let req = validate_battery_row(&row, 1).expect("valid extended battery row");
 
         // Manufacturer aliases resolved (snake_case + full address + did:web).
-        assert_eq!(req.manufacturer.name, "GreenCell GmbH");
+        assert_eq!(req.manufacturer.name, "Example Batteries GmbH");
         assert!(req.manufacturer.address.contains("Berlin"));
         // A postal-address header states an address and not a country, so
         // nothing is invented for `country` — the whole point of reading the two
@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(req.manufacturer.country, None);
         assert_eq!(
             req.manufacturer.did_web_url.as_deref(),
-            Some("https://greencell.example/.well-known/did.json")
+            Some("https://batteries.example/.well-known/did.json")
         );
         assert_eq!(req.repairability_score, Some(7.5));
 

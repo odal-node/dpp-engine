@@ -61,8 +61,9 @@ fn fetch_locks() -> &'static Mutex<HashMap<String, Arc<AsyncMutex<()>>>> {
 /// - `Ok(view)` — signature valid; `view` is the verified public passport (or
 ///   the served value verbatim when verification is disabled via an empty
 ///   `operator_did_url`, dev/test only).
-/// - `Err(CONFLICT)` (409) — missing/invalid signature, or the proof's `id` does
-///   not match the requested passport.
+/// - `Err(CONFLICT)` (409) — missing/invalid signature, a `kid` the operator's
+///   document does not name, or the proof's `id` does not match the requested
+///   passport.
 /// - `Err(SERVICE_UNAVAILABLE)` (503) — the operator DID document could not be
 ///   fetched/parsed, so the passport cannot be verified right now.
 #[tracing::instrument(skip(http, passport))]
@@ -100,21 +101,22 @@ pub async fn verify_passport_jws(
     // Fetch the operator DID document; fail closed (503) on any transport/parse error.
     let did_doc = fetch_did(http, operator_did_url).await?;
 
-    // Select the key by kid (fingerprint) so rotation-archived keys remain usable.
-    // Fall back to the primary key for old kid-less JWS tokens.
-    let pub_key = {
-        let kid = jws::extract_kid_from_jws(jws);
-        kid.as_deref()
-            .and_then(|k| jws::extract_key_by_fingerprint(&did_doc, k))
-            .or_else(|| jws::extract_primary_public_key(&did_doc))
-            .ok_or_else(|| {
-                tracing::warn!(
-                    code = event_codes::DID_UNREACHABLE,
-                    operator_did_url,
-                    "operator DID has no matching verification key"
-                );
-                StatusCode::SERVICE_UNAVAILABLE
-            })?
+    // The key the `kid` names in the operator's document, so rotation-archived
+    // keys stay usable. A token that names none is not checked against a default.
+    //
+    // The document was fetched, so this is a property of the proof and not of the
+    // network: a proof signed before keys were named by thumbprint carries a `kid`
+    // no current document names, and never will. It is as unverifiable as a bad
+    // signature and reads the same, where a `503` would invite retries that
+    // cannot help and an unreachable-DID code would point the log at the network.
+    let Some(pub_key) = jws::resolve_verification_key(&did_doc, jws) else {
+        metrics::counter!("jws_verify_total", "outcome" => "tampered").increment(1);
+        tracing::warn!(
+            code = event_codes::JWS_TAMPER,
+            operator_did_url,
+            "the proof's kid names no verification method in the operator's DID document"
+        );
+        return Err(StatusCode::CONFLICT);
     };
 
     // 1) Signature must verify against the operator key.

@@ -1,0 +1,55 @@
+description: |-
+  What the operator states about the personal data related to one field of
+  `productGroupData` that the product group's schema marks as able to hold it
+  (`x-personal-data`). Either nothing related is held, or it is held outside the
+  passport in an erasable record.
+
+  Every statement asserts that the field's value carries no personal data beyond
+  what the governing act requires the passport to carry. The personal data
+  itself is never in the passport: a published passport is signed, frozen,
+  archived and copied to a back-up provider, so it cannot be erased from, and
+  withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)).
+
+  Where a governing act admits customer personal data only with explicit consent
+  (ESPR Art. 10(1)(e), Reg. (EU) 2025/2509 Art. 20(10), Reg. (EU) 2026/405
+  Art. 22(h)), a basis other than `consent` is refused. The record named by
+  `record` is not served by any route of this node.
+oneOf:
+  - type: object
+    title: Nothing held
+    required:
+      - held
+    properties:
+      held:
+        type: string
+        enum:
+          - nothing
+    additionalProperties: false
+  - type: object
+    title: Held outside the passport
+    required:
+      - held
+      - lawfulBasis
+      - record
+    properties:
+      held:
+        type: string
+        enum:
+          - outside
+      lawfulBasis:
+        type: string
+        description: The ground of GDPR Art. 6(1) the data is held on.
+        enum:
+          - consent
+          - contract
+          - legalObligation
+          - vitalInterests
+          - publicTask
+          - legitimateInterests
+      record:
+        type: string
+        minLength: 1
+        description: >-
+          The identifier of the erasable record holding the data. Required, and
+          not blank.
+    additionalProperties: false

@@ -48,6 +48,52 @@ mod tests {
         assert!(cli.command.is_none());
     }
 
+    /// A variant's `///` doc comment is its help text, so a note written for
+    /// the next reader of the code is printed to an operator. The note on why
+    /// `Initiate` is boxed was.
+    #[test]
+    fn transfer_initiate_help_says_what_the_command_does_and_nothing_else() {
+        let mut cli = Cli::command();
+        let help = cli
+            .find_subcommand_mut("passport")
+            .and_then(|c| c.find_subcommand_mut("transfer"))
+            .and_then(|c| c.find_subcommand_mut("initiate"))
+            .expect("`odal passport transfer initiate` exists")
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("Sign a pending handover"), "{help}");
+        assert!(
+            !help.contains("Boxed"),
+            "an implementation note is in the help:\n{help}"
+        );
+    }
+
+    /// A field's `///` doc comment is its help text, so a 🚨 note written for
+    /// the next reader of the code is printed to an operator. The note on
+    /// `snapshot verify --key` was. Walks every command, so the next one fails
+    /// here rather than in front of someone.
+    #[test]
+    fn no_help_text_carries_a_note_for_maintainers() {
+        fn walk(cmd: &mut clap::Command, path: &str, leaks: &mut Vec<String>) {
+            let help = cmd.render_long_help().to_string();
+            if help.contains('🚨') {
+                leaks.push(format!("{path}:\n{help}"));
+            }
+            for sub in cmd.get_subcommands_mut() {
+                let path = format!("{path} {}", sub.get_name());
+                walk(sub, &path, leaks);
+            }
+        }
+
+        let mut leaks = Vec::new();
+        walk(&mut Cli::command(), "odal", &mut leaks);
+        assert!(
+            leaks.is_empty(),
+            "help text carries a maintainers' note:\n{}",
+            leaks.join("\n\n")
+        );
+    }
+
     #[test]
     fn tty_guard_suppressed_in_test_runner() {
         // cargo test pipes stdin — not a TTY — so the guard returns false,

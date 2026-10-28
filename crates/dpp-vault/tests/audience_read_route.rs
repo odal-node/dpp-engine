@@ -11,7 +11,7 @@
 //! - anonymous reads return the same signed public body as `/public/dpp/{id}`,
 //!   because public access must work without registration;
 //! - a credential grants exactly its audience's fields, and only on a passport
-//!   in the product groups it names;
+//!   in the product groups and categories it names;
 //! - an unusable credential is a 401 that reveals nothing about whether the
 //!   passport exists;
 //! - a node with the credential path unconfigured serves public rather than
@@ -54,7 +54,9 @@ fn issuer_key() -> SigningKey {
 /// Mint a compact JWS over the JCS-canonical credential, exactly as an issuer
 /// would.
 fn sign_credential(key: &SigningKey, cred: &DppAccessCredential) -> String {
-    let header = B64.encode(format!(r#"{{"alg":"EdDSA","kid":"{KID}"}}"#).as_bytes());
+    let header = B64.encode(
+        format!(r#"{{"alg":"EdDSA","cty":"vc","kid":"{ISSUER}#{KID}","typ":"vc+jwt"}}"#).as_bytes(),
+    );
     let value = serde_json::to_value(cred).expect("credential to value");
     let canonical = dpp_crypto::jws::canonicalize(&value).expect("canonicalize");
     let payload = B64.encode(&canonical);
@@ -148,7 +150,7 @@ async fn publish_battery(client: &TestClient) -> String {
             "/api/v1/dpp",
             json!({
                 "productName": "Audience Route Cell",
-                "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
                 "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
                 "batchId": "LOT-2026-07",
                 "productGroupData": {
@@ -467,7 +469,49 @@ async fn a_credential_for_another_product_group_grants_only_public() {
     assert!(body.get("lintResult").is_none(), "nor restricted data");
 }
 
-/// An unusable credential is a 401 carrying an RFC 7807 body, and it names the
+/// Category scope, over HTTP: the battery fixture states `batteryType:
+/// "portable"`, so a credential narrowed to `portable` unlocks it and one
+/// narrowed to `ev` does not.
+///
+/// The in-scope half is the one that proves the wiring: if the route did not
+/// read the category off the loaded passport, the narrowed credential would
+/// have nothing to match and would be downgraded too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_is_scoped_to_the_category_the_passport_states() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+
+    for (category, unlocks) in [("portable", true), ("ev", false)] {
+        let mut cred = credential_for(CredentialRole::AuthorisedRepairer, &["battery"]);
+        cred.credential_subject.product_categories = vec![category.to_owned()];
+        let header = sign_credential(&issuer_key(), &cred);
+
+        let resp = get_with_credential(&base, &id, Some(&header)).await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "{category}: a category mismatch is not an error"
+        );
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(
+            product_group_data(&body).contains_key("stateOfHealthPct"),
+            unlocks,
+            "{category}: individual-item data"
+        );
+        assert_eq!(
+            body.get("lintResult").is_some(),
+            unlocks,
+            "{category}: restricted data"
+        );
+    }
+}
+
+/// An unusable credential is a 401 carrying an RFC 9457 body, and it names the
 /// header the caller must fix.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unusable_credential_is_a_problem_response() {
@@ -489,7 +533,7 @@ async fn an_unusable_credential_is_a_problem_response() {
     assert_eq!(body["status"], json!(401));
     assert!(
         body.get("detail").and_then(Value::as_str).is_some(),
-        "RFC 7807 body carries a detail"
+        "RFC 9457 body carries a detail"
     );
 }
 

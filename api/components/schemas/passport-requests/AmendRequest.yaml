@@ -15,7 +15,8 @@ properties:
     description: |
       The correction, in the same shape the draft-update body takes: only the
       patchable content fields (`productName`, `co2ePerUnit`,
-      `repairabilityScore`, `productGroupData`, `componentRefs`) take effect.
+      `repairabilityScore`, `productGroupData`, `componentRefs`, `personalData`) take
+      effect.
 
       Other keys are ignored rather than refused, so a client that sends a full
       create-shaped body still works and still cannot make a create-time field

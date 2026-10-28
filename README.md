@@ -58,7 +58,7 @@ The engine ships as a **single binary** (`dpp-node`) that fuses all services und
 | `dpp-resolver` | bin+lib | Public QR / Digital Link resolver, JWS-verified fail-closed |
 | `dpp-render` | lib | Shared HTML rendering of the public passport view. Extracted from `dpp-resolver` so the live read and the continuity tier's pre-rendered snapshot go through **one** renderer — a second implementation is precisely how the static tier would drift from what the resolver serves |
 | `dpp-integrator` | bin+lib | CSV/XLSX-to-DPP bulk import adapter with per-product group templates |
-| `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 7807 HTTP errors |
+| `dpp-common` | lib | Event bus trait + well-known subjects, telemetry, RFC 9457 HTTP errors |
 | `dpp-plugin-host` | lib | wasmtime sandbox — fuel metering, memory cap, deny-all WASI, signed-plugin policy |
 | `dpp-node` | bin | **The single binary — fuses all services**, boot trust-report, registry outbox drain, signed-ruleset loader |
 | `dpp-cli` (`cli/`) | bin | `odal` — the operator control plane, from bootstrap to evidence dossier generation and verification |

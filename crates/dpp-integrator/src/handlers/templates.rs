@@ -95,6 +95,16 @@ fn templates() -> Vec<Template> {
             source: Source::Embedded(include_str!("../../templates/construction-v1.csv")),
             filename: "odal-construction-template.csv",
         },
+        Template {
+            key: "electronics",
+            source: Source::Embedded(include_str!("../../templates/electronics-v1.csv")),
+            filename: "odal-electronics-template.csv",
+        },
+        Template {
+            key: "detergent",
+            source: Source::Embedded(include_str!("../../templates/detergent-v1.csv")),
+            filename: "odal-detergent-template.csv",
+        },
     ];
     // Derived from the category list rather than written out, so a category
     // added to the contract gets a route without anyone remembering to add one.
@@ -167,7 +177,7 @@ pub async fn get_template(
 ) -> Response {
     let format = query.format.as_deref().unwrap_or("csv");
 
-    // RFC 7807, like every other error surface here. These two answered a bare
+    // RFC 9457, like every other error surface here. These two answered a bare
     // string with `text/plain`, while `GET /schemas/{pg}` and
     // `GET /product-groups/{pg}` — same crate, same failure class — already
     // answered `application/problem+json`.

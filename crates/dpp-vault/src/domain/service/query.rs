@@ -2,17 +2,16 @@
 //! history.
 
 use dpp_domain::{
-    Gtin, ProductIdentifier,
+    FieldError, Gtin, ProductIdentifier,
     error::DppError,
     passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
-    product_group::ProductGroupData,
     status::PassportStatus,
 };
 use dpp_types::audit::PassportAuditEntry;
 
-use super::PassportService;
+use super::{PassportService, claim::Claim};
 
 impl PassportService {
     /// Fetch a passport by id regardless of status.
@@ -377,48 +376,44 @@ async fn carrier_serial_is_taken(
         .any(|p| Some(p.id) != replaces && p.status != PassportStatus::Superseded))
 }
 
-/// Whether a live passport outside `passport`'s chain already prints its carrier
-/// serial under its GTIN.
+/// The refusal for `passport`, when a live passport outside its chain already
+/// holds what it claims by going live: the label it prints, or the identifier it
+/// carries. See [`Claim`].
 ///
-/// Publish asks this at the moment the label goes live. Create asks
+/// Publish asks this at the moment the passport goes live. Create asks
 /// [`carrier_serial_is_taken`] first, but two creates that arrive together can
 /// both pass it, and two published holders of one label cannot be repaired:
 /// neither declares the other, and `supersedesId` is fixed at create. Drafts do
 /// not count here because a draft answers no label, so whichever of two drafts
-/// publishes first keeps the serial and the other stays a draft.
+/// publishes first keeps the claim and the other stays a draft.
+///
+/// The label is the one the passport prints, whatever its level. Asked by serial
+/// alone, as this used to be, a model or a batch passport was checked against
+/// nothing: the serial it derives from its own id is shared by no other passport,
+/// while its label is the GTIN, or the GTIN and the lot, which every other
+/// passport at that level prints too.
 ///
 /// Asking is not enough on its own: two publishes could both ask before either
-/// writes. Publish asks while holding the label (`label_lock`), so the second
+/// writes. Publish asks while holding the claim (`label_lock`), so the second
 /// asks after the first has written.
 ///
 /// "Outside the chain" is the rule [`without_pending_successors`] resolves by:
 /// a passport and one that declares it in `supersedesId`, in either direction,
 /// are one chain, and superseded records are behind its head.
-pub(super) async fn carrier_serial_is_live_elsewhere(
+pub(super) async fn held_elsewhere(
     repo: &dyn PassportRepository,
     passport: &Passport,
-) -> Result<bool, DppError> {
-    let Some(identifier) = passport
-        .product_group_data
-        .as_ref()
-        .and_then(ProductGroupData::product_identifier)
-        .filter(|id| id.gtin().is_some())
-    else {
-        return Ok(false);
+) -> Result<Option<FieldError>, DppError> {
+    let Some(claim) = Claim::of(passport) else {
+        return Ok(None);
     };
-    let serial = passport.effective_carrier_serial();
-    let holders = repo
-        .find_by_carrier(
-            identifier,
-            &CarrierQualifier::Serial(serial.as_ref().into()),
-        )
-        .await?;
-    Ok(holders.iter().any(|p| {
+    let held = claim.holders(repo).await?.iter().any(|p| {
         p.id != passport.id
             && Some(p.id) != passport.supersedes_id
             && p.supersedes_id != Some(passport.id)
             && !matches!(p.status, PassportStatus::Draft | PassportStatus::Superseded)
-    }))
+    });
+    Ok(held.then(|| claim.refusal()))
 }
 
 /// The record a reader holding `record`'s label should reach: `record` itself,
@@ -555,7 +550,7 @@ mod label_resolution {
     use dpp_dal::in_memory_repo::InMemoryPassportRepo;
     use dpp_domain::ports::passport_repo::PassportRepository;
     use dpp_domain::{
-        Gtin,
+        FieldError, Gtin,
         catalog::Granularity,
         error::DppError,
         passport::{ManufacturerInfo, Passport, PassportId},
@@ -564,8 +559,7 @@ mod label_resolution {
     };
 
     use super::{
-        LabelLevel, LabelResolution, carrier_serial_is_live_elsewhere, carrier_serial_is_taken,
-        resolve_label,
+        LabelLevel, LabelResolution, carrier_serial_is_taken, held_elsewhere, resolve_label,
     };
 
     const GTIN: &str = "09506000134352";
@@ -575,8 +569,16 @@ mod label_resolution {
     }
 
     fn passport(status: PassportStatus) -> Passport {
+        passport_under(GTIN, status)
+    }
+
+    fn passport_under(gtin: &str, status: PassportStatus) -> Passport {
+        passport_identified(serde_json::json!({ "scheme": "gs1", "gtin": gtin }), status)
+    }
+
+    fn passport_identified(identifier: serde_json::Value, status: PassportStatus) -> Passport {
         let battery = serde_json::from_value(serde_json::json!({
-            "productIdentifier": { "scheme": "gs1", "gtin": GTIN },
+            "productIdentifier": identifier,
             "batteryChemistry": "LFP",
             "batteryType": "industrial",
             "nominalVoltageV": 3.2,
@@ -606,6 +608,7 @@ mod label_resolution {
             compliance_result: None,
             lint_result: None,
             product_group_data: Some(ProductGroupData::Battery(Box::new(battery))),
+            personal_data: Default::default(),
             status,
             qr_code_url: None,
             jws_signature: None,
@@ -1113,9 +1116,12 @@ mod label_resolution {
     }
 
     async fn live_elsewhere(repo: &InMemoryPassportRepo, passport: &Passport) -> bool {
-        carrier_serial_is_live_elsewhere(repo, passport)
-            .await
-            .expect("checks")
+        refusal(repo, passport).await.is_some()
+    }
+
+    /// The field error publish would answer with, when it would refuse.
+    async fn refusal(repo: &InMemoryPassportRepo, passport: &Passport) -> Option<FieldError> {
+        held_elsewhere(repo, passport).await.expect("checks")
     }
 
     /// Two drafts that both passed create's check, because their creates arrived
@@ -1175,5 +1181,282 @@ mod label_resolution {
         store(&repo, &[&defaulted]).await;
 
         assert!(taken(&repo, gtin(), &printed, None).await);
+    }
+
+    const OTHER_GTIN: &str = "01234567890128";
+
+    /// A passport under `gtin` that states `level` and, at batch level, a lot.
+    fn stating(
+        gtin: &str,
+        level: Granularity,
+        lot: Option<&str>,
+        status: PassportStatus,
+    ) -> Passport {
+        let mut p = passport_under(gtin, status);
+        p.granularity = Some(level);
+        p.batch_id = lot.map(Into::into);
+        p
+    }
+
+    /// Two passports that state model level under one GTIN both print
+    /// `/01/{gtin}`, and a label that names two passports resolves to neither.
+    /// Asked by serial, which is all publish asked, the second looks free: a
+    /// model-level passport's carrier serial is the one derived from its own id,
+    /// so no other passport shares it and the check can never fire.
+    #[tokio::test]
+    async fn a_second_model_level_passport_cannot_go_live_under_one_gtin() {
+        let repo = InMemoryPassportRepo::default();
+        let first = stating(GTIN, Granularity::Model, None, PassportStatus::Published);
+        let second = stating(GTIN, Granularity::Model, None, PassportStatus::Draft);
+        store(&repo, &[&first, &second]).await;
+
+        assert!(live_elsewhere(&repo, &second).await);
+        assert!(
+            !live_elsewhere(&repo, &first).await,
+            "a draft answers no label, so it does not hold the label against a publish"
+        );
+    }
+
+    /// The same at batch level, where the label is the GTIN and the lot.
+    #[tokio::test]
+    async fn a_second_batch_level_passport_for_one_lot_cannot_go_live() {
+        let repo = InMemoryPassportRepo::default();
+        let first = stating(
+            GTIN,
+            Granularity::Batch,
+            Some("LOT-1"),
+            PassportStatus::Published,
+        );
+        let second = stating(
+            GTIN,
+            Granularity::Batch,
+            Some("LOT-1"),
+            PassportStatus::Draft,
+        );
+        store(&repo, &[&first, &second]).await;
+
+        assert!(live_elsewhere(&repo, &second).await);
+    }
+
+    /// Without these the two cases above would pass against a check that
+    /// refuses every model and batch passport.
+    #[tokio::test]
+    async fn another_lot_or_another_gtin_is_not_a_collision() {
+        let repo = InMemoryPassportRepo::default();
+        let model = stating(GTIN, Granularity::Model, None, PassportStatus::Published);
+        let lot = stating(
+            GTIN,
+            Granularity::Batch,
+            Some("LOT-1"),
+            PassportStatus::Published,
+        );
+        let other_lot = stating(
+            GTIN,
+            Granularity::Batch,
+            Some("LOT-2"),
+            PassportStatus::Draft,
+        );
+        let other_gtin_model = stating(OTHER_GTIN, Granularity::Model, None, PassportStatus::Draft);
+        let other_gtin_lot = stating(
+            OTHER_GTIN,
+            Granularity::Batch,
+            Some("LOT-1"),
+            PassportStatus::Draft,
+        );
+        store(
+            &repo,
+            &[&model, &lot, &other_lot, &other_gtin_model, &other_gtin_lot],
+        )
+        .await;
+
+        assert!(!live_elsewhere(&repo, &other_lot).await);
+        assert!(!live_elsewhere(&repo, &other_gtin_model).await);
+        assert!(!live_elsewhere(&repo, &other_gtin_lot).await);
+    }
+
+    /// A model, a lot and a unit print three different labels under one GTIN, and
+    /// that is what a product with all three looks like.
+    #[tokio::test]
+    async fn labels_at_different_levels_do_not_collide() {
+        let repo = InMemoryPassportRepo::default();
+        let model = stating(GTIN, Granularity::Model, None, PassportStatus::Published);
+        let lot = stating(
+            GTIN,
+            Granularity::Batch,
+            Some("LOT-1"),
+            PassportStatus::Published,
+        );
+        let unit = stating(GTIN, Granularity::Item, None, PassportStatus::Published);
+        let unstated = passport(PassportStatus::Draft);
+        let draft_model = stating(GTIN, Granularity::Model, None, PassportStatus::Draft);
+        store(&repo, &[&model, &lot, &unit, &unstated]).await;
+
+        assert!(!live_elsewhere(&repo, &unstated).await);
+        // A draft model passport collides with the published model passport and
+        // with nothing else, so it is the one answer that must differ.
+        store(&repo, &[&draft_model]).await;
+        assert!(live_elsewhere(&repo, &draft_model).await);
+    }
+
+    /// A chain shares its label by design: an amendment and the passport it
+    /// replaces are both live for a step, and what they replaced is behind them.
+    #[tokio::test]
+    async fn a_model_level_chain_does_not_hold_its_label_against_itself() {
+        let repo = InMemoryPassportRepo::default();
+        let predecessor = stating(GTIN, Granularity::Model, None, PassportStatus::Published);
+        let mut successor = stating(GTIN, Granularity::Model, None, PassportStatus::Draft);
+        successor.supersedes_id = Some(predecessor.id);
+        let behind = stating(GTIN, Granularity::Model, None, PassportStatus::Superseded);
+        store(&repo, &[&predecessor, &successor, &behind]).await;
+
+        assert!(!live_elsewhere(&repo, &successor).await);
+    }
+
+    fn did() -> serde_json::Value {
+        serde_json::json!({ "scheme": "did", "did": "did:web:acme.example:b:1" })
+    }
+
+    fn link() -> serde_json::Value {
+        serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://id.acme.example/p/1"
+        })
+    }
+
+    /// A link or a DID is the whole key, with nothing after it for a second
+    /// passport to differ by, so a second published passport carrying the same
+    /// value is a second holder of the identifier. It was never asked: the check
+    /// returned early for any identifier that is not a GTIN.
+    #[tokio::test]
+    async fn a_second_passport_under_one_link_or_did_cannot_go_live() {
+        for identifier in [did(), link()] {
+            let repo = InMemoryPassportRepo::default();
+            let first = passport_identified(identifier.clone(), PassportStatus::Published);
+            let second = passport_identified(identifier, PassportStatus::Draft);
+            store(&repo, &[&first, &second]).await;
+
+            assert!(live_elsewhere(&repo, &second).await);
+            assert!(
+                !live_elsewhere(&repo, &first).await,
+                "a draft answers no label, so it does not hold the identifier against a publish"
+            );
+        }
+    }
+
+    /// The other direction, so the case above is not a check that refuses every
+    /// link and DID: another value, a superseded holder and a chain are all free.
+    #[tokio::test]
+    async fn another_identifier_or_a_chain_is_not_a_second_holder() {
+        let other = serde_json::json!({ "scheme": "did", "did": "did:web:acme.example:b:2" });
+        let repo = InMemoryPassportRepo::default();
+        let holder = passport_identified(did(), PassportStatus::Published);
+        let elsewhere = passport_identified(other, PassportStatus::Draft);
+        let behind = passport_identified(did(), PassportStatus::Superseded);
+        let mut successor = passport_identified(did(), PassportStatus::Draft);
+        successor.supersedes_id = Some(holder.id);
+        store(&repo, &[&holder, &elsewhere, &behind, &successor]).await;
+
+        assert!(!live_elsewhere(&repo, &elsewhere).await);
+        assert!(!live_elsewhere(&repo, &successor).await);
+    }
+
+    /// What a refusal names. `/carrierSerial` stays what it was; a model, a lot and
+    /// an identifier name the field the caller can change, and the message carries
+    /// the identifier so the caller can find the holder.
+    #[tokio::test]
+    async fn a_refusal_names_the_field_and_the_identifier() {
+        let held = |level, lot: Option<&str>| {
+            (
+                stating(GTIN, level, lot, PassportStatus::Published),
+                stating(GTIN, level, lot, PassportStatus::Draft),
+            )
+        };
+        let cases = [
+            (
+                held(Granularity::Model, None),
+                "/productGroupData/productIdentifier",
+            ),
+            (held(Granularity::Batch, Some("LOT-1")), "/batchId"),
+        ];
+        for ((first, second), field) in cases {
+            let repo = InMemoryPassportRepo::default();
+            store(&repo, &[&first, &second]).await;
+            let refusal = refusal(&repo, &second).await.expect("refused");
+            assert_eq!(refusal.field, field);
+            assert!(refusal.message.contains(GTIN), "{}", refusal.message);
+        }
+
+        let repo = InMemoryPassportRepo::default();
+        let first = attributing("SN-1", PassportStatus::Published);
+        let second = attributing("SN-1", PassportStatus::Draft);
+        store(&repo, &[&first, &second]).await;
+        assert_eq!(
+            refusal(&repo, &second).await.expect("refused").field,
+            "/carrierSerial"
+        );
+
+        let repo = InMemoryPassportRepo::default();
+        let first = passport_identified(did(), PassportStatus::Published);
+        let second = passport_identified(did(), PassportStatus::Draft);
+        store(&repo, &[&first, &second]).await;
+        let refusal = refusal(&repo, &second).await.expect("refused");
+        assert_eq!(refusal.field, "/productGroupData/productIdentifier");
+        assert!(
+            refusal.message.contains("did:web:acme.example:b:1"),
+            "{}",
+            refusal.message
+        );
+    }
+
+    /// Two publishes of one DID take turns, for the reason the model label does.
+    #[tokio::test]
+    async fn two_publishes_of_one_did_take_turns() {
+        use std::time::Duration;
+
+        let first = passport_identified(did(), PassportStatus::Draft);
+        let second = passport_identified(did(), PassportStatus::Draft);
+
+        let held = super::super::label_lock::hold(&first).await;
+        assert!(held.is_some(), "an identifier is held");
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(150),
+            super::super::label_lock::hold(&second),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "the second publish must wait for the first"
+        );
+    }
+
+    /// Two publishes of one model label take turns. The lock is what makes the
+    /// check above mean anything: both could ask before either has written. It
+    /// used to be keyed on the carrier serial, which a model-level passport
+    /// derives from its own id, so no two of them ever shared a stripe.
+    #[tokio::test]
+    async fn two_publishes_of_one_model_label_take_turns() {
+        use std::time::Duration;
+
+        let first = stating(GTIN, Granularity::Model, None, PassportStatus::Draft);
+        let second = stating(GTIN, Granularity::Model, None, PassportStatus::Draft);
+
+        let held = super::super::label_lock::hold(&first).await;
+        assert!(held.is_some(), "a GS1 label is held");
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(150),
+            super::super::label_lock::hold(&second),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "the second publish must wait for the first to write"
+        );
+        drop(held);
+        let after = tokio::time::timeout(
+            Duration::from_millis(150),
+            super::super::label_lock::hold(&second),
+        )
+        .await;
+        assert!(after.is_ok(), "and proceeds once the first is done");
     }
 }

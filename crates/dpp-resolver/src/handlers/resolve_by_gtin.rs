@@ -1,4 +1,5 @@
-//! Handlers for the GS1 Digital Link routes, conforming to GS1-CRSV1.
+//! Handlers for the GS1 Digital Link routes. Not assessed against the GS1
+//! Conformant Resolver Standard (GS1-CRSV1), so nothing here claims conformance.
 //!
 //! A printed carrier may carry more than the GTIN. This node's publisher emits
 //! `/01/{gtin}` for a model-level passport, `/01/{gtin}/10/{batch}` for a
@@ -47,7 +48,8 @@ pub struct ByGtinQuery {
 
 /// GS1 Digital Link resolver — `GET /01/{gtin}[?linkType=…]`
 ///
-/// Conforms to the GS1 Conformant Resolver Standard (GS1-CRSV1):
+/// Implements GS1 Digital Link resolution as described below; not assessed
+/// against the GS1 Conformant Resolver Standard (GS1-CRSV1):
 /// - `?linkType=linkset` or `Accept: application/linkset+json` → RFC 9264 linkset
 /// - `?linkType=gs1:pip` / `?linkType=gs1:dpp` → 307 redirect to DPP page
 /// - Default (no qualifier) → 307 redirect to the HTML product page

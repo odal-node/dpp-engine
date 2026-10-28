@@ -52,20 +52,20 @@ debug = "line-tables-only"
 # Core crates — consumed from crates.io (dpp-core is published independently;
 # see the pins below for the version actually in use, and README.md's sync
 # note for the other places that must agree on a bump).
-dpp-domain = "0.21.0"
+dpp-domain = "0.22.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
-dpp-crypto        = "0.21.0"
-dpp-vc            = "0.21.0"
+dpp-crypto        = "0.22.0"
+dpp-vc            = "0.22.0"
 # KeyStore lives in dpp-core/dpp-crypto; the identity service crate is dpp-identity
 # (dir: crates/dpp-identity, pkg: dpp-identity).
-dpp-digital-link  = "0.21.0"
-dpp-aas           = "0.21.0"
-dpp-plugin-traits = "0.21.0"
-dpp-registry      = "0.21.0"
-dpp-calc          = "0.21.0"
-dpp-rules         = { version = "0.21.0", features = ["bundle"] }
+dpp-digital-link  = "0.22.0"
+dpp-aas           = "0.22.0"
+dpp-plugin-traits = "0.22.0"
+dpp-registry      = "0.22.0"
+dpp-calc          = "0.22.0"
+dpp-rules         = { version = "0.22.0", features = ["bundle"] }
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
@@ -140,7 +140,19 @@ async-trait  = "0.1"
 dotenvy      = "0.15"
 
 # Event bus
-async-nats   = "0.50"
+#
+# Default features minus `websockets`. That feature pulls tokio-websockets 0.10
+# and, through it, a second copy of webpki-roots (0.26), first reported under
+# RUSTSEC-2026-0381 and since classified as unaffected, because it re-exports the
+# roots of the 1.x copy. No release of async-nats takes a newer
+# tokio-websockets, so the line cannot be moved; and the node reaches NATS
+# over `nats://`, never `ws://`, so the transport is dead weight. TLS to NATS
+# stays (`ring`). Re-add `websockets` only with a release that no longer pins
+# webpki-roots 0.26.
+async-nats   = { version = "0.50", default-features = false, features = [
+    "server_2_10", "server_2_11", "server_2_12", "server_2_14",
+    "service", "ring", "jetstream", "nkeys", "crypto", "object-store", "kv", "nuid",
+] }
 
 # AWS S3 and S3-compatible stores (RustFS, R2, …)
 #

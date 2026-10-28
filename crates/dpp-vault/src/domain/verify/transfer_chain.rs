@@ -225,22 +225,29 @@ mod tests {
         }
     }
 
-    fn did_doc_for(signing_key: &SigningKey) -> serde_json::Value {
+    /// The document `did` publishes: one method, `{did}#root`, controlled by it.
+    fn did_doc_for(did: &str, signing_key: &SigningKey) -> serde_json::Value {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let x = b64.encode(signing_key.verifying_key().to_bytes());
         serde_json::json!({
+            "id": did,
             "verificationMethod": [{
-                "id": "did:web:example.com#root",
-                "type": "JsonWebKey2020",
+                "id": format!("{did}#root"),
+                "type": "JsonWebKey",
+                "controller": did,
                 "publicKeyJwk": { "kty": "OKP", "crv": "Ed25519", "x": x },
             }],
-            "assertionMethod": ["did:web:example.com#root"],
+            "assertionMethod": [format!("{did}#root")],
         })
     }
 
-    fn sign(signing_key: &SigningKey, payload: &serde_json::Value) -> String {
+    /// A signature by `did`'s key, naming it by the absolute URL of its method.
+    fn sign(did: &str, signing_key: &SigningKey, payload: &serde_json::Value) -> String {
         let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        let header = b64.encode(serde_json::to_vec(&serde_json::json!({"alg": "EdDSA"})).unwrap());
+        let header = b64.encode(
+            serde_json::to_vec(&serde_json::json!({"alg": "EdDSA", "kid": format!("{did}#root")}))
+                .unwrap(),
+        );
         let body = b64.encode(canonicalize(payload).unwrap());
         let signing_input = format!("{header}.{body}");
         let sig = signing_key.sign(signing_input.as_bytes());
@@ -272,8 +279,9 @@ mod tests {
             cancelled_at: None,
             notes: None,
         };
-        record.from_signature = Some(sign(from_key, &record.signing_payload()));
-        record.node_acceptance_attestation = Some(sign(node_key, &acceptance_payload(&record)));
+        record.from_signature = Some(sign(from_did, from_key, &record.signing_payload()));
+        record.node_acceptance_attestation =
+            Some(sign(NODE_DID, node_key, &acceptance_payload(&record)));
         record
     }
 
@@ -293,8 +301,11 @@ mod tests {
             transfers: vec![record],
         };
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
-        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
+        docs.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
+        docs.insert(NODE_DID.to_string(), did_doc_for(NODE_DID, &node_key));
 
         assert!(verify_transfer_chain(&chain, &docs, NODE_DID).is_ok());
     }
@@ -318,8 +329,11 @@ mod tests {
             transfers: vec![record],
         };
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
-        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
+        docs.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
+        docs.insert(NODE_DID.to_string(), did_doc_for(NODE_DID, &node_key));
 
         // This assertion has now been both ways, and the previous comment asked
         // for exactly this moment: it said that if verification were
@@ -391,7 +405,7 @@ mod tests {
         // acceptance attestation stopped being verified against the incoming
         // operator's DID — no `to` document is consulted at all now.
         let mut docs = BTreeMap::new();
-        docs.insert(NODE_DID.to_string(), did_doc_for(&node_key));
+        docs.insert(NODE_DID.to_string(), did_doc_for(NODE_DID, &node_key));
 
         let brk = verify_transfer_chain(&chain, &docs, NODE_DID).expect_err("must fail closed");
         assert!(matches!(brk.issue, TransferSignatureIssue::From(_)));
@@ -422,7 +436,10 @@ mod tests {
             transfers: vec![record],
         };
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+        docs.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
 
         let brk = verify_transfer_chain(&chain, &docs, NODE_DID)
             .expect_err("a completed transfer must carry the node's acceptance attestation");
@@ -454,7 +471,10 @@ mod tests {
             transfers: vec![record],
         };
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+        docs.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
 
         assert!(verify_transfer_chain(&chain, &docs, NODE_DID).is_ok());
     }
@@ -509,14 +529,17 @@ mod tests {
             notes: None,
         };
         let payload = record.signing_payload();
-        record.from_signature = Some(sign(&from_key, &payload));
+        record.from_signature = Some(sign("did:web:from.example", &from_key, &payload));
         let chain = TransferChain {
             passport_id: record.passport_id,
             original_operator: operator("did:web:from.example"),
             transfers: vec![record],
         };
         let mut docs = BTreeMap::new();
-        docs.insert("did:web:from.example".to_string(), did_doc_for(&from_key));
+        docs.insert(
+            "did:web:from.example".to_string(),
+            did_doc_for("did:web:from.example", &from_key),
+        );
         assert!(
             verify_transfer_chain(&chain, &docs, NODE_DID).is_ok(),
             "an initiated (uncompleted) record must not fail on its pending countersignature"
