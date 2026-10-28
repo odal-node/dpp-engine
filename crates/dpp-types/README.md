@@ -1,75 +1,35 @@
 # dpp-types
 
-Platform-scoped shared types for [Odal Node](https://odal-node.io) — operator configuration,
-authentication context, audit entries, and API key management.
+Engine-side shared types and repository ports: authentication, API keys, the audit
+trail, operator configuration, the transactional outboxes and the trust report. Part
+of [dpp-engine](../../README.md), under the Business Source License 1.1.
 
-These types live in `dpp-engine` (BSL-1.1) rather than `dpp-domain` because they
-carry platform concerns — authentication, audit, API keys, operator configuration — that
-are not part of the open-source core. Any crate that needs to know *who is calling* imports
-from here. The node is single-tenant (DECISION-0002): these types carry no tenant scope.
+These live in the engine rather than in `dpp-core` because they change with how the
+node is deployed and operated, not with the regulations. The passport data model
+itself (`Passport`, `ProductGroupData`) is `dpp-core`'s `dpp-domain`. The node is
+single-tenant, so none of these types carries a tenant scope.
 
----
+## Modules
 
-## When to use this crate
-
-- You are writing a platform service (vault, integrator, …) and need `AuthContext`,
-  `ApiKey`, or `AuditEntry`.
-- You are implementing an authentication provider against the `AuthProvider` trait.
-- You are wiring the operator configuration repository via `OperatorConfigRepository`.
-
-## When NOT to use this crate
-
-- You need the DPP data model (`Passport`, `SectorData`) → `dpp-domain`.
-- You need cryptographic primitives → `dpp-crypto`; Verifiable Credential types → `dpp-vc`.
-
----
-
-## Public API
-
-```
-dpp_types
-├── api_key     ApiKey, ApiKeyRecord, ApiKeyRepository, CreateApiKeyRequest, NewApiKey
-├── audit       AuditEntry, AuditRepository
-├── auth        AuthContext, AuthError, AuthProvider
-└── operator    OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID,
-                UpdateOperatorConfig
-```
-
-### `AuthContext`
-
-Carries the authenticated caller on every inbound request. Threaded through Axum
-state and read by handlers without re-verifying the token.
-
-### `AuditEntry`
-
-Immutable record written on every mutating operation. Stored in PostgreSQL by
-`dpp-dal::pg::PgAuditRepo` and surfaced by `GET /dpp/{id}/history`.
-
-### `OperatorConfig`
-
-Single-row operator identity (legal name, country, DID URL, address, contact email).
-Mutated via `PATCH /vault/api/v1/operator`. `STANDALONE_OPERATOR_ID` is the
-well-known ID used in single-tenant deployments.
-
-### `ApiKey`
-
-Bearer token with a `odal_sk_` prefix. Only the SHA-256 hash is stored; the raw
-secret is shown once at creation time. `ApiKeyRepository` exposes `create`, `list`,
-`verify`, and `revoke`.
-
----
-
-## Relationship to other crates
-
-| Crate | Role |
+| Module | Contents |
 |---|---|
-| `dpp-domain` | Core passport types — `dpp-types` extends the model with platform concerns |
-| `dpp-dal` | Implements `ApiKeyRepository`, `AuditRepository`, `OperatorConfigRepository` |
-| `dpp-vault` | Consumes `AuthContext` and `AuditEntry` in every authenticated handler |
-| `dpp-common` | Supplies config helpers and telemetry used alongside these types |
+| `auth` | `AuthContext` (user id, scope, key id) that the middleware attaches to each request, `AuthError`, and the `AuthProvider` port |
+| `api_key` | `ApiKey`, `ApiKeyScope` (`read`, `write`, `admin`) and the repository port. Only a SHA-256 hash of an `odal_sk_…` key is stored |
+| `audit` | `AuditEntry`, hash-chain verification and the repository port |
+| `operator` | `OperatorConfig` (legal name, country, address, contact, retention policy), its port and `STANDALONE_OPERATOR_ID` |
+| `registry_identity` | Facilities (ESPR Annex III) and operator identifiers (ESPR Art. 13), with their append-only history |
+| `registry_sync`, `registry_transfer`, `seal`, `snapshot`, `webhook` | Transactional outboxes: rows written in the same transaction as the passport change, then delivered by the node's drainers |
+| `evidence` | The evidence dossier format, `VerificationReport` and its exit codes, and the repository port |
+| `transfer`, `successor` | Transfer-of-responsibility chains, and finding a passport's successor |
+| `trust` | `TrustMode`, `NodeProfile` and `NodeTrustReport`: each trust adapter's mode and the start-up check that refuses a stub under a production profile. Also the trusted-list cache port |
+| `qualification` | The seal qualification result as the HTTP API serves it |
+| `scan` | Scan telemetry port and aggregate read models |
+| `unsold_goods` | The ESPR Art. 24 disclosure record and its port |
+| `passport_request` | `CreatePassportRequest`, the body of `POST /vault/api/v1/dpp` |
 
----
+`dpp-dal` implements the repository ports against PostgreSQL; `dpp-vault` and
+`dpp-node` consume them.
 
-## License
+## Licence
 
-BSL-1.1 — see [LICENSE](../../LICENSE)
+[Business Source License 1.1](../../LICENSE).

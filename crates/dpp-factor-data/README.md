@@ -1,56 +1,38 @@
 # dpp-factor-data
 
-> **Not yet wired.** This crate exists as a stub. `dpp-node` does not load it yet;
-> it will be injected into the calculation pipeline once a dataset licence is signed
-> and the S3-backed factor store is stood up.
+The storage layer for licensed life-cycle inventory (LCI) emission factors, such as
+ecoinvent, EF or Sphera datasets, behind `dpp-calc`'s `FactorProvider` trait. Part
+of [dpp-engine](../../README.md), under the Business Source License 1.1.
 
-Licensed LCI emission factor data store for [Odal Node](https://odal-node.io).
+> [!NOTE]
+> **Status: planned.** No dataset is licensed, and no crate in the workspace depends
+> on this one. It ships a stub provider and the storage types only.
 
-Implements `dpp_calc::FactorProvider` for licensed datasets (ecoinvent, EF 3.1,
-Sphera). The `dpp-calc` crate defines the open methodology and trait; this crate
-holds the proprietary data layer so no licensed bytes ever appear in the
-Apache-2.0 `dpp-calc` crate.
+## What is here
 
-## What ships now
-
-Only `GhostFactorProvider` (returns `FactorNotFound` for every lookup) plus the
-supporting types `FactorDatasetManifest` and the `FactorStore` trait.
-No ecoinvent or EF data is bundled.
-
-## What comes later
-
-Before enabling the real `LicensedFactorProvider`, the following must be resolved
-
-1. Which dataset(s) to license first — ecoinvent, EF 3.1, or Sphera?
-2. Does the licence permit a managed multi-operator service?
-3. KMS availability: cloud SSE-KMS vs client-side `aes-gcm` envelope?
-4. Confirm with counsel that returning *computed* CO₂e + `table_hash` (not raw factors) is outside the "automated redistribution" prohibition.
-
-## Storage model (future)
-
-```
-s3://odal-factordata-<operator>/
-  ecoinvent-3.10/table.bin.enc     (AES-GCM encrypted factor table)
-  ecoinvent-3.10/manifest.json     (FactorDatasetManifest)
-  licenses/ecoinvent-3.10.pdf.enc  (signed licence document, encrypted)
-```
-
-Encrypted with KMS envelope encryption (SSE-KMS on cloud; client-side `aes-gcm` for self-hosted).
-The `FactorStore` trait decrypts into memory, never writes plaintext to disk.
-
-## Relationship to other crates
-
-| Crate | Role |
+| Item | Purpose |
 |---|---|
-| `dpp-calc` (core, Apache-2.0) | Defines `FactorProvider` trait + open calculators; never touches licensed data |
-| `dpp-node` | **Nothing yet.** This crate has no dependent in the workspace; `dpp-node` does not construct a `FactorProvider` of any kind. This row previously read "boots with `GhostFactorProvider`", which would tell a reader the factor tier was wired when it is not. It becomes true when a calculator that needs LCI data is on a publish path — see `dpp-calc`'s `co2e::cfb`, still gated on the Art. 7(1) delegated act |
+| `GhostFactorProvider` | A stub that answers `FactorNotFound` for every lookup |
+| `FactorStore` | The trait a real provider loads factor tables through |
+| `FactorDatasetManifest` | Describes a dataset (name, version, table hash) without containing it |
 
-## Licence warning
+## Why it is a separate crate
 
-**DO NOT** bundle or expose raw factor tables in any crate or over any API.
-The `table_hash` in `CalculationReceipt` is the only licensed-data artefact
-that may be shared externally.
+`dpp-calc` (Apache-2.0) holds the calculation methods and the `FactorProvider`
+trait. Licensed factor tables come with redistribution terms that bind regardless of
+this repository's licence, so they are kept out of both repositories:
 
-## License
+- Loader code, manifest types and stub providers may live here.
+- Raw factor tables, or any data derived from a licensed dataset, may not be
+  committed anywhere, encrypted or not. They are loaded at runtime from operator
+  storage.
+- No API returns raw factors. A calculation result may carry the dataset's
+  `table_hash` so it can be reproduced against the same table.
 
-BSL-1.1 — see [LICENSE](../../LICENSE)
+A real provider becomes useful once a calculation that needs LCI data runs on the
+publish path. In `dpp-calc` that is the carbon footprint calculation, which waits on
+the delegated act under ESPR Art. 7(1).
+
+## Licence
+
+[Business Source License 1.1](../../LICENSE).

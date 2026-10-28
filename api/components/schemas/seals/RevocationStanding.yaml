@@ -20,30 +20,30 @@ properties:
       - notAvailable
       - unusable
     description: >-
-      `notRevoked` — a CRL from this certificate's issuer, whose own signature
+      `notRevoked`: a CRL from this certificate's issuer, whose own signature
       verifies under a certificate the seal carries, does not list it.
 
 
-      `revoked` — that CRL lists it, and `at` says when. Whether this condemns the
+      `revoked`: that CRL lists it, and `at` says when. Whether this condemns the
       seal depends on `judgedAt`: a certificate revoked *after* a seal was made
       does not unmake it.
 
 
-      `notAvailable` — the seal carries no revocation material for this
+      `notAvailable`: the seal carries no revocation material for this
       certificate. Ordinary below `B-LT` and **not a defect**.
 
 
-      `unusable` — material was present and could not be relied on: an
+      `unusable`: material was present and could not be relied on: an
       unparseable list, or one whose signature does not verify. Distinct from
       `notAvailable` because something claiming to be authoritative failed, which
       is worth looking at. A CRL wearing the issuer's name but signed by another
-      key lands here and never on `notRevoked` — an unsigned list could otherwise
+      key lands here and never on `notRevoked`: an unsigned list could otherwise
       *clear* a revoked certificate.
   asOf:
     type: string
     format: date-time
     description: >-
-      With `notRevoked`, the CRL's `thisUpdate` — the moment its statement is
+      With `notRevoked`, the CRL's `thisUpdate`: the moment its statement is
       about. A list issued before the seal was made cannot rule out a later
       revocation, and this is here so a reader can see which question was
       actually answered.

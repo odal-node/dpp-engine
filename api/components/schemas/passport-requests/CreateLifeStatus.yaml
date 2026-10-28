@@ -1,6 +1,6 @@
 type: string
 description: >-
-  The subset of `LifeStatus` a passport may be **created** in — Regulation (EU)
+  The subset of `LifeStatus` a passport may be **created** in: Regulation (EU)
   2023/1542, Annex XIII point 4(c), less `waste`.
 
 

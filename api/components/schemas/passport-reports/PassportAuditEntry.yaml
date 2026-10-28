@@ -37,7 +37,7 @@ properties:
       - string
       - 'null'
     description: >-
-      The `x-request-id` of the HTTP request that produced this entry — the same
+      The `x-request-id` of the HTTP request that produced this entry: the same
       value returned in that request's response header, so a support
       conversation can be traced from a client's log to the trail. Null for an
       entry written outside a request, and for every entry written before this

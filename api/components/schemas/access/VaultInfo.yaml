@@ -20,7 +20,7 @@ properties:
       type: string
     description: >-
       Auth schemes the vault accepts. Currently a fixed list, not derived from
-      live config — `local` is listed even when
+      live config: `local` is listed even when
       `ADMIN_USERNAME`/`ADMIN_PASSWORD` are unset.
     example:
       - api_key

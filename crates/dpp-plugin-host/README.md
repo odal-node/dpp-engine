@@ -1,86 +1,71 @@
 # dpp-plugin-host
 
-`wasmtime`-based sandbox host for [Odal Node](https://odal-node.io) product group
-plugins.
+The `wasmtime` sandbox that runs product group plugins: WebAssembly modules that
+compute compliance results and passport payloads for one product group. Part of
+[dpp-engine](../../README.md), under the Business Source License 1.1.
 
-At node startup, `dpp-plugin-host` scans `/plugins/*.wasm`, compiles each module
-with `wasmtime`, and registers it under its product group key. Inbound passport
-requests are dispatched here; the host invokes the plugin's `calculate` export, maps
-the result to a `ComplianceResult`, and enforces the regulatory status gate before
-returning.
+To **write** a plugin, use `dpp-plugin-sdk`; the ABI is defined in
+`dpp-plugin-traits`. Both are Apache-2.0 crates in `dpp-core`.
 
----
+## Sandbox limits
 
-## When to use this crate
-
-- You are wiring new Wasm product group plugins into the node startup sequence.
-- You are writing a benchmark or integration test for plugin invocation overhead.
-- You need to extend host functions exposed to plugins.
-
-## When NOT to use this crate
-
-- You are **writing** a plugin → use `dpp-plugin-sdk` (open-source, Apache-2.0).
-- You need to define the plugin ABI → `dpp-plugin-traits`.
-
----
-
-## Architecture
-
-```
-node boot → loader::load_plugin(path) → WasmPluginHost::register(product_group_key, plugin)
-                                                         │
-passport request → PassportService → WasmPluginHost::compute(product_group_key, data)
-                                             │
-                              plugin.invoke_calculate(input_json)
-                                             │
-                              gate_determination(is_in_force, status)
-                                             │
-                                      ComplianceResult
-```
-
-### Regulatory status gate
-
-`WasmPluginHost::compute` calls `gate_determination(passport_determinable(key), status)` after every plugin invocation. A plugin registered for a provisional product group (e.g. a delegated act not yet in force) can never surface `Compliant` or `NonCompliant` — the gate downgrades the status to `NotAssessed`. This is enforced centrally regardless of what the plugin returns.
-
-### Passthrough behaviour
-
-When no plugin is registered for the requested product group, `WasmPluginHost::compute`
-returns `ComplianceStatus::PassthroughNoValidation`. The passport is stored with
-the manufacturer-supplied values unchanged — no compliance score is computed.
-
----
-
-## Module structure
-
-```
-src/
-├── loader.rs       load_plugin(path) — compiles .wasm, wires host functions, returns LoadedPlugin
-├── runtime.rs      wasmtime Engine + Linker construction (shared across all plugins)
-├── sandbox.rs      Per-invocation Store + memory limits
-├── host_funcs.rs   Host-side imports exposed to plugins (logging, abort)
-└── lib.rs          WasmPluginHost + ComplianceRegistry + PluginHost impls
-```
-
----
-
-## Feature flag: `integration-tests`
-
-Enables test helpers and the `wasm_invoke` criterion benchmark. Never enabled in
-production.
-
----
-
-## Relationship to other crates
-
-| Crate | Role |
+| Limit | Value |
 |---|---|
-| `dpp-plugin-traits` | Defines the Wasm ABI (`PluginInput`, `PluginResult`, `calculate` export) |
-| `dpp-plugin-sdk` | Used by plugin **authors** to build against the ABI |
-| `dpp-domain` | `SectorCatalog`, `ComplianceRegistry`, `PluginHost` port traits |
-| `dpp-node` | Constructs `WasmPluginHost`, scans `/plugins/`, registers loaded plugins |
+| CPU | Fuel metering, 10,000,000 units per invocation. A plugin that runs out traps |
+| Memory | 64 MiB of linear memory. Growth past it is refused |
+| WASI | A WASI preview 1 context with no preopened directories, no environment and no sockets. Wall and monotonic clocks are pinned to the moment the store was created |
+| Host functions | `odal::log` and `odal::now_ms` (the same pinned time) |
 
----
+The pinned clock makes a plugin's output a function of its input, so a compliance
+result can be reproduced by re-running the same input.
 
-## License
+## Loading and signatures
 
-BSL-1.1 — see [LICENSE](../../LICENSE)
+At start-up the node loads every `.wasm` file in `PLUGINS_DIR`; the product group key
+comes from the file. Each plugin must carry a detached Ed25519 signature
+(`<file>.sig`) that verifies against `PLUGIN_SIGNING_KEY`. Unsigned plugins load only
+with `ALLOW_UNSIGNED_PLUGINS=true`, and only under `NODE_PROFILE=development`.
+
+`POST /vault/api/v1/plugins` (`odal plugin install`) installs a signed plugin at
+runtime: it is verified, stored and swapped in without a restart.
+
+## Dispatch
+
+```mermaid
+flowchart LR
+    A[PassportService] --> B{plugin registered<br/>for the product group?}
+    B -- yes --> C[schema version supported?]
+    C -- yes --> D[invoke plugin in a fresh store]
+    D --> E[gate on the regulatory status]
+    E --> F[ComplianceResult]
+    C -- no --> X[refused]
+    B -- no --> G[PassthroughRegistry:<br/>no validation, values stored as supplied]
+```
+
+- **Schema version check.** A plugin declares the schema versions it supports and is
+  never called with data outside them.
+- **Regulatory status gate.** After every call, `gate_determination` downgrades the
+  result to `NotAssessed` when the product group's act cannot yet bindingly
+  determine compliance (for example, a delegated act not yet in force). A plugin
+  cannot report `Compliant` or `NonCompliant` for such a group.
+- **Passthrough.** With no plugin for a product group, `PassthroughRegistry` stores
+  the supplied values without a compliance check. From outside, "no plugin" and
+  "checked, no findings" look alike, so the node logs a warning at start-up naming
+  every product group that has no plugin loaded.
+
+## Modules
+
+```text
+src/
+├── host.rs          WasmPluginHost: register, install, hot-swap, dispatch
+├── runtime.rs       wasmtime Engine and per-invocation Store (fuel, memory, clocks)
+├── sandbox.rs       sandbox limits
+├── host_funcs.rs    odal::log, odal::now_ms
+└── loader/          discovery, loading and signature verification
+```
+
+The `integration-tests` feature enables the `wasm_invoke` benchmark and test helpers.
+
+## Licence
+
+[Business Source License 1.1](../../LICENSE).

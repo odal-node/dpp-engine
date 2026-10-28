@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinVariant
-  summary: GS1 Digital Link resolver — GTIN + consumer product variant
+  summary: GS1 Digital Link resolver (GTIN + consumer product variant)
   description: |
     A label that carries a consumer product variant (AI 22) after its GTIN.
     This node never prints one, but a label printed elsewhere may. **The

@@ -1,7 +1,7 @@
 type: object
 description: >-
   EU-registry state for one passport. `configured: false` means this deployment
-  has no registry queues at all — reported instead of a row of zeros, which
+  has no registry queues at all: reported instead of a row of zeros, which
   would read as "everything is registered".
 required:
   - passportId

@@ -7,14 +7,14 @@ get:
     as `battery-ev`, `battery-lmt` and `battery-industrial`.
 
     The served set is deliberately **not enumerated here.** It is derived from
-    one table in the handler, and the `404` body lists it — so a template added
+    one table in the handler, and the `404` body lists it, so a template added
     there is named by the refusal without anyone remembering to edit this
     sentence. That table exists because this list previously had three homes
     that disagreed, and this description was one of them.
 
     **There is no bare `battery` template.** What a battery passport must carry
     is decided per category, and the state-of-health parameters are two disjoint
-    sets under Annex VII Part A — an EV battery reports state of certified
+    sets under Annex VII Part A: an EV battery reports state of certified
     energy alone, while stationary and LMT batteries report a five-parameter
     list. One file cannot carry three obligations without offering columns some
     categories must not fill.
@@ -29,7 +29,7 @@ get:
     All three battery templates are **generated** from the same rules table the
     publish-time content gate reads, so a template cannot fall behind the
     obligation it exists to satisfy. Their rows import under the `battery`
-    product group — the category is carried by the row's own `batteryType`
+    product group: the category is carried by the row's own `batteryType`
     column, not by a product group of its own.
 
     Structured data points use four flat-file conventions: repeating groups
