@@ -22,7 +22,7 @@ async fn test_battery_create_publish_resolve() {
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": {
-            "name": "GreenCell GmbH",
+            "name": "Example Batteries GmbH",
             "address": "Prenzlauer Berg, Berlin, DE"
         },
         "materials": [
@@ -78,12 +78,12 @@ async fn test_battery_create_publish_resolve() {
             "anodeMaterial": [{"name": "Graphite", "weightPct": 18.0}],
             "electrolyteMaterial": [{"name": "LiPF6 in EC/DMC", "weightPct": 11.0}],
             "componentPartNumbers": ["CELL-21700-A", "BMS-4820"],
-            "sparePartsContacts": "parts@greencell.example.com",
-            "disassemblyInstructionsUrl": "https://greencell.example.com/disassembly/ind-48",
+            "sparePartsContacts": "parts@batteries.example.com",
+            "disassemblyInstructionsUrl": "https://batteries.example.com/disassembly/ind-48",
             "safetyMeasures": "Isolate before servicing; do not puncture",
             "testReportResults": "IEC 62619:2022 — pass",
             "markingInformation": "CE, separate-collection symbol, capacity label",
-            "euDeclarationOfConformity": "https://greencell.example.com/doc/ind-48.pdf",
+            "euDeclarationOfConformity": "https://batteries.example.com/doc/ind-48.pdf",
             "wasteBatteryInformation": "Return to an authorised collection point"
         }
     });
@@ -152,7 +152,7 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Incomplete Industrial Cell",
-                "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
+                "manufacturer": {"name": "Example Batteries GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.8}],
                 "productGroupData": {
                     "productGroup": "battery",
@@ -230,7 +230,7 @@ async fn a_portable_battery_is_outside_the_mandatory_content_scope() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Portable Cell",
-                "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
+                "manufacturer": {"name": "Example Batteries GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.02}],
                 "productGroupData": {
                     "productGroup": "battery",

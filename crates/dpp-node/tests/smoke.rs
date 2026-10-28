@@ -2345,7 +2345,7 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
         .bearer_auth(token)
         .json(&serde_json::json!({
             "productName": "Credential Loop Cell",
-            "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+            "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
             "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
             "batchId": "LOT-2026-09",
             "productGroupData": {
