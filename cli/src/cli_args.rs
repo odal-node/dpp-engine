@@ -59,7 +59,8 @@ pub enum Commands {
     Status,
     /// Report what the configured API key actually is (identity and scope)
     Whoami,
-    /// Pull latest container images
+    /// Update the node: rebuild it from source inside a clone of the engine,
+    /// otherwise pull the images for `ODAL_VERSION` (`latest` when unset)
     Update,
     // ── Onboarding & auth ────────────────────────────────────────────────────
     /// Onboard the operator and mint the first API key

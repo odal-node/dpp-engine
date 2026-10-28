@@ -476,14 +476,14 @@ mod tests {
             ("productName".into(), "Odal Reference Battery LFP-48".into()),
             ("gtin".into(), "09506000134352".into()),
             ("batchId".into(), "BATCH-2026-Q2-007".into()),
-            ("manufacturer_name".into(), "GreenCell GmbH".into()),
+            ("manufacturer_name".into(), "Example Batteries GmbH".into()),
             (
                 "manufacturer_address".into(),
                 "Prenzlauer Berg 12, 10405 Berlin, DE".into(),
             ),
             (
                 "manufacturer_didWebUrl".into(),
-                "https://greencell.example/.well-known/did.json".into(),
+                "https://batteries.example/.well-known/did.json".into(),
             ),
             ("batteryChemistry".into(), "LFP".into()),
             ("batteryType".into(), "industrial".into()),
@@ -507,7 +507,7 @@ mod tests {
         let req = validate_battery_row(&row, 1).expect("valid extended battery row");
 
         // Manufacturer aliases resolved (snake_case + full address + did:web).
-        assert_eq!(req.manufacturer.name, "GreenCell GmbH");
+        assert_eq!(req.manufacturer.name, "Example Batteries GmbH");
         assert!(req.manufacturer.address.contains("Berlin"));
         // A postal-address header states an address and not a country, so
         // nothing is invented for `country` — the whole point of reading the two
@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(req.manufacturer.country, None);
         assert_eq!(
             req.manufacturer.did_web_url.as_deref(),
-            Some("https://greencell.example/.well-known/did.json")
+            Some("https://batteries.example/.well-known/did.json")
         );
         assert_eq!(req.repairability_score, Some(7.5));
 

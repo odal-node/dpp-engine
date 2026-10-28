@@ -110,8 +110,12 @@ pub struct AsyncImportResponse {
 /// Accepts a `multipart/form-data` upload with the following fields:
 /// - `file`  — CSV or XLSX file (required)
 /// - `mode`  — `"dry_run"` to validate without creating records; any other
-///   value (or the field's absence) means `"apply"`, today's only write
-///   behaviour (create-only — delta upsert lands in a later segment).
+///   value (or the field's absence) means `"apply"`. Apply matches each row
+///   to the passports already on the node by identity and content, and acts
+///   on the match (`domain::matcher::RowAction`): `create` for a new
+///   identity, `updateDraft` for a draft whose content differs,
+///   `conflictPublished` for a published passport whose content differs
+///   (reported, never changed), and `unchanged` for identical content.
 ///
 /// Every import — dry-run or apply, sync or async — mints a job id and
 /// persists a row-addressed report retrievable via `GET
