@@ -680,8 +680,8 @@ mod tests {
         let failures = [
             AuthenticationFailure::NotACompactJws,
             AuthenticationFailure::NoMatchingKey {
-                document: "did:web:secret-document.example".into(),
-                kid: "secret-kid".into(),
+                document: Some("did:web:secret-document.example".into()),
+                kid: Some("secret-kid".into()),
             },
             AuthenticationFailure::SignatureDoesNotVerify,
             AuthenticationFailure::Unverifiable {
