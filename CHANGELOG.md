@@ -438,6 +438,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **With `WEBHOOK_ALLOW_PRIVATE_TARGETS` set, a webhook URL must still be
+  `http` or `https`.** The opt-out was meant to admit private hosts and plain
+  `http`. It skipped the scheme check entirely, so `POST /api/v1/webhooks` stored
+  `file:`, `ftp:` or any other scheme with a host: a subscription the drain's
+  HTTP client can never deliver to. For `file:` the stored form did not even
+  read back the same: `file://h//z:/` was stored as `file://h/z:/`, which has
+  no host. Such a URL is now refused with `422`. The new `url_guard` fuzz
+  target found it on its first run.
+
 - **A `Cargo.lock` that had drifted from the manifests passed CI.** No step
   built with `--locked`, so a build that found the lock out of step re-resolved
   in the runner and discarded the result: every check passed and the committed

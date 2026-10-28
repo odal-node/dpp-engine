@@ -11,10 +11,11 @@
 //!   fetch to a target this node did not choose must go through it.
 //! - [`ip_is_disallowed`] — the range predicate the two above share.
 //!
-//! `allow_private` opts out of the range check: this node is single-tenant, so a
-//! self-hosting operator may legitimately deliver to their *own* internal
-//! receiver. It defaults off (the Odal-hosted tier must never proxy into the
-//! metadata endpoint or Odal's network); operators enable it explicitly.
+//! `allow_private` opts out of the range check and admits plain `http` beside
+//! `https`: this node is single-tenant, so a self-hosting operator may
+//! legitimately deliver to their *own* internal receiver. It defaults off (the
+//! Odal-hosted tier must never proxy into the metadata endpoint or Odal's
+//! network); operators enable it explicitly.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -24,15 +25,24 @@ use url::{Host, Url};
 /// normalised URL string on success, or a human-readable rejection reason.
 ///
 /// When `allow_private` is true the address-range check is skipped (see module
-/// docs) — `https` is still required.
+/// docs) and plain `http` is accepted beside `https`. No other scheme is.
 pub fn validate_webhook_url(raw: &str, allow_private: bool) -> Result<String, String> {
     let url = Url::parse(raw).map_err(|e| format!("invalid URL: {e}"))?;
     // `Host` parses IP literals correctly (including bracketed IPv6 like `[::1]`,
     // which `host_str()` returns with brackets and so would never parse as an IP).
     let host = url.host().ok_or("webhook URL has no host")?;
     // Trust opt-in: a self-hoster delivering to their own internal network may
-    // use a private host and/or plain http — skip the scheme + range guard.
+    // use a private host and/or plain http — skip the range guard.
+    //
+    // The scheme is still checked. This branch used to return before any scheme
+    // check, so it stored `file:`, `ftp:` or any scheme with a host: a target the
+    // drain's HTTP client refuses, and for `file:` one that read back with no host
+    // (`file://h//z:/` was stored as `file://h/z:/`, which this function then
+    // refused). The `url_guard` fuzz target found it.
     if allow_private {
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err("webhook URL must use http or https".into());
+        }
         return Ok(url.to_string());
     }
     if url.scheme() != "https" {
@@ -294,6 +304,45 @@ mod tests {
         assert!(validate_webhook_url("http://10.0.0.5/hook", true).is_ok());
         // A malformed URL is still rejected even in trust mode.
         assert!(validate_webhook_url("not a url", true).is_err());
+    }
+
+    /// Trust mode admits plain http, and no scheme a delivery cannot use.
+    /// `file://h//z:/` is the `url_guard` fuzz target's finding: it used to be
+    /// accepted and stored as `file://h/z:/`, which has no host when read back.
+    #[test]
+    fn trust_mode_refuses_a_scheme_no_delivery_can_use() {
+        for raw in [
+            "file://h//z:/",
+            "file://receiver.internal/hook",
+            "ftp://10.0.0.5/hook",
+            "gopher://10.0.0.5/hook",
+        ] {
+            assert_eq!(
+                validate_webhook_url(raw, true),
+                Err("webhook URL must use http or https".to_owned()),
+                "{raw}"
+            );
+        }
+    }
+
+    /// The webhook service stores the URL this returns, and the drain parses it
+    /// again, so the stored form must check the same the second time. Each of
+    /// these is rewritten by normalisation.
+    #[test]
+    fn a_stored_webhook_url_checks_the_same_when_read_back() {
+        for raw in [
+            "HTTPS://Example.COM:443/a/../hook?x=1#f",
+            "http://10.0.0.5:8080/a/./b//hook",
+            "https://[0:0:0:0:0:ffff:a00:5]/hook",
+        ] {
+            let stored = validate_webhook_url(raw, true).expect(raw);
+            assert_ne!(stored, raw, "normalisation left {raw} as it was");
+            assert_eq!(
+                validate_webhook_url(&stored, true),
+                Ok(stored.clone()),
+                "{raw} was stored as {stored}"
+            );
+        }
     }
 
     #[test]
