@@ -154,6 +154,41 @@ async fn a_committed_change_writes_every_part() {
     assert_eq!(pending_deliveries(&pg).await, 1);
 }
 
+/// Successive changes to one passport keep its audit chain verifiable: each
+/// committed entry links to the one the change before it wrote.
+#[tokio::test]
+async fn successive_changes_keep_the_audit_chain_intact() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let p = repo
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+
+    log.commit(suspension(p.id)).await.expect("suspend");
+    let retirement = StateChange::new(PassportAuditEntry::new(
+        &p.id.to_string(),
+        "retired",
+        "state-change-test",
+        Some("suspended"),
+        Some("retired"),
+    ))
+    .with_passport(PassportWrite::Status(p.id, PassportStatus::Retired));
+    log.commit(retirement).await.expect("retire");
+
+    let audit = PgAuditRepo::new(pg.dal.clone());
+    let entries = audit
+        .list_by_passport(&p.id.to_string())
+        .await
+        .expect("audit");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        audit.verify_chain(&p.id.to_string()).await.expect("verify"),
+        None
+    );
+}
+
 /// A failure after the passport write rolls the whole change back.
 ///
 /// A transfer notice with no chain to accept it is refused after the passport
