@@ -532,6 +532,51 @@ async fn identity_health_is_mounted_at_identity_prefix() {
     assert_eq!(resp.status(), 200);
 }
 
+/// The node's own DID resolves by the did:web method, with no proxy rewrite.
+///
+/// The DID is read from the document the node serves, turned into a URL by the
+/// vault's did:web resolver, and that URL's path is requested from the node.
+/// A pathless `did:web:<host>` resolves to `/.well-known/did.json`, which the
+/// node used to serve only under `/identity`: the DID it signed as led to a
+/// `404` unless a proxy rewrote the path.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_nodes_own_did_resolves_by_the_did_web_method() {
+    let (base, _c) = start_db_and_node().await;
+    let client = reqwest::Client::new();
+
+    let served: serde_json::Value = client
+        .get(format!("{base}/identity/.well-known/did.json"))
+        .send()
+        .await
+        .expect("GET /identity/.well-known/did.json failed")
+        .json()
+        .await
+        .expect("the DID document must be JSON");
+    let did = served["id"]
+        .as_str()
+        .expect("the DID document must carry id");
+
+    let resolved = dpp_vault::domain::verify::did_web_url(did)
+        .unwrap_or_else(|e| panic!("the node's DID must be a did:web: {e}"));
+    let path = resolved
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|at| &rest[at..]))
+        .expect("a did:web URL has a path");
+
+    let resp = client
+        .get(format!("{base}{path}"))
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET {path} failed: {e}"));
+    assert_eq!(
+        resp.status(),
+        200,
+        "the node's DID {did} resolves to {resolved}, and the node must serve {path}"
+    );
+    let document: serde_json::Value = resp.json().await.expect("the DID document must be JSON");
+    assert_eq!(document, served, "both paths must serve the one document");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn integrator_health_is_mounted_at_integrator_prefix() {
     let (base, _c) = start_db_and_node().await;
@@ -739,6 +784,7 @@ async fn route_inventory_matches_assembled_router() {
             reqwest::Method::GET,
             "/identity/.well-known/did.json".into(),
         ),
+        (reqwest::Method::GET, "/.well-known/did.json".into()),
         (reqwest::Method::GET, "/integrator/health".into()),
         // `battery-ev` rather than `battery`: the bare product group is no
         // longer a template key — what a battery owes is decided per category,
@@ -2222,7 +2268,7 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
         .bearer_auth(token)
         .json(&serde_json::json!({
             "productName": "Credential Loop Cell",
-            "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+            "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
             "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
             "batchId": "LOT-2026-09",
             "productGroupData": {

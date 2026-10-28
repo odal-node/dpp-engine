@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use dpp_common::event::{self, DppEvent, EventBus, EventBusError};
 
 use dpp_dal::in_memory_repo::InMemoryPassportRepo;
 use dpp_domain::{
@@ -498,4 +499,85 @@ async fn a_rendered_snapshot_with_its_proof_removed_is_absent_not_expired() {
         "a stripped proof is Absent, never Expired: the dates are still there and \
          nothing vouches for them"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/// Keeps every event the service publishes, so a test can read them back.
+#[derive(Clone, Default)]
+struct RecordingEventBus(Arc<Mutex<Vec<DppEvent>>>);
+
+#[async_trait]
+impl EventBus for RecordingEventBus {
+    async fn publish(&self, event: &DppEvent) -> Result<(), EventBusError> {
+        self.0.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+}
+
+impl RecordingEventBus {
+    fn of_type(&self, event_type: &str) -> Vec<DppEvent> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == event_type)
+            .cloned()
+            .collect()
+    }
+}
+
+/// `supersede` publishes `dpp.passport.superseded`, the same event `amend`
+/// does, and refreshes the superseded passport's snapshot.
+///
+/// Both routes end in `supersede_predecessor`, which publishes the event, so
+/// linking an existing successor notifies a subscriber exactly as issuing a
+/// corrected one does. Nothing pinned that, and documentation came to say the
+/// opposite.
+#[tokio::test]
+async fn supersede_publishes_the_superseded_event() {
+    let (mut service, outbox, _identity, _key, _key_dir) = build_service().await;
+    let events = RecordingEventBus::default();
+    service.events = Arc::new(events.clone());
+    let auth = auth();
+
+    let predecessor = service
+        .create(draft_passport(), &auth)
+        .await
+        .expect("create");
+    let predecessor = service
+        .publish(predecessor.id, &auth)
+        .await
+        .expect("publish");
+
+    let mut successor = draft_passport();
+    successor.supersedes_id = Some(predecessor.id);
+    let successor = service
+        .create(successor, &auth)
+        .await
+        .expect("create the successor");
+    let successor = service
+        .publish(successor.id, &auth)
+        .await
+        .expect("publish the successor");
+
+    service
+        .supersede(predecessor.id, successor.id, None, &auth)
+        .await
+        .expect("supersede");
+
+    let superseded = events.of_type(event::subjects::PASSPORT_SUPERSEDED);
+    assert_eq!(
+        superseded.len(),
+        1,
+        "supersede must publish exactly one superseded event"
+    );
+    assert_eq!(superseded[0].data["passportId"], predecessor.id.to_string());
+    assert_eq!(superseded[0].data["successorId"], successor.id.to_string());
+    assert_eq!(superseded[0].data["status"], "superseded");
+
+    // One reconcile at publish, one when it was superseded.
+    assert_eq!(outbox.enqueue_count(predecessor.id), 2);
 }

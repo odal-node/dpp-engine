@@ -889,10 +889,10 @@ mod tests {
         ) -> Result<bool, DppError> {
             unreachable!("the drain never renews")
         }
-        async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+        async fn unsealed_published_counts(&self) -> Result<dpp_types::UnsealedCounts, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
-            Ok(0)
+            Ok(dpp_types::UnsealedCounts::default())
         }
     }
 
@@ -1095,7 +1095,7 @@ mod tests {
     /// The audit names a broken seal that every existing count calls healthy.
     ///
     /// The whole point of the pass. Both `enqueue_unsealed` and
-    /// `unsealed_published_count` ask whether the `seal` member is absent, so a
+    /// `unsealed_published_counts` ask whether the `seal` member is absent, so a
     /// passport carrying a seal that does not verify is swept by neither and
     /// counted by neither — it looks fine in every number the node reports.
     ///
@@ -1165,8 +1165,10 @@ mod tests {
             async fn status_counts(&self) -> Result<dpp_types::SealOutboxCounts, DppError> {
                 Ok(dpp_types::SealOutboxCounts::default())
             }
-            async fn unsealed_published_count(&self) -> Result<i64, DppError> {
-                Ok(0)
+            async fn unsealed_published_counts(
+                &self,
+            ) -> Result<dpp_types::UnsealedCounts, DppError> {
+                Ok(dpp_types::UnsealedCounts::default())
             }
         }
 

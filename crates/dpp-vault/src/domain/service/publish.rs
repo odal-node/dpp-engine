@@ -23,7 +23,7 @@ use dpp_types::{
     state_change::{PassportWrite, StateChange},
 };
 
-use super::{PassportService, retention_years_for};
+use super::{PassportService, retention_deadline, retention_years_for};
 use super::{catalog, schema_registry};
 
 /// Why a publish was refused. One value per `return Err` in [`PassportService::publish`].
@@ -718,8 +718,7 @@ pub fn stamp_publish_obligations(
         // by the operator before publishing.
         let published_at = passport.published_at.unwrap_or_else(Utc::now);
         let years = retention_years_for(&passport.product_group);
-        passport.retention_until =
-            Some(published_at + chrono::Duration::days(365 * i64::from(years)));
+        passport.retention_until = Some(retention_deadline(published_at, years));
     }
     passport.qr_code_url = Some(build_carrier_url(passport, resolver_base)?);
     Ok(())

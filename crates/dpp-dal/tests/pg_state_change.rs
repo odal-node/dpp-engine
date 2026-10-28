@@ -11,7 +11,8 @@
 use chrono::Utc;
 
 use dpp_dal::pg::{
-    PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgStateChangeLog, PgWebhookRepo,
+    PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog,
+    PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
@@ -19,6 +20,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::status::PassportStatus;
 use dpp_types::audit::{AuditRepository, PassportAuditEntry, PassportVersionStore};
+use dpp_types::registry_sync::{RegistryStatusIntent, RegistrySyncOutbox};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent};
 use dpp_types::webhook::{CreateWebhookRequest, WebhookOutbox, WebhookSubscriptionStore};
 
@@ -152,6 +154,41 @@ async fn a_committed_change_writes_every_part() {
     assert_eq!(pending_deliveries(&pg).await, 1);
 }
 
+/// Successive changes to one passport keep its audit chain verifiable: each
+/// committed entry links to the one the change before it wrote.
+#[tokio::test]
+async fn successive_changes_keep_the_audit_chain_intact() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let p = repo
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+
+    log.commit(suspension(p.id)).await.expect("suspend");
+    let retirement = StateChange::new(PassportAuditEntry::new(
+        &p.id.to_string(),
+        "retired",
+        "state-change-test",
+        Some("suspended"),
+        Some("retired"),
+    ))
+    .with_passport(PassportWrite::Status(p.id, PassportStatus::Retired));
+    log.commit(retirement).await.expect("retire");
+
+    let audit = PgAuditRepo::new(pg.dal.clone());
+    let entries = audit
+        .list_by_passport(&p.id.to_string())
+        .await
+        .expect("audit");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        audit.verify_chain(&p.id.to_string()).await.expect("verify"),
+        None
+    );
+}
+
 /// A failure after the passport write rolls the whole change back.
 ///
 /// A transfer notice with no chain to accept it is refused after the passport
@@ -228,4 +265,79 @@ async fn a_create_archives_nothing() {
             .expect("versions")
             .is_empty()
     );
+}
+
+/// A published passport with a pending registration, for the registry tests.
+async fn published_and_registered(pg: &TestPg) -> PassportId {
+    let draft = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Draft))
+        .await
+        .expect("create");
+    let mut published = draft.clone();
+    published.status = PassportStatus::Published;
+    published.published_at = Some(Utc::now());
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(
+            StateChange::new(PassportAuditEntry::new(
+                &draft.id.to_string(),
+                "published",
+                "state-change-test",
+                None,
+                Some("active"),
+            ))
+            .with_passport(PassportWrite::Replace(published))
+            .with_registration(serde_json::json!({ "registration": "payload" })),
+        )
+        .await
+        .expect("publish");
+    draft.id
+}
+
+async fn registry_intent(pg: &TestPg, id: PassportId) -> Option<RegistryStatusIntent> {
+    PgRegistrySyncRepo::new(pg.dal.clone())
+        .pending_for(id)
+        .await
+        .expect("read the registry row")
+        .expect("the registration is still pending")
+        .status_intent
+}
+
+/// The status a suspension owes the registry commits with the suspension.
+///
+/// It used to be recorded after the commit as "non-fatal", so a node killed in
+/// between left the registry believing a suspended passport was live, with
+/// nothing to re-queue it.
+#[tokio::test]
+async fn a_suspension_records_the_registry_status_it_owes() {
+    let pg = start_pg().await;
+    let id = published_and_registered(&pg).await;
+
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(suspension(id).with_registry_intent(RegistryStatusIntent::Suspended))
+        .await
+        .expect("suspend");
+
+    assert_eq!(
+        registry_intent(&pg, id).await,
+        Some(RegistryStatusIntent::Suspended)
+    );
+}
+
+/// A refused change records no registry status either.
+#[tokio::test]
+async fn a_refused_change_records_no_registry_status() {
+    let pg = start_pg().await;
+    let id = published_and_registered(&pg).await;
+
+    let refused = suspension(id)
+        .with_registry_intent(RegistryStatusIntent::Suspended)
+        .with_transfer_notice(uuid::Uuid::now_v7(), serde_json::json!({}));
+    assert!(
+        PgStateChangeLog::new(pg.dal.clone())
+            .commit(refused)
+            .await
+            .is_err()
+    );
+
+    assert_eq!(registry_intent(&pg, id).await, None);
 }
