@@ -26,7 +26,7 @@ use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 use super::repo_audit::append_in_tx;
 use super::repo_passport::{PgPassportRepo, insert_passport_in_tx, update_passport_in_tx};
 use super::repo_passport_version::insert_version;
-use super::repo_registry_sync::queue_registration_in_tx;
+use super::repo_registry_sync::{queue_registration_in_tx, record_status_intent};
 use super::repo_registry_transfer::queue_transfer_notice;
 use super::repo_transfer::upsert_chain;
 use super::repo_webhook::fan_out;
@@ -104,6 +104,7 @@ impl StateChangeLog for PgStateChangeLog {
             transfer_chain,
             registration,
             transfer_notice,
+            registry_intent,
             audit,
             webhook,
         } = change;
@@ -132,6 +133,14 @@ impl StateChangeLog for PgStateChangeLog {
                 )
             })?;
             queue_transfer_notice(&mut *tx, *transfer_id, chain.passport_id, payload).await?;
+        }
+        if let Some(intent) = registry_intent {
+            let passport = written.as_ref().ok_or_else(|| {
+                DppError::Internal(
+                    "a registry status is recorded only with the passport it describes".into(),
+                )
+            })?;
+            record_status_intent(&mut *tx, passport.id, intent).await?;
         }
         append_in_tx(&mut tx, audit).await?;
         if let Some(event) = &webhook {
