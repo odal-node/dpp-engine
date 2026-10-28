@@ -26,16 +26,17 @@ jobs:
           - image: dpp-node
             dockerfile: dpp-engine/docker/node.Dockerfile
             description: >-
-              Odal Node single binary — fuses vault, identity, integrator,
-              and Wasm plugin host into one process for self-hosted Digital
-              Product Passport deployments.
+              Odal Node server for self-hosted Digital Product Passports: one
+              process serving the passport API, the operator's did:web document
+              and bulk import, with the Wasm plugin host and the outbox drainers.
             readme: crates/dpp-node/README.md
           - image: dpp-resolver
             dockerfile: dpp-engine/docker/resolver.Dockerfile
             description: >-
-              Public QR / GS1 Digital Link resolver for Digital Product
-              Passports — verifies Ed25519 JWS signatures and serves HTML or
-              JSON-LD, no authentication required.
+              Public resolver for Digital Product Passports: answers GS1 Digital
+              Link scans, verifies each passport's signature against the
+              operator's did:web document, and serves HTML, JSON-LD or an Asset
+              Administration Shell. No authentication required.
             readme: crates/dpp-resolver/README.md
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

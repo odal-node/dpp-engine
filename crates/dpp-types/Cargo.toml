@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-types"
-description = "Platform-wide domain types for Odal Node (tenant, auth, audit, API keys)"
+description = "Engine-side shared types and repository ports for Odal Node: auth, API keys, the audit trail, operator configuration and the transactional outboxes"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true
