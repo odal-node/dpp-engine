@@ -83,6 +83,15 @@ impl PgStateChangeLog {
             }
             PassportWrite::Status(id, status) => {
                 let mut passport = self.archive_current(tx, id).await?;
+                // The caller checked this transition on a read taken before the
+                // lock, and a change committed since may have moved the passport
+                // on. A refusal rolls the archived version back with the rest.
+                if !passport.status.can_transition_to(&status) {
+                    return Err(DppError::InvalidTransition {
+                        current: passport.status.to_string(),
+                        required: status.to_string(),
+                    });
+                }
                 passport.status = status;
                 passport.updated_at = Utc::now();
                 update_passport_in_tx(tx, &passport).await?;
