@@ -21,7 +21,7 @@ properties:
 
       Declared rather than assumed. The node reports `ingesting` on
       `GET /stats` by asking whether the last flush is recent, and "recent" is
-      only meaningful relative to how often the sender promised to call —
+      only meaningful relative to how often the sender promised to call:
       `SCAN_FLUSH_INTERVAL_SECS` belongs to the resolver, a separate deployable
       whose environment the node cannot read.
 

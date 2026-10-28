@@ -1,5 +1,5 @@
 description: |
-  The passport exists but has been withdrawn from public view — it is suspended.
+  The passport exists but has been withdrawn from public view: it is suspended.
   Distinct from `404`: the node is confirming the identifier is real and
   declining to serve it, rather than denying knowledge of it.
 content:

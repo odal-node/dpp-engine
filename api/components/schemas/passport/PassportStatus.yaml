@@ -13,7 +13,7 @@ description: |
   - `active`: published and signed; publicly resolvable via QR
   - `suspended`: temporarily hidden (recall, dispute); JWS preserved
   - `retired`: post-retention; immutable; retained for regulatory record-keeping.
-    Not archiving — see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2
+    Not archiving: see `GET /dpp/{dppId}/versions` for EN 18221 clause 4.2
   - `superseded`: replaced by a newer passport version; terminal
   - `deactivated`: end-of-life declared (recycled, destroyed under a
     derogation, exported, or lost); terminal. The typed reason is carried by
@@ -28,5 +28,5 @@ description: |
   `retired`, `superseded` and `deactivated` are terminal.
 
   `archived` is refused on input. It was this status's wire value and now names
-  only what EN 18221 clause 4.2 means by it — the retention of historical
+  only what EN 18221 clause 4.2 means by it: the retention of historical
   versions of a passport that is still live.

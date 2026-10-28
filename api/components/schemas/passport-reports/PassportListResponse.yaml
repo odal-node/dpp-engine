@@ -13,7 +13,7 @@ properties:
   total:
     type: integer
     description: >-
-      Total matching the filter across every page — deliberately not the length
+      Total matching the filter across every page: deliberately not the length
       of `dpps`.
   limit:
     type: integer

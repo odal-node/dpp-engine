@@ -1,89 +1,83 @@
 # dpp-node
 
-Odal Node MVP single binary — fuses vault, identity, integrator, bridge, and plugin
-host into one process for [Odal Node](https://odal-node.io) self-hosted deployments.
+The Odal Node server binary: one Axum process that serves the passport API, the
+operator's `did:web` document and bulk import, hosts the Wasm plugin sandbox, and
+runs the background outbox drainers. Part of
+[dpp-engine](https://github.com/odal-node/dpp-engine), under the Business Source
+License 1.1.
 
-In production the full stack is a `docker-compose` of `dpp-node` + `dpp-resolver` +
-PostgreSQL. `dpp-node` listens on `:8001`; `dpp-resolver` on `:8003`.
+> [!NOTE]
+> Pre-production. The HTTP API and the database schema can still change between
+> minor versions.
 
----
+## Run it
 
-## What this binary does
+The supported way to run the node is the full stack (node, resolver, PostgreSQL,
+Redis, NATS) through the `odal` CLI. The
+[engine README](https://github.com/odal-node/dpp-engine#quick-start) has the
+step-by-step quick start. For engine development:
 
-1. **Loads configuration** from environment / `.env`.
-2. **Runs schema migrations** via `PgDal::migrate` if `DATABASE_MIGRATE_URL` is set.
-   If unset, migrations are assumed pre-applied by ops tooling.
-3. **Loads Wasm plugins** — scans `/plugins/*.wasm`, compiles each with `wasmtime`,
-   registers in `WasmPluginHost`.
-4. **Connects to NATS JetStream** — subscribes to domain events; routes them to the
-   EventBus.
-5. **Builds the fused router** — mounts vault, identity (public only), and integrator
-   under their respective prefixes.
-6. **Starts the Axum server** on `0.0.0.0:8001`.
+```bash
+just infra              # PostgreSQL, Redis and NATS in Docker
+cp .env.example .env    # set KEY_STORE_PASSPHRASE
+cargo run -p dpp-node
+```
 
----
+The node listens on `NODE_PORT` (8001). Configuration comes from environment
+variables; [`.env.example`](../../.env.example) lists every one under its section.
 
-## Route prefixes
+## Routes
 
-| Prefix | Crate | Description |
+| Prefix | Served by | What is there |
 |---|---|---|
-| `/health` | node | Top-level liveness probe |
-| `/vault/…` | `dpp-vault` | Full DPP write API + operator + API key management |
-| `/identity/…` | `dpp-identity` (public) | `did:web` document + health only |
-| `/integrator/…` | `dpp-integrator` | CSV/Excel import jobs |
+| `/health` | `dpp-node` | Liveness |
+| `/vault/*` | [`dpp-vault`](../dpp-vault/README.md) | Passport lifecycle, operator configuration, keys, webhooks, evidence, seals |
+| `/identity/*` | [`dpp-identity`](../dpp-identity/README.md) | The public `did:web` document and probes only |
+| `/integrator/*` | [`dpp-integrator`](../dpp-integrator/README.md) | CSV/XLSX import, templates and schemas |
 
-The internal identity signing endpoint (`/internal/sign`) is **not mounted** on the
-network. The vault calls `LocalIdentityService` in-process, so there is no
-network-reachable signing surface.
+The node mounts only the public identity routes. It signs in-process, so there is
+no network-reachable signing endpoint. The full route list, with authentication and
+scopes, is the OpenAPI description:
+[`api/openapi.bundled.yaml`](../../api/openapi.bundled.yaml).
 
----
+Prometheus metrics are served on a separate private listener, `METRICS_ADDR`
+(default `127.0.0.1:9100`).
 
-## Module structure
+## Start-up sequence
 
-```
+1. Read configuration from the environment. A missing required variable stops
+   the process.
+2. Connect to PostgreSQL. If `DATABASE_MIGRATE_URL` is set, apply the migrations in
+   `ops/pg/` with that privileged role first; otherwise they must already be
+   applied.
+3. Load and verify the Wasm plugins in `PLUGINS_DIR`.
+4. Open the encrypted key store at `KEY_STORE_PATH`.
+5. Resolve each trust adapter (compliance plugins, EU registry, seal, credential
+   issuers, ruleset channel) and record whether it is live, sandbox or a stub. Under
+   `NODE_PROFILE=production` the node refuses to start while a required adapter is
+   a stub.
+6. Connect to NATS if `NATS_URL` is set. Without it, events are discarded.
+7. Start the background tasks: the EU registry, transfer, webhook, seal and
+   snapshot outbox drainers, the ruleset poll, and the clean-up jobs. Drainers
+   for an unconfigured backend are not started.
+8. Serve the router and the metrics listener.
+
+## Modules
+
+```text
 src/
-├── config.rs     NodeConfig — merges all service configs + NATS URL + plugin dir
-├── infra/        Wire-up helpers (NATS connection, plugin loader bootstrap)
-├── router.rs     build() — nests vault, identity, integrator routers
-└── main.rs       Binary entry point (boot sequence described above)
+├── main.rs      the start-up sequence above
+├── boot/        database, trust-report and background-task construction
+├── config.rs    NodeConfig, read from the environment
+├── infra/       NATS event bus, PostgreSQL job store, outbox drainers, ruleset
+│                channel, S3 back-up and snapshot stores, trusted-list refresh
+├── plugins.rs   plugin directory loading and signature checks
+└── router.rs    nests the vault, identity and integrator routers
 ```
 
-The library surface (`lib.rs`) re-exports `config`, `infra`, and `router` so
-integration tests can build the assembled router with injected test states without
-going through the binary entry point.
+`lib.rs` exports `config`, `infra` and `router`, so integration tests can build the
+assembled router with test state.
 
----
+## Licence
 
-## Configuration (key environment variables)
-
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection URL for the least-privilege app role |
-| `DATABASE_MIGRATE_URL` | PostgreSQL connection URL for the migration role (optional) |
-| `NATS_URL` | NATS JetStream server URL |
-| `DID_WEB_BASE_URL` | Operator's public hostname for `did:web` document generation |
-| `PLUGIN_DIR` | Directory to scan for `.wasm` plugin files (default `/plugins`) |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Local bootstrap admin credentials |
-
-See `.env.example` in the repo root for the full list.
-
----
-
-## Relationship to other crates
-
-| Crate | Role |
-|---|---|
-| `dpp-vault` | DPP write engine; router nested under `/vault` |
-| `dpp-identity` | `build_public()` nested under `/identity` |
-| `dpp-integrator` | Async import adapter; router nested under `/integrator` |
-| `dpp-plugin-host` | Wasm sandbox; instantiated at boot, injected into vault |
-| `dpp-registry` | EU Central Registry connector; library only, no HTTP surface |
-| `dpp-dal` | PostgreSQL client; constructed here, passed to vault and integrator |
-| `dpp-common` | Telemetry init, config loading |
-| `dpp-resolver` | Separate process — not embedded in this binary |
-
----
-
-## License
-
-BSL-1.1 — see [LICENSE](../../LICENSE)
+[Business Source License 1.1](../../LICENSE).

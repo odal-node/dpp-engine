@@ -1216,6 +1216,84 @@ async fn full_dpp_lifecycle_through_assembled_node() {
     );
 }
 
+/// The README's quick start registers a facility and an operator identifier,
+/// then creates and publishes `ops/demo/samples/battery-full.json`. This runs
+/// those steps against the assembled node, so the documented example cannot
+/// drift into a body the node refuses.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_quick_start_battery_sample_creates_and_publishes() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000066");
+    let client = reqwest::Client::new();
+
+    // What `odal facility add` and `odal operator-id add` send, with the
+    // README's values.
+    let facility = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "Berlin plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility request failed");
+    assert!(facility.status().is_success(), "facility add failed");
+    let operator_id = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .send()
+        .await
+        .expect("operator-identifier request failed");
+    assert!(operator_id.status().is_success(), "operator-id add failed");
+
+    let sample: serde_json::Value =
+        serde_json::from_str(include_str!("../../../ops/demo/samples/battery-full.json"))
+            .expect("the sample is JSON");
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&sample)
+        .send()
+        .await
+        .expect("create request failed");
+    let status = resp.status();
+    let created: serde_json::Value = resp.json().await.expect("create response is JSON");
+    assert_eq!(status, 201, "create refused the sample: {created}");
+    assert_eq!(created["status"], "draft");
+    let schemas = dpp_domain::schemas::VersionedSchemaRegistry::new();
+    let (latest, _) = schemas
+        .latest("battery")
+        .expect("battery schema is embedded");
+    assert_eq!(
+        created["schemaVersion"].as_str(),
+        Some(latest.to_string().as_str()),
+        "stamped with the newest battery schema"
+    );
+    let id = created["id"].as_str().expect("response must contain id");
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = resp.status();
+    let published: serde_json::Value = resp.json().await.expect("publish response is JSON");
+    assert_eq!(status, 200, "publish refused the sample: {published}");
+    assert_eq!(published["status"], "active");
+    let carrier = published["qrCodeUrl"]
+        .as_str()
+        .expect("a published passport has a carrier");
+    assert!(
+        carrier.contains("/01/09506000134352/"),
+        "a GTIN-identified battery gets a GS1 Digital Link carrier, got {carrier}"
+    );
+    eprintln!("quick start sample: schema {latest}, carrier {carrier}");
+}
+
 // End-of-life deactivates the passport (retained, not deleted) and records
 // the typed EOL reason in the hash-chained audit trail.
 #[tokio::test(flavor = "multi_thread")]

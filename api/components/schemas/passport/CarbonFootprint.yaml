@@ -1,7 +1,7 @@
 type: object
 description: >-
   A CO₂-equivalent figure with the LCA context needed to read it. A bare number
-  is not comparable across products — the lifecycle stage and system boundary
+  is not comparable across products: the lifecycle stage and system boundary
   are what make two figures mean the same thing.
 required:
   - valueKg

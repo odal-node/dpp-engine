@@ -1,5 +1,5 @@
 description: |
-  A dependency the node needs is not reachable — the readiness probe pings the
+  A dependency the node needs is not reachable: the readiness probe pings the
   primary datastore, and reports this when that ping fails. The node is running;
   it is not ready to serve.
 content:

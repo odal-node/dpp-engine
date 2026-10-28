@@ -9,5 +9,5 @@ properties:
     type: string
     description: |
       The full plain-text API key. Shown ONCE at creation time.
-      Store securely — it cannot be retrieved again.
+      Store securely: it cannot be retrieved again.
     example: odal_sk_abc123def456ghi789jkl012mno345pqr678

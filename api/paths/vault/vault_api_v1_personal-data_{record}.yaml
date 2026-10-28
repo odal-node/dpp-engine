@@ -18,7 +18,7 @@ delete:
     takes no `Idempotency-Key`.
 
     **The tombstone is not free of personal data.** It keeps the identifier, the
-    passport and field the record belonged to, and when it was erased — none of
+    passport and field the record belonged to, and when it was erased: none of
     the content. A passport identifier can relate to whoever owns the item, and
     information that can be linked to a person is personal data (GDPR Recital
     26). The receipt is therefore as sensitive as the passport's individual-item
