@@ -97,6 +97,38 @@ pub(crate) async fn queue_registration_in_tx(
     Ok(())
 }
 
+/// Record the status the registry is owed for `passport_id` on its row.
+///
+/// Shared by [`RegistrySyncOutbox::enqueue_status`] and the state-change log,
+/// which records it in the transaction that changes the status.
+pub(crate) async fn record_status_intent<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    passport_id: PassportId,
+    intent: RegistryStatusIntent,
+) -> Result<(), DppError> {
+    // Writes `status_intent` only — never `status`. A passport suspended
+    // before its registration drained still owes that registration, so the
+    // queue state is left exactly as the drain and publish left it.
+    //
+    // Annotates an existing row; it never creates one. Rows are created by
+    // the publish transaction alone, so no row means the passport never
+    // published — and `Draft -> Retired` is legal, so `retire` reaches here
+    // for exactly those. Inserting would fabricate a payload-less row that
+    // the drain then marks `rejected`, raising an Art. 13 alarm for a
+    // passport that never owed a registration.
+    sqlx::query(
+        r#"UPDATE odal.registry_sync
+           SET status_intent = $2, updated_at = now()
+           WHERE passport_id = $1"#,
+    )
+    .bind(passport_id.0)
+    .bind(intent.as_db())
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 #[async_trait]
 impl RegistrySyncOutbox for PgRegistrySyncRepo {
     async fn commit_publish(
@@ -117,27 +149,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
         passport_id: PassportId,
         intent: RegistryStatusIntent,
     ) -> Result<(), DppError> {
-        // Writes `status_intent` only — never `status`. A passport suspended
-        // before its registration drained still owes that registration, so the
-        // queue state is left exactly as the drain and publish left it.
-        //
-        // Annotates an existing row; it never creates one. Rows are created by
-        // the publish transaction alone, so no row means the passport never
-        // published — and `Draft -> Retired` is legal, so `retire` reaches here
-        // for exactly those. Inserting would fabricate a payload-less row that
-        // the drain then marks `rejected`, raising an Art. 13 alarm for a
-        // passport that never owed a registration.
-        sqlx::query(
-            r#"UPDATE odal.registry_sync
-               SET status_intent = $2, updated_at = now()
-               WHERE passport_id = $1"#,
-        )
-        .bind(passport_id.0)
-        .bind(intent.as_db())
-        .execute(self.dal.pool())
-        .await
-        .map_err(db_err)?;
-        Ok(())
+        record_status_intent(self.dal.pool(), passport_id, intent).await
     }
 
     async fn due(&self, limit: i64) -> Result<Vec<RegistrySyncRow>, DppError> {

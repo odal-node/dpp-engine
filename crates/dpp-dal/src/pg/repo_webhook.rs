@@ -107,10 +107,11 @@ impl WebhookSubscriptionStore for PgWebhookRepo {
 /// Queue one delivery of `body` to every active subscription whose filter
 /// matches `event_type` (the exact subject, or `*`). Returns how many.
 ///
-/// One statement for both callers: [`WebhookOutbox::enqueue`] on the pool, and
-/// the state-change log inside the transaction that makes the change.
+/// One statement for every caller: [`WebhookOutbox::enqueue`] on the pool, and
+/// the state-change log and the import job store inside the transaction that
+/// makes the change.
 /// Insert..select keeps it to one round-trip regardless of subscriber count.
-pub(crate) async fn fan_out<'e>(
+pub async fn fan_out<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     event_type: &str,
     body: &str,

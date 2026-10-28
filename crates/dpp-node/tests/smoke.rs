@@ -275,6 +275,7 @@ async fn start_node_with_ruleset(
         vault_client,
         job_store,
         batch_concurrency: 4,
+        events: Arc::new(dpp_common::event::NoOpEventBus),
         idempotency: None,
     };
 

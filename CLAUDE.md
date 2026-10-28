@@ -390,7 +390,7 @@ Implementations:
 - `NoOpEventBus` (default when `NATS_URL` is absent) — discards silently
 - `NatsEventBus` (in `dpp-node/src/infra/`) — publishes to NATS JetStream stream `DPP_EVENTS` with subject pattern `dpp.>`, 7-day retention, file storage
 
-Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,failed}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
+Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,deactivated,transferred}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
 
 ### Job Store
 
