@@ -106,6 +106,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
         let app = super::build(state);
@@ -123,6 +124,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         }
     }

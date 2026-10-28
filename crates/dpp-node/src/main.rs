@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
         compliance,
         db.audit_repo.clone(),
-        event_bus,
+        event_bus.clone(),
         registry_sync,
         backup,
         operator,
@@ -419,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        events: event_bus,
         idempotency: Some(db.idempotency.clone()),
     };
 
