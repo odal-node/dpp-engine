@@ -52,7 +52,7 @@ dpp-resolver (:8003)   public QR/Digital-Link resolver (standalone, JWS-verifyin
 
 **Crates** (9 + cli): `dpp-types` (platform data: operator/auth/audit/keys),
 `dpp-dal`, `dpp-vault`, `dpp-identity`, `dpp-resolver`, `dpp-integrator`,
-`dpp-common` (event bus trait, telemetry, RFC 7807), `dpp-plugin-host`,
+`dpp-common` (event bus trait, telemetry, RFC 9457), `dpp-plugin-host`,
 `dpp-node` (the assembly), `cli`.
 
 **Dependency direction is one-way:** platform → core. Core has zero knowledge of
@@ -127,9 +127,12 @@ just ci                # check + integration-feature clippy + the Docker tiers
 against the running surface, and CI fails if that test is absent.
 
 > ⚠️ The feature-gated integration tests (`#![cfg(feature = "integration-tests")]`)
-> are **not** compiled or linted by `just check` — only by `just lint-integration`
-> and `just ci`. Run those before trusting "green," or bugs can hide in test-only
-> code that the standard gate never touches.
+> are type-checked and linted by `just check` (`just lint` turns their features
+> on), but **not run** by it: they need Docker. A change to a string, a status
+> code or an error message that one of them pins fails only when it runs, so run
+> `just test-integration`, or the one suite
+> (`cargo nextest run -p <crate> --features integration-tests --test <name>`),
+> before trusting "green."
 
 ## 7. Data model & migrations
 

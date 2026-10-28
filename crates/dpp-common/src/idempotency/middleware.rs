@@ -306,7 +306,7 @@ fn replay(stored: &StoredResponse) -> Response {
     response
 }
 
-/// An RFC 7807 refusal with its own `type` URI.
+/// An RFC 9457 refusal with its own `type` URI.
 ///
 /// Built from `Problem` directly rather than through a status-derived helper:
 /// the `type` is derived from the *title*, so a shared "Unprocessable Entity"

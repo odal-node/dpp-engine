@@ -101,66 +101,64 @@ impl VerifiedCredential {
     /// The Art. 77(2) audience this credential grants **before** it is scoped to
     /// a particular passport.
     ///
-    /// Prefer [`Self::audience_for_product_group`] at a read site: a credential issued
-    /// for one product group must not elevate a reader on another, and this method
-    /// cannot know which passport is being read.
+    /// Prefer [`Self::audience_for`] at a read site: a credential issued for one
+    /// product group or category must not elevate a reader on another, and this
+    /// method cannot know which passport is being read.
     #[must_use]
     pub fn audience(&self) -> Audience {
         self.0.credential_subject.role.audience()
     }
 
-    /// The audience this credential grants **over a passport in `product_group_key`**.
+    /// The audience this credential grants **over a passport in
+    /// `product_group_key` whose data states `passport_category`**.
     ///
-    /// A credential naming product groups grants nothing extra outside them, so an
-    /// out-of-scope credential resolves to [`Audience::Public`] rather than an
-    /// error: it is a valid credential that simply does not cover this product,
-    /// and public access is the baseline every caller already has. Denying
-    /// instead would also make the route a probe for which product group a passport is
-    /// in.
+    /// A credential naming product groups or product categories grants nothing
+    /// extra outside them, so an out-of-scope credential resolves to
+    /// [`Audience::Public`] rather than an error: it is a valid credential that
+    /// simply does not cover this product, and public access is the baseline
+    /// every caller already has. Denying instead would also make the route a
+    /// probe for which product group or category a passport is in.
     ///
-    /// The scope rule itself is core's — an empty `product_groups` list means unscoped,
-    /// a populated one must contain the product group — applied by re-running the pure
-    /// claims check with the product group now known. Nothing here re-implements it,
-    /// and nothing here touches the network: authentication, issuer trust and
-    /// revocation were all settled in [`read_and_verify`] before the database
-    /// was reached.
+    /// The scope rule itself is core's — an empty list means unscoped on that
+    /// axis, a populated one must contain the passport's value — applied by
+    /// re-running the pure claims check with both values now known. Nothing
+    /// here re-implements it, and nothing here touches the network:
+    /// authentication, issuer trust and revocation were all settled in
+    /// [`read_and_verify`] before the database was reached.
     ///
-    /// ## A product-category scope this node cannot evaluate grants nothing
+    /// ## A category the passport cannot state does not satisfy a category scope
     ///
-    /// `credential_subject` may carry free-string `product_categories`. There
-    /// is nothing to match them against: a passport has no product category.
-    /// The field that once held one was renamed `product_group` because it was
-    /// misnamed, and category is now a per-product group concept with a different
-    /// shape in each — a device type here, a plain string there, an Art. 8
-    /// scope bucket elsewhere that is explicitly not the passport's category.
+    /// `passport_category` is the passport's own
+    /// [`dpp_domain::product_group::ProductGroupData::product_category`]: the
+    /// group's category axis where its act defines one (a battery's
+    /// `batteryType`, an electronics `DeviceType`, …), and `None` for a group
+    /// with no such axis or a payload this build cannot interpret.
     ///
-    /// So this axis is not scoped, and the consequence used to be inverted:
-    /// passing `None` for the required category meant an issuer who narrowed a
-    /// credential to one category got a credential valid over **every** product
-    /// in its product groups. The restriction was read as its opposite.
-    ///
-    /// A restriction that cannot be evaluated is treated as unsatisfied, never
-    /// as satisfied: a credential naming any product category resolves to
-    /// [`Audience::Public`] here. That is the same downgrade an out-of-product group
-    /// credential gets — it is valid, it simply unlocks nothing on this node —
-    /// and it makes the gap loud for an issuer rather than silently generous.
-    ///
-    /// Enforcing the axis properly needs a decision about what a product
-    /// category *is* across product groups, which is not this layer's to invent.
+    /// `None` here does **not** mean what it means to core. Core reads a `None`
+    /// required category as "no requirement", which is right when the caller
+    /// is not asking about category at all. Passed through for a passport that
+    /// cannot answer, it would read an issuer's narrowing as its opposite: a
+    /// credential scoped to one category would unlock every product in its
+    /// groups that states none. So a credential naming any category resolves
+    /// to [`Audience::Public`] on such a passport — the same downgrade a
+    /// category mismatch gets — decided here, before core is asked. Core still
+    /// sees a `None` when the credential names no category, where "no
+    /// requirement" is the truth.
     #[must_use]
-    pub fn audience_for_product_group(
+    pub fn audience_for(
         &self,
         product_group_key: &str,
+        passport_category: Option<&str>,
         trust: &dyn TrustedIssuerRegistry,
     ) -> Audience {
-        if !self.0.credential_subject.product_categories.is_empty() {
+        if passport_category.is_none() && !self.0.credential_subject.product_categories.is_empty() {
             return Audience::Public;
         }
 
         let scoped = dpp_vc::verify_credential_claims_with_trust(
             &self.0,
             Some(product_group_key),
-            None,
+            passport_category,
             chrono::Utc::now(),
             trust,
         );
@@ -254,8 +252,8 @@ pub async fn read_and_verify(
     // fail-closed revocation policy is applied where it is defined rather than
     // re-implemented here. `required_product_group`/`required_product_category` are
     // None because this layer does not know which passport is being read; the
-    // product group scope is applied afterwards by
-    // [`VerifiedCredential::audience_for_product_group`], once the row is loaded. That
+    // product group and category scope is applied afterwards by
+    // [`VerifiedCredential::audience_for`], once the row is loaded. That
     // split is deliberate: everything that can make a credential *invalid* is
     // settled here, before the database is touched, so a bad credential gets
     // the same 401 whether or not the passport exists. Scope is not validity —
@@ -353,7 +351,7 @@ fn authentication_detail(failure: &AuthenticationFailure) -> &'static str {
     }
 }
 
-/// RFC 7807 rejection. 401 rather than 400: the request is well-formed HTTP; it
+/// RFC 9457 rejection. 401 rather than 400: the request is well-formed HTTP; it
 /// is the credential that failed, and the client's remedy is a different one.
 ///
 /// Details come from [`rejection_detail`] or are fixed strings at the call site;
@@ -864,12 +862,12 @@ mod tests {
             panic!("the credential itself is valid");
         };
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
+            c.audience_for("battery", Some("ev"), &trusting()),
             Audience::LegitimateInterest,
             "in scope: the credential names battery"
         );
         assert_eq!(
-            c.audience_for_product_group("textile", &trusting()),
+            c.audience_for("textile", None, &trusting()),
             Audience::Public,
             "out of scope: a battery credential must not unlock a textile passport"
         );
@@ -897,7 +895,7 @@ mod tests {
         };
         assert_eq!(c.audience(), Audience::Authority);
         assert_eq!(
-            c.audience_for_product_group("not-a-product_group", &trust),
+            c.audience_for("not-a-product_group", None, &trust),
             Audience::Public
         );
     }
@@ -922,25 +920,17 @@ mod tests {
             panic!("valid credential");
         };
         assert_eq!(
-            c.audience_for_product_group("textile", &trusting()),
+            c.audience_for("textile", None, &trusting()),
             Audience::LegitimateInterest
         );
     }
 
-    /// A credential naming a product category unlocks nothing, even where its
-    /// product group matches.
-    ///
-    /// There is nothing on a passport to match the category against, so the
-    /// restriction cannot be evaluated. Before this, the unevaluated axis was
-    /// passed as "no requirement" and the credential kept its full audience —
-    /// an issuer's narrowing read as its opposite. Failing closed is the only
-    /// direction that cannot over-grant.
-    #[tokio::test]
-    async fn a_product_category_scope_grants_nothing() {
+    /// Sign `cred`, run it through the real verification path, and return the
+    /// grant. A credential carrying a category list must still verify: scope
+    /// is not validity, and only [`VerifiedCredential::audience_for`] reads it.
+    async fn verified(cred: &DppAccessCredential) -> VerifiedCredential {
         let (key, kid) = key_and_kid();
-        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
-        cred.credential_subject.product_categories = vec!["smartphone".into()];
-        let jws = sign_credential(&key, &kid, &cred);
+        let jws = sign_credential(&key, &kid, cred);
         let out = read_and_verify(
             &headers_with(Some(&jws)),
             &Directory::with(Some(did_doc(&key, &kid))),
@@ -950,37 +940,91 @@ mod tests {
         let CredentialOutcome::Verified(c) = out else {
             panic!("the credential itself is valid");
         };
+        *c
+    }
 
-        // The credential is genuinely valid and its role is elevated …
-        assert_eq!(c.audience(), Audience::LegitimateInterest);
-        // … and it still unlocks nothing, in its own product group.
+    /// A credential narrowed to a category keeps its audience on a passport
+    /// that states that category — and only within its product groups, since
+    /// both axes must hold.
+    #[tokio::test]
+    async fn a_credential_naming_the_passports_category_keeps_its_audience() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
+            c.audience_for("battery", Some("ev"), &trusting()),
+            Audience::LegitimateInterest,
+            "in scope on both axes"
+        );
+        assert_eq!(
+            c.audience_for("electronics", Some("ev"), &trusting()),
             Audience::Public,
-            "an unevaluable restriction must not be read as no restriction"
+            "a matching category does not stand in for a matching product group"
         );
     }
 
-    /// The common case must stay unaffected: no product category named means no
-    /// restriction claimed, and product group scope alone decides.
+    /// A credential narrowed to EV batteries grants nothing extra on an LMT
+    /// battery. It stays valid, so the answer is a downgrade and not a 401.
     #[tokio::test]
-    async fn an_empty_product_category_list_changes_nothing() {
-        let (key, kid) = key_and_kid();
+    async fn a_credential_naming_another_category_grants_only_public() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
+        assert_eq!(c.audience(), Audience::LegitimateInterest);
+        assert_eq!(
+            c.audience_for("battery", Some("lmt"), &trusting()),
+            Audience::Public
+        );
+    }
+
+    /// No category named means no restriction claimed on that axis, whatever
+    /// the passport states — including nothing — and product group scope alone
+    /// decides.
+    #[tokio::test]
+    async fn an_empty_category_list_is_unscoped_on_that_axis() {
         let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
         cred.credential_subject.product_categories = Vec::new();
-        let jws = sign_credential(&key, &kid, &cred);
-        let out = read_and_verify(
-            &headers_with(Some(&jws)),
-            &Directory::with(Some(did_doc(&key, &kid))),
-            &trusting(),
-        )
-        .await;
-        let CredentialOutcome::Verified(c) = out else {
-            panic!("valid credential");
-        };
+        let c = verified(&cred).await;
+
+        for passport_category in [Some("ev"), Some("lmt"), None] {
+            assert_eq!(
+                c.audience_for("battery", passport_category, &trusting()),
+                Audience::LegitimateInterest,
+                "passport category {passport_category:?}"
+            );
+        }
+    }
+
+    /// A passport whose group has no category axis cannot satisfy a credential
+    /// narrowed to one. Core reads a `None` category as "no requirement", so
+    /// handing it the passport's `None` would grant a textile-scoped,
+    /// category-narrowed credential its full audience over every textile
+    /// passport — the restriction read as its opposite. It must land where a
+    /// mismatch lands, not where an unscoped credential does.
+    #[tokio::test]
+    async fn a_passport_stating_no_category_is_treated_as_a_mismatch() {
+        let mut narrowed = credential(CredentialRole::AuthorisedRepairer, 30);
+        narrowed.credential_subject.product_groups = vec!["textile".into()];
+        narrowed.credential_subject.product_categories = vec!["apparel".into()];
+        let narrowed = verified(&narrowed).await;
+
+        let mut unscoped = credential(CredentialRole::AuthorisedRepairer, 30);
+        unscoped.credential_subject.product_groups = vec!["textile".into()];
+        let unscoped = verified(&unscoped).await;
+
+        let cannot_answer = narrowed.audience_for("textile", None, &trusting());
+        assert_eq!(cannot_answer, Audience::Public);
         assert_eq!(
-            c.audience_for_product_group("battery", &trusting()),
-            Audience::LegitimateInterest
+            cannot_answer,
+            narrowed.audience_for("textile", Some("footwear"), &trusting()),
+            "same outcome as a category mismatch"
+        );
+        assert_ne!(
+            cannot_answer,
+            unscoped.audience_for("textile", None, &trusting()),
+            "not the outcome of a credential that names no category"
         );
     }
 

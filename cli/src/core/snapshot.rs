@@ -47,6 +47,14 @@ pub async fn action_snapshot_verify(
     now: DateTime<Utc>,
 ) -> Result<SnapshotBound> {
     let document = load_document(target).await?;
+    // No outer proof is the verdict `Absent` whatever key would have checked it,
+    // and core decides that before it reads one. Finding a key first would fetch
+    // a DID document for a proof that is not there, then blame the document for
+    // it: the proof's own `kid` is what picks the key, and no proof names none.
+    // Core keeps the rule; this only declines to look for a key it will not use.
+    if document.get("snapshotJwsSignature").is_none() {
+        return Ok(dpp_vc::verify_snapshot_bound(&document, "", now));
+    }
     let key_b64 = resolve_key(&document, key, did_url).await?;
     Ok(dpp_vc::verify_snapshot_bound(&document, &key_b64, now))
 }
@@ -589,6 +597,38 @@ mod tests {
         assert!(refused(
             "http://localhost.evil.example/.well-known/did.json"
         ));
+    }
+
+    /// 🚨 A stripped proof is the verdict `Absent`, whichever way the key would
+    /// have been found. With `--did-url` the proof's own `kid` picks the key, and
+    /// a proof that is not there names none, so resolving first reported the
+    /// DID document as the problem (exit 2) and never reached the verdict this
+    /// command exists to give (exit 1). The host does not resolve: if it were
+    /// asked for a key, the error would be a DNS failure rather than a verdict.
+    #[tokio::test]
+    async fn a_stripped_proof_is_absent_without_a_key_being_fetched() {
+        let (_dir, store, _key) = keystore();
+        let as_of = Utc::now();
+        let mut document = signed_snapshot(&store, as_of, as_of + chrono::Duration::days(7));
+        document
+            .as_object_mut()
+            .expect("object")
+            .remove("snapshotJwsSignature");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("public.json");
+        std::fs::write(&path, serde_json::to_vec(&document).expect("serialise")).expect("write");
+
+        let bound = action_snapshot_verify(
+            path.to_str().expect("utf-8"),
+            None,
+            Some("https://identity.invalid/.well-known/did.json"),
+            as_of,
+        )
+        .await
+        .expect("a stripped proof is a verdict, not a check that did not happen");
+
+        assert_eq!(bound, SnapshotBound::Absent);
+        assert_eq!(exit_code(&bound), 1);
     }
 
     #[tokio::test]

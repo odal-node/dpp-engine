@@ -95,34 +95,34 @@
 # recorded:   2026-10-20
 # expires:    2027-01-18
 # release-on: As RUSTSEC-2026-0371.
-# --- RUSTSEC-2026-0381 --------------------------------------------------
-# crate:      webpki-roots 0.26.11
-# path:       dpp-node -> async-nats [feature websockets, off] -> tokio-websockets -> webpki-roots
-# class:      not-in-graph
-# rationale:  The bundled root store trusts the distrusted emSign intermediates;
-#             1.0.10 fixes it, and the 1.x copy in this lockfile is already
-#             there. The 0.26 copy is reached only by `tokio-websockets` 0.10,
-#             which async-nats 0.50 pins and no release moves. The workspace
-#             declares async-nats without its `websockets` feature, so no build
-#             compiles that transport or the crate. It stays in `Cargo.lock`
-#             because async-nats names it in a weak feature
-#             (`tokio-websockets?/ring`), an edge cargo records whether or not
-#             the feature is on, and `cargo audit` reads the lockfile. The node
-#             reaches NATS over `nats://`; nothing here uses `ws://` or `wss://`.
-#             THIS ENTRY IS VOID THE MOMENT `websockets` IS ENABLED FOR
-#             async-nats. The class check holds the claim, against the default
-#             graph and the shipped node build alike.
-# anchor:     Cargo.toml::async-nats
+# --- RUSTSEC-2026-0387 --------------------------------------------------
+# crate:      crypto-bigint 0.5.5
+# path:       dpp-seal -> x509-verify -> p256 / p384 / p521 0.13 ->
+#             elliptic-curve 0.13 -> crypto-bigint 0.5
+# class:      reachable-but-mitigated
+# rationale:  Operations meant to be constant-time (subtraction, division,
+#             Montgomery multiplication) could branch on the values they
+#             compute, which leaks a secret integer through timing. The 0.5
+#             line has no fix: the advisory is patched from 0.7.6, and the
+#             0.7 copy in this lockfile is past it. 0.5 is reached only
+#             through `x509-verify`, whose ECDSA code checks a certificate's
+#             signature with the issuer's public key. Verification holds no
+#             secret, so a timing channel has nothing to leak. The node's own
+#             P-256 signing keys (the local development sealer and its
+#             timestamp authority) are on `p256` 0.14, a direct dependency of
+#             dpp-seal, and so on the patched crypto-bigint 0.7.
+#             THIS ENTRY IS VOID THE MOMENT ANY CODE SIGNS, DERIVES A SHARED
+#             SECRET OR GENERATES A KEY WITH THE 0.13 CURVE CRATES.
+# anchor:     crates/dpp-seal/src/cades/signature.rs::VerifyingKey
 # owner:      LKSNDRTMLKV
-# recorded:   2026-10-20
-# expires:    2027-01-18
-# release-on: async-nats ships a release whose WebSocket transport takes
-#             webpki-roots 1.0.10 or later, or drops the weak edge, so that the
-#             0.26 copy leaves the lockfile.
+# recorded:   2026-10-27
+# expires:    2027-04-27
+# release-on: `x509-verify` moves to the 0.14 curve crates, or is replaced by
+#             a verifier that does not pull crypto-bigint 0.5.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
-    "RUSTSEC-2026-0381",
+    "RUSTSEC-2026-0387",
 ]

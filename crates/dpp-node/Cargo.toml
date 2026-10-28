@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-node"
-description = "Odal Node MVP single binary — fuses vault, identity, integrator, registry connector and plugin host"
+description = "The Odal Node server binary: the passport API, the did:web document, bulk import, the Wasm plugin host and the outbox drainers in one process"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true

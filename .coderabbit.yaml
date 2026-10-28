@@ -166,7 +166,7 @@ reviews:
         used to carry failed the same way, for the same reason.
 
         STANDING CONVENTIONS — rules that hold, so they are not re-derived.
-        Errors are RFC 7807: `dpp-common::http_problem::Problem` is the error
+        Errors are RFC 9457: `dpp-common::http_problem::Problem` is the error
         shape for every HTTP surface, and a new error path uses it rather than
         an ad-hoc body. IDs are UUID v7 via `now_v7()` so they sort by time;
         `new_v4()` is acceptable only for throwaway values that are not

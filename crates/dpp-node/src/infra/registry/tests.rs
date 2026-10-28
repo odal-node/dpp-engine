@@ -699,6 +699,88 @@ async fn a_submission_still_being_checked_is_processing_and_reads_no_result() {
     );
 }
 
+/// 🚨 The registry's status words come from its interface, not from a published
+/// schema, so the next one it sends is a word this node has never seen. Reading
+/// it as a refusal would discard a submission that may have succeeded; reading
+/// it as a failure to parse would stall every row polled behind it. It is
+/// reported as it came, and it is not a verdict: the task's own state is
+/// unfinished, so no result is read for it.
+#[tokio::test]
+async fn a_task_in_a_state_the_node_has_no_name_for_is_unresolved_and_reads_no_result() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([registration_task(
+            "CORR-1", 7, "ON_HOLD"
+        )])));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync
+        .check_submission("CORR-1")
+        .await
+        .expect("an unfamiliar state is a report, not an error");
+
+    assert_eq!(
+        report,
+        SubmissionReport::Unrecognised {
+            state: "ON_HOLD".into()
+        }
+    );
+    assert!(!report.is_terminal(), "an unfamiliar state is not final");
+    assert!(
+        state.task_results_read.lock().await.is_empty(),
+        "a task the registry has not finished has no result worth reading"
+    );
+}
+
+/// The same rule at the second place a status is read. A task that says it
+/// finished and a result that says something else is not a registration, and
+/// the result's own word is the one the registry's interface shows.
+#[tokio::test]
+async fn a_result_in_a_state_the_node_has_no_name_for_is_unresolved() {
+    let state = Arc::new(MockState::default());
+    state
+        .tasks_queue
+        .lock()
+        .await
+        .push_back(task_page(serde_json::json!([registration_task(
+            "CORR-1", 7, "SUCCESS"
+        )])));
+    state.task_result_queue.lock().await.push_back((
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "SUCCESS",
+            "resultPayload": {
+                "outcomeResult": "SOMETHING_NEW",
+                "report": { "itemDetails": [{
+                    "uniqueProductIdentifier": "https://id.example.com/01/09506000134352/21/abc123",
+                    "outcome": "ACCEPTED",
+                    "registrationIdentifier": "EU-REG-7",
+                }] },
+            },
+        }),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync
+        .check_submission("CORR-1")
+        .await
+        .expect("an unfamiliar state is a report, not an error");
+
+    assert_eq!(
+        report,
+        SubmissionReport::Unrecognised {
+            state: "SOMETHING_NEW".into()
+        },
+        "a registration identifier beside a state this node cannot name is not a registration"
+    );
+    assert!(!report.is_terminal());
+}
+
 #[tokio::test]
 async fn a_successful_submission_reports_the_registration_identifier_from_its_result() {
     let state = Arc::new(MockState::default());

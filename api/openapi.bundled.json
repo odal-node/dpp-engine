@@ -71,6 +71,10 @@
       "description": "Signed outbound event delivery — subscribe, list, remove, test."
     },
     {
+      "name": "Personal Data",
+      "description": "Erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route reads one."
+    },
+    {
       "name": "Plugins",
       "description": "Signed product-group plugin hot-install — verify, persist, hot-swap (admin-only)."
     },
@@ -100,7 +104,7 @@
     },
     {
       "name": "Identity",
-      "description": "Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`."
+      "description": "Public did:web identity — DID document, health, readiness. On the fused node these are served under `/identity/*`, and the DID document also at the root, `/.well-known/did.json`, where the did:web method resolves the node's DID. The standalone identity service (:8002) serves them at the root — `/health`, `/ready`, `/.well-known/did.json`."
     },
     {
       "name": "Identity (internal)",
@@ -215,7 +219,7 @@
       "post": {
         "operationId": "validateDpp",
         "summary": "Dry-run a passport body without creating it",
-        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical rejection create\nwould have returned, not a paraphrase of it: a `422`, or a `409` for a\n`carrierSerial` another passport already holds. A body create would accept\nreturns `200` with the two verdicts.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
+        "description": "Runs exactly the validation `POST /vault/api/v1/dpp` runs, and persists\nnothing. The same code path serves both, so a preview and the real create\ncannot disagree.\n\n**Two verdicts, because create and publish deliberately differ.** Create is\nlenient about a product group with no resolvable JSON Schema — a draft is allowed\nto be incomplete — while publish fails closed on it, since a signed\npassport must have passed a real schema check. A body can therefore be\ncreatable but not yet clear the publish-time schema gate, and that gap is\nreported rather than hidden until publish is attempted.\n\nA body that create **would reject** gets back the identical rejection create\nwould have returned, not a paraphrase of it: a `422`, or a `409` for a\n`carrierSerial` another passport already holds. A body create would accept\nreturns `200` with the two verdicts.\n\nThe `422` includes the personal-data check. A field the product group's\nschema marks as able to hold personal data that has a value and no\n`personalData` statement, a statement about a field that is not marked, an\n`outside` statement naming no record, and a basis a governing act does not\nadmit are all refused here as they are on create, each naming its field. The\ncheck reads no store, so it is part of the preview. It never reads what a\nfield says.\n\n**`productGroupDataValid` is not a publish verdict.** It reports one of publish's\npreconditions — the product group-data gates — and publish applies others this\nroute does not run:\n\n- the **registry identity** requirement (a default facility and a primary\n  operator identifier), which needs operator state this route never reads;\n- the **category-mandatory content** gate, which is reachable only by\n  attempting the lifecycle transition, so it cannot be previewed;\n- the **compliance** gate, which needs a `placedOnMarketDate` and a stored\n  passport.\n\nA `productGroupDataValid: true` therefore means \"this body clears the schema\ngate\", never \"publish will succeed\". The field was called `publishValid`\nand was renamed because that name promised the latter.\n",
         "tags": [
           "DPP Management"
         ],
@@ -890,7 +894,7 @@
       "get": {
         "operationId": "getSealSummary",
         "summary": "Operator-wide sealing state",
-        "description": "How many published passports carry no seal, plus the outbox totals\nbehind that number.\n\n`unsealedPublished` is the headline; the three row counts are context.\nThey answer different questions and can legitimately disagree: the\ncounts describe outbox **rows**, while the obligation is about\n**passports**. Enqueueing happens after the publish commits, so a crash\nin that window publishes a passport that no row will ever cover —\n`pending: 0, exhausted: 0` is therefore consistent with any number of\nunsealed passports, and a summary built on rows alone would report all\nclear. A repair sweep queues those passports on its next pass.\n\nA passport whose seal covers a *superseded* signature is not counted\nhere — it carries a seal, and that seal remains a valid attestation of\nthe signature it was bought for. `GET /vault/api/v1/dpp/{dppId}/seal`\nreports that case per passport as `coverage`.\n\nWhen `sealingConfigured` is `false` no seal provider is selected, so\nevery count is `0` because this node has no outbox — not because it has\nnothing outstanding.\n",
+        "description": "How many published passports carry no seal, plus the outbox totals\nbehind that number.\n\n`unsealedPublished` counts the live ones and `unsealedTerminal` the ones\nthat have since been retired, superseded or deactivated. Terminal\npassports still serve publicly and still owe a seal, so the repair sweep\nseals them; they are counted apart so that the number to act on is not\npadded with records whose product ended long ago.\n\n`unsealedPublished` is the headline; the three row counts are context.\nThey answer different questions and can legitimately disagree: the\ncounts describe outbox **rows**, while the obligation is about\n**passports**. Enqueueing happens after the publish commits, so a crash\nin that window publishes a passport that no row will ever cover —\n`pending: 0, exhausted: 0` is therefore consistent with any number of\nunsealed passports, and a summary built on rows alone would report all\nclear. A repair sweep queues those passports on its next pass.\n\nA passport whose seal covers a *superseded* signature is not counted\nhere — it carries a seal, and that seal remains a valid attestation of\nthe signature it was bought for. `GET /vault/api/v1/dpp/{dppId}/seal`\nreports that case per passport as `coverage`.\n\nWhen `sealingConfigured` is `false` no seal provider is selected, so\nevery count is `0` because this node has no outbox — not because it has\nnothing outstanding.\n",
         "tags": [
           "DPP Management"
         ],
@@ -2815,6 +2819,64 @@
         }
       }
     },
+    "/vault/api/v1/personal-data/{record}": {
+      "delete": {
+        "operationId": "erasePersonalDataRecord",
+        "summary": "Erase a record of personal data",
+        "description": "Erases a record that a passport's `personalData` statement names\n(`{\"held\": \"outside\", \"record\": \"<id>\"}`), keeping a tombstone. This is how\na withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is\nsigned, frozen, archived and copied to the back-up provider, so the personal\ndata is held in a record that can be erased instead.\n\n**Erasing touches nothing else.** Not the passport, which is signed and\nfrozen. Not the statement in it, which keeps naming the record, so a reader\nfollowing the statement learns that the record is gone rather than that it\nnever existed. Not any other record.\n\n**Idempotent.** Erasing a record that is already erased returns the receipt\nit was given the first time, so a caller that lost the answer asks again. It\ntakes no `Idempotency-Key`.\n\n**The tombstone is not free of personal data.** It keeps the identifier, the\npassport and field the record belonged to, and when it was erased — none of\nthe content. A passport identifier can relate to whoever owns the item, and\ninformation that can be linked to a person is personal data (GDPR Recital\n26). The receipt is therefore as sensitive as the passport's individual-item\ndata, and the operator needs a basis for keeping the tombstone; to show that\nit erased (Art. 5(2)) is one. Nothing in this node deletes it.\n\n**No route reads a record.** A record is served by no resolver, public,\ncredentialed or authenticated view of a passport, and is never part of the\narchive of past versions or of the back-up copy. Serving one is a disclosure\nthat needs a basis of its own, which only the controller can establish for\neach purpose.\n\nAdmin-scoped, like every other route that removes something: the write scope\nproduces and moves passports, and none of that destroys anything.\n",
+        "tags": [
+          "Personal Data"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "record",
+            "in": "path",
+            "required": true,
+            "description": "The record's identifier, as the passport's statement names it (`personalData.<field>.record`).",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The record is erased. The same receipt on every call after the first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataErasureReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This node never held a record with that identifier, which includes a string that could not have been one. A record that was held and is erased is not a `404`: it answers `200` with its receipt.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/unsold-goods": {
       "get": {
         "operationId": "listUnsoldGoods",
@@ -3850,7 +3912,7 @@
             "name": "productGroup",
             "in": "path",
             "required": true,
-            "description": "The **template key**, which since the battery split is no longer always\na product group: `battery-ev`, `battery-lmt` and `battery-industrial`\nare keys served here, while `battery` is a product group served by\nnothing. Rows from all three import under the `battery` product group.\n\nThe parameter keeps its name because renaming a path parameter renames\nthe method argument in every generated client, and for the eight\nnon-battery templates the two are still the same string.\n",
+            "description": "The **template key**, which since the battery split is no longer always\na product group: `battery-ev`, `battery-lmt` and `battery-industrial`\nare keys served here, while `battery` is a product group served by\nnothing. Rows from all three import under the `battery` product group.\n\nThe parameter keeps its name because renaming a path parameter renames\nthe method argument in every generated client, and for every\nnon-battery template the two are still the same string.\n",
             "schema": {
               "type": "string",
               "example": "battery-ev"
@@ -3907,7 +3969,7 @@
       "post": {
         "operationId": "importFile",
         "summary": "Bulk-import passports from a file",
-        "description": "Upload a CSV or XLSX file to create draft passports for a product group\n(`battery`, `textile`, `steel`, `aluminium`, `tyre`). The caller's\n`Authorization: Bearer` token is validated and forwarded to the vault.\n\nA battery **template** key is accepted here too — `battery-ev`,\n`battery-lmt` and `battery-industrial` all import as `battery`, since the\ncategory is carried by the row's own `batteryType` column rather than being\na product group of its own. An operator who downloads `battery-ev` can post\nit back to `battery-ev` without translating the name.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
+        "description": "Upload a CSV or XLSX file to create draft passports for a product group.\nThe caller's `Authorization: Bearer` token is validated and forwarded to\nthe vault.\n\nThe importable set is deliberately **not enumerated here**: it is one list\nin the handler, and the `404` body names every accepted key. This sentence\nlisted five product groups long after the importer reached more.\n\nA battery **template** key is accepted here too — `battery-ev`,\n`battery-lmt` and `battery-industrial` all import as `battery`, since the\ncategory is carried by the row's own `batteryType` column rather than being\na product group of its own. An operator who downloads `battery-ev` can post\nit back to `battery-ev` without translating the name.\n\n- ≤ 100 valid rows → processed synchronously, `200` with results.\n- `> 100` valid rows → an async job is queued, `202` with a `jobId`.\n- `mode=dry_run` → validate only, `200` with the would-be results.\n\nEvery import — dry-run or apply, sync or async — mints a job id and\npersists a row-addressed report retrievable via the job-status\nendpoint, even when this endpoint's own response is synchronous.\n",
         "tags": [
           "Integrator"
         ],
@@ -4045,6 +4107,29 @@
         "operationId": "getDidDocument",
         "summary": "did:web DID document",
         "description": "Serves the operator's `did:web` DID document. Public, unauthenticated.\n",
+        "tags": [
+          "Identity"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The DID document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DidDocument"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/did.json": {
+      "get": {
+        "operationId": "getRootDidDocument",
+        "summary": "did:web DID document, at the did:web resolution path",
+        "description": "Serves the operator's `did:web` DID document at the path the did:web method\nresolves a pathless DID to: `did:web:<host>` is looked up at\n`https://<host>/.well-known/did.json`. The node's DID is pathless, so this\nis where a verifier fetches it.\n\nThe same document as `/identity/.well-known/did.json`, which stays for\ncallers that already use it. The standalone identity service serves this\npath too. Public, unauthenticated.\n",
         "tags": [
           "Identity"
         ],
@@ -4457,7 +4542,7 @@
       "get": {
         "operationId": "resolveByGtin",
         "summary": "GS1 Digital Link resolver",
-        "description": "GS1-conformant resolver (GS1-CRSV1) keyed by GTIN-14 — the carrier this node\nprints for a model-level passport. Behaviour depends\non the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n\nA GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a\nserial (AI 21), in that order and each optional, or a third-party\nextension (AI 235) on its own; each of those shapes is its own path below.\nAny other path under `/01/` cannot be a GS1 Digital Link, because its\nqualifiers are out of order, repeated, not ones a GTIN takes, or empty, and\nanswers `400` without a lookup.\n",
+        "description": "GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints\nfor a model-level passport. It has not been assessed against the GS1\nConformant Resolver Standard, and nothing here claims conformance. Behaviour\ndepends on the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n\nA GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a\nserial (AI 21), in that order and each optional, or a third-party\nextension (AI 235) on its own; each of those shapes is its own path below.\nAny other path under `/01/` cannot be a GS1 Digital Link, because its\nqualifiers are out of order, repeated, not ones a GTIN takes, or empty, and\nanswers `400` without a lookup.\n",
         "tags": [
           "Public Resolver"
         ],
@@ -5305,7 +5390,7 @@
     "schemas": {
       "Problem": {
         "type": "object",
-        "description": "RFC 7807 / RFC 9457 problem details. The shape\n`dpp-common::http_problem::Problem` produces, served as\n`application/problem+json`.\n\n`type` is derived from `title`, so each distinct `title` used across the\ncodebase is a stable catalogue key that clients may depend on.\n",
+        "description": "RFC 9457 problem details. The shape\n`dpp-common::http_problem::Problem` produces, served as\n`application/problem+json`.\n\n`type` is derived from `title`, so each distinct `title` used across the\ncodebase is a stable catalogue key that clients may depend on.\n",
         "required": [
           "type",
           "title",
@@ -5340,7 +5425,7 @@
           },
           "errors": {
             "type": "array",
-            "description": "The individual field failures behind this problem, when there are any.\n\nAn RFC 7807 §3.2 extension member. `detail` carries the same failures\njoined with `\"; \"` and is unaffected, so a client written before this\nmember existed keeps working; `errors` is what lets a newer one address a\nsingle field. Publishing a battery that is missing its Annex XIII content\nproduces upwards of thirty entries here.\n\nOmitted entirely — never `[]` — on problems that are not about fields.\n",
+            "description": "The individual field failures behind this problem, when there are any.\n\nAn RFC 9457 §3.2 extension member. `detail` carries the same failures\njoined with `\"; \"` and is unaffected, so a client written before this\nmember existed keeps working; `errors` is what lets a newer one address a\nsingle field. Publishing a battery that is missing its Annex XIII content\nproduces upwards of thirty entries here.\n\nOmitted entirely — never `[]` — on problems that are not about fields.\n",
             "items": {
               "$ref": "#/components/schemas/ProblemFieldError"
             }
@@ -6639,6 +6724,37 @@
           }
         }
       },
+      "PersonalDataErasureReceipt": {
+        "type": "object",
+        "description": "What is left of an erased record of personal data: which record it was, which\npassport and field it related to, and when it was erased. None of the erased\ncontent.\n\nThe tombstone is not free of personal data. A passport identifier can relate to\nwhoever owns the item (GDPR Recital 26), so the receipt is as sensitive as the\npassport's individual-item data and is kept only as long as the operator has a\nbasis to keep it.",
+        "required": [
+          "record",
+          "passportId",
+          "field",
+          "erasedAt"
+        ],
+        "properties": {
+          "record": {
+            "type": "string",
+            "description": "The erased record's identifier, as the passport's statement names it."
+          },
+          "passportId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The passport the record related to."
+          },
+          "field": {
+            "type": "string",
+            "description": "The marked field the record related to, as a dotted path inside `productGroupData`.",
+            "example": "usageHistory.negativeEvents"
+          },
+          "erasedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record's content was erased."
+          }
+        }
+      },
       "ValidateResponse": {
         "type": "object",
         "description": "The dry-run verdict. Two booleans rather than one, because create and publish deliberately differ: a body can be creatable as a draft and not yet publishable, and collapsing that into a single flag would hide the gap until the caller tried to publish.",
@@ -7164,6 +7280,7 @@
         "description": "Operator-wide sealing state. Read `sealingConfigured` first: when it is false every count is `0` because this node has no outbox, **not** because nothing is outstanding.",
         "required": [
           "unsealedPublished",
+          "unsealedTerminal",
           "pending",
           "sealed",
           "exhausted",
@@ -7172,7 +7289,11 @@
         "properties": {
           "unsealedPublished": {
             "type": "integer",
-            "description": "Published passports carrying no seal at all. `0` is the healthy state."
+            "description": "Live published passports (`active` or `suspended`) carrying no seal at all. `0` is the healthy state.\n\nLive only. A passport that was published unsealed and has since been retired, superseded or deactivated is counted in `unsealedTerminal`, so this is the number to act on without first working out which of the passports behind it still matter."
+          },
+          "unsealedTerminal": {
+            "type": "integer",
+            "description": "Retired, superseded or deactivated passports that were published and carry no seal. They still serve publicly and the obligation attached at publish, so the repair sweep seals them too: this is what is left of that, and it falls as the sweep works through them.\n\nUnlike `unsealedPublished`, a non-zero value here is not by itself a call to act: the sweep is already working through it. A count that does not fall is a call to act: the seals the sweep asks for are failing, which `exhausted` counts and the node's log explains."
           },
           "pending": {
             "type": "integer"

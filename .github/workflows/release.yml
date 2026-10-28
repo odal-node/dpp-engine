@@ -26,16 +26,17 @@ jobs:
           - image: dpp-node
             dockerfile: dpp-engine/docker/node.Dockerfile
             description: >-
-              Odal Node single binary — fuses vault, identity, integrator,
-              and Wasm plugin host into one process for self-hosted Digital
-              Product Passport deployments.
+              Odal Node server for self-hosted Digital Product Passports: one
+              process serving the passport API, the operator's did:web document
+              and bulk import, with the Wasm plugin host and the outbox drainers.
             readme: crates/dpp-node/README.md
           - image: dpp-resolver
             dockerfile: dpp-engine/docker/resolver.Dockerfile
             description: >-
-              Public QR / GS1 Digital Link resolver for Digital Product
-              Passports — verifies Ed25519 JWS signatures and serves HTML or
-              JSON-LD, no authentication required.
+              Public resolver for Digital Product Passports: answers GS1 Digital
+              Link scans, verifies each passport's signature against the
+              operator's did:web document, and serves HTML, JSON-LD or an Asset
+              Administration Shell. No authentication required.
             readme: crates/dpp-resolver/README.md
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,7 +46,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
