@@ -84,7 +84,8 @@ agent or session is recorded. It is off by default.
 | `VAULT_BASE_URL` | `http://vault:8001` | The node's vault, for cache misses |
 | `OPERATOR_DID_URL` | derived from `VAULT_BASE_URL` | The `did:web` document holding the verification key |
 | `CACHE_TTL_SECS` | `30` | Cache lifetime |
-| `RATE_LIMIT_RPM` | `120` | Per-IP requests per minute |
+| `RATE_LIMIT_RPM` | `120` | Requests per minute from one client address |
+| `TRUST_FORWARDED_FOR` | `false` | Count the first address in `X-Forwarded-For` instead of the TCP peer. Set it behind a proxy that is the only way in and replaces that header; see the [production runbook](../../docs/ops/PRODUCTION-RUNBOOK.md#limiting-request-rates) |
 | `RESOLVER_PORT` | `8003` | Listening port |
 | `METRICS_ADDR` | `127.0.0.1:9101` | Private Prometheus listener. Empty disables it |
 
