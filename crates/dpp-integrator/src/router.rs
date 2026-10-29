@@ -1,7 +1,9 @@
 //! Axum router for the integrator service — wires routes, body limits, and telemetry layers.
 
 use axum::{
-    Router, middleware,
+    Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{get, post},
 };
 use tower_http::{
@@ -55,7 +57,15 @@ pub fn build(state: AppState) -> Router {
     // The upload is the one route with a layer of its own, so that layer can sit
     // outside the idempotency layer below: a `route_layer` added later wraps the
     // ones added before it.
-    let import = Router::new().route("/api/v1/import/{productGroup}", post(import::import_file));
+    //
+    // The `DefaultBodyLimit` is not made redundant by the cap admission reads
+    // under. It is the limit the `Multipart` extractor reads through, and without
+    // one axum applies its own 2 MiB, which would refuse a valid upload between
+    // 2 and 5 MiB that admission had let through.
+    let import = Router::new().route(
+        "/api/v1/import/{productGroup}",
+        post(import::import_file).layer(DefaultBodyLimit::max(admission::IMPORT_BODY_LIMIT)),
+    );
 
     // Only the upload is keyed, but the layer goes on every route: it is a
     // `route_layer`, so it runs after routing and can read the matched

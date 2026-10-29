@@ -2161,6 +2161,69 @@ mod tests {
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
     }
 
+    /// An upload between axum's own default limit for a multipart body (2 MiB)
+    /// and the cap is a valid one, and is read through. Admission lets it by, so
+    /// the `Multipart` extractor must not stop it: that takes the route setting
+    /// its own limit, which is easy to read as redundant with the cap admission
+    /// enforces and is not.
+    #[tokio::test]
+    async fn a_valid_upload_over_axums_default_limit_is_accepted() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        // One row whose name is long enough to take the file past 2 MiB. The row
+        // is refused for it, which is beside the point: the answer is `200` only
+        // if the whole body was read.
+        let long_name = "x".repeat(3 * 1024 * 1024);
+        let csv = format!(
+            "{BATTERY_CSV_HEADER}\n{}\n",
+            battery_csv_row(VALID_GTIN).replacen("EV Battery 48V", &long_name, 1)
+        );
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        assert!(body.len() > 2 * 1024 * 1024 && body.len() < crate::admission::IMPORT_BODY_LIMIT);
+
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(response_json(resp).await["totalRows"], 1);
+    }
+
+    /// 🚨 A request whose `Content-Type` is no usable `multipart/form-data` is
+    /// refused before it takes a slot or has its body read, as it was when the
+    /// `Multipart` extractor was the only thing looking. The node is full here,
+    /// and the answer is `400`, not `429`, which pins the order.
+    #[tokio::test]
+    async fn an_unusable_content_type_is_refused_before_a_slot_is_taken() {
+        for content_type in [
+            None,
+            Some("text/plain"),
+            Some("multipart/form-data"),
+            Some("application/json; boundary=X"),
+        ] {
+            let (app, slots, store, mock) = keyed_node(1).await;
+            let _taken = slots.clone().try_acquire_owned().unwrap();
+            let polled = Arc::new(AtomicBool::new(false));
+
+            let mut request = keyed_import_request("k-1", unread_body(polled.clone()));
+            request.headers_mut().remove("content-type");
+            if let Some(content_type) = content_type {
+                request
+                    .headers_mut()
+                    .insert("content-type", content_type.parse().unwrap());
+            }
+            let resp = app.oneshot(request).await.unwrap();
+
+            assert_eq!(
+                resp.status(),
+                axum::http::StatusCode::BAD_REQUEST,
+                "content-type {content_type:?}"
+            );
+            assert!(!polled.load(Ordering::SeqCst), "the body was read");
+            assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+            assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
     /// 🚨 The slot has to cross the idempotency layer: a keyed import over the
     /// synchronous threshold keeps it for as long as its background job runs,
     /// and gives it back when the job ends, so the `202` does not free it and

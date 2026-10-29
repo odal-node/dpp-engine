@@ -15,15 +15,18 @@
 //!
 //! # What it does, in order
 //!
-//! 1. Refuses a request with no `Bearer` token: `401`.
-//! 2. Has the vault check the token: `401`. A merely non-empty token is not
+//! 1. Refuses headers that are no usable `multipart/form-data`: `400`. What the
+//!    `Multipart` extractor always did before the handler ran, so a request that
+//!    can never parse costs no vault call, no slot and no body read.
+//! 2. Refuses a request with no `Bearer` token: `401`.
+//! 3. Has the vault check the token: `401`. A merely non-empty token is not
 //!    enough, or any junk string would drive the parser.
-//! 3. Takes an import slot, or refuses with `429` and a `Retry-After`. After the
+//! 4. Takes an import slot, or refuses with `429` and a `Retry-After`. After the
 //!    token check, so an unauthenticated caller cannot fill the slots.
-//! 4. Reads the upload, within [`UPLOAD_DEADLINE`] and [`IMPORT_BODY_LIMIT`].
-//! 5. Hands the handler an [`Admitted`].
+//! 5. Reads the upload, within [`UPLOAD_DEADLINE`] and [`IMPORT_BODY_LIMIT`].
+//! 6. Hands the handler an [`Admitted`].
 //!
-//! Step 4 is here because the slot is held while it runs. If the idempotency
+//! Step 5 is here because the slot is held while it runs. If the idempotency
 //! layer did the reading, as it does for any keyed request that gets past this
 //! one, an upload that sent its headers and then stopped would hold a slot until
 //! its connection closed, and with the default two slots that locks every other
@@ -39,8 +42,8 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::{Body, to_bytes},
-    extract::{Request, State},
-    http::{HeaderValue, StatusCode, header},
+    extract::{FromRequest, Multipart, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -50,7 +53,9 @@ use tokio::sync::OwnedSemaphorePermit;
 use crate::{handlers::import::extract_bearer_token, state::AppState};
 
 /// Hard cap on the size of an import upload body (5 MiB). Bounds the work an
-/// authenticated caller can force the spreadsheet/CSV parser to do.
+/// authenticated caller can force the spreadsheet/CSV parser to do. Admission
+/// reads the body under it, and the route sets it as the limit the `Multipart`
+/// extractor reads through.
 pub(crate) const IMPORT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 
 /// `Retry-After` on the `429` an import gets when no slot is free. A fixed
@@ -84,8 +89,30 @@ pub struct Admitted {
     _slot: Arc<OwnedSemaphorePermit>,
 }
 
+/// The refusal the `Multipart` extractor gives these headers, if it gives one.
+///
+/// The extractor is what decides whether a `Content-Type` is a usable
+/// `multipart/form-data` with a boundary, so this asks it, on a request that
+/// carries only that header, rather than restating its rule here.
+async fn unusable_multipart_headers(headers: &HeaderMap) -> Option<Response> {
+    let mut probe = Request::new(Body::empty());
+    if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
+        probe
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type.clone());
+    }
+    Multipart::from_request(probe, &())
+        .await
+        .err()
+        .map(IntoResponse::into_response)
+}
+
 /// Admit an import, or answer for it. See the module docs.
 pub async fn admit_import(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if let Some(refusal) = unusable_multipart_headers(request.headers()).await {
+        return refusal;
+    }
+
     let token = match extract_bearer_token(request.headers()) {
         Some(t) if !t.is_empty() => t,
         _ => {
