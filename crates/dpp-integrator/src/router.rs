@@ -17,21 +17,19 @@ use dpp_common::{
 };
 
 use crate::{
+    admission,
     handlers::{health, import, job_status, product_groups, schemas, templates},
     state::AppState,
 };
 
-/// Hard cap on the size of an import upload body (5 MiB). Bounds the work an
-/// (unauthenticated) caller can force the spreadsheet/CSV parser to do.
-const IMPORT_BODY_LIMIT: usize = 5 * 1024 * 1024;
-
 /// Build the Axum router with all integrator routes and telemetry layers.
 ///
-/// Import uploads are subject to a 5 MiB body cap (`DefaultBodyLimit`) to bound
-/// the work an authenticated caller can force the parser to do. Auth is enforced
-/// inside each handler by forwarding the `Bearer` token to the vault.
+/// Import uploads are admitted by [`admission::admit_import`], which checks the
+/// caller's `Bearer` token with the vault, takes an import slot and reads the
+/// upload within a 5 MiB cap and a deadline. The other routes forward the token
+/// to the vault inside their handlers.
 pub fn build(state: AppState) -> Router {
-    let router = Router::new()
+    let other_routes = Router::new()
         .route("/health", get(health::health_handler))
         .route(
             "/api/v1/templates/{productGroup}",
@@ -54,27 +52,47 @@ pub fn build(state: AppState) -> Router {
             "/api/v1/schemas/{productGroup}/{version}",
             get(schemas::get_pinned_schema),
         )
-        .route(
-            "/api/v1/import/{productGroup}",
-            post(import::import_file).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
-        )
         .route("/api/v1/imports/{job_id}", get(job_status::get_job_status));
 
-    // Only the upload is keyed, but the layer goes on the whole tree: it is a
+    // The upload is the one route with a layer of its own, so that layer can sit
+    // outside the idempotency layer below: a `route_layer` added later wraps the
+    // ones added before it.
+    //
+    // The `DefaultBodyLimit` is not made redundant by the cap admission reads
+    // under. It is the limit the `Multipart` extractor reads through, and without
+    // one axum applies its own 2 MiB, which would refuse a valid upload between
+    // 2 and 5 MiB that admission had let through.
+    let import = Router::new().route(
+        "/api/v1/import/{productGroup}",
+        post(import::import_file).layer(DefaultBodyLimit::max(admission::IMPORT_BODY_LIMIT)),
+    );
+
+    // Only the upload is keyed, but the layer goes on every route: it is a
     // `route_layer`, so it runs after routing and can read the matched
     // template, and the policy table is what decides. Putting it on the one
     // route instead would move that decision into two places.
     //
     // Mounted only when a store is wired — see `AppState::idempotency`.
-    let router = match &state.idempotency {
-        Some(store) => router.route_layer(middleware::from_fn_with_state(
+    let keyed = |routes: Router<AppState>| match &state.idempotency {
+        Some(store) => routes.route_layer(middleware::from_fn_with_state(
             crate::middleware::idempotency_state(store.clone()),
             dpp_common::idempotency::idempotency_middleware,
         )),
-        None => router,
+        None => routes,
     };
 
-    router
+    // Admission goes on after the idempotency layer, which makes it the outer of
+    // the two. That order is the point: the idempotency layer buffers a keyed
+    // body whole before the handler runs, so a layer that has to refuse before
+    // any body is read cannot sit inside it. Not conditional on the store, since
+    // the cap applies with or without idempotency.
+    let import = keyed(import).route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        admission::admit_import,
+    ));
+
+    keyed(other_routes)
+        .merge(import)
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(http_metrics_middleware))
         .layer(middleware::from_fn(inject_request_id))
@@ -414,15 +432,16 @@ mod tests {
     /// Regression (red-team RT2-1): an oversized upload must be rejected, never
     /// parsed to a `200`. Two layered controls enforce this: the auth gate (the
     /// token is validated against the vault before the body is read) and the
-    /// `DefaultBodyLimit` cap. In this unit context there is no live vault, so the
-    /// request is rejected at the auth gate; the body-limit cap is the runtime
-    /// backstop for an *authenticated* hostile upload (exercised end-to-end in the
-    /// node integration suite). Either way the parser is never reached.
+    /// size cap the admission layer reads the body under. In this unit context
+    /// there is no live vault, so the request is rejected at the auth gate; the
+    /// cap for an *authenticated* upload is pinned in `handlers::import`
+    /// (`an_upload_over_the_cap_is_refused_with_400_keyed_or_not`). Either way
+    /// the parser is never reached.
     #[tokio::test]
     async fn import_oversized_upload_rejected() {
         let app = super::build(test_state());
 
-        let oversized = vec![b'a'; super::IMPORT_BODY_LIMIT + 1];
+        let oversized = vec![b'a'; crate::admission::IMPORT_BODY_LIMIT + 1];
         let req = Request::builder()
             .method("POST")
             .uri("/api/v1/import/battery")

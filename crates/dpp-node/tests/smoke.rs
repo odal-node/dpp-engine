@@ -1851,16 +1851,20 @@ async fn unauthenticated_request_increments_auth_failures_total() {
 
 /// Phase-3 metric (RT2-1 surface): an import with an unknown product group must increment
 /// `import_rejections_total{reason="unknown_product_group"}`. A valid multipart
-/// content-type is sent so the `Multipart` extractor constructs; the handler's
-/// product group check returns 404 before the body is read.
+/// content-type is sent so the `Multipart` extractor constructs. The caller
+/// carries a token because the admission layer runs ahead of the handler and
+/// answers `401` to one the vault does not accept, so only an authenticated
+/// caller reaches the handler's product group check, which returns 404.
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_product_group_import_increments_import_rejections_total() {
     let handle = prometheus_handle();
     let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000092");
 
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{base}/integrator/api/v1/import/widgets"))
+        .bearer_auth(&token)
         .header("content-type", "multipart/form-data; boundary=x")
         .body("--x--\r\n")
         .send()

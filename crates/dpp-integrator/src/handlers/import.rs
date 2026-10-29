@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Multipart, Path, State},
+    extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -14,12 +14,10 @@ use dpp_types::{STANDALONE_OPERATOR_ID, state_change::WebhookEvent};
 use serde::Serialize;
 use uuid::Uuid;
 
-use std::{
-    collections::{BTreeSet, HashMap},
-    time::Duration,
-};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::{
+    admission::Admitted,
     domain::{
         batch_runner::{BatchResult, run_batch},
         csv_parser,
@@ -36,11 +34,6 @@ use crate::{
 /// Rows at or below this threshold are handled synchronously; above it an async
 /// job is spawned and a `202 Accepted` is returned immediately.
 const SYNC_THRESHOLD: usize = 100;
-
-/// `Retry-After` on the `429` an import gets when no slot is free. A fixed
-/// guess: how long a running import takes depends on its size, which this
-/// request cannot know.
-const IMPORT_BUSY_RETRY_AFTER_SECS: &str = "30";
 
 /// What the multipart body of an import held.
 struct Upload {
@@ -210,10 +203,13 @@ pub struct AsyncImportResponse {
 /// the same shape.
 ///
 /// The caller's `Authorization: Bearer` JWT is forwarded to the vault service.
+/// It was checked, an import slot taken and the upload read before this runs,
+/// by [`crate::admission::admit_import`], whose [`Admitted`] carries the token
+/// and the slot.
 pub async fn import_file(
     Path(product_group): Path<String>,
     State(state): State<AppState>,
-    request_headers: HeaderMap,
+    Extension(admitted): Extension<Admitted>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate product group early
@@ -228,72 +224,19 @@ pub async fn import_file(
             .into_response();
     }
 
-    // Require a Bearer token BEFORE parsing the file, so anonymous callers never
-    // reach the (allocation-heavy) parser.
-    let auth_token = match extract_bearer_token(&request_headers) {
-        Some(t) if !t.is_empty() => t,
-        _ => {
-            metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
-            return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                .with_detail("Missing or empty Authorization: Bearer token.")
-                .into_response();
-        }
-    };
+    // The token has been verified and a slot taken, and the upload is in memory.
+    // The slot lives as long as the import does: the async path below moves
+    // `admitted` into the background task, so the `202` does not release it.
+    let auth_token = admitted.token.clone();
 
-    // A merely non-empty token is not enough — otherwise an attacker supplies any
-    // junk string (`Bearer x`) and still drives the parser (RT2-1). Validate it
-    // against the vault (same side-effect-free check the job-status endpoint
-    // uses) before reading the body, so only authenticated operators get there.
-    if !state.vault_client.verify_token(&auth_token).await {
-        metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
-        return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-            .with_detail("Invalid or unauthorized Authorization: Bearer token.")
-            .into_response();
-    }
-
-    // Take a slot before the handler reads the upload, so a node already running
-    // its share of imports refuses at once instead of holding another upload in
-    // memory. A request with an `Idempotency-Key` has already been buffered by
-    // the idempotency layer before it gets here; for those the cap bounds the
-    // imports that run, not the memory the uploads take.
-    // The slot lives as long as the import does: the async path below moves it
-    // into the background task, so it is not released by the `202`.
-    let import_slot = match state.import_slots.clone().try_acquire_owned() {
-        Ok(slot) => slot,
-        Err(_) => {
-            metrics::counter!("import_rejections_total", "reason" => "busy").increment(1);
-            let mut resp = Problem::new(StatusCode::TOO_MANY_REQUESTS, "Too Many Requests")
-                .with_detail(
-                    "This node is already running as many imports as it allows. \
-                     Retry once one has finished.",
-                )
-                .into_response();
-            resp.headers_mut().insert(
-                header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static(IMPORT_BUSY_RETRY_AFTER_SECS),
-            );
-            return resp;
-        }
-    };
-
-    // Parse multipart fields, within the deadline: the slot is held until this
-    // returns, so an upload that never finishes must not keep it. Returning
-    // drops the slot.
+    // Parse multipart fields
     let Upload {
         file_bytes,
         is_xlsx,
         mode,
-    } = match tokio::time::timeout(UPLOAD_DEADLINE, read_upload(&mut multipart)).await {
-        Ok(Ok(upload)) => upload,
-        Ok(Err(resp)) => return resp,
-        Err(_) => {
-            metrics::counter!("import_rejections_total", "reason" => "upload_timeout").increment(1);
-            return http_problem::bad_request(format!(
-                "Failed to read uploaded file: it did not arrive within {} seconds.",
-                UPLOAD_DEADLINE.as_secs()
-            ))
-            .into_response();
-        }
+    } = match read_upload(&mut multipart).await {
+        Ok(upload) => upload,
+        Err(resp) => return resp,
     };
 
     let file_bytes = match file_bytes {
@@ -543,7 +486,7 @@ pub async fn import_file(
     let concurrency = state.batch_concurrency;
 
     tokio::spawn(async move {
-        let _import_slot = import_slot;
+        let _admitted = admitted;
         if let Err(e) = job_store.set_status(job_id, JobStatus::Processing).await {
             tracing::error!(%job_id, error = %e, "failed to mark import job processing");
         }
@@ -804,30 +747,17 @@ fn batch_result_into_entries(
     (created, updated, errors)
 }
 
-// Kept down here, directly above the test module, because the OpenAPI contract
-// test reads each file only up to its first test-gated item: one above the
-// handler hides the handler from it.
-
-/// How long an upload may take to arrive once its import holds a slot. A caller
-/// that sends its headers and then stops would otherwise keep the slot until its
-/// connection closed, and with the default two slots that locks every other
-/// import out. The limit covers the whole upload, not each read, so a sender
-/// that drips a byte at a time cannot keep it open either. 120 s lets a 5 MiB
-/// file through at about 44 KiB/s.
-#[cfg(not(test))]
-const UPLOAD_DEADLINE: Duration = Duration::from_secs(120);
-/// Short enough for a test to wait out.
-#[cfg(test)]
-const UPLOAD_DEADLINE: Duration = Duration::from_secs(2);
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use axum::{Router, body::Body, http::Request};
+    use dpp_common::idempotency::{
+        Claim, IdempotencyError, IdempotencyStore, RequestKey, StoredResponse,
+    };
     use tower::ServiceExt;
 
     use crate::{
@@ -1021,9 +951,12 @@ mod tests {
         };
         use std::sync::Arc;
         use std::sync::Mutex;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
         pub(super) struct State_ {
+            /// Whether the vault accepts the token it is asked to verify. Open by
+            /// default; `false` makes it answer `401`.
+            pub(super) accepts_tokens: AtomicBool,
             pub(super) create_hits: AtomicUsize,
             pub(super) update_hits: AtomicUsize,
             /// `pub(super)` so tests can flip a created passport to `active`
@@ -1037,6 +970,7 @@ mod tests {
         impl Default for State_ {
             fn default() -> Self {
                 Self {
+                    accepts_tokens: AtomicBool::new(true),
                     create_hits: AtomicUsize::default(),
                     update_hits: AtomicUsize::default(),
                     passports: Mutex::default(),
@@ -1045,7 +979,10 @@ mod tests {
             }
         }
 
-        async fn verify_handler() -> Response {
+        async fn verify_handler(State(state): State<Arc<State_>>) -> Response {
+            if !state.accepts_tokens.load(Ordering::SeqCst) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
             (StatusCode::OK, Json(serde_json::json!({"items": []}))).into_response()
         }
 
@@ -1704,18 +1641,12 @@ mod tests {
         );
     }
 
+    /// The `404` is the handler's, so it is answered to a caller admission has
+    /// let through. An unauthenticated caller gets `401` first, whatever the
+    /// product group (`an_unknown_product_group_does_not_reveal_itself_to_an_unauthenticated_caller`).
     #[tokio::test]
-    async fn unknown_product_group_is_rejected_before_any_vault_call() {
-        // Intentionally a dead vault URL: the product group check must reject this
-        // before auth or parsing ever contact it.
-        let state = AppState {
-            vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
-            job_store: Arc::new(InMemoryJobStore::new()),
-            batch_concurrency: 1,
-            import_slots: Arc::new(tokio::sync::Semaphore::new(2)),
-            events: Arc::new(dpp_common::event::NoOpEventBus),
-            idempotency: None,
-        };
+    async fn an_unknown_product_group_is_refused_with_404_and_writes_nothing() {
+        let (state, mock) = live_vault_state().await;
         let app = build_router(state);
 
         let body = multipart_body("X", "x.csv", "a,b\n1,2\n", None);
@@ -1724,6 +1655,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// Admission runs ahead of the handler's product group check, so a request
+    /// the vault does not recognise is told so, not which groups exist.
+    #[tokio::test]
+    async fn an_unknown_product_group_does_not_reveal_itself_to_an_unauthenticated_caller() {
+        let (state, mock) = live_vault_state().await;
+        mock.accepts_tokens.store(false, Ordering::SeqCst);
+        let app = build_router(state);
+
+        let body = multipart_body("X", "x.csv", "a,b\n1,2\n", None);
+        let resp = app
+            .oneshot(import_request("not-a-real-product_group", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1890,7 +1838,7 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             resp.headers()["retry-after"],
-            super::IMPORT_BUSY_RETRY_AFTER_SECS
+            crate::admission::IMPORT_BUSY_RETRY_AFTER_SECS
         );
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
     }
@@ -1990,6 +1938,345 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
         assert_eq!(slots.available_permits(), 1);
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    // ── Keyed imports ─────────────────────────────────────────────────────────
+    //
+    // A request with an `Idempotency-Key` goes through the idempotency layer,
+    // which reads its body whole before the handler runs. Each test below sends
+    // a request that layer would otherwise have read, and pins that it is
+    // turned away first. The router is nested under `/integrator` as the node
+    // does, since that is the template the policy table keys the route by.
+
+    /// What the idempotency layer asked of its store. Every claim succeeds, so a
+    /// request that reaches the layer reaches the handler.
+    #[derive(Default)]
+    struct CountingStore {
+        claims: AtomicUsize,
+        completes: AtomicUsize,
+        releases: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl IdempotencyStore for CountingStore {
+        async fn claim(
+            &self,
+            _: &RequestKey,
+            _: &str,
+            _: Duration,
+            _: Duration,
+        ) -> Result<Claim, IdempotencyError> {
+            self.claims.fetch_add(1, Ordering::SeqCst);
+            Ok(Claim::Claimed)
+        }
+        async fn complete(
+            &self,
+            _: &RequestKey,
+            _: &StoredResponse,
+        ) -> Result<(), IdempotencyError> {
+            self.completes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn release(&self, _: &RequestKey) -> Result<(), IdempotencyError> {
+            self.releases.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
+            Ok(0)
+        }
+    }
+
+    /// A keyed-import state: one slot, a store that counts, and the router as
+    /// the node mounts it.
+    async fn keyed_node(
+        slots: usize,
+    ) -> (
+        Router,
+        Arc<tokio::sync::Semaphore>,
+        Arc<CountingStore>,
+        Arc<mock_vault::State_>,
+    ) {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(slots));
+        let slots = state.import_slots.clone();
+        let store = Arc::new(CountingStore::default());
+        state.idempotency = Some(store.clone());
+        let app = Router::new().nest("/integrator", crate::router::build(state));
+        (app, slots, store, mock)
+    }
+
+    fn keyed_import_request(key: &str, body: Body) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/integrator/api/v1/import/battery")
+            .header("authorization", "Bearer test-token")
+            .header("content-type", "multipart/form-data; boundary=X")
+            .header("idempotency-key", key)
+            .body(body)
+            .unwrap()
+    }
+
+    fn keyed_csv_request(key: &str, rows: usize) -> Request<Body> {
+        let body = multipart_body("X", "battery.csv", &battery_csv(rows), None);
+        keyed_import_request(key, Body::from(body))
+    }
+
+    /// A body that says so if anything reads it, and then fails the read, so an
+    /// ordering mistake shows as a failed assertion and not as a hang.
+    fn unread_body(polled: Arc<AtomicBool>) -> Body {
+        Body::from_stream(futures::stream::once(async move {
+            polled.store(true, Ordering::SeqCst);
+            Err::<axum::body::Bytes, std::io::Error>(std::io::Error::other(
+                "this body must not be read",
+            ))
+        }))
+    }
+
+    /// 🚨 With every slot taken, a keyed import is refused before anything reads
+    /// its body, and before the idempotency layer claims its key.
+    #[tokio::test]
+    async fn a_keyed_import_is_refused_with_429_before_its_body_is_read() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let _taken = slots.clone().try_acquire_owned().unwrap();
+        let polled = Arc::new(AtomicBool::new(false));
+
+        let resp = app
+            .oneshot(keyed_import_request("k-1", unread_body(polled.clone())))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()["retry-after"],
+            crate::admission::IMPORT_BUSY_RETRY_AFTER_SECS
+        );
+        assert!(!polled.load(Ordering::SeqCst), "the body was read");
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// 🚨 A token the vault does not accept costs a keyed request nothing: its
+    /// body is not read and its key is not claimed. The node is full here too,
+    /// and the answer is still `401`, which pins the order: the token is
+    /// checked before a slot is looked at.
+    #[tokio::test]
+    async fn an_invalid_token_on_a_keyed_import_is_refused_without_reading_the_body() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let _taken = slots.clone().try_acquire_owned().unwrap();
+        mock.accepts_tokens.store(false, Ordering::SeqCst);
+        let polled = Arc::new(AtomicBool::new(false));
+
+        let resp = app
+            .oneshot(keyed_import_request("k-1", unread_body(polled.clone())))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert!(!polled.load(Ordering::SeqCst), "the body was read");
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A busy refusal never claims the key, so there is nothing to record or
+    /// replay: once a slot is free the same key runs.
+    #[tokio::test]
+    async fn a_keyed_import_turned_away_for_lack_of_a_slot_can_be_retried_under_its_key() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let taken = slots.clone().try_acquire_owned().unwrap();
+
+        let first = app
+            .clone()
+            .oneshot(keyed_csv_request("k-1", 1))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+
+        drop(taken);
+        let retry = app.oneshot(keyed_csv_request("k-1", 1)).await.unwrap();
+
+        assert_eq!(retry.status(), axum::http::StatusCode::OK);
+        assert!(retry.headers().get("idempotency-replayed").is_none());
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// 🚨 The slot is held while a keyed upload is read, so a caller that stops
+    /// sending must not keep it. Admission reads the body under the deadline;
+    /// left to the idempotency layer the read would have none, and one stalled
+    /// upload would lock every other import out.
+    #[tokio::test]
+    async fn a_stalled_keyed_upload_gives_its_slot_back() {
+        use futures::StreamExt;
+
+        let (app, slots, store, mock) = keyed_node(1).await;
+
+        let full = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let first_half = axum::body::Bytes::from(full[..full.len() / 2].to_vec());
+        let stalled = futures::stream::once(async move { Ok::<_, std::io::Error>(first_half) })
+            .chain(futures::stream::pending());
+
+        let resp = tokio::time::timeout(
+            Duration::from_secs(30),
+            app.oneshot(keyed_import_request("k-1", Body::from_stream(stalled))),
+        )
+        .await
+        .expect("a stalled upload must be given up on")
+        .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A keyed upload over the size cap is refused where it is read, with the
+    /// same `400` an unkeyed one gets, and its key is never claimed. The
+    /// idempotency layer's own buffer is larger than the cap, so without this
+    /// a keyed upload between the two would be read in full first.
+    #[tokio::test]
+    async fn an_upload_over_the_cap_is_refused_with_400_keyed_or_not() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let big = "a".repeat(crate::admission::IMPORT_BODY_LIMIT);
+        let body = multipart_body("X", "battery.csv", &big, None);
+
+        let keyed = app
+            .clone()
+            .oneshot(keyed_import_request("k-1", Body::from(body.clone())))
+            .await
+            .unwrap();
+        let unkeyed = Request::builder()
+            .method("POST")
+            .uri("/integrator/api/v1/import/battery")
+            .header("authorization", "Bearer test-token")
+            .header("content-type", "multipart/form-data; boundary=X")
+            .body(Body::from(body))
+            .unwrap();
+        let unkeyed = app.oneshot(unkeyed).await.unwrap();
+
+        assert_eq!(keyed.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(unkeyed.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// An upload between axum's own default limit for a multipart body (2 MiB)
+    /// and the cap is a valid one, and is read through. Admission lets it by, so
+    /// the `Multipart` extractor must not stop it: that takes the route setting
+    /// its own limit, which is easy to read as redundant with the cap admission
+    /// enforces and is not.
+    #[tokio::test]
+    async fn a_valid_upload_over_axums_default_limit_is_accepted() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        // One row whose name is long enough to take the file past 2 MiB. The row
+        // is refused for it, which is beside the point: the answer is `200` only
+        // if the whole body was read.
+        let long_name = "x".repeat(3 * 1024 * 1024);
+        let csv = format!(
+            "{BATTERY_CSV_HEADER}\n{}\n",
+            battery_csv_row(VALID_GTIN).replacen("EV Battery 48V", &long_name, 1)
+        );
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        assert!(body.len() > 2 * 1024 * 1024 && body.len() < crate::admission::IMPORT_BODY_LIMIT);
+
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(response_json(resp).await["totalRows"], 1);
+    }
+
+    /// 🚨 A request whose `Content-Type` is no usable `multipart/form-data` is
+    /// refused before it takes a slot or has its body read, as it was when the
+    /// `Multipart` extractor was the only thing looking. The node is full here,
+    /// and the answer is `400`, not `429`, which pins the order.
+    #[tokio::test]
+    async fn an_unusable_content_type_is_refused_before_a_slot_is_taken() {
+        for content_type in [
+            None,
+            Some("text/plain"),
+            Some("multipart/form-data"),
+            Some("application/json; boundary=X"),
+        ] {
+            let (app, slots, store, mock) = keyed_node(1).await;
+            let _taken = slots.clone().try_acquire_owned().unwrap();
+            let polled = Arc::new(AtomicBool::new(false));
+
+            let mut request = keyed_import_request("k-1", unread_body(polled.clone()));
+            request.headers_mut().remove("content-type");
+            if let Some(content_type) = content_type {
+                request
+                    .headers_mut()
+                    .insert("content-type", content_type.parse().unwrap());
+            }
+            let resp = app.oneshot(request).await.unwrap();
+
+            assert_eq!(
+                resp.status(),
+                axum::http::StatusCode::BAD_REQUEST,
+                "content-type {content_type:?}"
+            );
+            assert!(!polled.load(Ordering::SeqCst), "the body was read");
+            assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+            assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    /// 🚨 The slot has to cross the idempotency layer: a keyed import over the
+    /// synchronous threshold keeps it for as long as its background job runs,
+    /// and gives it back when the job ends, so the `202` does not free it and
+    /// nothing leaks it.
+    #[tokio::test]
+    async fn a_keyed_async_import_keeps_its_slot_until_its_job_ends() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+
+        mock.gate.send_replace(false);
+        let resp = app
+            .clone()
+            .oneshot(keyed_csv_request("k-1", 101))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::ACCEPTED);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+
+        // The job is running, held at its first create, and the node is full.
+        assert_eq!(slots.available_permits(), 0);
+        let second = app
+            .clone()
+            .oneshot(keyed_csv_request("k-2", 1))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+
+        mock.gate.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while slots.available_permits() != 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the job must finish and give its slot back within 10s");
+
+        // The `202` was recorded under the key; the refusal was not.
+        assert_eq!(store.completes.load(Ordering::SeqCst), 1);
+        assert_eq!(store.releases.load(Ordering::SeqCst), 0);
+    }
+
+    /// A keyed synchronous import gives its slot back when it returns, and is
+    /// claimed once.
+    #[tokio::test]
+    async fn a_finished_keyed_import_gives_its_slot_back() {
+        let (app, slots, store, _mock) = keyed_node(1).await;
+
+        let resp = app.oneshot(keyed_csv_request("k-1", 1)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+        assert_eq!(store.completes.load(Ordering::SeqCst), 1);
     }
 }
 
