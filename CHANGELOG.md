@@ -481,10 +481,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   without limit, and an import held its slot while it did. Each call now gets 10
   seconds. A claim that does not answer in time is refused with the `503` an
   unreachable store already gets, and the request is not run. An outcome or a
-  release that does not answer is logged, and the response goes out unchanged,
-  as it does when recording fails. A call given up on may still have committed,
-  so a retry can meet `409` until the key's 60-second lease runs out, which is
-  the window a store error already leaves.
+  release that does not answer is logged, and the response goes out as it would
+  have without the timeout: unchanged, or with an empty body when it was too
+  large to buffer, which is what a failed release already does. A call given up
+  on may still have committed, so a retry can meet `409` until the key's
+  60-second lease runs out, which is the window a store error already leaves.
 
 - **The resolver's rate limit can be configured from `.env`, and the reference
   topology no longer shares one limit across every visitor.** The resolver reads
