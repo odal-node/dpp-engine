@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{Multipart, Path, State},
     http::{HeaderMap, StatusCode, header},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use dpp_common::{
     event::{self, DppEvent, EventBus},
@@ -14,7 +14,10 @@ use dpp_types::{STANDALONE_OPERATOR_ID, state_change::WebhookEvent};
 use serde::Serialize;
 use uuid::Uuid;
 
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    time::Duration,
+};
 
 use crate::{
     domain::{
@@ -38,6 +41,81 @@ const SYNC_THRESHOLD: usize = 100;
 /// guess: how long a running import takes depends on its size, which this
 /// request cannot know.
 const IMPORT_BUSY_RETRY_AFTER_SECS: &str = "30";
+
+/// What the multipart body of an import held.
+struct Upload {
+    file_bytes: Option<Vec<u8>>,
+    is_xlsx: bool,
+    mode: ImportMode,
+}
+
+/// Read the multipart body. The `Err` is the response to send.
+async fn read_upload(multipart: &mut Multipart) -> Result<Upload, Response> {
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut is_xlsx = false;
+    let mut mode = ImportMode::Apply;
+
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => {
+                let name = field.name().unwrap_or("").to_owned();
+                let content_type = field.content_type().map(|s| s.to_owned());
+                let filename = field.file_name().map(|s| s.to_owned());
+
+                match name.as_str() {
+                    "file" => {
+                        // Detect XLSX from content-type or filename extension
+                        is_xlsx = content_type
+                            .as_deref()
+                            .map(|ct| {
+                                ct.contains("spreadsheet")
+                                    || ct.contains("excel")
+                                    || ct.contains("xlsx")
+                            })
+                            .unwrap_or(false)
+                            || filename
+                                .as_deref()
+                                .map(|f| f.ends_with(".xlsx") || f.ends_with(".ods"))
+                                .unwrap_or(false);
+
+                        match field.bytes().await {
+                            Ok(b) => file_bytes = Some(b.to_vec()),
+                            Err(e) => {
+                                return Err(http_problem::bad_request(format!(
+                                    "Failed to read uploaded file: {e}"
+                                ))
+                                .into_response());
+                            }
+                        }
+                    }
+                    "mode" => {
+                        let val = field.text().await.unwrap_or_default();
+                        mode = match val.trim() {
+                            "dry_run" | "dryRun" => ImportMode::DryRun,
+                            _ => ImportMode::Apply,
+                        };
+                    }
+                    _ => {
+                        // Unknown fields are silently ignored
+                        let _ = field.bytes().await;
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return Err(
+                    http_problem::bad_request(format!("Multipart read error: {e}")).into_response(),
+                );
+            }
+        }
+    }
+
+    Ok(Upload {
+        file_bytes,
+        is_xlsx,
+        mode,
+    })
+}
 
 // ─── Response shapes ─────────────────────────────────────────────────────────
 
@@ -173,8 +251,11 @@ pub async fn import_file(
             .into_response();
     }
 
-    // Take a slot before the body is read, so a node already running its share
-    // of imports refuses at once instead of holding another upload in memory.
+    // Take a slot before the handler reads the upload, so a node already running
+    // its share of imports refuses at once instead of holding another upload in
+    // memory. A request with an `Idempotency-Key` has already been buffered by
+    // the idempotency layer before it gets here; for those the cap bounds the
+    // imports that run, not the memory the uploads take.
     // The slot lives as long as the import does: the async path below moves it
     // into the background task, so it is not released by the `202`.
     let import_slot = match state.import_slots.clone().try_acquire_owned() {
@@ -195,64 +276,25 @@ pub async fn import_file(
         }
     };
 
-    // Parse multipart fields
-    let mut file_bytes: Option<Vec<u8>> = None;
-    let mut is_xlsx = false;
-    let mut mode = ImportMode::Apply;
-
-    loop {
-        match multipart.next_field().await {
-            Ok(Some(field)) => {
-                let name = field.name().unwrap_or("").to_owned();
-                let content_type = field.content_type().map(|s| s.to_owned());
-                let filename = field.file_name().map(|s| s.to_owned());
-
-                match name.as_str() {
-                    "file" => {
-                        // Detect XLSX from content-type or filename extension
-                        is_xlsx = content_type
-                            .as_deref()
-                            .map(|ct| {
-                                ct.contains("spreadsheet")
-                                    || ct.contains("excel")
-                                    || ct.contains("xlsx")
-                            })
-                            .unwrap_or(false)
-                            || filename
-                                .as_deref()
-                                .map(|f| f.ends_with(".xlsx") || f.ends_with(".ods"))
-                                .unwrap_or(false);
-
-                        match field.bytes().await {
-                            Ok(b) => file_bytes = Some(b.to_vec()),
-                            Err(e) => {
-                                return http_problem::bad_request(format!(
-                                    "Failed to read uploaded file: {e}"
-                                ))
-                                .into_response();
-                            }
-                        }
-                    }
-                    "mode" => {
-                        let val = field.text().await.unwrap_or_default();
-                        mode = match val.trim() {
-                            "dry_run" | "dryRun" => ImportMode::DryRun,
-                            _ => ImportMode::Apply,
-                        };
-                    }
-                    _ => {
-                        // Unknown fields are silently ignored
-                        let _ = field.bytes().await;
-                    }
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                return http_problem::bad_request(format!("Multipart read error: {e}"))
-                    .into_response();
-            }
+    // Parse multipart fields, within the deadline: the slot is held until this
+    // returns, so an upload that never finishes must not keep it. Returning
+    // drops the slot.
+    let Upload {
+        file_bytes,
+        is_xlsx,
+        mode,
+    } = match tokio::time::timeout(UPLOAD_DEADLINE, read_upload(&mut multipart)).await {
+        Ok(Ok(upload)) => upload,
+        Ok(Err(resp)) => return resp,
+        Err(_) => {
+            metrics::counter!("import_rejections_total", "reason" => "upload_timeout").increment(1);
+            return http_problem::bad_request(format!(
+                "Failed to read uploaded file: it did not arrive within {} seconds.",
+                UPLOAD_DEADLINE.as_secs()
+            ))
+            .into_response();
         }
-    }
+    };
 
     let file_bytes = match file_bytes {
         Some(b) => b,
@@ -761,6 +803,22 @@ fn batch_result_into_entries(
 
     (created, updated, errors)
 }
+
+// Kept down here, directly above the test module, because the OpenAPI contract
+// test reads each file only up to its first test-gated item: one above the
+// handler hides the handler from it.
+
+/// How long an upload may take to arrive once its import holds a slot. A caller
+/// that sends its headers and then stops would otherwise keep the slot until its
+/// connection closed, and with the default two slots that locks every other
+/// import out. The limit covers the whole upload, not each read, so a sender
+/// that drips a byte at a time cannot keep it open either. 120 s lets a 5 MiB
+/// file through at about 44 KiB/s.
+#[cfg(not(test))]
+const UPLOAD_DEADLINE: Duration = Duration::from_secs(120);
+/// Short enough for a test to wait out.
+#[cfg(test)]
+const UPLOAD_DEADLINE: Duration = Duration::from_secs(2);
 
 #[cfg(test)]
 mod tests {
@@ -1902,6 +1960,36 @@ mod tests {
         })
         .await
         .expect("the job must finish and give its slot back within 10s");
+    }
+
+    /// 🚨 The slot is held while the upload is read, so a caller that sends its
+    /// headers and some of the body and then stops must not keep it: the read
+    /// has a deadline, and giving up hands the slot back.
+    #[tokio::test]
+    async fn a_stalled_upload_gives_its_slot_back() {
+        use futures::StreamExt;
+
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state);
+
+        // The first half of a valid upload, then nothing, ever.
+        let full = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let first_half = axum::body::Bytes::from(full[..full.len() / 2].to_vec());
+        let stalled = futures::stream::once(async move { Ok::<_, std::io::Error>(first_half) })
+            .chain(futures::stream::pending());
+        let (parts, _) = import_request("battery", Vec::new()).into_parts();
+        let request = Request::from_parts(parts, Body::from_stream(stalled));
+
+        let resp = tokio::time::timeout(Duration::from_secs(30), app.oneshot(request))
+            .await
+            .expect("the handler must give up on a stalled upload")
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
     }
 }
 

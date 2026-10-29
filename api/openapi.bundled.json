@@ -10562,7 +10562,7 @@
         }
       },
       "ImportBusy": {
-        "description": "The node is already running as many imports as it allows.\n\nReturned after the caller is authenticated and before the upload is read, so\nnothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT` (default 2).\nAn import over the synchronous threshold keeps its place until its background\njob finishes, so the `202` does not free it. Retry after the delay in\n`Retry-After`.\n",
+        "description": "The node is already running as many imports as it allows.\n\nReturned after the caller is authenticated and before the handler reads the\nupload, so nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT`\n(default 2). An import over the synchronous threshold keeps its place until its\nbackground job finishes, so the `202` does not free it. Retry after the delay in\n`Retry-After`. The `429` is not recorded under an `Idempotency-Key`, so a retry\nwith the same key runs.\n",
         "headers": {
           "Retry-After": {
             "description": "Seconds to wait before retrying.",

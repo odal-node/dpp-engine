@@ -16,8 +16,8 @@ pub struct AppState {
     /// Imports allowed to run at once. A slot is taken once the caller is
     /// authenticated and held until the import's last row is written, so an
     /// async job keeps its slot after the `202`. When none is free the import
-    /// is refused with `429` and nothing is read, rather than queued behind a
-    /// 5 MiB upload held in memory.
+    /// is refused with `429` before the handler reads the upload, rather than
+    /// queued behind a 5 MiB upload held in memory.
     pub import_slots: Arc<tokio::sync::Semaphore>,
     /// Where an import job's `dpp.import.completed` / `dpp.import.failed` is
     /// published once the job store has recorded it. Its webhook deliveries

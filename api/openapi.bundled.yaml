@@ -9299,11 +9299,12 @@ components:
       description: |
         The node is already running as many imports as it allows.
 
-        Returned after the caller is authenticated and before the upload is read, so
-        nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT` (default 2).
-        An import over the synchronous threshold keeps its place until its background
-        job finishes, so the `202` does not free it. Retry after the delay in
-        `Retry-After`.
+        Returned after the caller is authenticated and before the handler reads the
+        upload, so nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT`
+        (default 2). An import over the synchronous threshold keeps its place until its
+        background job finishes, so the `202` does not free it. Retry after the delay in
+        `Retry-After`. The `429` is not recorded under an `Idempotency-Key`, so a retry
+        with the same key runs.
       headers:
         Retry-After:
           description: Seconds to wait before retrying.

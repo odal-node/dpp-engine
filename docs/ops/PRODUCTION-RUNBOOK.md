@@ -110,10 +110,14 @@ Caddy obtains and renews the certificates.
 
 The node limits one thing itself: how many bulk imports run at once.
 `IMPORT_MAX_CONCURRENT` (default 2) is checked after the caller is authenticated and
-before the upload is read. An import that finds no free slot gets `429` with a
-`Retry-After`, and `import_rejections_total{reason="busy"}` counts it. An import over
-100 rows keeps its slot while its background job runs, so the `202` does not free it.
-`BATCH_CONCURRENCY` bounds the rows one import writes at a time.
+before the handler reads the upload. An import that finds no free slot gets `429` with
+a `Retry-After`, and `import_rejections_total{reason="busy"}` counts it. An import over
+100 rows keeps its slot while its background job runs, so the `202` does not free it,
+and an upload that has not arrived after 120 seconds is refused with `400` and gives
+its slot back. A request that carries an `Idempotency-Key` is buffered by the
+idempotency layer before the handler runs, so for those the cap bounds the imports
+that run, not the memory the uploads take. `BATCH_CONCURRENCY` bounds the rows one
+import writes at a time.
 
 **The node does not limit request rates.** The public passport reads, the credential
 read (which is unauthenticated and fetches the issuer's DID document) and the
