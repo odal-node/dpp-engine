@@ -12,12 +12,28 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+dpp-common = { path = "../crates/dpp-common" }
 dpp-integrator = { path = "../crates/dpp-integrator" }
+dpp-render = { path = "../crates/dpp-render" }
+dpp-types = { path = "../crates/dpp-types" }
 dpp-vault = { path = "../crates/dpp-vault" }
 # The `SealInspector` the verify target hands to `verify_dossier_json`. dpp-vault
 # takes the trait from dpp-types and never the adapter, so — like the node's
 # composition root — the caller supplies it.
 dpp-seal = { path = "../crates/dpp-seal" }
+# Core, at the version the workspace pins in its root `Cargo.toml`. A repin moves
+# these with it: the credential target implements dpp-vault's traits over
+# dpp-vc's types, and two versions of one crate do not share a type.
+dpp-domain = "0.22.0"
+dpp-vc = "0.22.0"
+async-trait = "0.1"
+base64 = "0.23"
+chrono = "0.4"
+http = "1"
+serde_json = "1"
+# Writes the workbook the XLSX target wraps its input in, as the integrator's own
+# tests build one: stored entries only, so no compression feature is needed.
+zip = { version = "9", default-features = false }
 
 [[bin]]
 name = "parse_csv"
@@ -29,6 +45,62 @@ bench = false
 [[bin]]
 name = "verify_dossier_json"
 path = "fuzz_targets/verify_dossier_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_xlsx"
+path = "fuzz_targets/parse_xlsx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_rows"
+path = "fuzz_targets/import_rows.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "create_request_validate"
+path = "fuzz_targets/create_request_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "credential_header"
+path = "fuzz_targets/credential_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cades_seal_inspect"
+path = "fuzz_targets/cades_seal_inspect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trusted_list_parse"
+path = "fuzz_targets/trusted_list_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "public_page_render"
+path = "fuzz_targets/public_page_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_guard"
+path = "fuzz_targets/url_guard.rs"
 test = false
 doc = false
 bench = false

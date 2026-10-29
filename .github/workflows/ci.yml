@@ -70,7 +70,8 @@ env:
 # workspace needs the flag too; nothing enforces it.
 #
 # Left without it on purpose: `cargo audit` (reads the lock, resolves nothing),
-# `cargo fmt`, and the wasm ABI fixture, whose own lock is git-ignored.
+# `cargo fmt`, the wasm ABI fixture, whose own lock is git-ignored, and the fuzz
+# crate, whose lock is git-ignored too and is started from the workspace's.
 
 jobs:
   fmt:
@@ -546,6 +547,52 @@ jobs:
       - name: Gate self-test
         working-directory: dpp-engine
         run: bash scripts/ci-guard-check.test.sh
+
+  fuzz-targets-check:
+    name: Every fuzz target runs in the nightly job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      # Shell only — no Rust toolchain.
+      - name: Every fuzz target is built, run nightly, and documented
+        working-directory: dpp-engine
+        run: bash scripts/fuzz-targets-check.sh
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/fuzz-targets-check.test.sh
+
+  # The fuzz crate is its own workspace, so the clippy and fmt jobs never see
+  # it, and fuzz.yml runs only on a schedule. This is the per-PR proof that the
+  # targets still compile against the code under review. It lints on stable;
+  # the nightly job is what builds them with the sanitizer and runs them.
+  fuzz-build:
+    name: Fuzz targets compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      # Before the cache step, so its key reads the lock the build will use.
+      # `just fuzz-check` copies it again; see that recipe for why.
+      - name: Start the fuzz lock from the workspace lock
+        working-directory: dpp-engine
+        run: cp Cargo.lock fuzz/Cargo.lock
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: dpp-engine/fuzz
+      - name: Install just
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just
+      - name: just fuzz-check
+        working-directory: dpp-engine
+        run: just fuzz-check
 
   openapi-lint:
     name: OpenAPI spec lints
