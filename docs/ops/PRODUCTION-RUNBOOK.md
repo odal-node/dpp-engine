@@ -185,6 +185,47 @@ Alert at least on: `trust_mode` below its expected value for any port,
 `ruleset_load_failures_total` increasing, and disk above 80%. Rules are in
 [METRICS-PLAN.md](METRICS-PLAN.md#starter-alert-rules).
 
+#### A stalled registry row
+
+A row is stalled once it has been tried eight times without settling. The node keeps
+trying it with backoff, so the alert says a person should look, not that anything is
+lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands.
+
+- A **`pending`** row is one the registry has not taken: it is unreachable or refuses
+  the payload, and the row's `message` says which.
+- A **`submitted`** row is one the registry holds and has not ruled on, and the node
+  polls it by the correlation identifier it was given. If a crash or a failed write
+  lost that identifier, the node looks the submission up by the unique product
+  identifier the passport was submitted under, and logs *recovered the correlation
+  identifier* when it finds it. Nothing more is needed then.
+
+Three log lines mean a person is needed:
+
+- *More than one registry submission reports this passport's unique product
+  identifier* lists the candidates. A successor can be submitted under its
+  predecessor's identifier, so the node does not choose between them.
+- *One registry submission reports this passport's unique product identifier, and not
+  every task was read* names one candidate. It may be a predecessor's, beside this
+  passport's own task that is still being checked or was not read, so the node does
+  not record it, and looks again on every attempt.
+- *Not found among the tasks read* is retried on every attempt, and a row that never
+  finds it stalls.
+
+There is no node-side way yet to record a correlation identifier by hand. Compare the
+candidates with the registry's own dashboard and raise it with the registry; the row
+stays where it is and loses nothing.
+
+A stalled **transfer notification** is one the registry answered with something the
+node could not read as accepted or refused: still processing, or a state the row's
+`message` quotes. It is sent again under the same idempotency key each time. Whether
+the registry's transfer route de-duplicates on that key has not been observed, so a
+notification that stalls may have been taken more than once: check the registry's own
+record of the handover before treating repeats as harmless, and raise a state that never
+settles with the registry. A notification the registry answers as already held (a
+`409` naming the replayed key) is closed as notified. That answer says the registry has
+it, not that it has applied the handover, and the node has no way to ask, so confirm a
+handover that matters in the registry.
+
 ### Upgrades
 
 1. Back up. Migrations only go forward, so the backup is the rollback.

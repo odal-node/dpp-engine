@@ -4,14 +4,14 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use dpp_domain::passport::PassportId;
-use dpp_registry::{EuRegistryResponse, RegistryStatusCode};
+use dpp_registry::RegistryStatusCode;
 use uuid::Uuid;
 
 use dpp_domain::DppError;
 use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
-    SubmissionAcknowledgement, SubmissionReport,
+    SubmissionAcknowledgement, SubmissionLookup, SubmissionReport, TransferReport,
 };
 use dpp_domain::transfer::{TransferReason, TransferRecord};
 
@@ -43,16 +43,14 @@ fn production_config_requires_mtls() {
 }
 
 #[test]
-fn response_to_record_maps_status_correctly() {
-    let resp = EuRegistryResponse {
+fn a_status_reply_of_registered_is_a_registered_record() {
+    let resp = StatusResponse {
         registry_id: "EU-REG-2026-00001".into(),
-        passport_id: Uuid::nil(),
         status: RegistryStatusCode::Registered,
-        message: None,
-        rejection_reasons: None,
         updated_at: Utc::now(),
+        message: None,
     };
-    let record = EuRegistrySync::response_to_record(&resp);
+    let record = EuRegistrySync::status_to_record(&resp);
     assert_eq!(record.status, RegistryStatus::Registered);
     assert_eq!(record.registration_id, "EU-REG-2026-00001");
 }
@@ -62,16 +60,14 @@ fn response_to_record_maps_status_correctly() {
 /// the port has no name for, and carries it as the registry said it rather than
 /// reading it as one of the three it does name.
 #[test]
-fn a_record_reply_of_rejected_is_carried_as_the_registry_said_it() {
-    let resp = EuRegistryResponse {
+fn a_status_reply_of_rejected_is_carried_as_the_registry_said_it() {
+    let resp = StatusResponse {
         registry_id: "EU-REG-2026-00002".into(),
-        passport_id: Uuid::nil(),
         status: RegistryStatusCode::Rejected,
-        message: Some("invalid data".into()),
-        rejection_reasons: Some(vec!["bad GTIN".into()]),
         updated_at: Utc::now(),
+        message: Some("invalid data".into()),
     };
-    let record = EuRegistrySync::response_to_record(&resp);
+    let record = EuRegistrySync::status_to_record(&resp);
     assert_eq!(
         record.status,
         RegistryStatus::Unrecognised("rejected".into())
@@ -285,7 +281,17 @@ mod mock_server {
         /// task-list request asked for.
         pub(super) task_results_read: Mutex<VecDeque<String>>,
         pub(super) task_pages_asked: Mutex<VecDeque<String>>,
+        /// Task-list pages by page number. A page named here is answered from
+        /// it, whatever order it is asked in; a page not named falls back to
+        /// `tasks_queue`. What a long list needs: which page is asked for, and in
+        /// what order, is the thing under test.
+        pub(super) tasks_by_page: Mutex<std::collections::HashMap<String, (StatusCode, Value)>>,
+        /// Task results by task identifier, answered the same way.
+        pub(super) results_by_task: Mutex<std::collections::HashMap<String, (StatusCode, Value)>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// The `Idempotency-Key` header of each transfer notification, `None`
+        /// when the request carried none.
+        pub(super) transfer_keys: Mutex<VecDeque<Option<String>>>,
         /// Bodies the registry actually received on `/transfer`. Asserting on
         /// the wire body is the only way to catch a field the adapter silently
         /// drops — a status-code assertion passes either way.
@@ -343,11 +349,11 @@ mod mock_server {
             std::collections::HashMap<String, String>,
         >,
     ) -> Response {
-        state
-            .task_pages_asked
-            .lock()
-            .await
-            .push_back(query.get("page").cloned().unwrap_or_default());
+        let page = query.get("page").cloned().unwrap_or_default();
+        state.task_pages_asked.lock().await.push_back(page.clone());
+        if let Some((status, body)) = state.tasks_by_page.lock().await.get(&page).cloned() {
+            return (status, Json(body)).into_response();
+        }
         pop_or_500(&state.tasks_queue).await
     }
 
@@ -355,15 +361,25 @@ mod mock_server {
         State(state): State<Arc<MockState>>,
         Path(id): Path<String>,
     ) -> Response {
-        state.task_results_read.lock().await.push_back(id);
+        state.task_results_read.lock().await.push_back(id.clone());
+        if let Some((status, body)) = state.results_by_task.lock().await.get(&id).cloned() {
+            return (status, Json(body)).into_response();
+        }
         pop_or_500(&state.task_result_queue).await
     }
 
     async fn transfer_handler(
         State(state): State<Arc<MockState>>,
         Path(_id): Path<String>,
+        headers: HeaderMap,
         Json(body): Json<Value>,
     ) -> Response {
+        state.transfer_keys.lock().await.push_back(
+            headers
+                .get(IDEMPOTENCY_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
+        );
         state.transfer_bodies.lock().await.push_back(body);
         pop_or_500(&state.transfer_queue).await
     }
@@ -937,6 +953,323 @@ async fn a_search_that_runs_out_of_pages_says_so() {
     );
 }
 
+/// A page of the task list that also says how long the list is.
+fn task_page_of(
+    total: u64,
+    tasks: serde_json::Value,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    (
+        axum::http::StatusCode::OK,
+        serde_json::json!({ "content": tasks, "totalElements": total }),
+    )
+}
+
+/// Fifty tasks that are not the one being looked for.
+fn filler_page(total: u64, prefix: &str) -> (axum::http::StatusCode, serde_json::Value) {
+    task_page_of(
+        total,
+        serde_json::Value::Array(
+            (0..50)
+                .map(|n| registration_task(&format!("{prefix}-{n}"), 1_000 + n, "SUCCESS"))
+                .collect(),
+        ),
+    )
+}
+
+/// 🚨 A list longer than the cap is read from both ends. The order is not known,
+/// and a task just submitted is at the front of a newest-first list and at the
+/// back of an oldest-first one; reading only the front never finds it in the
+/// second kind once the list outgrows the cap.
+#[tokio::test]
+async fn a_task_at_the_back_of_a_long_list_is_found() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), filler_page(5_000, "OLD"));
+        // The last of 100 pages: where an oldest-first list puts a new task.
+        pages.insert(
+            "99".into(),
+            task_page_of(
+                5_000,
+                serde_json::json!([registration_task("CORR-NEW", 4_999, "PROCESSING")]),
+            ),
+        );
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-NEW").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing);
+    assert_eq!(
+        state
+            .task_pages_asked
+            .lock()
+            .await
+            .iter()
+            .collect::<Vec<_>>(),
+        ["0", "99"],
+        "the first page says how long the list is, and the next read is its far end"
+    );
+}
+
+/// A search that read only the ends of a long list has not shown the task to be
+/// unlisted, and says so instead of reporting the registry as still working.
+#[tokio::test]
+async fn a_long_list_that_does_not_hold_the_task_at_either_end_says_the_search_ran_out() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        for page in (0..10).chain(90..100) {
+            pages.insert(page.to_string(), filler_page(5_000, &format!("P{page}")));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync
+        .check_submission("CORR-MIDDLE")
+        .await
+        .expect("a report");
+
+    assert!(
+        matches!(&report, SubmissionReport::Unrecognised { state } if state.contains("not found within")),
+        "got {report:?}"
+    );
+    let mut asked: Vec<u32> = state
+        .task_pages_asked
+        .lock()
+        .await
+        .iter()
+        .map(|p| p.parse().unwrap())
+        .collect();
+    asked.sort_unstable();
+    assert_eq!(
+        asked,
+        (0..10).chain(90..100).collect::<Vec<u32>>(),
+        "ten pages from each end, and none from the middle"
+    );
+}
+
+// ── Finding a submission whose handle was lost ───────────────────────────────
+
+/// A finished task's result, listing the passports it was about.
+fn result_naming(
+    upis: &[&str],
+    registration: Option<&str>,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    let items: Vec<_> = upis
+        .iter()
+        .map(|upi| {
+            serde_json::json!({
+                "uniqueProductIdentifier": upi,
+                "outcome": "ACCEPTED",
+                "registrationIdentifier": registration,
+            })
+        })
+        .collect();
+    (
+        axum::http::StatusCode::OK,
+        serde_json::json!({
+            "status": "SUCCESS",
+            "resultPayload": { "report": { "itemDetails": items } },
+        }),
+    )
+}
+
+const SOMEONE_ELSES: &str = "https://id.example.com/01/09506000134369";
+
+/// 🚨 The handle a replayed key left us without is found again, by the one thing
+/// the registry reports each passport against: the identifier it was submitted
+/// under.
+#[tokio::test]
+async fn a_lost_handle_is_found_by_the_identifier_the_passport_was_submitted_under() {
+    let request = valid_request();
+    let upi = request.data_carrier_uri.clone();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-A", 1, "SUCCESS"),
+            registration_task("CORR-B", 2, "SUCCESS"),
+            registration_task("CORR-C", 3, "SUCCESS"),
+        ])),
+    );
+    {
+        let mut results = state.results_by_task.lock().await;
+        results.insert("1".into(), result_naming(&[SOMEONE_ELSES], Some("REG-A")));
+        results.insert(
+            "2".into(),
+            result_naming(&[upi.as_str()], Some("REG-FOUND")),
+        );
+        results.insert("3".into(), result_naming(&[SOMEONE_ELSES], Some("REG-C")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let lookup = sync.find_submission(&request).await.expect("a lookup");
+
+    assert_eq!(
+        lookup,
+        SubmissionLookup::Found {
+            correlation_id: "CORR-B".into(),
+            report: SubmissionReport::Registered {
+                registration_id: "REG-FOUND".into()
+            },
+        },
+        "the handle and the ruling, from the task that reports this identifier"
+    );
+}
+
+/// 🚨 An identifier is not unique to a passport: a successor can be submitted
+/// under its predecessor's. Choosing between two submissions that report it would
+/// give a passport another passport's registration, so the lookup does not.
+#[tokio::test]
+async fn two_submissions_reporting_one_identifier_are_not_chosen_between() {
+    let request = valid_request();
+    let upi = request.data_carrier_uri.clone();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-PREDECESSOR", 1, "SUCCESS"),
+            registration_task("CORR-SUCCESSOR", 2, "SUCCESS"),
+        ])),
+    );
+    {
+        let mut results = state.results_by_task.lock().await;
+        results.insert("1".into(), result_naming(&[upi.as_str()], Some("REG-OLD")));
+        results.insert("2".into(), result_naming(&[upi.as_str()], Some("REG-NEW")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let lookup = sync.find_submission(&request).await.expect("a lookup");
+
+    assert_eq!(
+        lookup,
+        SubmissionLookup::Ambiguous {
+            candidates: vec!["CORR-PREDECESSOR".into(), "CORR-SUCCESSOR".into()]
+        }
+    );
+}
+
+/// A task still being checked reports no passport, so it may be the one and
+/// cannot be told from one that is not. Not finding the identifier while one is
+/// on the list does not say the registry holds none.
+#[tokio::test]
+async fn an_unfinished_task_means_not_finding_the_identifier_proves_nothing() {
+    let request = valid_request();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-A", 1, "SUCCESS"),
+            registration_task("CORR-B", 2, "PROCESSING"),
+        ])),
+    );
+    state
+        .results_by_task
+        .lock()
+        .await
+        .insert("1".into(), result_naming(&[SOMEONE_ELSES], Some("REG-A")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.find_submission(&request).await.expect("a lookup"),
+        SubmissionLookup::NotFound { exhaustive: false }
+    );
+}
+
+/// With every task finished, read, and none naming the identifier, the lookup can
+/// say it looked at all of it.
+#[tokio::test]
+async fn a_complete_list_without_the_identifier_says_it_was_all_read() {
+    let request = valid_request();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([registration_task(
+            "CORR-A", 1, "SUCCESS"
+        )])),
+    );
+    state
+        .results_by_task
+        .lock()
+        .await
+        .insert("1".into(), result_naming(&[SOMEONE_ELSES], Some("REG-A")));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.find_submission(&request).await.expect("a lookup"),
+        SubmissionLookup::NotFound { exhaustive: true }
+    );
+}
+
+/// Only registrations are read. A task of another kind has no passport result to
+/// look at, and reading it is a request wasted on every pass.
+#[tokio::test]
+async fn a_task_of_another_kind_is_not_read_looking_for_a_registration() {
+    let request = valid_request();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([{
+            "taskId": 9,
+            "type": "OPERATOR_ENROLMENT",
+            "correlationId": "CORR-X",
+            "status": "SUCCESS",
+        }])),
+    );
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.find_submission(&request).await.expect("a lookup");
+
+    assert!(state.task_results_read.lock().await.is_empty());
+}
+
+/// A finished task's result does not change, so it is read once. Looking for a
+/// lost handle repeats every pass until it is found; without this each pass
+/// would read every result in the list again.
+#[tokio::test]
+async fn a_finished_result_is_read_once_however_often_the_lookup_runs() {
+    let request = valid_request();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-A", 1, "SUCCESS"),
+            registration_task("CORR-B", 2, "SUCCESS"),
+        ])),
+    );
+    {
+        let mut results = state.results_by_task.lock().await;
+        results.insert("1".into(), result_naming(&[SOMEONE_ELSES], Some("REG-A")));
+        results.insert("2".into(), result_naming(&[SOMEONE_ELSES], Some("REG-B")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    for _ in 0..3 {
+        sync.find_submission(&request).await.expect("a lookup");
+    }
+
+    assert_eq!(
+        state.task_results_read.lock().await.len(),
+        2,
+        "two tasks, three lookups, two reads"
+    );
+}
+
 #[tokio::test]
 async fn an_unreachable_dashboard_is_an_error_not_a_verdict() {
     let state = Arc::new(MockState::default());
@@ -962,12 +1295,210 @@ async fn notify_transfer_success() {
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let report = sync
         .notify_transfer(&completed_transfer(), "EU-REG-4")
         .await
         .expect("notify_transfer should succeed");
 
-    assert_eq!(record.status, RegistryStatus::Registered);
+    // The record stays in service with the handover applied: that is the
+    // registry taking the notification, not a status to be passed on.
+    assert_eq!(report, TransferReport::Accepted);
+}
+
+/// 🚨 The notification is sent under the handover's own identity. Three of the
+/// answers end in the drain sending it again, and the key is what makes that the
+/// same notification and not a second: it must be the transfer's, and the same
+/// on every attempt.
+#[tokio::test]
+async fn a_transfer_notification_carries_the_transfers_id_as_its_idempotency_key() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    let transfer = completed_transfer();
+
+    sync.notify_transfer(&transfer, "EU-REG-K").await.unwrap();
+    sync.notify_transfer(&transfer, "EU-REG-K").await.unwrap();
+
+    let expected = transfer.transfer_id.to_string();
+    assert_eq!(
+        state
+            .transfer_keys
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![Some(expected.clone()), Some(expected)],
+        "every attempt presents the same key, and it is the transfer's"
+    );
+}
+
+/// A different handover is a different notification, so it is a different key.
+#[tokio::test]
+async fn two_transfers_do_not_share_a_key() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .unwrap();
+    sync.notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .unwrap();
+
+    let keys = state.transfer_keys.lock().await;
+    assert_eq!(keys.len(), 2);
+    assert_ne!(keys[0], keys[1]);
+}
+
+/// The registry's answer to a notification is read as an answer to it: whether
+/// it took the notification, and not where a registration stands. Each status is
+/// its own report, a state nobody has named is carried as it came, and none is
+/// read as an acceptance it did not say.
+#[tokio::test]
+async fn the_registrys_answer_to_a_notification_is_read_as_one() {
+    fn reply(status: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "registryId": "EU-REG-R",
+            "passportId": Uuid::now_v7(),
+            "status": status,
+            "updatedAt": Utc::now().to_rfc3339(),
+        });
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    }
+
+    let cases = [
+        (
+            reply("registered", serde_json::json!({})),
+            TransferReport::Accepted,
+        ),
+        (
+            reply("pending", serde_json::json!({})),
+            TransferReport::Processing,
+        ),
+        (
+            reply(
+                "rejected",
+                serde_json::json!({"rejectionReasons": ["no such record", "  ", "operator not verified"]}),
+            ),
+            TransferReport::Refused {
+                reason: "no such record; operator not verified".into(),
+            },
+        ),
+        (
+            reply(
+                "rejected",
+                serde_json::json!({"message": "refused by the registry"}),
+            ),
+            TransferReport::Refused {
+                reason: "refused by the registry".into(),
+            },
+        ),
+        (
+            reply("rejected", serde_json::json!({})),
+            TransferReport::Refused {
+                reason: "the registry refused the notification and gave no reason".into(),
+            },
+        ),
+        // A record the registry reports out of service is not a notification
+        // taken, or refused: it is a state to show as it came.
+        (
+            reply("suspended_by_authority", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "suspended_by_authority".into(),
+            },
+        ),
+        (
+            reply("deactivated", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "deactivated".into(),
+            },
+        ),
+        (
+            reply("UNDER_REVIEW", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "UNDER_REVIEW".into(),
+            },
+        ),
+    ];
+
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        for (body, _) in &cases {
+            queue.push_back((axum::http::StatusCode::OK, body.clone()));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    for (body, expected) in cases {
+        let report = sync
+            .notify_transfer(&completed_transfer(), "EU-REG-R")
+            .await
+            .expect("every reply is an answer");
+        assert_eq!(report, expected, "for {body}");
+    }
+}
+
+/// A replayed key is the registry saying it already holds the notification: an
+/// earlier attempt got through and its answer was lost, or was one this node
+/// could not settle on. Neither a failure nor grounds to send it a third time.
+#[tokio::test]
+async fn a_replayed_transfer_key_means_the_registry_already_holds_it() {
+    let state = Arc::new(MockState::default());
+    state
+        .transfer_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::CONFLICT, key_reused_body()));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync
+        .notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .expect("a replayed key is not a failure");
+
+    assert_eq!(report, TransferReport::AlreadyHeld);
+    assert_eq!(
+        state.transfer_bodies.lock().await.len(),
+        1,
+        "a replayed key is not retried"
+    );
+}
+
+/// Only the one `subCode` is read as "already done". Any other conflict says
+/// nothing about whether the notification was taken.
+#[tokio::test]
+async fn a_transfer_conflict_that_is_not_a_replayed_key_is_still_an_error() {
+    let state = Arc::new(MockState::default());
+    state.transfer_queue.lock().await.push_back((
+        axum::http::StatusCode::CONFLICT,
+        serde_json::json!({"subCode": "SOME_OTHER_CONFLICT", "traceId": "trace-x"}),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let err = sync
+        .notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .expect_err("another conflict is a refusal to be seen, not an acceptance");
+    assert!(err.to_string().contains("409"), "{err}");
 }
 
 // ── Payload validation is fail-closed ───────────────────────────────────────
@@ -1429,18 +1960,6 @@ fn a_counterparty_without_an_eu_identifier_falls_back_to_its_did() {
 /// service, which resubmitting does not fix.
 #[test]
 fn a_deactivated_record_is_not_reported_as_rejected() {
-    let resp = EuRegistryResponse {
-        registry_id: "EU-REG-D".into(),
-        passport_id: Uuid::nil(),
-        status: RegistryStatusCode::Deactivated,
-        message: None,
-        rejection_reasons: None,
-        updated_at: Utc::now(),
-    };
-    let mapped = EuRegistrySync::response_to_record(&resp).status;
-    assert_eq!(mapped, RegistryStatus::Deactivated);
-    assert_ne!(mapped, RegistryStatus::Unrecognised("rejected".into()));
-
     let status = StatusResponse {
         registry_id: "EU-REG-D".into(),
         status: RegistryStatusCode::Deactivated,

@@ -26,6 +26,65 @@ pub(super) struct TaskPage {
     /// The tasks on this page.
     #[serde(default)]
     pub content: Vec<Task>,
+    /// How many tasks the list holds in all, which the registry's interface
+    /// reads to page it. Observed, but a reply without it is read as a list of
+    /// unknown length rather than refused.
+    #[serde(default)]
+    pub total_elements: Option<u64>,
+}
+
+/// Which pages of the list to read, and whether reading them covers it all.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct PagePlan {
+    /// The page numbers after the first, in the order to read them.
+    pub pages: Vec<u32>,
+    /// Whether every task in the list is on a page that will be read.
+    pub covers_all: bool,
+}
+
+/// Decide which pages to read after the first, given how long the list is.
+///
+/// A list short enough for `cap` pages is read in full. A longer one is read
+/// from **both ends**, interleaved: the registry's order is not known (the
+/// interface passes a `sort` whose syntax is not recorded), and a task just
+/// submitted is at the front of a newest-first list and at the back of an
+/// oldest-first one. Reading only the front, as this once did, never finds it
+/// in the second kind once the list outgrows the cap.
+///
+/// A reply that gave no length is read from the front only, `cap` pages deep,
+/// and covers nothing it cannot show.
+pub(super) fn plan_pages(total_elements: Option<u64>, page_size: usize, cap: u32) -> PagePlan {
+    let Some(total) = total_elements else {
+        return PagePlan {
+            pages: (1..cap).collect(),
+            covers_all: false,
+        };
+    };
+    let page_size = u64::try_from(page_size.max(1)).unwrap_or(u64::MAX);
+    let total_pages = total.div_ceil(page_size);
+    if total_pages <= u64::from(cap) {
+        return PagePlan {
+            pages: (1..u32::try_from(total_pages).unwrap_or(cap)).collect(),
+            covers_all: true,
+        };
+    }
+
+    let last = u32::try_from(total_pages - 1).unwrap_or(u32::MAX);
+    let front = cap.div_ceil(2);
+    let back = cap - front;
+    let mut pages = Vec::new();
+    for i in 0..front.max(back) {
+        if i > 0 && i < front {
+            pages.push(i);
+        }
+        if i < back {
+            pages.push(last - i);
+        }
+    }
+    PagePlan {
+        pages,
+        covers_all: false,
+    }
 }
 
 /// One dashboard task, as far as finding a submission needs it.
@@ -61,6 +120,23 @@ impl Task {
                 .is_none_or(|kind| kind == REGISTRATION_TASK_TYPE)
     }
 
+    /// Whether this is a registration request. A task that names no type is read
+    /// as one, as [`is_submission`](Self::is_submission) reads it.
+    pub(super) fn is_registration(&self) -> bool {
+        self.task_type
+            .as_deref()
+            .is_none_or(|kind| kind == REGISTRATION_TASK_TYPE)
+    }
+
+    /// Whether the registry has finished with this task, so it has a result that
+    /// names passports. A task still being checked reports none.
+    pub(super) fn is_finished(&self) -> bool {
+        matches!(
+            self.status,
+            Some(SubmissionOutcome::Success | SubmissionOutcome::Failure)
+        )
+    }
+
     /// The task identifier as a path segment.
     pub(super) fn id_segment(&self) -> Option<String> {
         match &self.task_id {
@@ -81,6 +157,21 @@ pub(super) struct TaskResult {
     /// What the registry reported about the submission.
     #[serde(default)]
     pub result_payload: Option<ResultPayload>,
+}
+
+impl TaskResult {
+    /// The unique product identifier of each passport this result reports on.
+    ///
+    /// What a result is matched to a passport by, and the only thing it is: the
+    /// registry reports each passport against the URL it was submitted under, and
+    /// nothing published says results come back in submission order.
+    pub(super) fn unique_product_identifiers(&self) -> impl Iterator<Item = &str> {
+        self.result_payload
+            .iter()
+            .filter_map(|p| p.report.as_ref())
+            .flat_map(|r| r.item_details.iter())
+            .map(|item| item.unique_product_identifier.as_str())
+    }
 }
 
 /// The body of a task result.
@@ -347,5 +438,112 @@ mod tests {
                 state: "ON_HOLD".to_owned()
             }
         );
+    }
+
+    // ── which pages are read ─────────────────────────────────────────────────
+
+    /// A list that fits the cap is read whole, and says so.
+    #[test]
+    fn a_short_list_is_read_in_full() {
+        // 120 tasks at 50 a page is three pages; page 0 is already read.
+        assert_eq!(
+            plan_pages(Some(120), 50, 20),
+            PagePlan {
+                pages: vec![1, 2],
+                covers_all: true
+            }
+        );
+        // An empty list and a one-page list need nothing more.
+        for total in [0, 1, 50] {
+            assert_eq!(
+                plan_pages(Some(total), 50, 20),
+                PagePlan {
+                    pages: vec![],
+                    covers_all: true
+                },
+                "{total} tasks"
+            );
+        }
+        // Exactly the cap is still covered.
+        assert!(plan_pages(Some(20 * 50), 50, 20).covers_all);
+    }
+
+    /// 🚨 A list longer than the cap is read from both ends. The registry's
+    /// order is not known, and a task just submitted is at the front of a
+    /// newest-first list and at the back of an oldest-first one: reading only the
+    /// front never finds it in the second kind.
+    #[test]
+    fn a_long_list_is_read_from_both_ends() {
+        // 5 000 tasks is 100 pages; the cap of 20 is split between the ends.
+        let plan = plan_pages(Some(5_000), 50, 20);
+        assert!(!plan.covers_all, "it cannot cover what it does not read");
+
+        let mut pages = plan.pages.clone();
+        pages.sort_unstable();
+        pages.dedup();
+        assert_eq!(pages.len(), plan.pages.len(), "no page is read twice");
+        assert_eq!(
+            plan.pages.len() + 1,
+            20,
+            "page 0 plus the rest is exactly the cap"
+        );
+
+        assert!(plan.pages.contains(&99), "the last page is read");
+        assert!(plan.pages.contains(&90), "and the ten before it");
+        assert!(plan.pages.contains(&9), "and the front, past page 0");
+        assert!(
+            !plan.pages.contains(&50),
+            "the middle is not read, and the plan does not claim it was"
+        );
+
+        // Interleaved, so a hit at either end is found as early as at the other.
+        assert_eq!(&plan.pages[..4], &[99, 1, 98, 2]);
+    }
+
+    /// A reply without a length is read from the front only and claims nothing.
+    #[test]
+    fn a_list_of_unknown_length_covers_nothing_it_cannot_show() {
+        let plan = plan_pages(None, 50, 20);
+        assert_eq!(plan.pages, (1..20).collect::<Vec<_>>());
+        assert!(!plan.covers_all);
+    }
+
+    #[test]
+    fn a_result_is_matched_by_the_identifier_it_reports() {
+        let result = result(json!({
+            "status": "SUCCESS",
+            "resultPayload": { "report": { "itemDetails": [
+                accepted(Some("A")),
+                {
+                    "uniqueProductIdentifier": "https://id.example.com/01/09506000134369",
+                    "outcome": "ACCEPTED",
+                    "registrationIdentifier": "B",
+                },
+            ] } },
+        }));
+        assert_eq!(
+            result.unique_product_identifiers().collect::<Vec<_>>(),
+            [
+                "https://id.example.com/01/09506000134352",
+                "https://id.example.com/01/09506000134369"
+            ]
+        );
+        // A result with nothing in it names nothing.
+        assert_eq!(
+            self::result(json!({})).unique_product_identifiers().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_task_without_a_type_is_read_as_a_registration_and_one_of_another_kind_is_not() {
+        let untyped: Task = serde_json::from_value(json!({ "taskId": 1 })).expect("a task");
+        assert!(untyped.is_registration());
+        let other: Task =
+            serde_json::from_value(json!({ "taskId": 2, "type": "ENROLMENT" })).expect("a task");
+        assert!(!other.is_registration());
+        assert!(!untyped.is_finished(), "no status is not a finished task");
+        assert!(task("SUCCESS").is_finished() && task("FAILURE").is_finished());
+        assert!(!task("PROCESSING").is_finished());
     }
 }
