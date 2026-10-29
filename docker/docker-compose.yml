@@ -131,6 +131,14 @@ services:
       RESOLVER_BASE_URL: ${RESOLVER_BASE_URL:?RESOLVER_BASE_URL must be set in .env}
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The per-address request limit, with the binary's own defaults. Behind a
+      # reverse proxy every visitor arrives from the proxy's address, so unless
+      # TRUST_FORWARDED_FOR is true they all share one RATE_LIMIT_RPM bucket.
+      # It is false here because this file publishes the port on every
+      # interface: set it in `.env` only once the proxy is the sole way in and
+      # replaces X-Forwarded-For (docs/ops/PRODUCTION-RUNBOOK.md).
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-120}
+      TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-false}
     depends_on:
       - node
       - redis

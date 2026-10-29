@@ -84,7 +84,9 @@ before the first publish.
 - Firewall: allow 22, 80 (ACME) and 443; deny the rest.
 - `fail2ban` and unattended security upgrades.
 - **Bind the containers to loopback**, so only the proxy reaches them. The shipped
-  Compose file publishes on all interfaces; change the two mappings:
+  Compose file publishes on all interfaces; change the two mappings. The resolver's
+  per-address limit relies on this too (see
+  [Limiting request rates](#limiting-request-rates)):
 
   ```yaml
   node:
@@ -126,13 +128,42 @@ rates in front of the node, at the proxy or a network service. The node does not
 `X-Forwarded-For`, so a limit inside it would see one address, the proxy's.
 
 **The resolver does limit per address.** It allows `RATE_LIMIT_RPM` requests a minute
-from one address (default 120), answers the rest with `429` and `Retry-After: 60`, and
-counts them in `rate_limit_rejections_total`. Behind the proxy it sees the proxy's
-address, unless `TRUST_FORWARDED_FOR=true` makes it read the client's from
-`X-Forwarded-For`, which is safe only behind a proxy that sets that header and strips
-inbound copies. The Compose file passes neither variable to the resolver container, so
-both stay at their defaults and every client behind the proxy counts against the same
-address.
+from one address (default 120, in a fixed one-minute window), answers the rest with
+`429` and `Retry-After: 60`, and counts them in `rate_limit_rejections_total`. Health
+and readiness probes are exempt. Compose passes `RATE_LIMIT_RPM` and
+`TRUST_FORWARDED_FOR` from `.env` to the resolver container, with those defaults.
+
+Which address it counts is the decision to make. With `TRUST_FORWARDED_FOR` unset or
+`false` it counts the TCP peer, which behind the proxy is the proxy: every visitor
+shares one `RATE_LIMIT_RPM` budget, so the whole public gets 120 requests a minute.
+**Set `TRUST_FORWARDED_FOR=true` in `.env` for this topology.** The resolver then counts
+the first address in `X-Forwarded-For`. That is safe only when both of these hold:
+
+- **The proxy is the only way in.** With the resolver port bound to loopback (step 2)
+  it is. A client that can reach the resolver directly can send any `X-Forwarded-For`
+  and take a fresh budget on every request.
+- **The proxy replaces the header instead of adding to it.** The resolver trusts the
+  first entry, which a client can write if the proxy appends. Caddy's `reverse_proxy`
+  discards an inbound `X-Forwarded-For` and sends the address that connected to it
+  (checked on Caddy 2.11), unless that address is in `trusted_proxies`, where it
+  appends. So leave `TRUST_FORWARDED_FOR` false when Caddy sits behind a CDN or another
+  proxy you have declared trusted, and limit at that layer. In nginx, use
+  `proxy_set_header X-Forwarded-For $remote_addr;`. The common
+  `$proxy_add_x_forwarded_for` appends, which is the unsafe form.
+
+To check it behind your proxy, send more than the limit from one machine, then one
+request from a second machine:
+
+```bash
+for i in $(seq 130); do
+  curl -s -o /dev/null -w '%{http_code}\n' https://dpp.operator.example/dpp/<a-published-id>
+done | sort | uniq -c
+```
+
+The first machine sees `429` for the requests past 120, and the second machine's
+request must not. If it does, the resolver is counting the proxy's address.
+
+For the limits you set in front of the node:
 
 - **Caddy** has no rate-limiting handler in its standard build. The usual one is a
   third-party module compiled in with `xcaddy`, which is not part of the Caddy
@@ -158,6 +189,8 @@ refused, since a limit that was never exceeded is untested.
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
 | `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
 | `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
+| `TRUST_FORWARDED_FOR` | For the reference proxy | `true`, so the resolver rate-limits each visitor and not the proxy. Only with the resolver bound to loopback and a proxy that replaces `X-Forwarded-For`; see [Limiting request rates](#limiting-request-rates) |
+| `RATE_LIMIT_RPM` | No | Requests a minute per address at the resolver. Default 120 |
 | `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
 | `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |

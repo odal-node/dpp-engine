@@ -467,6 +467,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The resolver's rate limit can be configured from `.env`, and the reference
+  topology no longer shares one limit across every visitor.** The resolver reads
+  `RATE_LIMIT_RPM` and `TRUST_FORWARDED_FOR`, but its Compose service passed
+  neither and reads no `env_file`, so a value in `.env` never reached it. The
+  limit then counted the TCP peer, which behind the reverse proxy is the proxy:
+  three clients sending 100 requests each against a Caddy-fronted resolver shared
+  one 120-request budget, and the third was refused every request. Compose now
+  passes both, with the binary's defaults (`120`, `false`), and the runbook sets
+  `TRUST_FORWARDED_FOR=true` for the reference topology. That is safe only with
+  the resolver bound to loopback and a proxy that replaces `X-Forwarded-For`; the
+  runbook says how to check both. A test now fails when the resolver reads a
+  variable that Compose neither passes nor lists as not passed.
+
 - **With `WEBHOOK_ALLOW_PRIVATE_TARGETS` set, a webhook URL must still be
   `http` or `https`.** The opt-out was meant to admit private hosts and plain
   `http`. It skipped the scheme check entirely, so `POST /api/v1/webhooks` stored
