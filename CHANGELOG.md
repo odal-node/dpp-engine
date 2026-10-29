@@ -233,6 +233,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   always present. `SealOutbox::unsealed_published_count` is now
   `unsealed_published_counts` and returns both. `odal seal status` prints both.
 
+- **A `NODE_PROFILE` that is not a profile refuses to start.** `Production`,
+  `prod` and `production ` with a trailing space used to boot as
+  `development`, the profile that allows stub trust ports and honours
+  `ALLOW_UNSIGNED_PLUGINS=true`, so a mistyped production deployment ran the
+  permissive profile without a word. The accepted values are exactly
+  `development`, `sandbox` and `production`; the error quotes what it found.
+  Unset and empty are unchanged and still mean `development`.
+  `NodeProfile::from_env` now returns a `Result`, and `NodeProfile::parse` is
+  the same check on a raw value.
+
+  **Migration:** a deployment that sets `NODE_PROFILE` to anything else fixes the
+  spelling, or unsets the variable to keep `development`.
+
 ### Added
 
 - **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
@@ -437,6 +450,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   still imports.
 
 ### Fixed
+
+- **With `WEBHOOK_ALLOW_PRIVATE_TARGETS` set, a webhook URL must still be
+  `http` or `https`.** The opt-out was meant to admit private hosts and plain
+  `http`. It skipped the scheme check entirely, so `POST /api/v1/webhooks` stored
+  `file:`, `ftp:` or any other scheme with a host: a subscription the drain's
+  HTTP client can never deliver to. For `file:` the stored form did not even
+  read back the same: `file://h//z:/` was stored as `file://h/z:/`, which has
+  no host. Such a URL is now refused with `422`. The new `url_guard` fuzz
+  target found it on its first run.
 
 - **A `Cargo.lock` that had drifted from the manifests passed CI.** No step
   built with `--locked`, so a build that found the lock out of step re-resolved

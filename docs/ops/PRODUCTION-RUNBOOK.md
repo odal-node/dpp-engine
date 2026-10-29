@@ -119,7 +119,7 @@ Caddy obtains and renews the certificates.
 | `KEY_STORE_PATH` | Set by Compose | Leave it on the `node-data` volume; anywhere else, a container recreate generates a new key |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
 | `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
-| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live |
+| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
 | `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
 | `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |

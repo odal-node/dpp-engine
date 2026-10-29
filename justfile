@@ -364,6 +364,30 @@ ci-guard-check:
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
 
+# Every fuzz target is built by fuzz/Cargo.toml, run by the nightly fuzz job, and
+# named in fuzz/README.md. The reasoning lives in the script.
+fuzz-targets-check:
+    bash scripts/fuzz-targets-check.sh
+
+# Prove fuzz-targets-check still refuses what it claims to.
+fuzz-targets-check-self-test:
+    bash scripts/fuzz-targets-check.test.sh
+
+# Format-check and lint the fuzz targets on the pinned stable toolchain.
+#
+# The fuzz crate is its own workspace, so `fmt-check` and `lint` never see it,
+# and until this ran on pull requests only the nightly fuzz job compiled it: a
+# change that broke a target was found the morning after it merged. It starts
+# from the workspace lock, as the nightly job does (fuzz/.gitignore says why),
+# so it cannot pass `--locked`: cargo prunes that lock to the fuzz crate's graph.
+#
+# Not in `check`, because it builds a second workspace from cold; CI runs it on
+# every pull request, as it does `openapi-check`.
+fuzz-check:
+    cp Cargo.lock fuzz/Cargo.lock
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
+    cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings
+
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
 # The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
@@ -399,7 +423,7 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test check-plugins test audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg
