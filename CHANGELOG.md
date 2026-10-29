@@ -474,6 +474,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **With `TRUST_FORWARDED_FOR=true`, the resolver counts the last
+  `X-Forwarded-For` entry, not the first.** The first entry is the one a client
+  writes. Behind a proxy that appends to the header, as Caddy does once
+  `trusted_proxies` covers the client and nginx does with
+  `$proxy_add_x_forwarded_for`, a client could send a different first entry on
+  every request and take a fresh rate-limit bucket each time: 200 requests from
+  one client all passed, against 120 allowed. The last entry is the one the proxy
+  in front of the resolver added, whether it replaced the client's value or
+  appended to it, so a proxy that replaces the header (Caddy's default) behaves as
+  before. A proxy that adds its entry as a separate header line is read from the
+  last line, and an entry that is not an address falls back to the peer's bucket.
+  Behind a chain of proxies the last entry is the nearest proxy's address, so the
+  visitors who reach it share one budget.
+
 - **The resolver's rate limit can be configured from `.env`, and the reference
   topology no longer shares one limit across every visitor.** The resolver reads
   `RATE_LIMIT_RPM` and `TRUST_FORWARDED_FOR`, but its Compose service passed
