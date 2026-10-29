@@ -153,7 +153,7 @@ refused, since a limit that was never exceeded is untested.
 | `KEY_STORE_PATH` | Set by Compose | Leave it on the `node-data` volume; anywhere else, a container recreate generates a new key |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
 | `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
-| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live |
+| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
 | `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
 | `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |
@@ -236,6 +236,24 @@ The test `signature_signed_before_rotation_still_verifies_after` in `dpp-identit
 covers this. Follow the archive-then-generate order documented on
 `rotate_key_handler`.
 
+### The DID domain is a trust root
+
+A passport is verified against the operator's `did:web` document, which is fetched
+over HTTPS from the operator's domain. Whoever controls that domain's DNS records or
+its TLS endpoint can change which keys the document names, and so which signatures
+verify. The resolver caches a fetched document for five minutes. Nothing in the node
+detects a changed document today, and a verifier that trusts only the document trusts
+your DNS. Protect the domain accordingly:
+
+- Turn on the registrar's transfer lock and two-factor sign-in for the registrar and
+  the DNS provider, and keep the number of people with access small.
+- Sign the zone (DNSSEC) where the registrar supports it.
+- Publish CAA records that name the certificate authority you use, so no other issuer
+  is asked to certify the domain.
+- After every key rotation, fetch your DID document and record the thumbprints it
+  names. Compare a fresh fetch against that record on a schedule and treat a
+  difference you did not make as an incident.
+
 ### Key custody
 
 Decide and write down who holds `KEY_STORE_PASSPHRASE`:
@@ -245,6 +263,20 @@ Decide and write down who holds `KEY_STORE_PASSPHRASE`:
 - **The administrator holds it** in a password manager, with a sealed offline copy.
 
 Either way, the custody arrangement belongs in the operator's records.
+
+What protects the key while the node runs:
+
+- The key store is an encrypted file (AES-256-GCM, key derived from the passphrase
+  with Argon2id). The node reads the passphrase from the `KEY_STORE_PASSPHRASE`
+  environment variable and nowhere else, so anyone who can read the node's
+  environment (`docker inspect`, the Compose file, a copy of `.env`) holds the
+  passphrase, and the encrypted file plus the passphrase is the signing identity.
+- Keep `.env` readable by the deploy user only (mode `0600`), keep it out of
+  version control, and keep it out of any backup that leaves the host. Back up the
+  key store file and the passphrase separately.
+- The decrypted key is held in the node's memory. There is no hardware-backed or
+  remote-signer option today, so a host compromise is a key compromise. Rotate the
+  key if the host may have been exposed.
 
 ## Go-live checklist
 
