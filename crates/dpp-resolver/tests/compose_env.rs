@@ -62,29 +62,38 @@ fn is_env_name(s: &str) -> bool {
 
 /// The names passed to a call of `var("NAME")` or `env::var("NAME")`, skipping
 /// comment lines and identifiers that merely end in `var` (`set_var`, `remove_var`).
+///
+/// The source is scanned as one text, not line by line, so a call that rustfmt has
+/// split across lines, or one with a space before the parenthesis, is still read.
 fn env_reads(source: &str) -> BTreeSet<String> {
+    let code = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut names = BTreeSet::new();
-    for line in source.lines() {
-        if line.trim_start().starts_with("//") {
+    let mut from = 0;
+    while let Some(at) = code[from..].find("var") {
+        let start = from + at;
+        let after = start + "var".len();
+        from = after;
+        let preceded_by_identifier = code[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        if preceded_by_identifier {
             continue;
         }
-        let mut from = 0;
-        while let Some(at) = line[from..].find("var(\"") {
-            let start = from + at;
-            let name_start = start + "var(\"".len();
-            from = name_start;
-            let preceded_by_identifier = line[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
-            if preceded_by_identifier {
-                continue;
-            }
-            if let Some(len) = line[name_start..].find('"') {
-                let name = &line[name_start..name_start + len];
-                if is_env_name(name) {
-                    names.insert(name.to_string());
-                }
+        let Some(rest) = code[after..].trim_start().strip_prefix('(') else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('"') else {
+            continue;
+        };
+        if let Some(len) = rest.find('"') {
+            let name = &rest[..len];
+            if is_env_name(name) {
+                names.insert(name.to_string());
             }
         }
     }
@@ -252,6 +261,26 @@ fn the_scan_reads_names_through_a_local_helper_and_ignores_look_alikes() {
         env_reads(source),
         set(&["PORT", "REDIS_URL", "TWO_ON_ONE_LINE"])
     );
+}
+
+#[test]
+fn a_read_split_across_lines_or_spaced_out_is_still_recorded() {
+    // rustfmt breaks a call whose argument does not fit the line, so a variable
+    // with a long enough name is read as `var(` / `"NAME"` / `)` on three lines.
+    let source = r#"
+        let a = std::env::var(
+            "SPLIT_BY_LINE",
+        );
+        let b = std::env::var ("SPACED_CALL");
+        // std::env::var(
+        //     "COMMENTED_OUT",
+        // );
+        std::env::set_var(
+            "SET_BY_A_TEST",
+            "1",
+        );
+    "#;
+    assert_eq!(env_reads(source), set(&["SPACED_CALL", "SPLIT_BY_LINE"]));
 }
 
 #[test]

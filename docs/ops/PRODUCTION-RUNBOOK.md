@@ -151,16 +151,19 @@ the first address in `X-Forwarded-For`. That is safe only when both of these hol
   `proxy_set_header X-Forwarded-For $remote_addr;`. The common
   `$proxy_add_x_forwarded_for` appends, which is the unsafe form.
 
-To check it behind your proxy, send more than the limit from one machine, then one
-request from a second machine:
+To check it behind your proxy, send ten more requests than the limit from one machine,
+inside one minute, then one request from a second machine. Set `LIMIT` to your
+`RATE_LIMIT_RPM` and `URL` to a published passport's address:
 
 ```bash
-for i in $(seq 130); do
-  curl -s -o /dev/null -w '%{http_code}\n' https://dpp.operator.example/dpp/<a-published-id>
+LIMIT=120
+URL='https://dpp.operator.example/dpp/<a-published-id>'
+for i in $(seq $((LIMIT + 10))); do
+  curl -s -o /dev/null -w '%{http_code}\n' "$URL"
 done | sort | uniq -c
 ```
 
-The first machine sees `429` for the requests past 120, and the second machine's
+The first machine sees `429` for the requests past `LIMIT`, and the second machine's
 request must not. If it does, the resolver is counting the proxy's address.
 
 For the limits you set in front of the node:
