@@ -204,13 +204,15 @@ async fn record_outcome(
 ) -> Response {
     let status = response.status();
 
-    // A `5xx` releases the claim rather than recording it: the request failed
-    // in a way the client should be able to retry, and a recorded server error
-    // would replay the failure for a day. A `4xx` is a deterministic rejection
-    // of this exact body — replaying it is correct and costs nothing.
-    if status.is_server_error() {
+    // A `5xx` or a `429` releases the claim rather than recording it: the request
+    // failed, or was turned away for lack of capacity, in a way the client should
+    // be able to retry, and a recorded one would replay the refusal for a day to a
+    // caller that waited as `Retry-After` told it to. Any other `4xx` is a
+    // deterministic rejection of this exact body — replaying it is correct and
+    // costs nothing.
+    if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
         if let Err(e) = state.store.release(key).await {
-            tracing::warn!(error = %e, "could not release an idempotency claim after a 5xx");
+            tracing::warn!(error = %e, "could not release an idempotency claim after a 5xx or 429");
         }
         return response;
     }

@@ -115,12 +115,20 @@ before the upload is read. An import that finds no free slot gets `429` with a
 100 rows keeps its slot while its background job runs, so the `202` does not free it.
 `BATCH_CONCURRENCY` bounds the rows one import writes at a time.
 
-**The node does not limit request rates.** The public routes (the resolver, the public
-passport reads, and the credential read, which is unauthenticated and fetches the
-issuer's DID document) and the authenticated API accept whatever reaches them. Set
-per-address and per-credential rates in front of the node, at the proxy or a network
-service. The node does not read `X-Forwarded-For`, so a limit inside it would see one
-address, the proxy's.
+**The node does not limit request rates.** The public passport reads, the credential
+read (which is unauthenticated and fetches the issuer's DID document) and the
+authenticated API accept whatever reaches them. Set per-address and per-credential
+rates in front of the node, at the proxy or a network service. The node does not read
+`X-Forwarded-For`, so a limit inside it would see one address, the proxy's.
+
+**The resolver does limit per address.** It allows `RATE_LIMIT_RPM` requests a minute
+from one address (default 120), answers the rest with `429` and `Retry-After: 60`, and
+counts them in `rate_limit_rejections_total`. Behind the proxy it sees the proxy's
+address, unless `TRUST_FORWARDED_FOR=true` makes it read the client's from
+`X-Forwarded-For`, which is safe only behind a proxy that sets that header and strips
+inbound copies. The Compose file passes neither variable to the resolver container, so
+both stay at their defaults and every client behind the proxy counts against the same
+address.
 
 - **Caddy** has no rate-limiting handler in its standard build. The usual one is a
   third-party module compiled in with `xcaddy`, which is not part of the Caddy
