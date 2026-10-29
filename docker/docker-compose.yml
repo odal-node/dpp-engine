@@ -121,8 +121,17 @@ services:
       dockerfile: dpp-engine/docker/resolver.Dockerfile
     ports:
       - "${RESOLVER_PORT:-8003}:8003"
+      # The metrics listener (see METRICS_ADDR below), on the host's loopback
+      # only: the series it serves are not for anyone who can reach the API.
+      - "127.0.0.1:9101:9101"
     environment:
       PORT: "8003"
+      # The binary's default is 127.0.0.1:9101, which inside a container is the
+      # container's own loopback: neither the host nor another service could
+      # connect, whatever the ports above publish. Every interface of the
+      # container instead; the mapping above is what keeps it off the network.
+      # Fixed here, not read from `.env`, where METRICS_ADDR is the node's.
+      METRICS_ADDR: 0.0.0.0:9101
       VAULT_BASE_URL: http://node:8000/vault
       OPERATOR_DID_URL: http://node:8000/identity/.well-known/did.json
       # The same value the node signs into each carrier. This service reads no
@@ -131,6 +140,9 @@ services:
       RESOLVER_BASE_URL: ${RESOLVER_BASE_URL:?RESOLVER_BASE_URL must be set in .env}
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The longest a suspension or recall can take to reach a scanner, in seconds:
+      # raise it only knowing that.
+      CACHE_TTL_SECS: ${CACHE_TTL_SECS:-30}
       # The per-address request limit, with the binary's own defaults. Behind a
       # reverse proxy every visitor arrives from the proxy's address, so unless
       # TRUST_FORWARDED_FOR is true they all share one RATE_LIMIT_RPM bucket.

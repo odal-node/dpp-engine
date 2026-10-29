@@ -25,11 +25,18 @@ curl -s http://127.0.0.1:9100/metrics | grep -E '^(trust_mode|passport_publish_t
   counts are not visible to anyone who can reach the API.
 
 **Containers:** `127.0.0.1` in `METRICS_ADDR` is the container's own loopback, not the
-host's. A scraper must run on the same container network (a sidecar, or a service on
-the same Compose network addressing the target by service name). Do not set
-`METRICS_ADDR` to a routable address to reach it from outside; if a scraper must cross
-a network, use a private interface behind a network boundary, or put TLS and
-authentication in front of the listener.
+host's, and no other container can reach it either, including one on the same Compose
+network addressing the target by service name. A listener bound there can be read only
+from inside its own container, or from a sidecar that shares its network namespace.
+
+The shipped Compose file does this for the resolver: it binds the listener to
+`0.0.0.0:9101` inside the container, so a service on the Compose network reaches it as
+`resolver:9101`, and it publishes the port on the VM's `127.0.0.1:9101` only, for a
+scraper or cron job on the VM. `METRICS_ADDR` in `.env` does not change that; it is the
+node's. The node's listener is untouched: it keeps its loopback default unless `.env`
+sets `METRICS_ADDR`, and nothing publishes it. Do not publish either on a routable
+address; if a scraper must cross a network, use a private interface behind a network
+boundary, or put TLS and authentication in front of the listener.
 
 **A new binary must install a recorder.** `metrics::counter!` is a silent no-op in a
 process with no recorder installed. Both binaries install one at start-up.

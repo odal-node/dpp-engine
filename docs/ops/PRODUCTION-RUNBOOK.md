@@ -199,7 +199,8 @@ refused, since a limit that was never exceeded is untested.
 | `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
 | `TRUST_FORWARDED_FOR` | For the reference proxy | `true`, so the resolver rate-limits each visitor and not the proxy. Only with the resolver bound to loopback and a proxy that sets `X-Forwarded-For`; see [Limiting request rates](#limiting-request-rates) |
 | `RATE_LIMIT_RPM` | No | Requests a minute per address at the resolver. Default 120 |
-| `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
+| `CACHE_TTL_SECS` | No | The resolver's cache lifetime in seconds, default 30. It is also the longest a suspension or recall takes to reach a scanner, so raise it only knowing that |
+| `METRICS_ADDR` | No | The node's listener only; keep it on loopback. The Compose file fixes the resolver's own. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
 | `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |
 | `DATABASE_MIGRATE_URL` | No | With it, migrations run at every start. For a stricter setup, start once with it set to apply migrations, then remove it so the long-running node holds only the application role |
@@ -258,6 +259,11 @@ untested backup is not a backup.
 |---|---|---|
 | External uptime check on `https://dpp.operator.example/health` and one known passport | Any uptime service | Liveness only. Do not give an external service an API key: even a `read` key reads every passport |
 | `trust_mode` and the other series on the metrics listener | On the VM (Prometheus, or a cron job reading `/metrics`) | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
+
+The Compose file publishes the resolver's metrics listener on the VM's
+`127.0.0.1:9101`, which is where `rate_limit_rejections_total` and the resolver's
+other series are read. It does not publish the node's listener; see
+[METRICS-PLAN.md](METRICS-PLAN.md#where-metrics-are-served).
 
 Alert at least on: `trust_mode` below its expected value for any port,
 `signing_failures_total` increasing, `registry_outbox_stalled > 0`,

@@ -34,6 +34,9 @@ pub struct Config {
     /// through [`dpp_common::config::resolver_base_url`], the same reader the
     /// node stamps carriers with.
     pub resolver_base_url: String,
+
+    /// Requests a minute one client address may make (default 120, at least 1).
+    pub rate_limit_rpm: u32,
 }
 
 impl Config {
@@ -41,7 +44,7 @@ impl Config {
     ///
     /// Required: `REDIS_URL`, `RESOLVER_BASE_URL`.
     /// Optional with defaults: `CACHE_TTL_SECS` (30), `RESOLVER_PORT`/`PORT` (8003),
-    /// `LOG_LEVEL` (info), `METRICS_ADDR` (127.0.0.1:9101).
+    /// `LOG_LEVEL` (info), `METRICS_ADDR` (127.0.0.1:9101), `RATE_LIMIT_RPM` (120).
     ///
     /// # Errors
     /// Returns an error if any required variable is absent or an optional
@@ -65,10 +68,73 @@ impl Config {
                 Ok(s) => Some(s),
                 Err(_) => Some("127.0.0.1:9101".into()), // private default
             },
+            rate_limit_rpm: parse_rate_limit_rpm(std::env::var("RATE_LIMIT_RPM").ok().as_deref())?,
         })
     }
 }
 
+/// The `RATE_LIMIT_RPM` rule on a raw value, so it is tested without the process
+/// environment. Unset is 120.
+///
+/// # Errors
+/// Returns an error if the value is not a whole number, or is zero.
+pub fn parse_rate_limit_rpm(raw: Option<&str>) -> Result<u32> {
+    let rpm: u32 = raw
+        .unwrap_or("120")
+        .parse()
+        .context("RATE_LIMIT_RPM must be a whole number of requests a minute")?;
+    anyhow::ensure!(
+        rpm >= 1,
+        "RATE_LIMIT_RPM must be at least 1: 0 would refuse every request"
+    );
+    Ok(rpm)
+}
+
 fn var(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("missing required env var: {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unset_is_120_a_minute() {
+        assert_eq!(parse_rate_limit_rpm(None).unwrap(), 120);
+    }
+
+    #[test]
+    fn a_whole_number_is_taken_as_written() {
+        assert_eq!(parse_rate_limit_rpm(Some("600")).unwrap(), 600);
+        assert_eq!(parse_rate_limit_rpm(Some("1")).unwrap(), 1);
+    }
+
+    /// A value that is not a count is refused at boot. Falling back to 120 would
+    /// leave an operator who wrote `6,000` or `100/min` believing a limit is in
+    /// force that is not the one they set; the other numeric settings here
+    /// (`CACHE_TTL_SECS`) already refuse to start on one.
+    #[test]
+    fn a_value_that_is_not_a_count_is_refused() {
+        for bad in [
+            "abc",
+            "",
+            " ",
+            "6,000",
+            "100/min",
+            "-1",
+            "1.5",
+            "4294967296",
+        ] {
+            let err = parse_rate_limit_rpm(Some(bad)).unwrap_err().to_string();
+            assert!(err.contains("RATE_LIMIT_RPM"), "{bad:?}: {err}");
+        }
+    }
+
+    /// Zero would refuse every request, and the cause would not be visible from
+    /// the `429` it answers with, so it is refused rather than clamped.
+    #[test]
+    fn zero_is_refused_because_it_would_refuse_every_request() {
+        let err = parse_rate_limit_rpm(Some("0")).unwrap_err().to_string();
+        assert!(err.contains("at least 1"), "{err}");
+    }
 }
