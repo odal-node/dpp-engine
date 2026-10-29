@@ -210,6 +210,7 @@ mod tests {
             admin_username: None,
             admin_password: None,
             batch_concurrency: 20,
+            import_max_concurrent: 2,
             nats_url: None,
             port: 8001,
             log_level: "info".into(),

@@ -106,6 +106,44 @@ dpp.operator.example {
 
 Caddy obtains and renews the certificates.
 
+#### Limiting request rates
+
+The node limits one thing itself: how many bulk imports run at once.
+`IMPORT_MAX_CONCURRENT` (default 2) is checked after the caller is authenticated and
+before the handler reads the upload. An import that finds no free slot gets `429` with
+a `Retry-After`, and `import_rejections_total{reason="busy"}` counts it. An import over
+100 rows keeps its slot while its background job runs, so the `202` does not free it,
+and an upload that has not arrived after 120 seconds is refused with `400` and gives
+its slot back. A request that carries an `Idempotency-Key` is buffered by the
+idempotency layer before the handler runs, so for those the cap bounds the imports
+that run, not the memory the uploads take. `BATCH_CONCURRENCY` bounds the rows one
+import writes at a time.
+
+**The node does not limit request rates.** The public passport reads, the credential
+read (which is unauthenticated and fetches the issuer's DID document) and the
+authenticated API accept whatever reaches them. Set per-address and per-credential
+rates in front of the node, at the proxy or a network service. The node does not read
+`X-Forwarded-For`, so a limit inside it would see one address, the proxy's.
+
+**The resolver does limit per address.** It allows `RATE_LIMIT_RPM` requests a minute
+from one address (default 120), answers the rest with `429` and `Retry-After: 60`, and
+counts them in `rate_limit_rejections_total`. Behind the proxy it sees the proxy's
+address, unless `TRUST_FORWARDED_FOR=true` makes it read the client's from
+`X-Forwarded-For`, which is safe only behind a proxy that sets that header and strips
+inbound copies. The Compose file passes neither variable to the resolver container, so
+both stay at their defaults and every client behind the proxy counts against the same
+address.
+
+- **Caddy** has no rate-limiting handler in its standard build. The usual one is a
+  third-party module compiled in with `xcaddy`, which is not part of the Caddy
+  project and keeps its counters in memory only. A custom build is also not updated by
+  the distribution's package, so you take on patching Caddy yourself.
+- **nginx** limits requests with `limit_req_zone` and `limit_req`, and `limit_conn`
+  bounds open connections. Return `429` with `limit_req_status`.
+
+Whichever you use, test it: send more than the limit and confirm the extra requests are
+refused, since a limit that was never exceeded is untested.
+
 ### 4. Configuration
 
 `.env` is the contract between you and the node. Set `chmod 600 .env`.

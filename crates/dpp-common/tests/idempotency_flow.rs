@@ -20,6 +20,7 @@ use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
+    response::IntoResponse,
     routing::post,
 };
 use dpp_common::idempotency::{
@@ -340,6 +341,63 @@ async fn a_claim_still_in_flight_answers_409_with_retry_after() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(response.headers().get("retry-after").unwrap(), "1");
     assert_eq!(calls.0.load(Ordering::SeqCst), 0);
+}
+
+/// The keyed create, turning away its first caller the way a route with a
+/// capacity limit does, then accepting the next.
+fn busy_once_app(store: Arc<dyn IdempotencyStore>, calls: Calls) -> Router {
+    let inner = Router::new()
+        .route(
+            "/dpp",
+            post(move || {
+                let calls = calls.clone();
+                async move {
+                    if calls.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                        (
+                            StatusCode::TOO_MANY_REQUESTS,
+                            [("retry-after", "30")],
+                            "busy",
+                        )
+                            .into_response()
+                    } else {
+                        StatusCode::CREATED.into_response()
+                    }
+                }
+            }),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            IdempotencyLayerState {
+                store,
+                principal: Arc::new(|_| Some("operator@example.com".to_owned())),
+            },
+            idempotency_middleware,
+        ));
+
+    Router::new().nest("/vault", Router::new().nest("/api/v1", inner))
+}
+
+/// 🚨 A `429` says "come back later", not "this body is wrong", so it is not
+/// recorded: the retry the client makes after `Retry-After` has to reach the
+/// handler. Recording it would replay the refusal for 24 hours to the one
+/// caller that did as it was told.
+#[tokio::test]
+async fn a_request_turned_away_with_429_can_be_retried_under_its_key() {
+    let store = Arc::new(MemStore::default());
+    let calls = Calls(Arc::new(AtomicUsize::new(0)));
+
+    let first = busy_once_app(store.clone(), calls.clone())
+        .oneshot(create(Some("k-1"), r#"{"productName":"n"}"#))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let retry = busy_once_app(store, calls.clone())
+        .oneshot(create(Some("k-1"), r#"{"productName":"n"}"#))
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), StatusCode::CREATED);
+    assert!(retry.headers().get("idempotency-replayed").is_none());
+    assert_eq!(calls.0.load(Ordering::SeqCst), 2, "the retry must run");
 }
 
 /// The scan-telemetry case, which is the one route in the keyed set that

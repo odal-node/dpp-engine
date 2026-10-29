@@ -29,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store,
         batch_concurrency: cfg.batch_concurrency,
+        import_slots: Arc::new(tokio::sync::Semaphore::new(cfg.import_max_concurrent)),
         events: Arc::new(dpp_common::event::NoOpEventBus),
         // The standalone integrator binary has no database — its job store is
         // in-memory — so there is nowhere to record a claim. `None` leaves the
