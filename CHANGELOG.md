@@ -233,6 +233,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   always present. `SealOutbox::unsealed_published_count` is now
   `unsealed_published_counts` and returns both. `odal seal status` prints both.
 
+- **A `NODE_PROFILE` that is not a profile refuses to start.** `Production`,
+  `prod` and `production ` with a trailing space used to boot as
+  `development`, the profile that allows stub trust ports and honours
+  `ALLOW_UNSIGNED_PLUGINS=true`, so a mistyped production deployment ran the
+  permissive profile without a word. The accepted values are exactly
+  `development`, `sandbox` and `production`; the error quotes what it found.
+  Unset and empty are unchanged and still mean `development`.
+  `NodeProfile::from_env` now returns a `Result`, and `NodeProfile::parse` is
+  the same check on a raw value.
+
+  **Migration:** a deployment that sets `NODE_PROFILE` to anything else fixes the
+  spelling, or unsets the variable to keep `development`.
+
 ### Added
 
 - **Bulk import and CSV templates reach `electronics` and `detergent`.** Both

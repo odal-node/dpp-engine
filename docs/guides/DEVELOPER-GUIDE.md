@@ -92,7 +92,7 @@ binary, with its default and its reasoning. The ones you need to run the node:
 | `DID_WEB_BASE_URL` | `http://localhost:8001` | Origin of the `did:web` identifier |
 | `RESOLVER_BASE_URL` | `http://localhost:8003` | Origin printed into QR codes. Required; no default |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | | Local admin credential for `odal bootstrap`. Leave unset once a key exists if you do not want the path |
-| `NODE_PROFILE` | `development` (default) | `sandbox` refuses to start while a required trust adapter is a stub; `production` also refuses sandbox adapters |
+| `NODE_PROFILE` | `development` (default) | Exactly `development`, `sandbox` or `production`; any other value refuses to start. `sandbox` refuses to start while a required trust adapter is a stub; `production` also refuses sandbox adapters |
 | `LOG_LEVEL` | `info` | A `tracing` filter, so `dpp_vault=debug,info` also works |
 | `LOG_FORMAT` | unset | `pretty` for readable terminal output; JSON otherwise |
 
