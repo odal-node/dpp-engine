@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Read once and handed to both gates that depend on it — the plugin signing
     // policy below and the trust report — so the two cannot disagree about it.
-    let profile = NodeProfile::from_env();
+    let profile = NodeProfile::from_env().context("Invalid NODE_PROFILE")?;
 
     // ── Wasm plugin host ──────────────────────────────────────────────────────
     let plugin_host =
