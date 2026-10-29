@@ -106,6 +106,32 @@ dpp.operator.example {
 
 Caddy obtains and renews the certificates.
 
+#### Limiting request rates
+
+The node limits one thing itself: how many bulk imports run at once.
+`IMPORT_MAX_CONCURRENT` (default 2) is checked after the caller is authenticated and
+before the upload is read. An import that finds no free slot gets `429` with a
+`Retry-After`, and `import_rejections_total{reason="busy"}` counts it. An import over
+100 rows keeps its slot while its background job runs, so the `202` does not free it.
+`BATCH_CONCURRENCY` bounds the rows one import writes at a time.
+
+**The node does not limit request rates.** The public routes (the resolver, the public
+passport reads, and the credential read, which is unauthenticated and fetches the
+issuer's DID document) and the authenticated API accept whatever reaches them. Set
+per-address and per-credential rates in front of the node, at the proxy or a network
+service. The node does not read `X-Forwarded-For`, so a limit inside it would see one
+address, the proxy's.
+
+- **Caddy** has no rate-limiting handler in its standard build. The usual one is a
+  third-party module compiled in with `xcaddy`, which is not part of the Caddy
+  project and keeps its counters in memory only. A custom build is also not updated by
+  the distribution's package, so you take on patching Caddy yourself.
+- **nginx** limits requests with `limit_req_zone` and `limit_req`, and `limit_conn`
+  bounds open connections. Return `429` with `limit_req_status`.
+
+Whichever you use, test it: send more than the limit and confirm the extra requests are
+refused, since a limit that was never exceeded is untested.
+
 ### 4. Configuration
 
 `.env` is the contract between you and the node. Set `chmod 600 .env`.

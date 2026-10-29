@@ -419,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        import_slots: Arc::new(tokio::sync::Semaphore::new(cfg.import_max_concurrent)),
         events: event_bus,
         idempotency: Some(db.idempotency.clone()),
     };

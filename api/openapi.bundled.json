@@ -4051,6 +4051,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "429": {
+            "$ref": "#/components/responses/ImportBusy"
           }
         }
       }
@@ -10554,6 +10557,31 @@
               "title": "Gone",
               "status": 410,
               "detail": "This passport is suspended and is not publicly available."
+            }
+          }
+        }
+      },
+      "ImportBusy": {
+        "description": "The node is already running as many imports as it allows.\n\nReturned after the caller is authenticated and before the upload is read, so\nnothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT` (default 2).\nAn import over the synchronous threshold keeps its place until its background\njob finishes, so the `202` does not free it. Retry after the delay in\n`Retry-After`.\n",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/too-many-requests",
+              "title": "Too Many Requests",
+              "status": 429,
+              "detail": "This node is already running as many imports as it allows. Retry once one has finished."
             }
           }
         }

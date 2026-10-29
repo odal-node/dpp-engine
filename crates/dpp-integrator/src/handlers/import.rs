@@ -34,6 +34,11 @@ use crate::{
 /// job is spawned and a `202 Accepted` is returned immediately.
 const SYNC_THRESHOLD: usize = 100;
 
+/// `Retry-After` on the `429` an import gets when no slot is free. A fixed
+/// guess: how long a running import takes depends on its size, which this
+/// request cannot know.
+const IMPORT_BUSY_RETRY_AFTER_SECS: &str = "30";
+
 // ─── Response shapes ─────────────────────────────────────────────────────────
 
 /// Response body for a synchronous import (≤ 100 valid rows).
@@ -167,6 +172,28 @@ pub async fn import_file(
             .with_detail("Invalid or unauthorized Authorization: Bearer token.")
             .into_response();
     }
+
+    // Take a slot before the body is read, so a node already running its share
+    // of imports refuses at once instead of holding another upload in memory.
+    // The slot lives as long as the import does: the async path below moves it
+    // into the background task, so it is not released by the `202`.
+    let import_slot = match state.import_slots.clone().try_acquire_owned() {
+        Ok(slot) => slot,
+        Err(_) => {
+            metrics::counter!("import_rejections_total", "reason" => "busy").increment(1);
+            let mut resp = Problem::new(StatusCode::TOO_MANY_REQUESTS, "Too Many Requests")
+                .with_detail(
+                    "This node is already running as many imports as it allows. \
+                     Retry once one has finished.",
+                )
+                .into_response();
+            resp.headers_mut().insert(
+                header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static(IMPORT_BUSY_RETRY_AFTER_SECS),
+            );
+            return resp;
+        }
+    };
 
     // Parse multipart fields
     let mut file_bytes: Option<Vec<u8>> = None;
@@ -474,6 +501,7 @@ pub async fn import_file(
     let concurrency = state.batch_concurrency;
 
     tokio::spawn(async move {
+        let _import_slot = import_slot;
         if let Err(e) = job_store.set_status(job_id, JobStatus::Processing).await {
             tracing::error!(%job_id, error = %e, "failed to mark import job processing");
         }
@@ -937,13 +965,26 @@ mod tests {
         use std::sync::Mutex;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        #[derive(Default)]
         pub(super) struct State_ {
             pub(super) create_hits: AtomicUsize,
             pub(super) update_hits: AtomicUsize,
             /// `pub(super)` so tests can flip a created passport to `active`
             /// directly — `create_handler` only ever produces `draft`.
             pub(super) passports: Mutex<Vec<serde_json::Value>>,
+            /// Open by default. Set to `false` and every create waits until it
+            /// is set to `true`, which holds an import mid-run.
+            pub(super) gate: tokio::sync::watch::Sender<bool>,
+        }
+
+        impl Default for State_ {
+            fn default() -> Self {
+                Self {
+                    create_hits: AtomicUsize::default(),
+                    update_hits: AtomicUsize::default(),
+                    passports: Mutex::default(),
+                    gate: tokio::sync::watch::channel(true).0,
+                }
+            }
         }
 
         async fn verify_handler() -> Response {
@@ -954,6 +995,8 @@ mod tests {
             State(state): State<Arc<State_>>,
             Json(mut body): Json<serde_json::Value>,
         ) -> Response {
+            let mut open = state.gate.subscribe();
+            let _ = open.wait_for(|open| *open).await;
             let n = state.create_hits.fetch_add(1, Ordering::SeqCst) + 1;
             let id = format!("pp-{n}");
             body["id"] = serde_json::json!(id);
@@ -1057,6 +1100,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new(&base_url)),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 4,
+            import_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
@@ -1610,6 +1654,7 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 1,
+            import_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
@@ -1770,6 +1815,93 @@ mod tests {
         let result = job.result.expect("completed job must carry a result");
         assert_eq!(result.created.len(), 101);
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 101);
+    }
+
+    /// 🚨 With every slot taken the import is refused before its body is read,
+    /// and told when to come back. The vault is never called.
+    #[tokio::test]
+    async fn an_import_is_refused_when_no_slot_is_free() {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let _taken = state.import_slots.clone().try_acquire_owned().unwrap();
+        let app = build_router(state);
+
+        let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()["retry-after"],
+            super::IMPORT_BUSY_RETRY_AFTER_SECS
+        );
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// The slot goes back when a synchronous import returns, so one import
+    /// does not lock the node for the next.
+    #[tokio::test]
+    async fn a_finished_import_gives_its_slot_back() {
+        let (mut state, _mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state);
+
+        for _ in 0..2 {
+            let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+            let resp = app
+                .clone()
+                .oneshot(import_request("battery", body))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), axum::http::StatusCode::OK);
+            assert_eq!(slots.available_permits(), 1);
+        }
+    }
+
+    /// 🚨 The `202` is not the end of an import: the background job still
+    /// writes rows, so it keeps the slot until it is done. Releasing at the
+    /// `202` would let the cap protect nothing for any import over the
+    /// synchronous threshold.
+    #[tokio::test]
+    async fn an_async_job_keeps_its_slot_until_it_finishes() {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state.clone());
+
+        mock.gate.send_replace(false);
+        let body = multipart_body("X", "battery.csv", &battery_csv(101), None);
+        let resp = app
+            .clone()
+            .oneshot(import_request("battery", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::ACCEPTED);
+        let json = response_json(resp).await;
+        let job_id = uuid::Uuid::parse_str(json["jobId"].as_str().unwrap()).unwrap();
+
+        // The job is running, held at its first create.
+        assert_eq!(slots.available_permits(), 0);
+        let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let second = app.oneshot(import_request("battery", body)).await.unwrap();
+        assert_eq!(second.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+
+        mock.gate.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let done = state
+                    .job_store
+                    .get(job_id)
+                    .await
+                    .is_some_and(|job| matches!(job.status, JobStatus::Completed));
+                if done && slots.available_permits() == 1 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the job must finish and give its slot back within 10s");
     }
 }
 

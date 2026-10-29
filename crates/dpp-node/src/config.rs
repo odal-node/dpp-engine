@@ -50,6 +50,9 @@ pub struct NodeConfig {
     // ── Integrator service ────────────────────────────────────────────────────
     /// Maximum concurrent vault requests during a batch import run (default 20).
     pub batch_concurrency: usize,
+    /// Maximum number of imports running at once (default 2). A further import
+    /// is refused with `429` until one finishes.
+    pub import_max_concurrent: usize,
 
     // ── Event bus ──────────────────────────────────────────────────────────────
     /// NATS server URL, e.g. `nats://localhost:4222`. When absent, events are
@@ -122,6 +125,7 @@ impl std::fmt::Debug for NodeConfig {
             .field("admin_username", &self.admin_username)
             .field("admin_password", &opt_secret(&self.admin_password))
             .field("batch_concurrency", &self.batch_concurrency)
+            .field("import_max_concurrent", &self.import_max_concurrent)
             .field(
                 "nats_url",
                 &self.nats_url.as_deref().map(redact_url_credentials),
@@ -206,6 +210,7 @@ impl NodeConfig {
                 .unwrap_or_else(|_| "20".into())
                 .parse()
                 .context("BATCH_CONCURRENCY must be a positive integer")?,
+            import_max_concurrent: dpp_integrator::config::import_max_concurrent_from_env()?,
             nats_url: std::env::var("NATS_URL").ok().filter(|s| !s.is_empty()),
             port: std::env::var("NODE_PORT")
                 .or_else(|_| std::env::var("PORT"))
@@ -824,6 +829,7 @@ mod tests {
             "ADMIN_PASSWORD",
             "CORS_ALLOWED_ORIGINS",
             "BATCH_CONCURRENCY",
+            "IMPORT_MAX_CONCURRENT",
             "NATS_URL",
             "NODE_PORT",
             "PORT",
@@ -863,6 +869,7 @@ mod tests {
         assert_eq!(cfg.port, 8001);
         assert_eq!(cfg.log_level, "info");
         assert_eq!(cfg.batch_concurrency, 20);
+        assert_eq!(cfg.import_max_concurrent, 2);
         assert_eq!(cfg.plugins_dir, "./plugins");
         assert!(cfg.cors_allowed_origins.is_empty());
         assert!(cfg.nats_url.is_none());

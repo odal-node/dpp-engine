@@ -235,6 +235,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A node runs at most two imports at once, and says `429` to a third.**
+  Nothing bounded the number of concurrent imports, so each one fanned out
+  `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
+  `IMPORT_MAX_CONCURRENT` (default 2, at least 1) is checked once the caller is
+  authenticated and before the upload is read; an import that finds no free slot
+  gets `429` with `Retry-After`, counted in
+  `import_rejections_total{reason="busy"}`. An import over 100 rows keeps its slot
+  while its background job runs, so the `202` does not free it. This bounds
+  imports, not request rates: set those at the proxy (the runbook says how the
+  node and the proxy divide the work).
+
 - **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
   reasons recorded for leaving them out were wrong. Electronics'
   `productCategory` and `energyEfficiencyClass` already deserialise from a
