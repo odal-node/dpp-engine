@@ -281,6 +281,8 @@ mod mock_server {
         /// task-list request asked for.
         pub(super) task_results_read: Mutex<VecDeque<String>>,
         pub(super) task_pages_asked: Mutex<VecDeque<String>>,
+        /// The `sort` each task-list request asked for, `""` when it asked for none.
+        pub(super) task_sorts_asked: Mutex<VecDeque<String>>,
         /// Task-list pages by page number. A page named here is answered from
         /// it, whatever order it is asked in; a page not named falls back to
         /// `tasks_queue`. What a long list needs: which page is asked for, and in
@@ -351,6 +353,11 @@ mod mock_server {
     ) -> Response {
         let page = query.get("page").cloned().unwrap_or_default();
         state.task_pages_asked.lock().await.push_back(page.clone());
+        state
+            .task_sorts_asked
+            .lock()
+            .await
+            .push_back(query.get("sort").cloned().unwrap_or_default());
         if let Some((status, body)) = state.tasks_by_page.lock().await.get(&page).cloned() {
             return (status, Json(body)).into_response();
         }
@@ -1049,6 +1056,145 @@ async fn a_long_list_that_does_not_hold_the_task_at_either_end_says_the_search_r
         (0..10).chain(90..100).collect::<Vec<u32>>(),
         "ten pages from each end, and none from the middle"
     );
+}
+
+// ── Asking for the list newest first, and checking what came back ────────────
+
+/// Fifty tasks that are not the one being looked for, submitted at one-minute
+/// intervals, newest first when `newest_first` and oldest first when not. The
+/// first page of a list is the one whose times decide how the rest is read.
+fn dated_filler_page(
+    total: u64,
+    prefix: &str,
+    newest_first: bool,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    let base = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z").unwrap();
+    task_page_of(
+        total,
+        serde_json::Value::Array(
+            (0..50)
+                .map(|n| {
+                    let minutes = if newest_first { -(n as i64) } else { n as i64 };
+                    let mut task =
+                        registration_task(&format!("{prefix}-{n}"), 1_000 + n, "SUCCESS");
+                    task["submittedAt"] =
+                        serde_json::json!((base + chrono::Duration::minutes(minutes)).to_rfc3339());
+                    task
+                })
+                .collect(),
+        ),
+    )
+}
+
+/// 🚨 The list is asked for newest first on every page, in the registry's own
+/// syntax. Asking for no order is what left the order unknown in the first place.
+#[tokio::test]
+async fn every_page_of_the_list_is_asked_for_newest_first() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(120, "A", true));
+        pages.insert("1".into(), dated_filler_page(120, "B", true));
+        pages.insert("2".into(), dated_filler_page(120, "C", true));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.check_submission("CORR-NOT-THERE")
+        .await
+        .expect("a report");
+
+    let sorts: Vec<String> = state
+        .task_sorts_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(sorts.len(), 3, "three pages were read");
+    assert!(
+        sorts
+            .iter()
+            .all(|s| s == dpp_registry::TASKS_SORT_NEWEST_FIRST),
+        "{sorts:?}"
+    );
+    assert_eq!(dpp_registry::TASKS_SORT_NEWEST_FIRST, "submittedAt,desc");
+}
+
+/// 🚨 When the first page shows the list came back newest first, a long one is read
+/// from the front: the budget goes where a new submission is. A task on page 15,
+/// which a both-ends read never reaches, is found, and the back is never asked for.
+#[tokio::test]
+async fn a_long_list_that_came_back_newest_first_is_read_from_the_front() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(5_000, "NEW", true));
+        for page in 1..15 {
+            pages.insert(
+                page.to_string(),
+                dated_filler_page(5_000, &format!("P{page}"), true),
+            );
+        }
+        pages.insert(
+            "15".into(),
+            task_page_of(
+                5_000,
+                serde_json::json!([registration_task("CORR-FOUND", 15_000, "PROCESSING")]),
+            ),
+        );
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-FOUND").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing, "found on page 15");
+    let asked: Vec<String> = state
+        .task_pages_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        asked,
+        (0..=15).map(|n| n.to_string()).collect::<Vec<_>>(),
+        "the front, in order, and the back never"
+    );
+}
+
+/// 🚨 A registry that ignored the sort is not believed. If the first page runs oldest
+/// first, a new task is at the back, and the plan falls back to both ends and finds
+/// it there, as it did before the list was asked for in any order.
+#[tokio::test]
+async fn a_list_that_ignored_the_sort_is_still_read_from_both_ends() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(5_000, "OLD", false));
+        pages.insert(
+            "99".into(),
+            task_page_of(
+                5_000,
+                serde_json::json!([registration_task("CORR-NEW", 4_999, "PROCESSING")]),
+            ),
+        );
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-NEW").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing);
+    let asked: Vec<String> = state
+        .task_pages_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(asked, ["0", "99"], "the far end is read next, as before");
 }
 
 // ── Finding a submission whose handle was lost ───────────────────────────────

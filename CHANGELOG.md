@@ -235,6 +235,28 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The registry's task list is asked for newest first, and read from the front
+  once the first page shows it came back that way (needs the `dpp-core` release
+  that carries `TASKS_SORT_NEWEST_FIRST`).** The adapter read a long list from both
+  ends because the registry's order was not known: a task just submitted is at the
+  front of a newest-first list and at the back of an oldest-first one. The
+  registry's own client was read again on 2026-10-20 and sends `sort` as
+  `submittedAt,desc` on every read, so the adapter now sends the same.
+
+  *What was asked for is not trusted.* The first page's `submittedAt` times are
+  read, and the list is treated as newest first only when at least two are
+  readable, none is newer than the one before it, and at least one is strictly
+  older. Then a long list is read from the front, all twenty pages, which reaches
+  twice as far into the recent past as splitting the budget with the back did,
+  and the back is never asked for. Anything else (a registry that ignored the
+  sort, a page too short to compare, equal times, a time that is not an RFC 3339
+  time, a run that is not monotonic) leaves the order unknown and the list is read
+  from both ends, exactly as before. A list that fits the cap is read in full
+  whichever way it came.
+
+  Nothing about what a search *covers* changes: a long list is still never
+  reported as read in full.
+
 - **A lost submission handle is found again, and a transfer notification is sent
   under a stable key (needs the `dpp-core` release that carries
   `SubmissionLookup`, `TransferReport` and `authenticate_access_credential_with_reason`).**

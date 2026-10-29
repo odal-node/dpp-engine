@@ -42,18 +42,67 @@ pub(super) struct PagePlan {
     pub covers_all: bool,
 }
 
-/// Decide which pages to read after the first, given how long the list is.
+/// How the list is ordered, as the first page shows it.
 ///
-/// A list short enough for `cap` pages is read in full. A longer one is read
-/// from **both ends**, interleaved: the registry's order is not known (the
-/// interface passes a `sort` whose syntax is not recorded), and a task just
-/// submitted is at the front of a newest-first list and at the back of an
-/// oldest-first one. Reading only the front, as this once did, never finds it
-/// in the second kind once the list outgrows the cap.
+/// The list is asked for newest first ([`TASKS_SORT_NEWEST_FIRST`](dpp_registry::TASKS_SORT_NEWEST_FIRST), what
+/// the registry's own interface sends), but what was asked for is not what was
+/// delivered, so the order is **checked on the data**, not assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListOrder {
+    /// The first page's tasks run from the latest submission to the earliest, so
+    /// a task just submitted is on the front of the list.
+    NewestFirst,
+    /// The page does not show it: too few tasks to compare, a submission time that
+    /// is missing or unreadable, a run that is ascending, or one that is not
+    /// monotonic. Nothing is concluded about where a new task is.
+    Unknown,
+}
+
+/// Read the order off a page of tasks.
+///
+/// [`ListOrder::NewestFirst`] only when at least two tasks carry a readable
+/// `submittedAt`, no later task is newer than an earlier one, and at least one
+/// is strictly older. A page of equal times, or of one task, says nothing about
+/// direction. Every task that carries a time is compared; one that carries none
+/// is skipped, not guessed at.
+pub(super) fn order_of(tasks: &[Task]) -> ListOrder {
+    let times: Vec<chrono::DateTime<chrono::Utc>> = tasks
+        .iter()
+        .filter_map(|task| task.submitted_at.as_deref())
+        .map(|text| chrono::DateTime::parse_from_rfc3339(text).map(|t| t.to_utc()))
+        .collect::<Result<_, _>>()
+        .unwrap_or_default();
+    let descending = times.windows(2).all(|pair| pair[0] >= pair[1]);
+    let some_older = times.windows(2).any(|pair| pair[0] > pair[1]);
+    if times.len() >= 2 && descending && some_older {
+        ListOrder::NewestFirst
+    } else {
+        ListOrder::Unknown
+    }
+}
+
+/// Decide which pages to read after the first, given how long the list is and how
+/// it is ordered.
+///
+/// A list short enough for `cap` pages is read in full, whatever its order. A
+/// longer one is read according to what the first page showed:
+///
+/// - [`ListOrder::NewestFirst`]: from the **front**, `cap` pages deep. A task just
+///   submitted is on the first page, so the budget goes where the answer is, and
+///   covers the most recent submissions twice as deep as splitting it would.
+/// - [`ListOrder::Unknown`]: from **both ends**, interleaved. A task just submitted
+///   is at the front of a newest-first list and at the back of an oldest-first
+///   one, and reading only the front never finds it in the second kind once the
+///   list outgrows the cap.
 ///
 /// A reply that gave no length is read from the front only, `cap` pages deep,
 /// and covers nothing it cannot show.
-pub(super) fn plan_pages(total_elements: Option<u64>, page_size: usize, cap: u32) -> PagePlan {
+pub(super) fn plan_pages(
+    total_elements: Option<u64>,
+    page_size: usize,
+    cap: u32,
+    order: ListOrder,
+) -> PagePlan {
     let Some(total) = total_elements else {
         return PagePlan {
             pages: (1..cap).collect(),
@@ -66,6 +115,13 @@ pub(super) fn plan_pages(total_elements: Option<u64>, page_size: usize, cap: u32
         return PagePlan {
             pages: (1..u32::try_from(total_pages).unwrap_or(cap)).collect(),
             covers_all: true,
+        };
+    }
+
+    if order == ListOrder::NewestFirst {
+        return PagePlan {
+            pages: (1..cap).collect(),
+            covers_all: false,
         };
     }
 
@@ -108,6 +164,11 @@ pub(super) struct Task {
     /// Where the submission has got to.
     #[serde(default)]
     pub status: Option<SubmissionOutcome>,
+    /// When the task was submitted. What the list is sorted by, and what
+    /// [`order_of`] reads the order off. Kept as it came: a value that is not an
+    /// RFC 3339 time is read as no order shown, never as an error.
+    #[serde(default)]
+    pub submitted_at: Option<String>,
 }
 
 impl Task {
@@ -447,7 +508,7 @@ mod tests {
     fn a_short_list_is_read_in_full() {
         // 120 tasks at 50 a page is three pages; page 0 is already read.
         assert_eq!(
-            plan_pages(Some(120), 50, 20),
+            plan_pages(Some(120), 50, 20, ListOrder::Unknown),
             PagePlan {
                 pages: vec![1, 2],
                 covers_all: true
@@ -456,7 +517,7 @@ mod tests {
         // An empty list and a one-page list need nothing more.
         for total in [0, 1, 50] {
             assert_eq!(
-                plan_pages(Some(total), 50, 20),
+                plan_pages(Some(total), 50, 20, ListOrder::Unknown),
                 PagePlan {
                     pages: vec![],
                     covers_all: true
@@ -465,7 +526,7 @@ mod tests {
             );
         }
         // Exactly the cap is still covered.
-        assert!(plan_pages(Some(20 * 50), 50, 20).covers_all);
+        assert!(plan_pages(Some(20 * 50), 50, 20, ListOrder::Unknown).covers_all);
     }
 
     /// 🚨 A list longer than the cap is read from both ends. The registry's
@@ -475,7 +536,7 @@ mod tests {
     #[test]
     fn a_long_list_is_read_from_both_ends() {
         // 5 000 tasks is 100 pages; the cap of 20 is split between the ends.
-        let plan = plan_pages(Some(5_000), 50, 20);
+        let plan = plan_pages(Some(5_000), 50, 20, ListOrder::Unknown);
         assert!(!plan.covers_all, "it cannot cover what it does not read");
 
         let mut pages = plan.pages.clone();
@@ -500,10 +561,122 @@ mod tests {
         assert_eq!(&plan.pages[..4], &[99, 1, 98, 2]);
     }
 
+    /// A page of tasks carrying these submission times, in this order.
+    fn page_submitted(times: &[Option<&str>]) -> Vec<Task> {
+        times
+            .iter()
+            .enumerate()
+            .map(|(n, time)| {
+                serde_json::from_value(json!({ "taskId": n, "submittedAt": time })).expect("a task")
+            })
+            .collect()
+    }
+
+    /// 🚨 Newest first is concluded from the data, never from having asked: the
+    /// times run from the latest to the earliest, and at least one step is real.
+    #[test]
+    fn a_page_running_from_latest_to_earliest_is_newest_first() {
+        let page = page_submitted(&[
+            Some("2026-10-20T12:00:00Z"),
+            Some("2026-10-20T11:00:00Z"),
+            Some("2026-10-19T09:30:00Z"),
+        ]);
+        assert_eq!(order_of(&page), ListOrder::NewestFirst);
+
+        // Offsets are times, not text: the same instant written two ways is equal,
+        // and 11:00 at +02:00 is earlier than 12:00Z.
+        let mixed = page_submitted(&[
+            Some("2026-10-20T12:00:00Z"),
+            Some("2026-10-20T11:00:00+02:00"),
+        ]);
+        assert_eq!(order_of(&mixed), ListOrder::NewestFirst);
+    }
+
+    /// Everything short of that concludes nothing about where a new task is, so the
+    /// plan falls back to both ends: an ascending page (the sort was ignored, or
+    /// honoured the other way), one that is not monotonic, one too short to compare,
+    /// one of equal times, and a time that is missing or not a time.
+    #[test]
+    fn anything_short_of_newest_first_is_unknown() {
+        let unknown = |times: &[Option<&str>]| order_of(&page_submitted(times));
+
+        assert_eq!(
+            unknown(&[Some("2026-10-19T09:00:00Z"), Some("2026-10-20T09:00:00Z")]),
+            ListOrder::Unknown,
+            "ascending: a new task is at the back"
+        );
+        assert_eq!(
+            unknown(&[
+                Some("2026-10-20T09:00:00Z"),
+                Some("2026-10-19T09:00:00Z"),
+                Some("2026-10-20T10:00:00Z"),
+            ]),
+            ListOrder::Unknown,
+            "not monotonic"
+        );
+        assert_eq!(unknown(&[Some("2026-10-20T09:00:00Z")]), ListOrder::Unknown);
+        assert_eq!(unknown(&[]), ListOrder::Unknown);
+        assert_eq!(
+            unknown(&[Some("2026-10-20T09:00:00Z"), Some("2026-10-20T09:00:00Z")]),
+            ListOrder::Unknown,
+            "equal times say nothing about direction"
+        );
+        assert_eq!(
+            unknown(&[Some("2026-10-20T09:00:00Z"), Some("yesterday-ish")]),
+            ListOrder::Unknown,
+            "a time that is not a time shows nothing, and is not skipped past"
+        );
+        assert_eq!(
+            unknown(&[None, None, None]),
+            ListOrder::Unknown,
+            "tasks that carry no time at all"
+        );
+        // One task without a time among ones with is skipped, not guessed at.
+        assert_eq!(
+            unknown(&[
+                Some("2026-10-20T10:00:00Z"),
+                None,
+                Some("2026-10-20T09:00:00Z"),
+            ]),
+            ListOrder::NewestFirst
+        );
+    }
+
+    /// 🚨 A long list verified newest first is read from the front, the whole budget
+    /// where the answer is. A new submission is on the first page of such a list, and
+    /// splitting the budget with the back would halve how far into the recent past
+    /// the search reaches.
+    #[test]
+    fn a_long_list_verified_newest_first_is_read_from_the_front() {
+        let plan = plan_pages(Some(5_000), 50, 20, ListOrder::NewestFirst);
+        assert_eq!(plan.pages, (1..20).collect::<Vec<_>>());
+        assert!(!plan.covers_all, "it cannot cover what it does not read");
+        assert!(
+            !plan.pages.contains(&99),
+            "the back is not read: a new task is not there"
+        );
+    }
+
+    /// The order changes where the budget goes and nothing about what is covered: a
+    /// list that fits the cap is read in full whichever order it came in.
+    #[test]
+    fn the_order_does_not_change_what_a_short_list_covers() {
+        for order in [ListOrder::NewestFirst, ListOrder::Unknown] {
+            assert_eq!(
+                plan_pages(Some(120), 50, 20, order),
+                PagePlan {
+                    pages: vec![1, 2],
+                    covers_all: true
+                },
+                "{order:?}"
+            );
+        }
+    }
+
     /// A reply without a length is read from the front only and claims nothing.
     #[test]
     fn a_list_of_unknown_length_covers_nothing_it_cannot_show() {
-        let plan = plan_pages(None, 50, 20);
+        let plan = plan_pages(None, 50, 20, ListOrder::Unknown);
         assert_eq!(plan.pages, (1..20).collect::<Vec<_>>());
         assert!(!plan.covers_all);
     }
