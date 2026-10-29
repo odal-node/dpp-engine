@@ -199,11 +199,15 @@ lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands.
   identifier the passport was submitted under, and logs *recovered the correlation
   identifier* when it finds it. Nothing more is needed then.
 
-Two log lines mean a person is needed:
+Three log lines mean a person is needed:
 
 - *More than one registry submission reports this passport's unique product
   identifier* lists the candidates. A successor can be submitted under its
   predecessor's identifier, so the node does not choose between them.
+- *One registry submission reports this passport's unique product identifier, and not
+  every task was read* names one candidate. It may be a predecessor's, beside this
+  passport's own task that is still being checked or was not read, so the node does
+  not record it, and looks again on every attempt.
 - *Not found among the tasks read* is retried on every attempt, and a row that never
   finds it stalls.
 
@@ -217,7 +221,10 @@ node could not read as accepted or refused: still processing, or a state the row
 the registry's transfer route de-duplicates on that key has not been observed, so a
 notification that stalls may have been taken more than once: check the registry's own
 record of the handover before treating repeats as harmless, and raise a state that never
-settles with the registry.
+settles with the registry. A notification the registry answers as already held (a
+`409` naming the replayed key) is closed as notified. That answer says the registry has
+it, not that it has applied the handover, and the node has no way to ask, so confirm a
+handover that matters in the registry.
 
 ### Upgrades
 

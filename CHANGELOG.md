@@ -272,15 +272,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   registration stands. The notification is sent with the transfer's own identifier
   as the `Idempotency-Key`, which is what makes sending it again the same
   notification: a reply that is still processing, or a state the node has no name
-  for, now keeps the notification open and retries it, and a replay is answered as
-  already held and closes it. Before, any reply the node could not name closed the
+  for, now keeps the notification open and retries it, and an answer naming the
+  replayed key is read as already held and closes it. That answer says the registry
+  holds the notification, not that it applied the handover, and no route to ask has
+  been seen. Before, any reply the node could not name closed the
   row as notified, which is a handover the registry's record may never learn of.
   The transfer route's reply is **unobserved** (core records the route as invented),
   so the statuses are read conservatively: only `registered` is an acceptance.
 
   *Credential refusals.* An access credential that fails authentication is told
-  which of five things to fix: no key for its `kid`, a signature that does not
-  verify, a token not typed as a VC-JWT, a payload that is not a credential, or an
+  which of seven things to fix: a token that is not a compact JWS, no key for its
+  `kid`, a signature that does not verify, a header or signature that cannot be
+  read, a token not typed as a VC-JWT, a payload that is not a credential, or an
   issuer other than its document's. They read the same before, so an issuer whose
   tooling had not yet set `typ` was sent to debug a sound signature. The
   presenter's own `kid` and issuer are not echoed. A bad signature keeps its old

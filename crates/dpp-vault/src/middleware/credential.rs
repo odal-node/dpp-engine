@@ -314,7 +314,7 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
 /// The sentence for a credential that could not be authenticated: one per thing
 /// its issuer would go and fix.
 ///
-/// Authentication refuses for five different reasons and they used to read the
+/// Authentication refuses for seven different reasons and they used to read the
 /// same, so an issuer whose tooling had not yet set the token's type was told its
 /// signature did not verify, and went to debug a key that was sound. Each of
 /// these is something the issuer already knows about its own token, so saying it

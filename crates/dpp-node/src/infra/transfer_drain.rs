@@ -109,7 +109,9 @@ pub async fn drain_once(
         match outcome {
             // Taken, or already held: an earlier attempt under the same key got
             // through. Either way the registry has the notification and sending
-            // it again would be wrong.
+            // it again would be wrong. Already held does not say the handover was
+            // applied, and no route that would say so has been seen, so the row
+            // closes on the registry's word that it holds the notification.
             Ok(TransferReport::Accepted | TransferReport::AlreadyHeld) => {
                 let _ = outbox.mark_notified(tid, registry_id.clone()).await;
                 stats.notified += 1;
@@ -136,8 +138,9 @@ pub async fn drain_once(
             // learns of. The notification stays open as a failed attempt: it backs
             // off, counts toward the stalled rollup, and is sent again under the
             // same idempotency key, which is what makes that the same notification
-            // and not a second. The replay settles it as already held once the
-            // registry has finished; one that never settles is for a person.
+            // and not a second. When the registry answers a replay is unobserved: an
+            // answer naming the replayed key closes the row as already held, above,
+            // and one that never settles is for a person.
             Ok(TransferReport::Processing) => {
                 let _ = outbox
                     .mark_attempt_failed(
