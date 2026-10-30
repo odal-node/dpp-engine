@@ -24,8 +24,8 @@ use axum::{
     routing::post,
 };
 use dpp_common::idempotency::{
-    Claim, IdempotencyError, IdempotencyLayerState, IdempotencyStore, RequestKey, StoredResponse,
-    idempotency_middleware,
+    Claim, ClaimToken, IdempotencyError, IdempotencyLayerState, IdempotencyStore, RequestKey,
+    Settled, StoredResponse, idempotency_middleware,
 };
 use tower::ServiceExt;
 
@@ -40,6 +40,7 @@ struct MemStore {
 
 struct Row {
     fingerprint: String,
+    claim: ClaimToken,
     completed: Option<StoredResponse>,
 }
 
@@ -59,14 +60,16 @@ impl IdempotencyStore for MemStore {
         let mut rows = self.rows.lock().unwrap();
         match rows.get(&id(key)) {
             None => {
+                let claim = ClaimToken::mint();
                 rows.insert(
                     id(key),
                     Row {
                         fingerprint: fingerprint.to_owned(),
+                        claim: claim.clone(),
                         completed: None,
                     },
                 );
-                Ok(Claim::Claimed)
+                Ok(Claim::Claimed(claim))
             }
             Some(row) if row.fingerprint != fingerprint => Ok(Claim::FingerprintMismatch),
             Some(row) => match &row.completed {
@@ -79,17 +82,30 @@ impl IdempotencyStore for MemStore {
     async fn complete(
         &self,
         key: &RequestKey,
+        claim: &ClaimToken,
         response: &StoredResponse,
-    ) -> Result<(), IdempotencyError> {
-        if let Some(row) = self.rows.lock().unwrap().get_mut(&id(key)) {
-            row.completed = Some(response.clone());
+    ) -> Result<Settled, IdempotencyError> {
+        match self.rows.lock().unwrap().get_mut(&id(key)) {
+            Some(row) if row.claim == *claim => {
+                row.completed = Some(response.clone());
+                Ok(Settled::Applied)
+            }
+            _ => Ok(Settled::Superseded),
         }
-        Ok(())
     }
 
-    async fn release(&self, key: &RequestKey) -> Result<(), IdempotencyError> {
-        self.rows.lock().unwrap().remove(&id(key));
-        Ok(())
+    async fn release(
+        &self,
+        key: &RequestKey,
+        claim: &ClaimToken,
+    ) -> Result<Settled, IdempotencyError> {
+        let mut rows = self.rows.lock().unwrap();
+        if rows.get(&id(key)).is_some_and(|row| row.claim == *claim) {
+            rows.remove(&id(key));
+            Ok(Settled::Applied)
+        } else {
+            Ok(Settled::Superseded)
+        }
     }
 
     async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
@@ -111,10 +127,15 @@ impl IdempotencyStore for DeadStore {
     ) -> Result<Claim, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
-    async fn complete(&self, _: &RequestKey, _: &StoredResponse) -> Result<(), IdempotencyError> {
+    async fn complete(
+        &self,
+        _: &RequestKey,
+        _: &ClaimToken,
+        _: &StoredResponse,
+    ) -> Result<Settled, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
-    async fn release(&self, _: &RequestKey) -> Result<(), IdempotencyError> {
+    async fn release(&self, _: &RequestKey, _: &ClaimToken) -> Result<Settled, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
     async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
