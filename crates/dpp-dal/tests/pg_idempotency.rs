@@ -178,7 +178,11 @@ async fn release_frees_an_in_flight_key_but_never_a_completed_one() {
     let second = claimed(&repo, &k, &fp).await;
 
     repo.complete(&k, &second, &stored(201)).await.unwrap();
-    repo.release(&k, &second).await.unwrap();
+    assert_eq!(
+        repo.release(&k, &second).await.unwrap(),
+        Settled::Superseded,
+        "a completed claim is no longer in flight, so a release has nothing to free"
+    );
     assert_eq!(
         repo.claim(&k, &fp, LEASE, RETENTION).await.unwrap(),
         Claim::Replay(stored(201))
