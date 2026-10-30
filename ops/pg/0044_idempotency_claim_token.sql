@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0045 — idempotency_key.claim_token: whose claim the row is.
+-- 0044 — idempotency_key.claim_token: whose claim the row is.
 --
 -- 0036 matched an outcome or a release to its row by the four-part key and
 -- `state = 'in_flight'` alone. That says a claim is in flight, not whose. Once a

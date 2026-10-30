@@ -17,7 +17,7 @@ use sqlx::Row;
 
 use super::PgDal;
 
-/// PostgreSQL implementation of [`IdempotencyStore`] (migrations 0036 and 0045).
+/// PostgreSQL implementation of [`IdempotencyStore`] (migrations 0036 and 0044).
 pub struct PgIdempotencyRepo {
     dal: PgDal,
 }
