@@ -250,11 +250,9 @@ async fn main() -> anyhow::Result<()> {
         scan_counter,
     };
 
-    // Per-IP rate limit (default 120 requests/minute; override with RATE_LIMIT_RPM).
-    let rpm: u32 = std::env::var("RATE_LIMIT_RPM")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(120);
+    // Per-IP rate limit (default 120 requests/minute; override with RATE_LIMIT_RPM,
+    // which `Config::from_env` has already refused to start on if it is not a count).
+    let rpm = cfg.rate_limit_rpm;
     // Only trust X-Forwarded-For when running behind a known proxy that is the
     // sole way in and sets it. Off by default — the resolver binds 0.0.0.0 and may
     // be directly reachable, where the header is fully attacker-controlled.

@@ -16,7 +16,7 @@
 //! by `dpp_common::config::resolver_base_url`; Compose requires it, and the CLI's
 //! scaffold test pins that.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Variables the resolver reads that the Compose service does not pass, each with
@@ -28,14 +28,6 @@ const NOT_PASSED: &[(&str, &str)] = &[
     (
         "RESOLVER_PORT",
         "the host side of the port mapping; the container listens on the PORT pinned in the compose file",
-    ),
-    (
-        "CACHE_TTL_SECS",
-        "the 30 s default is the longest a suspended passport is still served from cache (Config::cache_ttl_secs)",
-    ),
-    (
-        "METRICS_ADDR",
-        "the default listener is loopback inside the container, and the compose file publishes no port for it",
     ),
     (
         "SCAN_INGEST_URL",
@@ -105,13 +97,18 @@ fn env_reads(source: &str) -> BTreeSet<String> {
 /// pass vacuously otherwise), or names no variables at all, so a format this
 /// reader does not understand fails instead of reading as an empty set.
 fn passed_names(compose: &str, service: &str) -> Result<BTreeSet<String>, String> {
+    Ok(passed_env(compose, service)?.into_keys().collect())
+}
+
+/// [`passed_names`] with each entry's value as written, `${…}` expressions and all.
+fn passed_env(compose: &str, service: &str) -> Result<BTreeMap<String, String>, String> {
     let header = format!("  {service}:");
     let mut lines = compose.lines().skip_while(|l| l.trim_end() != header);
     if lines.next().is_none() {
         return Err(format!("no `{service}` service in the compose file"));
     }
     let mut in_environment = false;
-    let mut names = BTreeSet::new();
+    let mut names = BTreeMap::new();
     for line in lines {
         let text = line.trim();
         if text.is_empty() || text.starts_with('#') {
@@ -131,9 +128,9 @@ fn passed_names(compose: &str, service: &str) -> Result<BTreeSet<String>, String
             in_environment = text == "environment:";
         } else if in_environment
             && indent == 6
-            && let Some((key, _)) = text.split_once(':')
+            && let Some((key, value)) = text.split_once(':')
         {
-            names.insert(key.trim().to_string());
+            names.insert(key.trim().to_string(), value.trim().to_string());
         }
     }
     if names.is_empty() {
@@ -143,6 +140,36 @@ fn passed_names(compose: &str, service: &str) -> Result<BTreeSet<String>, String
         ));
     }
     Ok(names)
+}
+
+/// The `ports:` mappings of `service`, as written between the quotes.
+fn published_ports(compose: &str, service: &str) -> Result<Vec<String>, String> {
+    let header = format!("  {service}:");
+    let mut lines = compose.lines().skip_while(|l| l.trim_end() != header);
+    if lines.next().is_none() {
+        return Err(format!("no `{service}` service in the compose file"));
+    }
+    let mut in_ports = false;
+    let mut ports = Vec::new();
+    for line in lines {
+        let text = line.trim();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent <= 2 {
+            break;
+        }
+        if indent == 4 {
+            in_ports = text == "ports:";
+        } else if in_ports
+            && indent == 6
+            && let Some(entry) = text.strip_prefix("- ")
+        {
+            ports.push(entry.trim().trim_matches('"').to_string());
+        }
+    }
+    Ok(ports)
 }
 
 /// What the binary reads that is neither passed nor recorded.
@@ -263,6 +290,48 @@ fn the_scan_reads_names_through_a_local_helper_and_ignores_look_alikes() {
     );
 }
 
+/// The metrics listener binds loopback by default, and loopback inside a container
+/// is the container's own: nothing outside it, a sibling container or the VM, can
+/// connect. So `rate_limit_rejections_total` and every other series the resolver
+/// emits could not be scraped from the shipped stack, and the scrape example in
+/// docs/ops/METRICS-PLAN.md (`resolver:9101`) pointed at nothing.
+///
+/// The compose file binds the listener to every interface of the container and
+/// publishes it on the host's loopback only, never on a public interface: the
+/// series are not meant for anyone who can reach the API.
+#[test]
+fn the_metrics_listener_is_reachable_from_the_host_loopback_and_nowhere_wider() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docker/docker-compose.yml");
+    let compose = std::fs::read_to_string(&path).unwrap();
+    let env = passed_env(&compose, COMPOSE_SERVICE).unwrap();
+    let ports = published_ports(&compose, COMPOSE_SERVICE).unwrap();
+
+    let bound = env
+        .get("METRICS_ADDR")
+        .expect("the resolver service does not set METRICS_ADDR, so its listener stays on the container's loopback");
+    let (host, port) = bound.rsplit_once(':').unwrap();
+    assert_eq!(
+        host, "0.0.0.0",
+        "METRICS_ADDR is {bound}: bound to anything but every interface of the container, \
+         no published port can reach it"
+    );
+
+    let mappings: Vec<&String> = ports
+        .iter()
+        .filter(|p| p.ends_with(&format!(":{port}")))
+        .collect();
+    assert!(
+        !mappings.is_empty(),
+        "no `ports:` entry publishes the metrics port {port}, so the host cannot scrape it: {ports:?}"
+    );
+    for mapping in mappings {
+        assert!(
+            mapping.starts_with("127.0.0.1:"),
+            "{mapping} publishes the metrics port beyond the host's loopback"
+        );
+    }
+}
+
 #[test]
 fn a_read_split_across_lines_or_spaced_out_is_still_recorded() {
     // rustfmt breaks a call whose argument does not fit the line, so a variable
@@ -307,6 +376,35 @@ services:
     assert_eq!(
         passed_names(compose, "resolver").unwrap(),
         set(&["PORT", "RATE_LIMIT_RPM"])
+    );
+}
+
+#[test]
+fn the_compose_reader_takes_values_and_only_the_named_services_ports() {
+    let compose = "\
+services:
+  node:
+    ports:
+      - \"8001:8000\"
+  resolver:
+    ports:
+      - \"${RESOLVER_PORT:-8003}:8003\"
+      - \"127.0.0.1:9101:9101\"
+    environment:
+      METRICS_ADDR: 0.0.0.0:9101
+    depends_on:
+      - node
+";
+    assert_eq!(
+        published_ports(compose, "resolver").unwrap(),
+        vec![
+            "${RESOLVER_PORT:-8003}:8003".to_string(),
+            "127.0.0.1:9101:9101".to_string()
+        ]
+    );
+    assert_eq!(
+        passed_env(compose, "resolver").unwrap()["METRICS_ADDR"],
+        "0.0.0.0:9101"
     );
 }
 

@@ -474,6 +474,24 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The resolver's metrics can be scraped from the shipped stack, and
+  `CACHE_TTL_SECS` and `RATE_LIMIT_RPM` do what `.env.example` says.** The
+  metrics listener binds `127.0.0.1:9101` by default, which in a container is
+  the container's own loopback, and the resolver service published no port for it:
+  neither the host nor another service could connect, so
+  `rate_limit_rejections_total` and every other resolver series were out of
+  reach, and the scrape example in `docs/ops/METRICS-PLAN.md` (`resolver:9101`)
+  pointed at nothing. The Compose file now binds it to `0.0.0.0:9101` inside the
+  container and publishes it on the host's `127.0.0.1:9101` only. `CACHE_TTL_SECS`
+  was listed in `.env.example` but never passed to the container; Compose now
+  passes it with its default of 30. `RATE_LIMIT_RPM` fell back to 120 when it was
+  not a number, so an operator who wrote `6,000` believed a limit was in force
+  that was not the one they set; the resolver now refuses to start on a value that
+  is not a whole number, or is `0`, which would refuse every request.
+  `.env.example` also claimed the resolver reads `LOG_FORMAT`; only the node
+  does, and the standalone services always log plain text. The node's own
+  listener is untouched and still unpublished.
+
 - **A request that outlives its lease can no longer overwrite or delete the
   claim of the request that reclaimed its key.** A claim on an idempotency key
   becomes reclaimable once its 60-second lease runs out, and recording an
