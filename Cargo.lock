@@ -2349,6 +2349,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "criterion",
  "dotenvy",
  "futures",
  "hex",
@@ -2502,6 +2503,7 @@ dependencies = [
  "base64 0.23.1",
  "calamine",
  "chrono",
+ "criterion",
  "csv",
  "dotenvy",
  "dpp-common",
@@ -2645,6 +2647,7 @@ name = "dpp-render"
 version = "0.14.0"
 dependencies = [
  "chrono",
+ "criterion",
  "dpp-digital-link",
  "dpp-domain",
  "qrcode",

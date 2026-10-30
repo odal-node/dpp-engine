@@ -39,3 +39,8 @@ tokio               = { workspace = true }
 proptest            = { workspace = true }
 tower               = { version = "0.5", features = ["util"] }
 serial_test         = "4"
+criterion           = { workspace = true }
+
+[[bench]]
+name    = "request_guards"
+harness = false

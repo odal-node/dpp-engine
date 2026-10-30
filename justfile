@@ -85,6 +85,15 @@ LOCKED := if path_exists(justfile_directory() + "/.cargo/config.toml") == "true"
 test:
     cargo nextest run --workspace
 
+# Run the Criterion benches that need no infrastructure
+#
+# Not `--workspace`: that would also build every crate's unit tests in bench mode.
+# `dpp-node`'s NATS bench is left out because it needs Docker and the
+# `integration-tests` feature; run it with
+# `cargo bench -p dpp-node --features integration-tests`.
+bench:
+    cargo bench --benches -p dpp-render -p dpp-integrator -p dpp-common -p dpp-plugin-host
+
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 #
 # One shared Postgres for the whole run rather than one container per test.

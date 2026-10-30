@@ -1,0 +1,87 @@
+name: Benchmarks
+
+# The Criterion benches that need no infrastructure, weekly and on demand.
+#
+# A measurement, not a gate. A shared runner is too noisy to fail a build on a
+# timing, and a bench that cannot fail a pull request has no business slowing
+# one down, so this runs on a schedule and never on a push. What it does instead
+# is make a regression visible: Criterion compares each run with the last one it
+# saw, so the previous run's results are restored from a cache and the ones it
+# judges slower are written to the run summary.
+#
+# That comparison is only as good as the two runners being alike, which is not
+# guaranteed. Read a flagged bench as a reason to run it again, not as a finding.
+#
+# The NATS bench is not here: it needs Docker and the `integration-tests` feature.
+# See `just bench`.
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Monday 03:17 UTC
+  workflow_dispatch:
+
+# Least privilege by default. This run builds and measures; it writes nothing
+# back to the repository.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: Criterion benchmarks
+    runs-on: ubuntu-latest
+    # Without a ceiling, a hang would hold a runner for six hours.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: dpp-engine
+      - name: Install just
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just
+      # Criterion keeps the last run's numbers under `target/criterion` and prints
+      # the change against them. That directory is saved under a key of its own,
+      # and the next run restores the newest, so each run is compared with the one
+      # before. The run id is in the key because a cache entry cannot be
+      # overwritten.
+      - name: Restore the previous run's results
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dpp-engine/target/criterion
+          key: criterion-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: criterion-
+      - name: just bench
+        working-directory: dpp-engine
+        # `tee` would otherwise hide a failing `just bench`: the step's default
+        # shell has no `pipefail`.
+        run: |
+          set -o pipefail
+          just bench 2>&1 | tee "$RUNNER_TEMP/bench.log"
+      - name: Report the benches Criterion judges slower
+        if: always()
+        run: |
+          {
+            echo "### Benches slower than the previous run"
+            echo
+            echo "Indicative only: runners differ. Run a flagged bench again before believing it."
+            echo
+            echo '```'
+            grep -B4 "Performance has regressed" "$RUNNER_TEMP/bench.log" || echo "none"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Criterion reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: criterion-reports
+          path: dpp-engine/target/criterion/
+          retention-days: 30
