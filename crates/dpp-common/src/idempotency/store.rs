@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
 /// How long a completed key is honoured.
 ///
@@ -56,11 +57,52 @@ pub struct StoredResponse {
     pub content_type: Option<String>,
 }
 
+/// Proof that a request holds the claim on its key.
+///
+/// A store mints one when it grants a claim, and the request hands it back to
+/// record an outcome or to release the claim. It is needed because "the row for
+/// this key is `in_flight`" does not say whose claim that is: once a lease runs
+/// out the claim is reclaimable, and a request that outlived its lease would
+/// otherwise record its outcome over, or release, the claim of the request that
+/// reclaimed it.
+///
+/// Opaque to everything but the store that minted it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimToken(Uuid);
+
+impl ClaimToken {
+    /// A new token, unlike every other. For a store to call when it grants a
+    /// claim.
+    #[must_use]
+    pub fn mint() -> Self {
+        Self(Uuid::now_v7())
+    }
+
+    /// The token as a UUID, for a store that persists it.
+    #[must_use]
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+}
+
+/// What a store did with an outcome or a release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settled {
+    /// The claim was this request's, and the outcome was recorded or the claim
+    /// released.
+    Applied,
+    /// The claim is no longer this request's: it was reclaimed after its lease
+    /// ran out, or swept. Nothing was written, so the request that holds the
+    /// claim now is undisturbed.
+    Superseded,
+}
+
 /// What the store says about a key the middleware is trying to claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Claim {
-    /// The claim is ours; run the handler and then record the outcome.
-    Claimed,
+    /// The claim is ours; run the handler and then record the outcome, with this
+    /// token.
+    Claimed(ClaimToken),
     /// This exact request already completed. Replay this and run nothing.
     Replay(StoredResponse),
     /// Another attempt holds an unexpired claim. Tell the caller to retry.
@@ -95,7 +137,7 @@ pub trait IdempotencyStore: Send + Sync {
     ///
     /// Implementations must make the claim atomic against a concurrent caller:
     /// exactly one of two simultaneous first attempts may receive
-    /// [`Claim::Claimed`].
+    /// [`Claim::Claimed`], and each claim carries a token of its own.
     ///
     /// # Errors
     /// [`IdempotencyError::Unavailable`] if the store cannot be reached.
@@ -109,21 +151,33 @@ pub trait IdempotencyStore: Send + Sync {
 
     /// Record the outcome of a claimed request, making it replayable.
     ///
+    /// `claim` is the token [`IdempotencyStore::claim`] returned. An
+    /// implementation writes only while that claim is still the key's, and
+    /// answers [`Settled::Superseded`], writing nothing, once it is not.
+    ///
     /// # Errors
     /// [`IdempotencyError::Unavailable`] if the store cannot be reached.
     async fn complete(
         &self,
         key: &RequestKey,
+        claim: &ClaimToken,
         response: &StoredResponse,
-    ) -> Result<(), IdempotencyError>;
+    ) -> Result<Settled, IdempotencyError>;
 
     /// Release a claim without recording an outcome, so the same key may be
     /// tried again. Used when the handler failed in a way the client should be
     /// able to retry.
     ///
+    /// Like [`IdempotencyStore::complete`], it touches only a claim that is still
+    /// `claim`'s, and answers [`Settled::Superseded`] otherwise.
+    ///
     /// # Errors
     /// [`IdempotencyError::Unavailable`] if the store cannot be reached.
-    async fn release(&self, key: &RequestKey) -> Result<(), IdempotencyError>;
+    async fn release(
+        &self,
+        key: &RequestKey,
+        claim: &ClaimToken,
+    ) -> Result<Settled, IdempotencyError>;
 
     /// Delete every key past its retention horizon. Returns how many went.
     ///
