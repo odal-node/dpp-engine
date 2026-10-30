@@ -123,7 +123,7 @@ roxmltree    = "0.21"
 #   * **Reconsider on first production sealing.** If a trusted-list verdict
 #     starts carrying legal weight on this dependency, the acceptance above
 #     needs re-arguing rather than inheriting.
-xml-sec      = "0.1.20"
+xml-sec      = "0.2.0"
 
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
