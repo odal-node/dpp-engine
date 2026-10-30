@@ -84,15 +84,16 @@ before the first publish.
 - Firewall: allow 22, 80 (ACME) and 443; deny the rest.
 - `fail2ban` and unattended security upgrades.
 - **Bind the containers to loopback**, so only the proxy reaches them. The shipped
-  Compose file publishes on all interfaces; change the two mappings. The resolver's
-  per-address limit relies on this too (see
+  Compose file publishes on all interfaces; change the node's mapping and the
+  resolver's first one, and keep the resolver's second, which publishes its metrics
+  listener on loopback only. The resolver's per-address limit relies on this too (see
   [Limiting request rates](#limiting-request-rates)):
 
   ```yaml
   node:
     ports: ["127.0.0.1:${NODE_PORT:-8001}:8000"]
   resolver:
-    ports: ["127.0.0.1:${RESOLVER_PORT:-8003}:8003"]
+    ports: ["127.0.0.1:${RESOLVER_PORT:-8003}:8003", "127.0.0.1:9101:9101"]
   ```
 
 ### 3. TLS proxy
@@ -258,7 +259,7 @@ untested backup is not a backup.
 | Probe | Where it runs | What it can check |
 |---|---|---|
 | External uptime check on `https://dpp.operator.example/health` and one known passport | Any uptime service | Liveness only. Do not give an external service an API key: even a `read` key reads every passport |
-| `trust_mode` and the other series on the metrics listener | On the VM (Prometheus, or a cron job reading `/metrics`) | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
+| `trust_mode` and the other series on the metrics listener | The resolver's: on the VM (Prometheus, or a cron job reading `/metrics`). The node's: only inside its own container, until the Compose file publishes it | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
 
 The Compose file publishes the resolver's metrics listener on the VM's
 `127.0.0.1:9101`, which is where `rate_limit_rejections_total` and the resolver's

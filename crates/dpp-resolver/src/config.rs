@@ -68,18 +68,22 @@ impl Config {
                 Ok(s) => Some(s),
                 Err(_) => Some("127.0.0.1:9101".into()), // private default
             },
-            rate_limit_rpm: parse_rate_limit_rpm(std::env::var("RATE_LIMIT_RPM").ok().as_deref())?,
+            rate_limit_rpm: rate_limit_rpm_from(std::env::var("RATE_LIMIT_RPM"))?,
         })
     }
 }
 
 /// The `RATE_LIMIT_RPM` rule on a raw value, so it is tested without the process
-/// environment. Unset is 120.
+/// environment. Unset is 120, and so is a blank value: `RATE_LIMIT_RPM=` in a
+/// copied `.env.example` means "not set", as it does for the node's optional
+/// settings and for Compose's `${RATE_LIMIT_RPM:-120}`.
 ///
 /// # Errors
 /// Returns an error if the value is not a whole number, or is zero.
 pub fn parse_rate_limit_rpm(raw: Option<&str>) -> Result<u32> {
     let rpm: u32 = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("120")
         .parse()
         .context("RATE_LIMIT_RPM must be a whole number of requests a minute")?;
@@ -88,6 +92,17 @@ pub fn parse_rate_limit_rpm(raw: Option<&str>) -> Result<u32> {
         "RATE_LIMIT_RPM must be at least 1: 0 would refuse every request"
     );
     Ok(rpm)
+}
+
+/// `RATE_LIMIT_RPM` from the result of reading it. Only a variable that is not
+/// there falls back to the default: one that is set to something that is not valid
+/// Unicode is not a count, so it is refused like any other value that is not one.
+fn rate_limit_rpm_from(read: Result<String, std::env::VarError>) -> Result<u32> {
+    match read {
+        Ok(value) => parse_rate_limit_rpm(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_rate_limit_rpm(None),
+        Err(e) => Err(anyhow::Error::new(e).context("RATE_LIMIT_RPM must be valid Unicode")),
+    }
 }
 
 fn var(name: &str) -> Result<String> {
@@ -115,19 +130,40 @@ mod tests {
     /// (`CACHE_TTL_SECS`) already refuse to start on one.
     #[test]
     fn a_value_that_is_not_a_count_is_refused() {
-        for bad in [
-            "abc",
-            "",
-            " ",
-            "6,000",
-            "100/min",
-            "-1",
-            "1.5",
-            "4294967296",
-        ] {
+        for bad in ["abc", "6,000", "100/min", "-1", "1.5", "4294967296"] {
             let err = parse_rate_limit_rpm(Some(bad)).unwrap_err().to_string();
             assert!(err.contains("RATE_LIMIT_RPM"), "{bad:?}: {err}");
         }
+    }
+
+    /// `RATE_LIMIT_RPM=` in a copied `.env.example` means "not set", as it does for
+    /// the node's optional settings, and it is what Compose's `${RATE_LIMIT_RPM:-120}`
+    /// already does with a blank value. The two must agree, or the same `.env` starts
+    /// a stack and refuses to start the binary.
+    #[test]
+    fn a_blank_value_reads_as_unset() {
+        for blank in ["", " ", "\t"] {
+            assert_eq!(parse_rate_limit_rpm(Some(blank)).unwrap(), 120, "{blank:?}");
+        }
+    }
+
+    /// A value that is not valid Unicode is not a count either. Reading it with
+    /// `.ok()` turned it into "unset", so the resolver started on 120.
+    #[test]
+    fn a_value_that_is_not_unicode_is_refused() {
+        let read = Err(std::env::VarError::NotUnicode(std::ffi::OsString::from(
+            "x",
+        )));
+        let err = rate_limit_rpm_from(read).unwrap_err().to_string();
+        assert!(err.contains("RATE_LIMIT_RPM"), "{err}");
+        assert!(err.contains("Unicode"), "{err}");
+    }
+
+    #[test]
+    fn an_unset_variable_is_the_default_and_a_set_one_is_taken() {
+        let unset = Err(std::env::VarError::NotPresent);
+        assert_eq!(rate_limit_rpm_from(unset).unwrap(), 120);
+        assert_eq!(rate_limit_rpm_from(Ok("600".into())).unwrap(), 600);
     }
 
     /// Zero would refuse every request, and the cause would not be visible from
