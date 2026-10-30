@@ -81,7 +81,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt
@@ -96,7 +97,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: clippy
@@ -124,7 +126,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -194,7 +197,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -343,6 +347,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Forbid println!/eprintln!/dbg! in crates/**/src (service code).
       # The cli/ directory, tests, and benches are explicitly allowed.
       #
@@ -361,6 +366,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # event_type/NATS-subject strings must come from dpp_common::event::subjects,
       # or a renamed subject silently stops matching subscribers.
       #
@@ -377,6 +383,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain, so this reports in seconds and is
       # independent of whether the workspace builds. Its own job rather than a
       # step inside another, so "someone disabled the API drift gate" is a
@@ -397,6 +404,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain, so this reports in seconds and is
       # independent of whether the workspace builds. Its own job rather than a
       # step inside another, so "someone enabled the XML entity resolver" is a
@@ -422,6 +430,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # mod.rs should be `mod` + `pub use` only. The two exceptions (service/mod.rs
       # and validate/mod.rs) are named in the script, which is the one place they
       # are written down: scripts/mod-rs-check.sh, the script `just check` runs.
@@ -442,6 +451,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. "The app role cannot DELETE" is the
       # sentence an application-compromise argument rests on, and it had drifted
       # from the grants once already.
@@ -456,6 +466,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. A copy of the Postgres harness or of the
       # in-memory repository double fails here, instead of drifting for a year.
       - name: No fork of the shared test harness
@@ -473,6 +484,7 @@ jobs:
           # it needs history. The default checkout is one commit on one ref, and
           # the script used to answer that with "skipping" and a green tick.
           fetch-depth: 0
+          persist-credentials: false
       # Shell only — no Rust toolchain. `sqlx::migrate!` checksums every file, so
       # editing an applied migration stops an already-migrated node from booting.
       - name: No migration that main already has is modified
@@ -491,6 +503,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. Service code reaches the network through
       # `dpp_common::outbound`, which applies the SSRF guard; a bare
       # `reqwest::get` or `Client::builder()` is refused unless it is a target the
@@ -506,6 +519,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. No route, path file, event subject, client
       # URL or status value takes "archive" back from EN 18221 clause 4.2.
       - name: No route, subject or status says archive
@@ -524,6 +538,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. The audit register suppresses
       # RUSTSEC-2023-0071 on one ground: this workspace holds no RSA private key.
       # That is a claim about the code, held by this script and by nothing else.
@@ -540,6 +555,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain.
       - name: Every script in scripts/ is run by a workflow, or says why not
         working-directory: dpp-engine
@@ -555,6 +571,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain.
       - name: Every fuzz target is built, run nightly, and documented
         working-directory: dpp-engine
@@ -574,7 +591,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -601,6 +619,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
       # Node rather than the Rust toolchain, so this is cheap and independent of
       # the build. Redocly 2.x requires Node >= 22.12.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -647,7 +666,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -709,7 +729,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
@@ -767,6 +788,7 @@ jobs:
         with:
           path: dpp-engine
           fetch-depth: 0
+          persist-credentials: false
 
       # The job always runs and always reports — the expensive half is what is
       # conditional. A job skipped by a workflow-level `paths:` filter reports

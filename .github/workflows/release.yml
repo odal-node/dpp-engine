@@ -13,12 +13,16 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   publish:
     name: Build & push ${{ matrix.image }}
     runs-on: ubuntu-latest
+    # The one job that pushes images, so the one that may write packages. Granted
+    # here and not for the whole workflow, so a job added later does not inherit it.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +46,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: dpp-engine
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 

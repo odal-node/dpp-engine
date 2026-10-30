@@ -1,0 +1,106 @@
+name: Workflow lint
+
+# Static analysis of the workflows themselves.
+#
+# `release.yml` runs with a token that can write packages, `ci.yml` has more than
+# twenty jobs that each check out the repository, and `advisories.yml` is the
+# run that is supposed to notice when something we depend on goes wrong. Nothing
+# used to check what any of them does with its token, whether every action is
+# pinned to a commit that still exists upstream, or whether a `run:` step
+# interpolates a value an outsider could choose. Two tools, because they find
+# different things:
+#
+#   zizmor      security: credentials left behind by a checkout, actions that are
+#               not pinned or whose pinned commit is not in the repository it
+#               names, an action with a published advisory, expressions that
+#               inject into a shell, and Dependabot settings.
+#   actionlint  correctness: workflow syntax, expression types, and the shell
+#               inside every `run:` (it runs `shellcheck` where that is installed,
+#               which it is on the runner).
+#
+# The default `regular` persona gates. The `pedantic` one reports code smells such
+# as an image that is not pinned by digest, or an action a shell command could
+# replace, and is deliberately not gated on.
+#
+# How two actions are pinned, because it looks odd and is deliberate.
+# `dtolnay/rust-toolchain` publishes one branch per channel, each a single commit
+# on top of its `master` that sets the `toolchain` default, and rewrites those
+# branches as `master` moves. Pinning such a commit is what its README shows, and
+# zizmor reports it as a commit with no history in the repository it names,
+# because upstream has since replaced it. So `rust-toolchain` is pinned to a
+# `master` commit, with the toolchain passed as an input at every use, which runs
+# the same code. A comment naming a branch on those pins would go stale on the
+# next upstream commit, so they have none. `taiki-e/install-action` is pinned to a
+# release tag, with the tool passed, which Dependabot can also move.
+#
+# Both tools are downloaded from their release and checked against the SHA-256
+# recorded here, so the bytes that run are the bytes that were read. Dependabot
+# cannot see either pin; moving one is a deliberate edit, and a newer version of
+# either may find something the pinned one does not, which is the reason to move it
+# on a pull request of its own.
+#
+# Deliberately not path-filtered, so that it can be made a required check without
+# blocking every pull request that leaves `.github/` alone. The weekly run covers
+# the other way a workflow goes bad: an advisory published against an action we
+# already pin, with no commit to trigger anything.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1" # Monday 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  ZIZMOR_VERSION: "1.30.1"
+  ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+jobs:
+  zizmor:
+    name: Workflows pass zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        run: |
+          curl -fsSL -o zizmor.tar.gz "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf zizmor.tar.gz -C "$RUNNER_TEMP/bin" zizmor
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # The token lets zizmor ask GitHub the questions it cannot answer from the
+      # files: whether a pinned commit belongs to the repository it names, and
+      # whether an action has a published advisory. It is the workflow's own
+      # read-only token, and nothing here writes.
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --format github .github
+
+  actionlint:
+    name: Workflows pass actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        run: |
+          curl -fsSL -o actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf actionlint.tar.gz -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: actionlint
+        run: actionlint -color
