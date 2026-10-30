@@ -88,11 +88,21 @@ test:
 # Run the Criterion benches that need no infrastructure
 #
 # Not `--workspace`: that would also build every crate's unit tests in bench mode.
-# `dpp-node`'s NATS bench is left out because it needs Docker and the
-# `integration-tests` feature; run it with
-# `cargo bench -p dpp-node --features integration-tests`.
+# The ones that need Docker are `just bench-infra`.
 bench:
     cargo bench --benches -p dpp-render -p dpp-integrator -p dpp-common -p dpp-plugin-host
+
+# Run the Criterion benches that need Docker (dal, vault, node)
+#
+# One shared Postgres for the whole run, as `just test-integration` has: the DAL
+# and vault benches go through the shared harness, which clones a database on
+# the server `ODAL_TEST_PG_ADMIN_URL` names. The NATS bench starts a container of
+# its own.
+#
+# The targets are named rather than `--benches`, which would also run each crate's
+# unit tests again in bench mode.
+bench-infra:
+    bash scripts/shared-test-pg.sh cargo bench -p dpp-dal -p dpp-vault -p dpp-node --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-node/integration-tests --bench pg_repo --bench publish_serve --bench nats_throughput
 
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 #

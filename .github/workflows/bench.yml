@@ -1,6 +1,7 @@
 name: Benchmarks
 
-# The Criterion benches that need no infrastructure, weekly and on demand.
+# The Criterion benches, weekly and on demand: the ones that need no infrastructure
+# (`just bench`) and the ones that need Docker (`just bench-infra`).
 #
 # A measurement, not a gate. A shared runner is too noisy to fail a build on a
 # timing, and a bench that cannot fail a pull request has no business slowing
@@ -12,8 +13,16 @@ name: Benchmarks
 # That comparison is only as good as the two runners being alike, which is not
 # guaranteed. Read a flagged bench as a reason to run it again, not as a finding.
 #
-# The NATS bench is not here: it needs Docker and the `integration-tests` feature.
-# See `just bench`.
+# The Docker ones start their own servers: `just bench-infra` runs a Postgres for
+# the DAL and vault benches through `scripts/shared-test-pg.sh`, and the NATS bench
+# starts a container of its own. Docker is installed on the runner.
+#
+# The real-plugin benches in `dpp-plugin-host` build the battery plugin from a
+# sibling `dpp-core` working tree, which a runner does not have. They skip with a
+# warning here, and only the WAT floor benches run. Checking `dpp-core` out beside
+# this repository would not fix that: the run would then bench whatever its default
+# branch holds, not the release this workspace is pinned to. The plugin is not
+# published as a crate.
 on:
   schedule:
     - cron: "17 3 * * 1" # Monday 03:17 UTC
@@ -66,6 +75,15 @@ jobs:
         run: |
           set -o pipefail
           just bench 2>&1 | tee "$RUNNER_TEMP/bench.log"
+      # After `just bench` rather than instead of it, and appending to the same
+      # log, so the report below reads both. `if: always()` so a failure in the
+      # first does not hide the second's figures.
+      - name: just bench-infra
+        if: always()
+        working-directory: dpp-engine
+        run: |
+          set -o pipefail
+          just bench-infra 2>&1 | tee -a "$RUNNER_TEMP/bench.log"
       - name: Report the benches Criterion judges slower
         if: always()
         run: |
