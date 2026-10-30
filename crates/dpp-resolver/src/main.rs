@@ -458,6 +458,60 @@ mod security_regression {
         assert_eq!(client_ip(&req, true), ip("203.0.113.7"));
     }
 
+    /// A limited router with a two-request budget, the middleware in front of a
+    /// handler that always answers, and a helper that sends one request through it.
+    ///
+    /// The `client_ip` tests above stop short of `rate_limit_mw`: a change that
+    /// stopped the middleware calling it would leave them green while every client
+    /// behind one proxy shared a single budget.
+    fn limited_app(trust_forwarded_for: bool) -> Router {
+        let limiter = Arc::new(RateLimiter::new(
+            2,
+            Duration::from_secs(60),
+            trust_forwarded_for,
+        ));
+        Router::new()
+            .route("/dpp/x", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(limiter, rate_limit_mw))
+    }
+
+    async fn status_for(app: &Router, forwarded_for: &str) -> StatusCode {
+        use tower::ServiceExt;
+        let proxy: SocketAddr = "198.51.100.1:443".parse().unwrap();
+        app.clone()
+            .oneshot(req_with_xff(forwarded_for, proxy))
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn clients_behind_one_proxy_get_separate_budgets_when_forwarding_is_trusted() {
+        let app = limited_app(true);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(
+            status_for(&app, "192.0.2.1").await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a third request from one client is over its budget of two"
+        );
+        // Another client behind the same proxy, on the same peer address, still
+        // has its own budget.
+        assert_eq!(status_for(&app, "192.0.2.2").await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_forwarded_address_buys_no_second_budget_when_forwarding_is_not_trusted() {
+        let app = limited_app(false);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(status_for(&app, "192.0.2.2").await, StatusCode::OK);
+        assert_eq!(
+            status_for(&app, "192.0.2.3").await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "three different forwarded addresses share the proxy's budget of two"
+        );
+    }
+
     #[test]
     fn bucket_map_stays_bounded_under_fresh_ip_flood() {
         // A flood of distinct, never-expiring IPs must not grow the map without
