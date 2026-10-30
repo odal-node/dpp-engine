@@ -474,6 +474,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A database that stops answering no longer holds keyed requests for as long
+  as it stays silent.** The idempotency layer makes four calls to its store (a
+  claim, recording an outcome and two kinds of release) and nothing bounded any
+  of them, so a request carrying an `Idempotency-Key` waited on a hung store
+  without limit, and an import held its slot while it did. Each call now gets 10
+  seconds. A claim that does not answer in time is refused with the `503` an
+  unreachable store already gets, and the request is not run. An outcome or a
+  release that does not answer is logged, and the response goes out as it would
+  have without the timeout: unchanged, or with an empty body when it was too
+  large to buffer, which is what a failed release already does. A call given up
+  on may still have committed, so a retry can meet `409` until the key's
+  60-second lease runs out, which is the window a store error already leaves.
+
 - **With `TRUST_FORWARDED_FOR=true`, the resolver counts the last
   `X-Forwarded-For` entry, not the first.** The first entry is the one a client
   writes. Behind a proxy that appends to the header, as Caddy does once
