@@ -756,7 +756,7 @@ mod tests {
 
     use axum::{Router, body::Body, http::Request};
     use dpp_common::idempotency::{
-        Claim, IdempotencyError, IdempotencyStore, RequestKey, StoredResponse,
+        Claim, ClaimToken, IdempotencyError, IdempotencyStore, RequestKey, Settled, StoredResponse,
     };
     use tower::ServiceExt;
 
@@ -1967,19 +1967,24 @@ mod tests {
             _: Duration,
         ) -> Result<Claim, IdempotencyError> {
             self.claims.fetch_add(1, Ordering::SeqCst);
-            Ok(Claim::Claimed)
+            Ok(Claim::Claimed(ClaimToken::mint()))
         }
         async fn complete(
             &self,
             _: &RequestKey,
+            _: &ClaimToken,
             _: &StoredResponse,
-        ) -> Result<(), IdempotencyError> {
+        ) -> Result<Settled, IdempotencyError> {
             self.completes.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(Settled::Applied)
         }
-        async fn release(&self, _: &RequestKey) -> Result<(), IdempotencyError> {
+        async fn release(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+        ) -> Result<Settled, IdempotencyError> {
             self.releases.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(Settled::Applied)
         }
         async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
             Ok(0)

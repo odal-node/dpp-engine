@@ -474,6 +474,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A request that outlives its lease can no longer overwrite or delete the
+  claim of the request that reclaimed its key.** A claim on an idempotency key
+  becomes reclaimable once its 60-second lease runs out, and recording an
+  outcome or releasing a claim matched the row by key and `in_flight` state
+  alone. A request that ran past its lease then recorded its response over the
+  newer claim's row, so later retries replayed the superseded response, or it
+  released that row, which let a third request run while the second was still
+  going. Each claim now carries a token, minted by the store and replaced when
+  the key is reclaimed, and an outcome or a release names the token it was
+  granted: once the claim is no longer its own, nothing is written. The
+  response goes out as before and a warning is logged. The handler may still
+  have run twice by then, which is what a lease that expires on a live request
+  means; this keeps the second run's record intact. The store port changes:
+  `claim` returns the token, and `complete` and `release` take it and report
+  whether they applied. The table gains a `claim_token` column, which needs no
+  grant change.
+
 - **A database that stops answering no longer holds keyed requests for as long
   as it stays silent.** The idempotency layer makes four calls to its store (a
   claim, recording an outcome and two kinds of release) and nothing bounded any

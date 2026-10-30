@@ -83,14 +83,18 @@ mod tests {
         async fn complete(
             &self,
             _: &dpp_common::idempotency::RequestKey,
+            _: &dpp_common::idempotency::ClaimToken,
             _: &dpp_common::idempotency::StoredResponse,
-        ) -> Result<(), dpp_common::idempotency::IdempotencyError> {
+        ) -> Result<dpp_common::idempotency::Settled, dpp_common::idempotency::IdempotencyError>
+        {
             unreachable!()
         }
         async fn release(
             &self,
             _: &dpp_common::idempotency::RequestKey,
-        ) -> Result<(), dpp_common::idempotency::IdempotencyError> {
+            _: &dpp_common::idempotency::ClaimToken,
+        ) -> Result<dpp_common::idempotency::Settled, dpp_common::idempotency::IdempotencyError>
+        {
             unreachable!()
         }
         async fn purge_expired(&self) -> Result<u64, dpp_common::idempotency::IdempotencyError> {
