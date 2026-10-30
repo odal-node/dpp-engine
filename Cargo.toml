@@ -200,7 +200,7 @@ proptest              = "1"
 
 # Wasm plugin runtime
 wasmtime       = { version = "49", default-features = false, features = ["cranelift", "async", "component-model"] }
-wasmtime-wasi  = "49"
+wasmtime-wasi  = "50"
 
 # GS1 / JSON-LD
 json-ld        = "0.21"
