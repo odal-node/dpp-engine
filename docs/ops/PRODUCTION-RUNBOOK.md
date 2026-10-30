@@ -137,19 +137,24 @@ Which address it counts is the decision to make. With `TRUST_FORWARDED_FOR` unse
 `false` it counts the TCP peer, which behind the proxy is the proxy: every visitor
 shares one `RATE_LIMIT_RPM` budget, so the whole public gets 120 requests a minute.
 **Set `TRUST_FORWARDED_FOR=true` in `.env` for this topology.** The resolver then counts
-the first address in `X-Forwarded-For`. That is safe only when both of these hold:
+the last address in `X-Forwarded-For`, the one the proxy put there. That is safe only
+when both of these hold:
 
 - **The proxy is the only way in.** With the resolver port bound to loopback (step 2)
   it is. A client that can reach the resolver directly can send any `X-Forwarded-For`
   and take a fresh budget on every request.
-- **The proxy replaces the header instead of adding to it.** The resolver trusts the
-  first entry, which a client can write if the proxy appends. Caddy's `reverse_proxy`
-  discards an inbound `X-Forwarded-For` and sends the address that connected to it
-  (checked on Caddy 2.11), unless that address is in `trusted_proxies`, where it
-  appends. So leave `TRUST_FORWARDED_FOR` false when Caddy sits behind a CDN or another
-  proxy you have declared trusted, and limit at that layer. In nginx, use
-  `proxy_set_header X-Forwarded-For $remote_addr;`. The common
-  `$proxy_add_x_forwarded_for` appends, which is the unsafe form.
+- **The proxy sets the header.** It may replace what the client sent or add to it:
+  either way its own entry is the last, and that is the one counted. Caddy's
+  `reverse_proxy` replaces it by default and adds to it when the connecting address is
+  in `trusted_proxies` (checked on Caddy 2.11). nginx does either, with
+  `proxy_set_header X-Forwarded-For $remote_addr;` or `$proxy_add_x_forwarded_for`. A
+  proxy that passes the client's header through untouched makes the count the
+  client's choice. If a proxy adds its entry as a separate header line, the last line
+  is the one read.
+
+Behind a CDN or another proxy in front of yours, the last entry is that proxy's
+address, not the visitor's, so visitors who arrive through the same address share one
+budget. Limit at that layer instead.
 
 To check it behind your proxy, send ten more requests than the limit from one machine,
 inside one minute, then one request from a second machine. Set `LIMIT` to your
@@ -192,7 +197,7 @@ refused, since a limit that was never exceeded is untested.
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
 | `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
 | `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
-| `TRUST_FORWARDED_FOR` | For the reference proxy | `true`, so the resolver rate-limits each visitor and not the proxy. Only with the resolver bound to loopback and a proxy that replaces `X-Forwarded-For`; see [Limiting request rates](#limiting-request-rates) |
+| `TRUST_FORWARDED_FOR` | For the reference proxy | `true`, so the resolver rate-limits each visitor and not the proxy. Only with the resolver bound to loopback and a proxy that sets `X-Forwarded-For`; see [Limiting request rates](#limiting-request-rates) |
 | `RATE_LIMIT_RPM` | No | Requests a minute per address at the resolver. Default 120 |
 | `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |

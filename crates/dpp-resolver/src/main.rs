@@ -43,8 +43,10 @@ const SWEEP_DIVISOR: usize = 5;
 struct RateLimiter {
     max: u32,
     window: Duration,
-    /// Whether to trust the `X-Forwarded-For` header (only safe behind a proxy
-    /// that sets it and strips inbound copies). Off by default.
+    /// Whether to count the address the one proxy in front of this service put at
+    /// the end of `X-Forwarded-For`, instead of the TCP peer. Only safe when that
+    /// proxy is the sole way in and sets the header (replacing it or appending to
+    /// it). Off by default.
     trust_forwarded_for: bool,
     /// Hard cap on bucket count. Always [`MAX_BUCKETS`] in production —
     /// [`RateLimiter::new`] is the only constructor a binary calls.
@@ -102,15 +104,24 @@ fn client_ip(req: &Request, trust_forwarded_for: bool) -> IpAddr {
     // Only honour `X-Forwarded-For` when explicitly enabled (the resolver binds
     // 0.0.0.0 and may be directly reachable; an attacker can otherwise rotate the
     // header to mint a fresh bucket per request and bypass the limiter).
+    //
+    // The address counted is the LAST entry of the LAST header line: what the one
+    // proxy in front of this service added, by replacing the client's value or by
+    // appending to it. The first entry is the one a client writes, so counting it
+    // would let a client choose its bucket behind any proxy that appends.
+    // An unreadable entry is not guessed at: the peer's bucket is shared, never
+    // chosen by the client.
     if trust_forwarded_for
-        && let Some(first) = req
+        && let Some(last) = req
             .headers()
-            .get("x-forwarded-for")
+            .get_all("x-forwarded-for")
+            .iter()
+            .next_back()
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.rsplit(',').next())
             .and_then(|s| s.trim().parse::<IpAddr>().ok())
     {
-        return first;
+        return last;
     }
     req.extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -244,9 +255,9 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(120);
-    // Only trust X-Forwarded-For when running behind a known proxy that sets and
-    // sanitises it. Off by default — the resolver binds 0.0.0.0 and may be
-    // directly reachable, where the header is fully attacker-controlled.
+    // Only trust X-Forwarded-For when running behind a known proxy that is the
+    // sole way in and sets it. Off by default — the resolver binds 0.0.0.0 and may
+    // be directly reachable, where the header is fully attacker-controlled.
     let trust_forwarded_for = std::env::var("TRUST_FORWARDED_FOR")
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false);
@@ -361,6 +372,144 @@ mod security_regression {
         let socket: SocketAddr = "203.0.113.7:443".parse().unwrap();
         let req = req_with_xff("10.0.0.1", socket);
         assert_eq!(client_ip(&req, true), "10.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    /// A request carrying one `X-Forwarded-For` header line per entry, in order.
+    fn req_with_xff_lines(lines: &[&str], socket: SocketAddr) -> Request {
+        let mut builder = Request::builder().uri("/dpp/x");
+        for line in lines {
+            builder = builder.header("x-forwarded-for", *line);
+        }
+        let mut req = builder.body(Body::empty()).unwrap();
+        req.extensions_mut().insert(ConnectInfo(socket));
+        req
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    const PEER: &str = "203.0.113.7:443";
+
+    /// The entry a client writes comes first and the proxy adds its own after it,
+    /// so counting the first entry lets a client pick its own rate-limit bucket by
+    /// writing the header. Measured: Caddy with `trusted_proxies`, and nginx with
+    /// `$proxy_add_x_forwarded_for`, both forward `<client's value>, <peer>`.
+    #[test]
+    fn the_entry_a_proxy_appended_is_counted_not_the_one_a_client_wrote() {
+        let req = req_with_xff("6.6.6.6, 192.0.2.44", PEER.parse().unwrap());
+        assert_eq!(client_ip(&req, true), ip("192.0.2.44"));
+    }
+
+    /// A proxy that replaces the header, as Caddy's `reverse_proxy` does by
+    /// default, leaves one entry, and that entry is the client.
+    #[test]
+    fn a_single_entry_is_the_client() {
+        let req = req_with_xff("192.0.2.44", PEER.parse().unwrap());
+        assert_eq!(client_ip(&req, true), ip("192.0.2.44"));
+    }
+
+    /// Some proxies add their entry as a further header line instead of joining
+    /// the existing one, and `HeaderMap::get` would return the client's line.
+    #[test]
+    fn the_last_header_line_is_the_one_the_proxy_added() {
+        let req = req_with_xff_lines(&["6.6.6.6", "192.0.2.44"], PEER.parse().unwrap());
+        assert_eq!(client_ip(&req, true), ip("192.0.2.44"));
+    }
+
+    #[test]
+    fn the_last_entry_of_the_last_line_wins() {
+        let req = req_with_xff_lines(
+            &["6.6.6.6, 7.7.7.7", "8.8.8.8, 192.0.2.44 "],
+            PEER.parse().unwrap(),
+        );
+        assert_eq!(client_ip(&req, true), ip("192.0.2.44"));
+    }
+
+    #[test]
+    fn an_ipv6_entry_is_counted() {
+        let req = req_with_xff("6.6.6.6, 2001:db8::7", PEER.parse().unwrap());
+        assert_eq!(client_ip(&req, true), ip("2001:db8::7"));
+    }
+
+    /// An entry that is not an address is not guessed at. The peer's bucket is the
+    /// safe direction: it can only be shared, never chosen by the client.
+    #[test]
+    fn an_unreadable_last_entry_falls_back_to_the_peer() {
+        for header in [
+            "192.0.2.44, not-an-ip",
+            "192.0.2.44,",
+            "192.0.2.44:8443",
+            "",
+        ] {
+            let req = req_with_xff(header, PEER.parse().unwrap());
+            assert_eq!(client_ip(&req, true), ip("203.0.113.7"), "{header:?}");
+        }
+    }
+
+    #[test]
+    fn no_header_means_the_peer() {
+        let mut req = Request::builder()
+            .uri("/dpp/x")
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(ConnectInfo(PEER.parse::<SocketAddr>().unwrap()));
+        assert_eq!(client_ip(&req, true), ip("203.0.113.7"));
+    }
+
+    /// A limited router with a two-request budget, the middleware in front of a
+    /// handler that always answers, and a helper that sends one request through it.
+    ///
+    /// The `client_ip` tests above stop short of `rate_limit_mw`: a change that
+    /// stopped the middleware calling it would leave them green while every client
+    /// behind one proxy shared a single budget.
+    fn limited_app(trust_forwarded_for: bool) -> Router {
+        let limiter = Arc::new(RateLimiter::new(
+            2,
+            Duration::from_secs(60),
+            trust_forwarded_for,
+        ));
+        Router::new()
+            .route("/dpp/x", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(limiter, rate_limit_mw))
+    }
+
+    async fn status_for(app: &Router, forwarded_for: &str) -> StatusCode {
+        use tower::ServiceExt;
+        let proxy: SocketAddr = "198.51.100.1:443".parse().unwrap();
+        app.clone()
+            .oneshot(req_with_xff(forwarded_for, proxy))
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn clients_behind_one_proxy_get_separate_budgets_when_forwarding_is_trusted() {
+        let app = limited_app(true);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(
+            status_for(&app, "192.0.2.1").await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a third request from one client is over its budget of two"
+        );
+        // Another client behind the same proxy, on the same peer address, still
+        // has its own budget.
+        assert_eq!(status_for(&app, "192.0.2.2").await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_forwarded_address_buys_no_second_budget_when_forwarding_is_not_trusted() {
+        let app = limited_app(false);
+        assert_eq!(status_for(&app, "192.0.2.1").await, StatusCode::OK);
+        assert_eq!(status_for(&app, "192.0.2.2").await, StatusCode::OK);
+        assert_eq!(
+            status_for(&app, "192.0.2.3").await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "three different forwarded addresses share the proxy's budget of two"
+        );
     }
 
     #[test]
