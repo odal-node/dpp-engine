@@ -43,14 +43,14 @@ jobs:
           - public_page_render
           - url_guard
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
           persist-credentials: false
       # The channel is the `toolchain` input. The pinned commit is the action's
       # `stable` branch, the pin ci.yml uses, and this line used to call it
       # `nightly`: the job only ever fuzzed on nightly because the input says so.
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: nightly
       # Fuzz the dependency graph that ships. The fuzz crate is its own
@@ -60,7 +60,7 @@ jobs:
       - name: Start the fuzz lock from the workspace lock
         working-directory: dpp-engine
         run: cp Cargo.lock fuzz/Cargo.lock
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine/fuzz
       - name: Install cargo-fuzz
@@ -99,7 +99,7 @@ jobs:
                 if [ "$(wc -c < "$seed")" -gt "$MAX_LEN" ]; then rm "$seed"; fi
               done ;;
           esac
-          ls "$corpus" | wc -l
+          find "$corpus" -mindepth 1 -maxdepth 1 | wc -l
       # `-timeout=10` reports any single input that takes ten seconds as a
       # finding, rather than libFuzzer's default of twenty minutes: the import
       # parsers' bomb guards exist to bound exactly that.
@@ -110,7 +110,7 @@ jobs:
           -max_total_time=60 -max_len=${{ env.MAX_LEN }} -timeout=10 -print_final_stats=1
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: dpp-engine/fuzz/artifacts/

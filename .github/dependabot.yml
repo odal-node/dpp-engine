@@ -67,6 +67,8 @@ updates:
           - "proptest"
           - "criterion"
           - "serial_test"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: "/docker"
@@ -82,6 +84,8 @@ updates:
       # alone is how the images came to name 1.98 while compiling with 1.96.
       # Move the toolchain file and both FROM lines together, by hand.
       - dependency-name: "rust"
+    cooldown:
+      default-days: 7
 
   # Actions are pinned to full commit SHAs — an unpinned third-party action is
   # arbitrary code running against this repo's token. Dependabot understands
@@ -98,3 +102,5 @@ updates:
       actions:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7

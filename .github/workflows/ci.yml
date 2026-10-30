@@ -78,10 +78,11 @@ jobs:
     name: Format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt
@@ -93,14 +94,15 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
       # The command lives in the justfile, once: `just lint` is what `just check`
@@ -121,13 +123,14 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
@@ -191,13 +194,14 @@ jobs:
       ODAL_TEST_PG_ADMIN_URL: postgres://postgres:test@127.0.0.1:5432/postgres
       ODAL_TEST_S3_ENDPOINT: http://127.0.0.1:9000
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
@@ -318,7 +322,7 @@ jobs:
           exit $test_exit
       - name: Upload integration test results
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-test-results-${{ github.run_id }}
           path: dpp-engine/results/*.xml
@@ -340,9 +344,10 @@ jobs:
     name: No debug prints in service crates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Forbid println!/eprintln!/dbg! in crates/**/src (service code).
       # The cli/ directory, tests, and benches are explicitly allowed.
       #
@@ -358,9 +363,10 @@ jobs:
     name: No raw event subject literals outside dpp-common::event
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # event_type/NATS-subject strings must come from dpp_common::event::subjects,
       # or a renamed subject silently stops matching subscribers.
       #
@@ -374,9 +380,10 @@ jobs:
     name: OpenAPI contract fixtures stay exhaustive
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain, so this reports in seconds and is
       # independent of whether the workspace builds. Its own job rather than a
       # step inside another, so "someone disabled the API drift gate" is a
@@ -394,9 +401,10 @@ jobs:
     name: Trusted list XML stays on roxmltree's DTD-refusing default
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain, so this reports in seconds and is
       # independent of whether the workspace builds. Its own job rather than a
       # step inside another, so "someone enabled the XML entity resolver" is a
@@ -419,9 +427,10 @@ jobs:
     name: No public items in mod.rs (index files only)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # mod.rs should be `mod` + `pub use` only. The two exceptions (service/mod.rs
       # and validate/mod.rs) are named in the script, which is the one place they
       # are written down: scripts/mod-rs-check.sh, the script `just check` runs.
@@ -439,9 +448,10 @@ jobs:
     name: DELETE grants match the register in ops/pg/README.md
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. "The app role cannot DELETE" is the
       # sentence an application-compromise argument rests on, and it had drifted
       # from the grants once already.
@@ -453,9 +463,10 @@ jobs:
     name: Shared test scaffolding has one home
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. A copy of the Postgres harness or of the
       # in-memory repository double fails here, instead of drifting for a year.
       - name: No fork of the shared test harness
@@ -466,13 +477,14 @@ jobs:
     name: Applied migrations are never edited
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
           # The check diffs against main with `...`, which needs a merge base, so
           # it needs history. The default checkout is one commit on one ref, and
           # the script used to answer that with "skipping" and a green tick.
           fetch-depth: 0
+          persist-credentials: false
       # Shell only — no Rust toolchain. `sqlx::migrate!` checksums every file, so
       # editing an applied migration stops an already-migrated node from booting.
       - name: No migration that main already has is modified
@@ -488,9 +500,10 @@ jobs:
     name: No unguarded outbound HTTP clients
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. Service code reaches the network through
       # `dpp_common::outbound`, which applies the SSRF guard; a bare
       # `reqwest::get` or `Client::builder()` is refused unless it is a target the
@@ -503,9 +516,10 @@ jobs:
     name: Archive means one thing
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. No route, path file, event subject, client
       # URL or status value takes "archive" back from EN 18221 clause 4.2.
       - name: No route, subject or status says archive
@@ -521,9 +535,10 @@ jobs:
     name: No RSA private-key operation (the RUSTSEC-2023-0071 claim)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain. The audit register suppresses
       # RUSTSEC-2023-0071 on one ground: this workspace holds no RSA private key.
       # That is a claim about the code, held by this script and by nothing else.
@@ -537,9 +552,10 @@ jobs:
     name: Every guard script runs in CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain.
       - name: Every script in scripts/ is run by a workflow, or says why not
         working-directory: dpp-engine
@@ -552,9 +568,10 @@ jobs:
     name: Every fuzz target runs in the nightly job
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Shell only — no Rust toolchain.
       - name: Every fuzz target is built, run nightly, and documented
         working-directory: dpp-engine
@@ -571,10 +588,11 @@ jobs:
     name: Fuzz targets compile
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
           components: rustfmt, clippy
@@ -583,7 +601,7 @@ jobs:
       - name: Start the fuzz lock from the workspace lock
         working-directory: dpp-engine
         run: cp Cargo.lock fuzz/Cargo.lock
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine/fuzz
       - name: Install just
@@ -598,12 +616,13 @@ jobs:
     name: OpenAPI spec lints
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
       # Node rather than the Rust toolchain, so this is cheap and independent of
       # the build. Redocly 2.x requires Node >= 22.12.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.18.0
       # The description's version and the crate version move together on a
@@ -644,13 +663,14 @@ jobs:
     name: Security audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
       - name: Install cargo-audit
@@ -706,13 +726,14 @@ jobs:
     env:
       ODAL_TEST_PG_ADMIN_URL: postgres://postgres:test@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
@@ -763,10 +784,11 @@ jobs:
     steps:
       # `fetch-depth: 0` so the scope step below can diff against the base
       # commit; the default shallow clone does not contain it.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
           fetch-depth: 0
+          persist-credentials: false
 
       # The job always runs and always reports — the expensive half is what is
       # conditional. A job skipped by a workflow-level `paths:` filter reports
@@ -841,7 +863,7 @@ jobs:
           fi
           echo "${dockerfile} builds with rust ${base}, the channel rust-toolchain.toml pins."
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.scope.outputs.build == 'true'
 
       # Context is the workspace root holding the checked-out repo, matching
@@ -855,7 +877,7 @@ jobs:
       # the merge that preceded it.
       - name: Build ${{ matrix.image }} (no push)
         if: steps.scope.outputs.build == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
