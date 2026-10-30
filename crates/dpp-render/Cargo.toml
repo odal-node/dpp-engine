@@ -22,3 +22,8 @@ chrono     = { workspace = true }
 # drives the completeness check off the embedded schemas' x-disclosure
 # annotations rather than a restated field list.
 dpp-domain = { workspace = true }
+criterion  = { workspace = true }
+
+[[bench]]
+name    = "render_page"
+harness = false
