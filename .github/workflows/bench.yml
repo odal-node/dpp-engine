@@ -7,8 +7,8 @@ name: Benchmarks
 # timing, and a bench that cannot fail a pull request has no business slowing
 # one down, so this runs on a schedule and never on a push. What it does instead
 # is make a regression visible: Criterion compares each run with the last one it
-# saw, so the previous run's results are restored from a cache and the ones it
-# judges slower are written to the run summary.
+# saw, so the previous run's results are downloaded from its artifact and the ones
+# it judges slower are written to the run summary.
 #
 # That comparison is only as good as the two runners being alike, which is not
 # guaranteed. Read a flagged bench as a reason to run it again, not as a finding.
@@ -42,6 +42,11 @@ jobs:
     runs-on: ubuntu-latest
     # Without a ceiling, a hang would hold a runner for six hours.
     timeout-minutes: 60
+    # `actions: read` is what lets the job list the earlier runs and download an
+    # artifact from one.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -58,17 +63,35 @@ jobs:
         with:
           tool: just
       # Criterion keeps the last run's numbers under `target/criterion` and prints
-      # the change against them. That directory is saved under a key of its own,
-      # and the next run restores the newest, so each run is compared with the one
-      # before. The run id is in the key because a cache entry cannot be
-      # overwritten.
+      # the change against them. Those numbers are the `criterion-reports` artifact
+      # every run uploads below; this step downloads the one from the last
+      # successful run on the default branch, so each run is compared with the one
+      # before.
+      #
+      # An artifact and not a cache, on purpose. A cache entry that goes unused for
+      # seven days is evicted, and a weekly run that starts late (a scheduled run
+      # can begin hours after the cron time) can land just past that, with the
+      # baseline gone. An artifact is kept for `retention-days` below, several times
+      # the interval between runs.
+      #
+      # When there is nothing to download (the first run, or the last artifact has
+      # expired) the run goes ahead without a baseline and the summary says so.
       - name: Restore the previous run's results
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: dpp-engine/target/criterion
-          key: criterion-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: criterion-
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          previous=$(gh run list --workflow bench.yml --branch "$DEFAULT_BRANCH" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$previous" ]; then
+            echo "No earlier successful run to compare with."
+            exit 0
+          fi
+          gh run download "$previous" --name criterion-reports --dir dpp-engine/target/criterion \
+            || echo "Run $previous has no criterion-reports artifact left."
       - name: just bench
+        id: bench
         working-directory: dpp-engine
         # `tee` would otherwise hide a failing `just bench`: the step's default
         # shell has no `pipefail`.
@@ -79,22 +102,51 @@ jobs:
       # log, so the report below reads both. `if: always()` so a failure in the
       # first does not hide the second's figures.
       - name: just bench-infra
+        id: bench-infra
         if: always()
         working-directory: dpp-engine
         run: |
           set -o pipefail
           just bench-infra 2>&1 | tee -a "$RUNNER_TEMP/bench.log"
+      # Three outcomes that must not read alike: a bench step did not finish,
+      # Criterion had no earlier results to compare with, and a comparison that
+      # found nothing slower. Only a complete run may say plain "none".
+      #
+      # Six lines of context before the verdict reach the benchmark's name. A name
+      # longer than 23 characters is printed on a line of its own, and a benchmark
+      # with a throughput prints `thrpt:`, `change:`, and a `time:` and `thrpt:`
+      # line under it before the verdict: name, `time:`, `thrpt:`, `change:`,
+      # `time:`, `thrpt:`, verdict.
       - name: Report the benches Criterion judges slower
         if: always()
+        env:
+          BENCH_OUTCOME: ${{ steps.bench.outcome }}
+          INFRA_OUTCOME: ${{ steps.bench-infra.outcome }}
         run: |
+          none="none"
+          if [ "$BENCH_OUTCOME" != "success" ] || [ "$INFRA_OUTCOME" != "success" ]; then
+            none="none in the output that was produced"
+          fi
           {
             echo "### Benches slower than the previous run"
             echo
-            echo "Indicative only: runners differ. Run a flagged bench again before believing it."
-            echo
-            echo '```'
-            grep -B4 "Performance has regressed" "$RUNNER_TEMP/bench.log" || echo "none"
-            echo '```'
+            if [ ! -f "$RUNNER_TEMP/bench.log" ]; then
+              echo "No benchmark output was produced (just bench: $BENCH_OUTCOME, just bench-infra: $INFRA_OUTCOME), so no comparison was made."
+            else
+              if [ "$none" != "none" ]; then
+                echo "A bench step did not finish (just bench: $BENCH_OUTCOME, just bench-infra: $INFRA_OUTCOME). What follows covers only the output it produced."
+                echo
+              fi
+              if grep -q "change:" "$RUNNER_TEMP/bench.log"; then
+                echo "Indicative only: runners differ. Run a flagged bench again before believing it."
+                echo
+                echo '```'
+                grep -B6 "Performance has regressed" "$RUNNER_TEMP/bench.log" || echo "$none"
+                echo '```'
+              else
+                echo "Criterion printed no comparison: this is the first run, or the last run's artifact had expired."
+              fi
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload Criterion reports
         if: always()

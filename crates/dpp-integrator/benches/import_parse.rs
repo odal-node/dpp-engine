@@ -40,6 +40,7 @@ fn cell(column: &str, n: usize) -> String {
     }
 }
 
+/// The importable textile columns, in the template's order.
 fn column_names() -> Vec<&'static str> {
     columns_for(PRODUCT_GROUP)
         .expect("textile is importable")
@@ -48,10 +49,12 @@ fn column_names() -> Vec<&'static str> {
         .collect()
 }
 
+/// `value` as one quoted CSV field.
 fn csv_field(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+/// A CSV upload of `rows` textile rows under the template's header.
 fn csv_bytes(rows: usize) -> Vec<u8> {
     let columns = column_names();
     let mut out = template_header(&columns_for(PRODUCT_GROUP).expect("importable"));
@@ -78,6 +81,7 @@ fn letters(mut index: usize) -> String {
     String::from_utf8(out).expect("ASCII")
 }
 
+/// `value` escaped for use as XML text.
 fn xml_text(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -144,6 +148,7 @@ fn xlsx_bytes(rows: usize) -> Vec<u8> {
     buf
 }
 
+/// Row `n` as the parsers return it: only the columns that have a value.
 fn sample_row(n: usize) -> HashMap<String, String> {
     column_names()
         .into_iter()
@@ -152,14 +157,21 @@ fn sample_row(n: usize) -> HashMap<String, String> {
         .collect()
 }
 
+/// Parsing a CSV and an XLSX upload at several row counts.
 fn parsing(c: &mut Criterion) {
     let mut csv = c.benchmark_group("csv_parse");
     for rows in [10_usize, 1_000, 10_000] {
         let bytes = csv_bytes(rows);
+        let parsed = parse_csv(&bytes).expect("the fixture parses");
         assert_eq!(
-            parse_csv(&bytes).expect("the fixture parses").len(),
+            parsed.len(),
             rows,
             "every CSV fixture row should survive parsing"
+        );
+        assert_eq!(
+            parsed[0].get("productName"),
+            Some(&cell("productName", 0)),
+            "the first CSV row should carry its cells, not just exist"
         );
         csv.throughput(Throughput::Elements(rows as u64));
         csv.bench_with_input(BenchmarkId::from_parameter(rows), &bytes, |b, bytes| {
@@ -173,10 +185,16 @@ fn parsing(c: &mut Criterion) {
     let mut xlsx = c.benchmark_group("xlsx_parse");
     for rows in [10_usize, 1_000] {
         let bytes = xlsx_bytes(rows);
+        let parsed = parse_xlsx(&bytes).expect("the fixture parses");
         assert_eq!(
-            parse_xlsx(&bytes).expect("the fixture parses").len(),
+            parsed.len(),
             rows,
             "every XLSX fixture row should survive parsing"
+        );
+        assert_eq!(
+            parsed[0].get("productName"),
+            Some(&cell("productName", 0)),
+            "the first XLSX row should carry its cells, not just exist"
         );
         xlsx.throughput(Throughput::Elements(rows as u64));
         xlsx.bench_with_input(BenchmarkId::from_parameter(rows), &bytes, |b, bytes| {
@@ -186,6 +204,8 @@ fn parsing(c: &mut Criterion) {
     xlsx.finish();
 }
 
+/// Validating one row that passes and one that fails, and the CPU side of a
+/// 1000-row import.
 fn validation(c: &mut Criterion) {
     let valid = sample_row(0);
     assert!(

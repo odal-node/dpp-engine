@@ -17,6 +17,9 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use dpp_common::idempotency::{keyed_routes, policy_for};
 use dpp_common::url_guard::{ip_is_disallowed, validate_public_https_url, validate_webhook_url};
 
+/// The outbound URL guard: webhook targets that are accepted and ones that are
+/// refused, the private-range switch, the public-HTTPS check, and the address
+/// check on its own.
 fn url_guard(c: &mut Criterion) {
     // Accepted and refused are different paths, and a refusal returns early. Each
     // case is checked to be the one its name says.
@@ -54,6 +57,10 @@ fn url_guard(c: &mut Criterion) {
         webhook.bench_function(*label, |b| b.iter(|| validate_webhook_url(url, false)));
     }
     // A self-hoster delivering to their own network skips the range guard.
+    assert!(
+        validate_webhook_url("http://10.0.0.5/hook", true).is_ok(),
+        "allow_private should accept a private-network URL"
+    );
     webhook.bench_function("allow_private", |b| {
         b.iter(|| validate_webhook_url("http://10.0.0.5/hook", true));
     });

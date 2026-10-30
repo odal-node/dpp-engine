@@ -60,6 +60,7 @@ fn battery() -> Value {
     })
 }
 
+/// Create a draft and return its id.
 async fn create(client: &TestClient) -> String {
     let resp = client.post_json("/api/v1/dpp", battery()).await;
     assert_eq!(resp.status(), 201, "create");
@@ -67,6 +68,7 @@ async fn create(client: &TestClient) -> String {
     created["id"].as_str().expect("an id").to_owned()
 }
 
+/// Publish the draft `id`.
 async fn publish(client: &TestClient, id: &str) {
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/publish"), json!({}))
@@ -74,11 +76,14 @@ async fn publish(client: &TestClient, id: &str) {
     assert_eq!(resp.status(), 200, "publish");
 }
 
+/// GET `path` and require a 200.
 async fn get_ok(client: &TestClient, path: &str) {
     let resp = client.get(path).await;
     assert_eq!(resp.status(), 200, "GET {path}");
 }
 
+/// The list at two table sizes, then create, publish, and the two reads, against
+/// one vault and one database.
 fn publish_serve(c: &mut Criterion) {
     let rt = Runtime::new().expect("a tokio runtime");
     let pg = rt.block_on(start_postgres());

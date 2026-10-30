@@ -21,6 +21,10 @@ const BASE_URL: &str = "https://id.odal-node.io";
 /// would skip the most expensive step.
 const CARRIER: &str = "https://id.odal-node.io/01/09506000134352/21/0190a9f01234abcd5678";
 
+/// Public fields in the unmodelled view, one row each in the remainder table.
+const UNMODELLED_FIELDS: usize = 50;
+
+/// The public view of a textile passport.
 fn textile_view() -> Value {
     json!({
         "productName": "Organic Cotton T-Shirt",
@@ -42,6 +46,7 @@ fn textile_view() -> Value {
     })
 }
 
+/// The public view of a battery passport.
 fn battery_view() -> Value {
     json!({
         "productName": "Traction Battery Pack",
@@ -86,14 +91,17 @@ fn unmodelled_view(fields: usize) -> Value {
     })
 }
 
+/// The page as the live read serves it.
 fn render(view: &Value) -> String {
     render_page(DPP_ID, view, BASE_URL, SnapshotNotice::Live)
 }
 
+/// The public page for three product groups, with and without its QR code, as a
+/// continuity snapshot, and the QR code alone.
 fn render_benchmarks(c: &mut Criterion) {
     let textile = textile_view();
     let battery = battery_view();
-    let unmodelled = unmodelled_view(50);
+    let unmodelled = unmodelled_view(UNMODELLED_FIELDS);
 
     // Each fixture has to reach the part of the page its name says. A figure for a
     // page with no QR code, or whose remainder table is empty, would still print.
@@ -114,9 +122,16 @@ fn render_benchmarks(c: &mut Criterion) {
     );
     let unmodelled_html = render(&unmodelled);
     assert!(
-        unmodelled_html.contains("Further Public Data") && unmodelled_html.contains("value 49"),
-        "every public field of an unmodelled group should reach the remainder table"
+        unmodelled_html.contains("Further Public Data"),
+        "an unmodelled group should get a remainder table"
     );
+    // The whole cell, so `value 4` is not found inside `value 49`.
+    for i in 0..UNMODELLED_FIELDS {
+        assert!(
+            unmodelled_html.contains(&format!("<td>value {i}</td>")),
+            "public field {i} should reach the remainder table"
+        );
+    }
 
     let mut pages = c.benchmark_group("render_page");
     for (label, view, html) in [
@@ -154,8 +169,15 @@ fn render_benchmarks(c: &mut Criterion) {
     let as_of = Utc.with_ymd_and_hms(2026, 7, 19, 12, 30, 0).unwrap();
     let valid_until = Utc.with_ymd_and_hms(2026, 7, 26, 12, 30, 0).unwrap();
     let snapshot = SnapshotNotice::Snapshot { as_of, valid_until };
+    // The element, not the class name: the page's stylesheet defines `.snapshot-note`
+    // on every render, banner or not.
+    let banner = r#"class="snapshot-note""#;
     assert!(
-        render_page(DPP_ID, &textile, BASE_URL, snapshot).contains("snapshot-note"),
+        !textile_html.contains(banner),
+        "a live render carries no banner"
+    );
+    assert!(
+        render_page(DPP_ID, &textile, BASE_URL, snapshot).contains(banner),
         "the snapshot render should carry its banner"
     );
     c.bench_function("render_page_snapshot_textile", |b| {

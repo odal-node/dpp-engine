@@ -56,6 +56,7 @@ const API_KEYS: u64 = 100;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+/// The frozen document, read as the current `Passport`.
 fn fixture() -> Passport {
     serde_json::from_str(DOC).expect("the frozen document reads as a current passport")
 }
@@ -98,6 +99,7 @@ async fn grow(repo: &Arc<PgPassportRepo>, have: &mut u64, want: u64) {
     while inserts.join_next().await.is_some() {}
 }
 
+/// A new audit entry for `passport_id`; the store chains it to the one before.
 fn audit_entry(passport_id: &str) -> PassportAuditEntry {
     PassportAuditEntry {
         id: Uuid::now_v7(),
@@ -114,6 +116,7 @@ fn audit_entry(passport_id: &str) -> PassportAuditEntry {
     }
 }
 
+/// An active admin key whose prefix is `odal_sk_` and `n`.
 fn api_key(n: u64) -> ApiKeyRecord {
     ApiKeyRecord {
         key: ApiKey {
@@ -130,6 +133,8 @@ fn api_key(n: u64) -> ApiKeyRecord {
     }
 }
 
+/// The passport repository at three table sizes and as point operations, then the
+/// audit trail and the API-key lookup.
 fn pg_repo(c: &mut Criterion) {
     let rt = Runtime::new().expect("a tokio runtime");
     let pg = rt.block_on(start_pg());
@@ -145,7 +150,18 @@ fn pg_repo(c: &mut Criterion) {
     // A benchmark that times a refusal or an empty page still prints a figure, so
     // each fixture is checked to reach the path it is named for.
 
-    let mut have = 0;
+    // One passport that is not a draft, so the status filter has something to leave
+    // out. It also serves the published read below.
+    let published = rt
+        .block_on(passports.create(published_doc()))
+        .expect("store a published passport");
+    assert!(
+        rt.block_on(passports.find_published_by_id(published.id))
+            .expect("read it back")
+            .is_some(),
+        "the published passport is found as published"
+    );
+    let mut have = 1;
     for size in SIZES {
         rt.block_on(grow(&passports, &mut have, size));
 
@@ -173,6 +189,12 @@ fn pg_repo(c: &mut Criterion) {
             rt.block_on(passports.count(None, None)).expect("count"),
             have,
             "the table holds what was inserted"
+        );
+        assert_eq!(
+            rt.block_on(passports.count(Some(PassportStatus::Draft), None))
+                .expect("count"),
+            have - 1,
+            "the draft filter leaves the published passport out"
         );
         let page = rt
             .block_on(passports.list(None, None, None, 20, 0))
@@ -233,15 +255,6 @@ fn pg_repo(c: &mut Criterion) {
 
     // --- Point operations -------------------------------------------------------
 
-    let published = rt
-        .block_on(passports.create(published_doc()))
-        .expect("store a published passport");
-    assert!(
-        rt.block_on(passports.find_published_by_id(published.id))
-            .expect("read it back")
-            .is_some(),
-        "the published passport is found as published"
-    );
     let stored = rt
         .block_on(passports.create(draft()))
         .expect("store a draft");
@@ -255,12 +268,17 @@ fn pg_repo(c: &mut Criterion) {
         );
     });
     point.bench_function("find_by_id", |b| {
-        b.iter(|| rt.block_on(passports.find_by_id(stored.id)).expect("read"));
+        b.iter(|| {
+            rt.block_on(passports.find_by_id(stored.id))
+                .expect("read")
+                .expect("the passport is stored")
+        });
     });
     point.bench_function("find_published_by_id", |b| {
         b.iter(|| {
             rt.block_on(passports.find_published_by_id(published.id))
                 .expect("read")
+                .expect("the passport is published")
         });
     });
     point.bench_function("update", |b| {
