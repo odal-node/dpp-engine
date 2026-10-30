@@ -1,6 +1,6 @@
 //! The axum middleware that claims, replays and refuses.
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 
 use axum::{
     body::{Body, to_bytes},
@@ -13,8 +13,8 @@ use axum::{
 use super::{
     policy::{RoutePolicy, policy_for},
     store::{
-        Claim, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyStore, RequestKey, StoredResponse,
-        fingerprint,
+        Claim, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore, RequestKey,
+        StoredResponse, fingerprint,
     },
 };
 use crate::http_problem::Problem;
@@ -34,6 +34,40 @@ const MAX_BUFFER: usize = 9 * 1024 * 1024;
 /// token — a UUID is 36 characters — and the column is the primary key, so an
 /// unbounded one is an index-bloat vector.
 const MAX_KEY_LEN: usize = 255;
+
+/// Longest the middleware waits on one call to the store.
+///
+/// The store is a port, and nothing in the port bounds how long a call takes. A
+/// database with no free connection, or a network gone quiet, would otherwise
+/// hold every keyed request, and anything the request holds, for as long as it
+/// stayed silent. The import route's slot is held through the claim, so one
+/// stuck store would keep other imports out.
+///
+/// Well past a single-row upsert, so it fires only when something is wrong, and
+/// well inside [`DEFAULT_LEASE`]. A call given up on may still have committed: a
+/// claim leaves its key `in_flight` until the lease runs out, so a retry meets
+/// `Claim::InFlight` for that long. That is the window a store error already
+/// leaves, not a new one.
+#[cfg(not(test))]
+const STORE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Short enough for a test to wait out.
+#[cfg(test)]
+const STORE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Await one call to the store, treating one that does not answer within
+/// [`STORE_TIMEOUT`] as the store being unavailable, which every caller below
+/// already handles.
+async fn bounded<T>(
+    call: impl Future<Output = Result<T, IdempotencyError>>,
+) -> Result<T, IdempotencyError> {
+    tokio::time::timeout(STORE_TIMEOUT, call)
+        .await
+        .unwrap_or_else(|_| {
+            Err(IdempotencyError::Unavailable(format!(
+                "no answer within {STORE_TIMEOUT:?}"
+            )))
+        })
+}
 
 /// Resolves the calling principal from a request.
 ///
@@ -146,10 +180,12 @@ pub async fn idempotency_middleware(
     };
     let fp = fingerprint(&bytes);
 
-    match state
-        .store
-        .claim(&key, &fp, DEFAULT_LEASE, DEFAULT_RETENTION)
-        .await
+    match bounded(
+        state
+            .store
+            .claim(&key, &fp, DEFAULT_LEASE, DEFAULT_RETENTION),
+    )
+    .await
     {
         Ok(Claim::Replay(stored)) => return replay(&stored),
         Ok(Claim::InFlight) => {
@@ -211,7 +247,7 @@ async fn record_outcome(
     // deterministic rejection of this exact body — replaying it is correct and
     // costs nothing.
     if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
-        if let Err(e) = state.store.release(key).await {
+        if let Err(e) = bounded(state.store.release(key)).await {
             tracing::warn!(error = %e, "could not release an idempotency claim after a 5xx or 429");
         }
         return response;
@@ -230,7 +266,7 @@ async fn record_outcome(
             // The body is consumed and cannot be recovered. Release rather than
             // record — better a re-executed retry than a replayed empty body.
             tracing::warn!(error = %e, "response too large to record for replay; releasing the claim");
-            if let Err(e) = state.store.release(key).await {
+            if let Err(e) = bounded(state.store.release(key)).await {
                 tracing::warn!(error = %e, "could not release an idempotency claim");
             }
             return Response::from_parts(parts, Body::empty());
@@ -249,7 +285,7 @@ async fn record_outcome(
     // transaction, which the per-operation repository ports do not permit. It
     // is today's behaviour, so it is never a regression — but it is a warning,
     // not a debug line, because it is the one case a duplicate can still occur.
-    if let Err(e) = state.store.complete(key, &stored).await {
+    if let Err(e) = bounded(state.store.complete(key, &stored)).await {
         tracing::warn!(
             error = %e,
             "the write committed but its idempotency record did not; a retry may duplicate"
@@ -475,5 +511,164 @@ mod tests {
         let before = types.len();
         types.dedup();
         assert_eq!(before, types.len(), "two refusals share a problem type URI");
+    }
+
+    /// A store whose chosen calls never return, as a database that has stopped
+    /// answering does. The others succeed.
+    #[derive(Default)]
+    struct StuckStore {
+        claim: bool,
+        complete: bool,
+        release: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl IdempotencyStore for StuckStore {
+        async fn claim(
+            &self,
+            _: &RequestKey,
+            _: &str,
+            _: std::time::Duration,
+            _: std::time::Duration,
+        ) -> Result<Claim, IdempotencyError> {
+            if self.claim {
+                std::future::pending::<()>().await;
+            }
+            Ok(Claim::Claimed)
+        }
+        async fn complete(
+            &self,
+            _: &RequestKey,
+            _: &StoredResponse,
+        ) -> Result<(), IdempotencyError> {
+            if self.complete {
+                std::future::pending::<()>().await;
+            }
+            Ok(())
+        }
+        async fn release(&self, _: &RequestKey) -> Result<(), IdempotencyError> {
+            if self.release {
+                std::future::pending::<()>().await;
+            }
+            Ok(())
+        }
+        async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
+            Ok(0)
+        }
+    }
+
+    /// The keyed create, answering `status`, behind the middleware over `store`,
+    /// and how many times its handler ran.
+    fn keyed_app(
+        store: StuckStore,
+        status: StatusCode,
+    ) -> (axum::Router, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::routing::post;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let ran = Arc::new(AtomicUsize::new(0));
+        let counted = ran.clone();
+        let inner = axum::Router::new()
+            .route(
+                "/dpp",
+                post(move || {
+                    let counted = counted.clone();
+                    async move {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        status
+                    }
+                }),
+            )
+            .route_layer(axum::middleware::from_fn_with_state(
+                IdempotencyLayerState {
+                    store: Arc::new(store),
+                    principal: Arc::new(|_| Some("operator@example.com".to_owned())),
+                },
+                idempotency_middleware,
+            ));
+        (
+            axum::Router::new().nest("/vault", axum::Router::new().nest("/api/v1", inner)),
+            ran,
+        )
+    }
+
+    /// Send one keyed request, failing the test rather than hanging it if the
+    /// middleware never answers.
+    async fn send_keyed(app: axum::Router) -> Response {
+        use tower::ServiceExt;
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            app.oneshot(
+                axum::extract::Request::post("/vault/api/v1/dpp")
+                    .header(IDEMPOTENCY_KEY_HEADER, "k-1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("the middleware must give up on a store that never answers")
+        .unwrap()
+    }
+
+    /// 🚨 A claim the store never answers refuses the request, as an unreachable
+    /// store does, instead of holding it for as long as the database stays
+    /// silent. The request is not run: nothing recorded it.
+    #[tokio::test]
+    async fn a_claim_the_store_never_answers_is_refused_with_503() {
+        let (app, ran) = keyed_app(
+            StuckStore {
+                claim: true,
+                ..Default::default()
+            },
+            StatusCode::CREATED,
+        );
+
+        let response = send_keyed(app).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// 🚨 The handler has already committed by the time its outcome is recorded,
+    /// so a store that never takes the record must not hold the caller's
+    /// response: the caller would time out and retry a request that succeeded.
+    /// The response goes out unchanged, as it does when recording fails.
+    #[tokio::test]
+    async fn an_outcome_the_store_never_records_does_not_hold_the_response() {
+        let (app, ran) = keyed_app(
+            StuckStore {
+                complete: true,
+                ..Default::default()
+            },
+            StatusCode::CREATED,
+        );
+
+        let response = send_keyed(app).await;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// The same for the release a `5xx` or a `429` makes.
+    #[tokio::test]
+    async fn a_release_the_store_never_answers_does_not_hold_the_response() {
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            let (app, ran) = keyed_app(
+                StuckStore {
+                    release: true,
+                    ..Default::default()
+                },
+                status,
+            );
+
+            let response = send_keyed(app).await;
+
+            assert_eq!(response.status(), status);
+            assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
     }
 }
