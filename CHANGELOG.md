@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-30
+
 ### Breaking
 
 - **`dpp-core` 0.22.0: a key is named by its own thumbprint, and a token
@@ -1094,6 +1096,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   cited without its revision, a row nothing cites, and a row without a dated
   status. It proves a citation has a status somebody read, not that the status
   is current, so re-reading the register is now a step of the release checklist.
+
+- **No tool had read the workflows, and two kinds of finding sat in all of
+  them.** `workflow-lint.yml` now runs zizmor (security) and actionlint
+  (correctness) on every pull request, on `main`, weekly and on demand, each
+  downloaded at a pinned version and checked against a recorded SHA-256. What
+  they found is fixed: every `actions/checkout` step kept the job's token in the
+  checkout, and none needs it, so each now sets `persist-credentials: false`;
+  `release.yml` granted `packages: write` to the whole workflow and now grants it
+  to its one publishing job; `dtolnay/rust-toolchain` was pinned to a commit on a
+  branch that has diverged from upstream's `master`, and `Swatinem/rust-cache` to
+  a commit one past its last release, so the first now pins `master` and the
+  second the release, and each version comment beside a pin names the exact
+  release. Dependabot waits seven days before proposing an update. No job's
+  effective permissions widened.
+
+### Known limitations
+
+- **Two transfers started at the same moment on one passport keep only one in
+  its chain.** `initiate_transfer` reads the transfer chain without a lock and
+  writes the whole chain back, so two initiations that overlap both pass the
+  check for a pending transfer, both return a `TransferRecord`, and both write
+  an audit entry and a `dpp.passport.transferred` event, while the chain holds
+  only the second. Transfers initiated one at a time are not affected. The fix
+  is scheduled for 0.16.0 (#535).
 
 ## [0.14.0] - 2026-09-24
 

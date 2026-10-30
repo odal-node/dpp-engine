@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Odal Node API",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "description": "The HTTP API of a self-hosted Odal Node: create, validate, sign, publish and\nserve EU Digital Product Passports. Pre-production: the API can still change\nbetween minor versions.\n\nTwo deployables serve it:\n\n- **Node** (`http://localhost:8001`): one process with three route groups,\n  `/vault/*` (passport lifecycle), `/identity/*` (`did:web` document) and\n  `/integrator/*` (CSV/XLSX import).\n- **Resolver** (`http://localhost:8003`): the public, unauthenticated reader\n  that GS1 Digital Link scans land on.\n\nAuthenticated vault routes are under `/vault/api/v1/`. Send an API key as\n`Authorization: Bearer odal_sk_...`; each key has the scope `read`, `write`\nor `admin`. The local admin credential (HTTP Basic) exists to mint the first\nkey. Errors are RFC 9457 problem documents.\n\nRegulations implemented: Regulation (EU) 2024/1781 (ESPR) and Regulation\n(EU) 2023/1542 (batteries). Identity follows W3C DID Core 1.0 and the W3C\nVerifiable Credentials Data Model 2.0.\n",
     "contact": {
       "name": "Odal Support",
