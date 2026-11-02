@@ -162,8 +162,8 @@ test-seal-db:
 # default-feature pass has to come back.
 #
 # Features are named per package rather than via `--all-features`, which would
-# also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept out of
-# server-side builds on purpose — see cli/Cargo.toml). That is not a gap this
+# also enable `cli/desktop` (pulls in rfd, kept out of server-side builds on
+# purpose — see cli/Cargo.toml). That is not a gap this
 # closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting `tests/sdk_abi.rs`
 # needs no wasm target, only running it does, and the integration tiers run it.
 #
