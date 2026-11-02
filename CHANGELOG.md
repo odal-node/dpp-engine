@@ -10,6 +10,68 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **`dpp-core` 0.23.0: a registration refuses an operator identifier with no
+  EN 18219 clause 6 route.** *(Breaking for an operator whose primary identifier
+  is a VAT or EORI number.)* Core now accepts an operator or facility identifier
+  on a registration only under `lei`, `duns` or `gln`: an EU-wide VAT number has
+  no ICD, none was found for an EORI number, and a DID is scheme 8 only with a
+  credential a register has issued. The adapter fails closed on that check as on
+  every other, so each attempt at such a registration is refused before it is
+  sent, and the row backs off and counts toward the stalled rollup. Facilities
+  are added under a GLN and are not affected.
+
+  **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
+  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A draft stamped before
+  the change, and a registration already queued, keep the identifier they were
+  given.
+
+- **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
+  placing date, and from 18 August 2027 with its due diligence declaration.**
+  Core's content table answers the due diligence report (Annex XIII point 1(d))
+  as of the battery's facts: from 18 August 2027 it is owed unless Art. 47
+  exempts the battery. So the publish gate refuses such a battery that states no
+  `placedOnMarketDate`, on the envelope or in `productGroupData`, unless it is
+  second-life, and from that date one that does not carry
+  `dueDiligenceOperatorScope` (battery schema 2.10.0). `PublishReadiness` says the
+  count of mandatory data points grows by one from that date, and a test holds
+  the sentence to the gate.
+
+  **Migration:** send `placedOnMarketDate` on create, or in the import column of
+  that name. The battery CSV templates have no column for `dueDiligenceUrl` or
+  `dueDiligenceOperatorScope` yet, so a battery placed from 18 August 2027 cannot
+  be imported into a passport that publishes.
+
+- **`dpp-core` 0.23.0: an anonymous reader no longer receives a critical raw
+  material's weight or country of origin** from a battery passport written at
+  schema 2.9.0 or later, or an electronics passport written at 1.5.0 or later.
+  Core labels both fields `restricted` from those versions. A passport written
+  against an earlier version keeps its classes and the bytes its signatures
+  cover; a new one is written against the new version.
+
+### Fixed
+
+- **A transfer notification is sent under a stable key, and only an answer that
+  says the registry took it closes it.** `dpp-core` 0.23.0's registry port
+  answers a transfer notification with a `TransferReport`, whether the registry
+  took it, rather than a record's status. The notification now carries the
+  transfer's own identifier as its `Idempotency-Key`, which is what makes sending
+  it again the same notification: a reply that is still processing, or a state
+  this node has no name for, keeps it open and sends it again, and a conflict
+  naming the replayed key is read as already held and closes it. That answer says
+  the registry holds the notification, not that it applied the handover, and no
+  route to ask has been seen. A refusal is recorded with the registry's reasons.
+  Before, a reply reporting the record suspended or deactivated closed the row as
+  notified. The transfer route's reply is unobserved, so only `registered` is read
+  as an acceptance.
+
+- **The resolver's JSON-LD defines a term for every product group field.** It
+  carries `dpp-core` 0.23.0's context, so a JSON-LD processor no longer drops a
+  product group's data when it expands the document. The context names withheld
+  fields too, as terms; their values are not served, and the tests that scan the
+  body for a withheld field now read it without its `@context`.
+
 ## [0.15.0] - 2026-10-30
 
 ### Breaking

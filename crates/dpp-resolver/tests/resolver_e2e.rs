@@ -986,7 +986,13 @@ async fn a_restricted_product_group_field_is_absent_from_the_public_view() {
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
         .expect("read body");
-    let body = String::from_utf8(body.to_vec()).expect("utf-8");
+    // The inline `@context` defines a term for every field the product group can
+    // carry, served or withheld, so the scan reads the document without it.
+    let mut doc: serde_json::Value = serde_json::from_slice(&body).expect("a JSON-LD body");
+    if let Some(object) = doc.as_object_mut() {
+        object.remove("@context");
+    }
+    let body = doc.to_string();
 
     assert!(
         !body.contains("cathodeMaterial"),

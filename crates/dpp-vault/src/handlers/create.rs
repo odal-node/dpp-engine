@@ -472,6 +472,7 @@ mod schema_validation {
             usage_history: None,
             voltage_temperature_range: None,
             waste_battery_information: None,
+            due_diligence_operator_scope: None,
         }))
     }
 

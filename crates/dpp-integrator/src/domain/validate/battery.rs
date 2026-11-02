@@ -276,6 +276,10 @@ pub fn validate_battery_row(
         // for any category, and a column an operator cannot answer is a column
         // they will fill with something.
         placed_on_market_date: None,
+        // No column yet: core reads the declaration only for a battery placed on
+        // the market from 18 August 2027, and refuses that battery's first
+        // publish until it is declared.
+        due_diligence_operator_scope: None,
         carbon_footprint_class_ruleset_id: None,
         carbon_footprint_class_ruleset_version: None,
         recycled_content_reporting_year: None,

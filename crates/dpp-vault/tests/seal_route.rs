@@ -421,6 +421,7 @@ async fn a_completed_handover_says_responsibility_may_have_moved() {
         postal_address: None,
         electronic_address: None,
         country: "DE".to_owned(),
+        identifier: None,
     };
     let from = operator("did:web:acme.example", "Acme GmbH");
     let mut chain = TransferChain::new(id, from.clone());

@@ -39,7 +39,7 @@ use dpp_domain::{
     ports::passport_repo::PassportRepository,
     ports::registry_sync::{
         RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryRecord,
-        RegistrySyncPort, SubmissionAcknowledgement, SubmissionReport,
+        RegistrySyncPort, SubmissionAcknowledgement, SubmissionReport, TransferReport,
     },
     product_group::{ProductGroup, ProductGroupData},
     status::PassportStatus,
@@ -123,6 +123,7 @@ fn draft_passport() -> Passport {
             name: "Outbox Plant".into(),
             country: "DE".into(),
             address: None,
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,
@@ -249,7 +250,7 @@ impl RegistrySyncPort for MockPort {
         &self,
         _record: &dpp_domain::transfer::TransferRecord,
         _registry_id: &str,
-    ) -> Result<RegistryRecord, DppError> {
+    ) -> Result<TransferReport, DppError> {
         unimplemented!("not exercised")
     }
 }
