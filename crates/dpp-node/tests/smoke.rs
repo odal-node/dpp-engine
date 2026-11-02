@@ -637,7 +637,7 @@ async fn route_inventory_matches_assembled_router() {
     let operator_id_resp = client
         .post(format!("{base}/vault/api/v1/operator-identifiers"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .json(&serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }))
         .send()
         .await
         .expect("operator-identifier seed request failed");
@@ -922,7 +922,7 @@ async fn second_life_successor_verifies_against_pinned_parent() {
     let op_id_resp = client
         .post(format!("{base}/vault/api/v1/operator-identifiers"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .json(&serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }))
         .send()
         .await
         .expect("operator-identifier seed request failed");
@@ -1243,7 +1243,7 @@ async fn the_quick_start_battery_sample_creates_and_publishes() {
     let operator_id = client
         .post(format!("{base}/vault/api/v1/operator-identifiers"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .json(&serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }))
         .send()
         .await
         .expect("operator-identifier request failed");
@@ -2336,7 +2336,7 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
     let resp = client
         .post(format!("{base}/vault/api/v1/operator-identifiers"))
         .bearer_auth(token)
-        .json(&serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }))
+        .json(&serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }))
         .send()
         .await
         .expect("operator-identifier seed request failed");

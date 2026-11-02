@@ -134,3 +134,156 @@ async fn duplicate_facility_returns_422_not_500() {
     let dup = client.post_json("/api/v1/facilities", body).await;
     assert_eq!(dup.status(), 422, "a duplicate facility must return 422");
 }
+
+/// 🚨 A VAT number is stamped as the operator identifier, and is refused as the
+/// identifier of a registration. dpp-core accepts only a scheme with an EN 18219
+/// clause 6 route there (an LEI, a D-U-N-S number or a GLN), and a queued
+/// registration is fixed, so one built from a VAT number would be refused on
+/// every attempt. Publish says so instead, where the operator can act on it,
+/// and queues nothing.
+///
+/// A product group with no live registration duty publishes under the same
+/// identifier, with no registration, as it does when the identity is missing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_vat_primary_identifier_is_refused_at_publish_where_a_registration_is_owed() {
+    use dpp_dal::pg::PgRegistrySyncRepo;
+    use dpp_domain::passport::PassportId;
+    use dpp_types::RegistrySyncOutbox;
+
+    let pg = start_postgres().await;
+    seed_operator_config(&pg.dal).await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000001");
+    let client = TestClient::new(&vault_url, &token);
+    let outbox = PgRegistrySyncRepo::new(pg.dal.clone());
+
+    let resp = client
+        .post_json(
+            "/api/v1/facilities",
+            serde_json::json!({
+                "name": "Default Plant",
+                "identifierScheme": "gln",
+                "identifierValue": "4012345000009",
+                "country": "DE",
+                "isDefault": true
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let resp = client
+        .post_json(
+            "/api/v1/operator-identifiers",
+            serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    // A battery owes a registration.
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            serde_json::json!({
+                "productName": "Portable Cell",
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                    "batteryChemistry": "LFP",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 3.7,
+                    "nominalCapacityAh": 2.5,
+                    "co2ePerUnitKg": 1.8
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let battery = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .expect("created passport has an id")
+        .to_owned();
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{battery}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "a registration it cannot carry is refused"
+    );
+    let body = resp.text().await.unwrap_or_default();
+    assert!(
+        body.contains("operator identifier cannot be registered")
+            && body.contains("'vat'")
+            && body.contains("LEI"),
+        "the refusal names the scheme and the fix: {body}"
+    );
+    let after: serde_json::Value = client
+        .get(&format!("/api/v1/dpp/{battery}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["status"], "draft", "a refused publish leaves a draft");
+    let battery_id = PassportId(uuid::Uuid::parse_str(&battery).unwrap());
+    assert!(
+        outbox.pending_for(battery_id).await.unwrap().is_none(),
+        "nothing is queued for a registration the adapter would refuse"
+    );
+
+    // A textile passport owes none yet, so it publishes under the same identifier.
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            serde_json::json!({
+                "productName": "Organic Cotton Tee",
+                "manufacturer": { "name": "Example Textiles SpA", "address": "Milano, IT" },
+                "materials": [{"name": "Cotton", "weightKg": 0.22}],
+                "productGroupData": {
+                    "productGroup": "textile",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134369" },
+                    "carbonFootprintKgCo2e": 4.2,
+                    "careInstructions": "Machine wash cold, line dry",
+                    "chemicalComplianceStandard": "OEKO-TEX 100",
+                    "countryOfOrigin": "IT",
+                    "countryOfRawMaterialOrigin": "IN",
+                    "disassemblyInstructions": "Remove label and neck tape before recycling",
+                    "endOfLifeInstructions": "Return to a textile collection point",
+                    "expectedWashCycles": 50,
+                    "fibreComposition": [{"fibre": "cotton", "pct": 100}],
+                    "microplasticSheddingMgPerWash": 12,
+                    "productWeightGrams": 220,
+                    "recyclabilityClass": "B",
+                    "recycledContentPct": 30,
+                    "sparePartsAvailable": false,
+                    "waterUseLitres": 1800
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201, "a textile passport is created");
+    let textile = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .expect("created passport has an id")
+        .to_owned();
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{textile}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "no registration is owed, so none is refused: {}",
+        resp.text().await.unwrap_or_default()
+    );
+    let textile_id = PassportId(uuid::Uuid::parse_str(&textile).unwrap());
+    assert!(
+        outbox.pending_for(textile_id).await.unwrap().is_none(),
+        "and none is queued"
+    );
+}

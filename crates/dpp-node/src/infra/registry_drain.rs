@@ -38,7 +38,8 @@ pub struct DrainStats {
     pub rejected: u32,
     /// Rows that failed transiently and were backed off for retry.
     pub retried: u32,
-    /// Rows dropped from draining because their payload was missing/corrupt.
+    /// Rows dropped from draining because their payload was missing, corrupt, or
+    /// refused by the adapter's own checks before it was sent.
     pub skipped: u32,
 }
 
@@ -180,6 +181,17 @@ async fn apply_acknowledgement(
                 .mark_attempt_failed(pid, format!("unrecognised acknowledgement: {other:?}"))
                 .await;
             stats.retried += 1;
+        }
+        // The adapter's own checks refused the payload before sending it. The
+        // payload was fixed when the passport was published, so sending it again
+        // cannot change that answer: it is rejected with the reason, as a corrupt
+        // payload is. Every failure to reach or hear from the registry arrives as
+        // another variant and is retried below.
+        Err(dpp_domain::DppError::Validation(e)) => {
+            let _ = outbox
+                .mark_rejected(pid, format!("refused before sending: {e}"))
+                .await;
+            stats.skipped += 1;
         }
         Err(e) => {
             // Transient/unreachable — back off and retry. The row stays.

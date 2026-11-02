@@ -578,8 +578,11 @@ pub async fn seed_complete_operator(dal: &PgDal) {
         STANDALONE_OPERATOR_ID,
         OperatorIdentifier {
             id: uuid::Uuid::now_v7(),
-            scheme: "vat".into(),
-            value: "DE123456789".into(),
+            // An LEI: a registration carries only a scheme with an EN 18219
+            // clause 6 route, so a VAT number here would refuse every publish
+            // that owes one.
+            scheme: "lei".into(),
+            value: "529900T8BM49AURSDO55".into(),
             label: None,
             is_primary: true,
             created_at: chrono::Utc::now(),

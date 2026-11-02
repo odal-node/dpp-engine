@@ -39,10 +39,12 @@ async fn add_default_facility(client: &TestClient) {
         )
         .await;
     assert_eq!(resp.status(), 201);
+    // An LEI: a battery owes a registration, which carries only a scheme with an
+    // EN 18219 clause 6 route.
     let resp = client
         .post_json(
             "/api/v1/operator-identifiers",
-            json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }),
+            json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }),
         )
         .await;
     assert_eq!(resp.status(), 201);
@@ -92,7 +94,7 @@ async fn publish_is_blocked_without_annexiii_identity_then_backfills() {
         .await
         .unwrap();
     assert_eq!(dpp["facility"]["value"], "4012345000009");
-    assert_eq!(dpp["operatorIdentifier"], "DE123456789");
+    assert_eq!(dpp["operatorIdentifier"], "529900T8BM49AURSDO55");
 }
 
 #[tokio::test(flavor = "multi_thread")]

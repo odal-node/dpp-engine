@@ -175,6 +175,8 @@ enum Outcome {
     Accepted,
     /// A replayed submission: the registry holds it and gave no handle for it.
     Held,
+    /// The adapter's own checks refused the payload before anything was sent.
+    Invalid,
     /// The registry could not be reached.
     Transient,
     /// Poll: the registry ruled and generated a registration identifier.
@@ -216,6 +218,11 @@ impl RegistrySyncPort for MockPort {
                 correlation_id: CORRELATION_ID.into(),
             }),
             Outcome::Held => Ok(SubmissionAcknowledgement::AlreadyHeld),
+            Outcome::Invalid => Err(DppError::Validation(
+                "EU registry payload failed validation: the operator identifier scheme 'vat' \
+                 has no EN 18219 clause 6 route in this build"
+                    .into(),
+            )),
             Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
             other => panic!("not an answer to a submission: {}", other as u8),
         }
@@ -403,6 +410,41 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
             .is_some_and(|m| m.contains("NOT_RESOLVABLE_UPI")),
         "the registry's reason reaches the row for a human: {:?}",
         row.message
+    );
+}
+
+/// 🚨 A payload the adapter refuses before sending is refused for good. It was
+/// fixed when the passport was published, so sending it again cannot change the
+/// answer, and retrying it would leave the row backing off for ever with nobody
+/// told why. It is rejected with the reason, and never offered to the port again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_payload_the_adapter_refuses_is_rejected_not_retried() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+
+    let id = create_and_publish(&dal, &outbox).await;
+    let (port, calls) = mock(Outcome::Invalid);
+    let stats = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(stats.skipped, 1, "{stats:?}");
+    assert_eq!(stats.retried, 0, "a refusal is not a transient failure");
+
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Rejected);
+    assert!(
+        row.message
+            .as_deref()
+            .is_some_and(|m| m.contains("clause 6")),
+        "the reason reaches the row for a human: {:?}",
+        row.message
+    );
+
+    make_due(&dal, id).await;
+    drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "never offered to the port again"
     );
 }
 

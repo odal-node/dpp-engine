@@ -17,15 +17,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   is a VAT or EORI number.)* Core now accepts an operator or facility identifier
   on a registration only under `lei`, `duns` or `gln`: an EU-wide VAT number has
   no ICD, none was found for an EORI number, and a DID is scheme 8 only with a
-  credential a register has issued. The adapter fails closed on that check as on
-  every other, so each attempt at such a registration is refused before it is
-  sent, and the row backs off and counts toward the stalled rollup. Facilities
-  are added under a GLN and are not affected.
+  credential a register has issued. Publish now asks the same question, through
+  core's `ActorIdentifier::from_legacy`, before it queues a registration: where
+  the product group's obligation is live it refuses with `422` and the reason
+  `unregistrable_identity`, naming the scheme and the fix, and elsewhere it
+  publishes without a registration, as it does when the identity is missing.
+  Queued, such a registration would have been refused on every attempt, because
+  its payload is fixed at publish. A VAT or EORI number is still accepted and
+  stamped as the operator identifier. Facilities are added under a GLN and are
+  not affected.
 
   **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
-  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A draft stamped before
-  the change, and a registration already queued, keep the identifier they were
-  given.
+  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A registration already
+  queued under a VAT or EORI number is rejected by the drain the first time it is
+  tried (see **Fixed**).
 
 - **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
   placing date, and from 18 August 2027 with its due diligence declaration.**
@@ -51,6 +56,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   cover; a new one is written against the new version.
 
 ### Fixed
+
+- **A registration the adapter refuses before sending is rejected, not retried
+  for ever.** The registration drain read every error as transient, so a payload
+  the adapter's own checks refused backed off and was tried again with no end.
+  It can never pass: the payload is fixed when the passport is published. Such a
+  row is now marked rejected, with the reason, as a corrupt payload already was.
+  Only the adapter's checks report a `Validation` error; a registry that cannot be
+  reached, or that answers with a failure, is still retried. (#562)
 
 - **A transfer notification is sent under a stable key, and only an answer that
   says the registry took it closes it.** `dpp-core` 0.23.0's registry port
