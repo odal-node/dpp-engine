@@ -10,10 +10,11 @@
 #
 # A pull request passes when one of these holds:
 #
-#   - The `## [Unreleased]` section of CHANGELOG.md cites it, and CHANGELOG.md is
-#     part of the pull request. It is cited by its own number, or by the number
-#     of an issue its body says it closes ("Closes #123"), since that one is known
-#     before the pull request exists.
+#   - An entry the pull request adds to, or rewrites in, the `## [Unreleased]`
+#     section of CHANGELOG.md cites it. It is cited by its own number, or by the
+#     number of an issue its body says it closes ("Closes #123", "Closes: #123"),
+#     since that one is known before the pull request exists. A citation already
+#     in the section does not count: another change wrote it.
 #   - It carries the `no-changelog` label, and its body has a line
 #     `No changelog: <reason>`: a test-only change, a CI pin, a typo. The label
 #     alone is not a reason.
@@ -67,22 +68,37 @@ fi
 
 numbers="$PR_NUMBER"
 for issue in $(printf '%s\n' "$body" \
-    | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' \
+    | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+#[0-9]+' \
     | grep -oE '[0-9]+' || true); do
     numbers="$numbers $issue"
 done
 
-unreleased="$(awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md)"
+# The [Unreleased] entries, one per line. An entry is a top-level `- ` item with
+# everything under it, up to the next item or heading.
+entries() {
+    awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on' \
+        | awk '/^- / { if (e != "") print e; e = $0; next }
+               /^#/ { if (e != "") print e; e = ""; next }
+               e != "" { e = e " " $0 }
+               END { if (e != "") print e }'
+}
+
+# Only an entry this pull request adds or rewrites counts. Reading the whole
+# section let a citation another change wrote, of an issue this one also closes,
+# pass a pull request that changed an unrelated line.
+changed="$(LC_ALL=C comm -13 \
+    <(git show "$BASE_SHA:CHANGELOG.md" | entries | LC_ALL=C sort) \
+    <(entries < CHANGELOG.md | LC_ALL=C sort))"
 for n in $numbers; do
     # A here-string, not a pipe: `grep -q` stops at the first match, and a writer
     # still feeding it a section larger than a pipe holds then fails, which under
     # `pipefail` turns a citation that was found into a refusal.
-    if grep -qE "#$n([^0-9]|$)" <<< "$unreleased"; then
-        echo "changelog-check: [Unreleased] cites #$n."
+    if grep -qE "#$n([^0-9]|$)" <<< "$changed"; then
+        echo "changelog-check: an [Unreleased] entry this change writes cites #$n."
         exit 0
     fi
 done
 
-fail "CHANGELOG.md changed, but its [Unreleased] section cites none of: #${numbers// /, #}." \
+fail "CHANGELOG.md changed, but no [Unreleased] entry it adds or rewrites cites any of: #${numbers// /, #}." \
     "End the entry with (#$PR_NUMBER), or with an issue the body closes ('Closes #123')." \
     "An entry under a released version does not count: this change is not in it."

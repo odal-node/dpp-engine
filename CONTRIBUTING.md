@@ -189,7 +189,8 @@ Sign off every commit under the [DCO](https://developercertificate.org/):
 
 Every pull request adds an entry under `## [Unreleased]` that cites it: its own
 number, or the number of an issue its body closes (`Closes #123`), which is known
-before the pull request exists. A change that needs no entry, such as a test-only
+before the pull request exists. An entry it rewrites counts; a citation another change
+already wrote does not. A change that needs no entry, such as a test-only
 change or a CI pin, carries the `no-changelog` label and says why in its body, on a
 line `No changelog: <reason>`. Dependabot's pull requests are exempt; a release
 checks their bumps.

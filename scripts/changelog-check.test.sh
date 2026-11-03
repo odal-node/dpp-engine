@@ -84,6 +84,17 @@ run_case a_number_that_only_starts_with_it_is_refused reject \
     "$(with_entry '- **A new fix.** (#120)')"
 run_case an_issue_the_body_only_mentions_is_refused reject \
     "$(with_entry '- **A new fix.** (#40)')" PR_BODY="Related to #40"
+run_case a_closing_keyword_with_a_colon_is_accepted accept \
+    "$(with_entry '- **A new fix.** (#40)')" PR_BODY="Closes: #40"
+# The base section already cites #3. A change that closes #3 and writes an
+# entry citing nothing must not borrow that citation.
+run_case an_issue_another_entry_already_cites_is_refused reject \
+    "$(with_entry '- **A new fix.**')" PR_BODY="Closes #3"
+run_case an_entry_this_change_rewrites_may_cite_the_issue_it_closes accept \
+    "$(printf '%s' "$BASE_CHANGELOG" | sed 's/An older fix\./An older fix, corrected./')" \
+    PR_BODY="Closes #3"
+run_case a_citation_added_to_an_existing_entry_is_accepted accept \
+    "$(printf '%s' "$BASE_CHANGELOG" | sed 's/(#3)/(#3, #12)/')"
 run_case a_citation_under_a_released_version_is_refused reject \
     "$(printf '%s' "$BASE_CHANGELOG" | sed 's/- \*\*The first release.\*\* (#1)/- **The first release.** (#1, #12)/')"
 run_case no_changelog_with_a_reason_is_accepted accept unchanged \
