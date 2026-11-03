@@ -124,7 +124,15 @@ _test-integration-tiers:
     cargo nextest run -p dpp-dal         --features integration-tests
     cargo nextest run -p dpp-vault       --features integration-tests
     cargo nextest run -p dpp-plugin-host --features integration-tests   # fuel test: Linux only
+    # `operator_paths.rs` drives the real `odal`, another package's binary.
+    cargo build -p dpp-cli --bin odal
     cargo nextest run -p dpp-node        --features integration-tests
+
+# Builds the tag unless BIN_DIR holds its `dpp-node` and `odal`. Needs Docker.
+# The next release is tested upgrading from it (docs/governance/RELEASE.md).
+# After tagging a release: capture a database its own binaries wrote
+capture-upgrade-fixture VERSION BIN_DIR='':
+    bash scripts/capture-upgrade-fixture.sh {{VERSION}} {{BIN_DIR}}
 
 # Run the PostgreSQL integration lane (pg_integration T1–T7; needs Docker)
 test-pg:
