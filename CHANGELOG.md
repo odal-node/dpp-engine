@@ -23,9 +23,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `unregistrable_identity`, naming the scheme and the fix, and elsewhere it
   publishes without a registration, as it does when the identity is missing.
   Queued, such a registration would have been refused on every attempt, because
-  its payload is fixed at publish. A VAT or EORI number is still accepted and
-  stamped as the operator identifier. Facilities are added under a GLN and are
-  not affected.
+  its payload is fixed at publish. Only a passport that has never queued a
+  registration is refused: one published before this release keeps its row, and
+  its identifier cannot change, so a suspended one can still be re-activated. A
+  VAT or EORI number is still accepted and stamped as the operator identifier.
+  Facilities are added under a GLN and are not affected.
 
   **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
   (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A registration already

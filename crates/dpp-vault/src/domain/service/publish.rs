@@ -473,7 +473,7 @@ impl PassportService {
         // under its own reason: see `unregistrable_identity`.
         let registration = match &self.registry_outbox {
             None => None,
-            Some(_) => {
+            Some(outbox) => {
                 // The scheme is only assertable for the value the passport
                 // actually carries. If that value did not come from the current
                 // primary identifier — the primary was changed after the draft
@@ -485,9 +485,24 @@ impl PassportService {
                     .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
                     .map(|(scheme, _)| scheme.as_str())
                     .unwrap_or_default();
-                let built = match unregistrable_identity(identifier_scheme, &passport) {
-                    Some(why) => Err((REASON_UNREGISTRABLE_IDENTITY, why.into())),
-                    None => RegistrationRequest::from_published_passport(
+                let unregistrable = unregistrable_identity(identifier_scheme, &passport);
+                // An identity the registry cannot take is refused only for a
+                // passport that has never queued a registration. One that has
+                // keeps its row, whatever became of it: the identifier it was
+                // signed with cannot change, so refusing a re-publish would fix
+                // nothing and only keep a suspended passport from being
+                // re-activated. Its registration is queued as before, which the
+                // outbox leaves alone unless the row was rejected, and a rejected
+                // one the drain rejects again with its reason. This is how an
+                // operator who published under a VAT number before it was
+                // refused re-activates a passport after upgrading.
+                let refused = match &unregistrable {
+                    Some(_) => outbox.pending_for(id).await?.is_none(),
+                    None => false,
+                };
+                let built = match unregistrable {
+                    Some(why) if refused => Err((REASON_UNREGISTRABLE_IDENTITY, why.into())),
+                    _ => RegistrationRequest::from_published_passport(
                         &passport,
                         RegisteringOperator {
                             legal_name: &self.operator.legal_name,

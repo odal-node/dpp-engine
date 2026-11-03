@@ -287,3 +287,119 @@ async fn a_vat_primary_identifier_is_refused_at_publish_where_a_registration_is_
         "and none is queued"
     );
 }
+
+/// An identity the registry cannot take is refused only for a passport that has
+/// never queued a registration (the test above). One that has keeps its row:
+/// the identifier it was signed with cannot change, so refusing would fix
+/// nothing and only keep a suspended passport from being re-activated. An
+/// operator who published under a VAT number before it was refused has exactly
+/// such rows, `pending` until the drain reaches them and `rejected` after.
+/// Both re-publish. A pending row is left as it is, and a rejected one is
+/// queued again, for the drain to reject again with its reason.
+///
+/// The row is written directly, as a node from before the refusal wrote it, and
+/// publish meets it by the path a re-activation takes. `operator_paths.rs` runs
+/// the real case end to end: a suspended passport in a database v0.14.0 wrote.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unregistrable_identity_is_refused_only_before_a_registration_was_queued() {
+    use dpp_dal::pg::{PgRegistrySyncRepo, sqlx};
+    use dpp_domain::passport::PassportId;
+    use dpp_types::{RegistrySyncOutbox, RegistrySyncStatus};
+
+    let pg = start_postgres().await;
+    seed_operator_config(&pg.dal).await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000001");
+    let client = TestClient::new(&vault_url, &token);
+    let outbox = PgRegistrySyncRepo::new(pg.dal.clone());
+
+    let resp = client
+        .post_json(
+            "/api/v1/facilities",
+            serde_json::json!({
+                "name": "Default Plant",
+                "identifierScheme": "gln",
+                "identifierValue": "4012345000009",
+                "country": "DE",
+                "isDefault": true
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let resp = client
+        .post_json(
+            "/api/v1/operator-identifiers",
+            serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    for (row_status, gtin) in [
+        (RegistrySyncStatus::Pending, "09506000134376"),
+        (RegistrySyncStatus::Rejected, "09506000134383"),
+    ] {
+        let status = row_status.as_db();
+        let resp = client
+            .post_json(
+                "/api/v1/dpp",
+                serde_json::json!({
+                    "productName": "Portable Cell",
+                    "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                    "productGroupData": {
+                        "productGroup": "battery",
+                        "productIdentifier": { "scheme": "gs1", "gtin": gtin },
+                        "batteryChemistry": "LFP",
+                        "batteryType": "portable",
+                        "nominalVoltageV": 3.7,
+                        "nominalCapacityAh": 2.5,
+                        "co2ePerUnitKg": 1.8
+                    }
+                }),
+            )
+            .await;
+        assert_eq!(resp.status(), 201);
+        let battery = resp.json::<serde_json::Value>().await.unwrap()["id"]
+            .as_str()
+            .expect("created passport has an id")
+            .to_owned();
+        let battery_id = PassportId(uuid::Uuid::parse_str(&battery).unwrap());
+        sqlx::query(
+            "INSERT INTO odal.registry_sync (passport_id, payload, status) \
+             VALUES ($1, '{\"queued\": \"before the upgrade\"}', $2)",
+        )
+        .bind(battery_id.0)
+        .bind(status)
+        .execute(pg.dal.pool())
+        .await
+        .expect("write the row an earlier node queued");
+
+        let resp = client
+            .post_json(
+                &format!("/api/v1/dpp/{battery}/publish"),
+                serde_json::json!({}),
+            )
+            .await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "publish over a `{status}` registration: {}",
+            resp.text().await.unwrap_or_default()
+        );
+        let row = outbox.pending_for(battery_id).await.unwrap().unwrap();
+        let before = Some(serde_json::json!({ "queued": "before the upgrade" }));
+        match row_status {
+            RegistrySyncStatus::Pending => {
+                assert_eq!(row.status, RegistrySyncStatus::Pending);
+                assert_eq!(row.payload, before, "a pending row is left as it was");
+            }
+            _ => {
+                assert_eq!(
+                    row.status,
+                    RegistrySyncStatus::Pending,
+                    "a rejected row is queued again"
+                );
+                assert_ne!(row.payload, before, "with this publish's registration");
+            }
+        }
+    }
+}
