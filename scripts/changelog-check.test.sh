@@ -93,6 +93,17 @@ run_case no_changelog_without_a_reason_is_refused reject unchanged \
     PR_LABELS="no-changelog" PR_BODY="Pins an action."
 run_case a_dependabot_pull_request_is_accepted accept unchanged \
     PR_AUTHOR="dependabot[bot]"
+# A real [Unreleased] section runs to tens of kilobytes, more than a pipe holds.
+# Piping it into `grep -q`, which exits at the first match, broke the writer's
+# pipe, and under `pipefail` a found citation then read as a failure: the gate
+# refused its own pull request. A section this long reproduces that.
+run_case an_entry_atop_a_long_unreleased_section_is_accepted accept \
+    "$(with_entry '- **A new fix.** (#12)' | awk '
+        { print }
+        /\(#12\)/ { for (i = 0; i < 4000; i++) print "  A long earlier entry, line " i, "of padding." }')"
+run_case a_reason_atop_a_long_body_is_accepted accept unchanged \
+    PR_LABELS="no-changelog" PR_BODY="No changelog: a CI pin
+$(for i in $(seq 1 4000); do echo "More of the body, line $i."; done)"
 run_case a_missing_base_commit_is_refused reject \
     "$(with_entry '- **A new fix.** (#12)')" BASE_SHA=0000000000000000000000000000000000000000
 

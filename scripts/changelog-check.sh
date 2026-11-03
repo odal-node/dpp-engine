@@ -74,7 +74,10 @@ done
 
 unreleased="$(awk '/^## \[Unreleased\]/ { on = 1; next } /^## \[/ { on = 0 } on' CHANGELOG.md)"
 for n in $numbers; do
-    if printf '%s\n' "$unreleased" | grep -qE "#$n([^0-9]|$)"; then
+    # A here-string, not a pipe: `grep -q` stops at the first match, and a writer
+    # still feeding it a section larger than a pipe holds then fails, which under
+    # `pipefail` turns a citation that was found into a refusal.
+    if grep -qE "#$n([^0-9]|$)" <<< "$unreleased"; then
         echo "changelog-check: [Unreleased] cites #$n."
         exit 0
     fi
