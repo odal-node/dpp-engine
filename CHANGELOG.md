@@ -10,7 +10,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-10-30
+## [0.15.0] - 2026-11-03
 
 ### Breaking
 
