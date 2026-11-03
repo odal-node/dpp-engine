@@ -512,8 +512,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   successor and then failed to supersede the predecessor, leaving both live. A
   write to a retention-locked passport now carries only the fields the caller
   changed, compared with a fresh reading of the row under its lock, so the stored
-  record stays as it was signed. A change to its content is still refused.
-  (#566)
+  record stays as it was signed. A change to its content is still refused, and a
+  write built from a reading taken before a concurrent publish can no longer
+  clear the passport's retention lock. (#566)
 - **The resolver's metrics can be scraped from the shipped stack, and
   `CACHE_TTL_SECS` and `RATE_LIMIT_RPM` do what `.env.example` says.** The
   metrics listener binds `127.0.0.1:9101` by default, which in a container is

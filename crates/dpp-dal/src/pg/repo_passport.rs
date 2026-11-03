@@ -241,13 +241,25 @@ impl PgPassportRepo {
     /// content still differs from the reading, so it is still written and the
     /// guard still refuses it: this removes a false refusal, never a true one. A
     /// draft is written whole, which is how it takes the current shape.
+    ///
+    /// A locked row also stays locked. A write built from a reading taken before
+    /// a concurrent publish carries `retentionLocked: false`, and the guard lets
+    /// that flag change, so it would otherwise unlock the row. The write is
+    /// serialised as locked, which makes the flag an unchanged key.
     pub(crate) async fn update_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         passport: &Passport,
     ) -> Result<(), DppError> {
-        let mut doc = Self::to_doc(passport)?;
-        if let Some(stored) = self.locked_reading(tx, passport.id).await?
+        let stored = self.locked_reading(tx, passport.id).await?;
+        let mut doc = if stored.is_some() {
+            let mut locked = passport.clone();
+            locked.retention_locked = true;
+            Self::to_doc(&locked)?
+        } else {
+            Self::to_doc(passport)?
+        };
+        if let Some(stored) = &stored
             && let (Some(written), Some(stored)) = (doc.as_object_mut(), stored.as_object())
         {
             written.retain(|key, value| stored.get(key) != Some(value));

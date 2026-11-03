@@ -32,13 +32,14 @@
 
 use std::path::Path;
 
-use dpp_dal::pg::{PgPassportRepo, PgStateChangeLog};
+use dpp_dal::pg::{PgPassportRepo, PgRegistrySyncRepo, PgStateChangeLog};
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::DppError;
 use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::status::PassportStatus;
 use dpp_types::audit::PassportAuditEntry;
+use dpp_types::registry_sync::RegistrySyncOutbox;
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 use serde_json::Value;
 
@@ -203,4 +204,53 @@ async fn a_real_edit_to_its_product_group_data_is_still_refused() {
         stored(&pg, id).await["productGroupData"],
         before["productGroupData"]
     );
+}
+
+/// A write built from a reading taken before a concurrent publish carries
+/// `retentionLocked: false`. That differs from the stored `true`, and the guard
+/// lets the flag change, so it would unlock the row.
+#[tokio::test]
+async fn a_write_from_a_reading_before_publish_does_not_unlock_it() {
+    let pg = start_pg().await;
+    let id = seed(&pg, published_before_the_lens_hop()).await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let mut stale = repo.find_by_id(id).await.expect("read").expect("exists");
+    stale.retention_locked = false;
+    repo.update(stale)
+        .await
+        .expect("the write itself is harmless");
+
+    let locked: bool =
+        sqlx::query_scalar("SELECT retention_locked FROM odal.passport WHERE id = $1")
+            .bind(id.0)
+            .fetch_one(&admin(&pg).await)
+            .await
+            .expect("read the column");
+    assert!(locked, "a retention-locked row stays locked");
+    assert_eq!(stored(&pg, id).await["retentionLocked"], true);
+}
+
+/// Re-publishing a suspended passport goes through the registry outbox's
+/// `commit_publish`, the third writer, and must work on the old shape too.
+#[tokio::test]
+async fn it_can_be_republished_through_the_registry_outbox() {
+    let pg = start_pg().await;
+    let before = published_before_the_lens_hop();
+    let id = seed(&pg, before.clone()).await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let mut passport = repo
+        .update_status(id, PassportStatus::Suspended)
+        .await
+        .expect("suspend");
+    passport.status = PassportStatus::Published;
+    PgRegistrySyncRepo::new(pg.dal.clone())
+        .commit_publish(&passport, serde_json::json!({}))
+        .await
+        .expect("a suspended passport in an older shape can be re-published");
+
+    let after = stored(&pg, id).await;
+    assert_eq!(after["status"], "active");
+    only_the_status_moved(&before, &after);
 }
