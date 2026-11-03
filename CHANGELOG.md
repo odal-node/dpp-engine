@@ -249,6 +249,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A dpp-core release is tested against the engine before it is published.**
+  A published crate cannot be taken back, and dpp-core cannot find out alone that
+  a release breaks a node: it has no database and no passports an earlier release
+  stored. The 0.15.0 upgrade defect came in through exactly such a repin.
+  `.github/workflows/core-candidate.yml`, dispatched on the repin branch with a
+  core commit, patches onto that commit and runs `just lint`, `just test` and
+  `just test-integration`, including the upgrade from every captured release,
+  and the plugin SDK ABI test against a guest built with the candidate's SDK.
+  `docs/governance/RELEASE.md` gains *Repinning dpp-core*, which makes a green
+  run a precondition of the core release. (#569)
+- **Every pull request records itself in this file, or says why it does not.**
+  Of the 81 pull requests merged between 0.14.0 and 0.15.0 that Dependabot did
+  not open, two were cited here by number, so nothing could show that every
+  merged change was described, or that every entry described a change that
+  merged. A pull request now adds an entry under `[Unreleased]` citing its own
+  number or an issue its body closes. A change that needs none carries the
+  `no-changelog` label and a `No changelog: <reason>` line in its body.
+  `.github/workflows/changelog.yml` enforces this and re-runs when a label
+  changes, and `scripts/changelog-check.test.sh` proves each refusal in
+  `just check`. (#568)
+- **Onboarding a fresh node and upgrading from a release are tested on every
+  pull request, with the real binaries.** Both were release checklist items done
+  by hand, and the upgrade found a defect the day it was done (under **Fixed**:
+  a passport published before an upgrade could not change status).
+  `crates/dpp-node/tests/operator_paths.rs` starts the `dpp-node` binary the
+  way a deployment does. One test onboards it with the `odal` binary:
+  `bootstrap`, `whoami`, a facility and an operator identifier, a passport
+  published with the minted key, and a second `bootstrap` refused. The other
+  loads a database a real release wrote, boots this build over it so its
+  migrations run, and requires every public view to come back byte for byte,
+  every published passport to suspend, re-activate and amend, and none of the
+  product group data they were signed over to change. The databases are
+  captured from each tagged release's own binaries by
+  `just capture-upgrade-fixture`, starting with 0.14.0, and a release pull
+  request fails when the release before it has none.
 - **The node serves its own DID document at the root, where `did:web`
   resolves.** The node signs as a pathless `did:web:<host>`, which the did:web
   method resolves to `https://<host>/.well-known/did.json`, and the document was
