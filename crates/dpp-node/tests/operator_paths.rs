@@ -516,6 +516,8 @@ async fn upgrade_from(fixture: &Path) {
         );
     }
 
+    let primary = apply_documented_migrations(&node, release).await;
+
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT id::text, status FROM odal.passport ORDER BY id")
             .fetch_all(&admin)
@@ -532,7 +534,7 @@ async fn upgrade_from(fixture: &Path) {
             assert_eq!(code, StatusCode::OK, "{release}: GET {read}: {body}");
         }
         match status.as_str() {
-            "active" => published_lifecycle(&node, &admin, release, &id).await,
+            "active" => published_lifecycle(&node, &admin, release, &id, &primary).await,
             "suspended" => {
                 let (code, body) = node
                     .admin(Method::POST, &format!("{path}/publish"), None)
@@ -566,9 +568,59 @@ async fn upgrade_from(fixture: &Path) {
     }
 }
 
+/// The changes the CHANGELOG's **Breaking** entries ask an operator to make,
+/// made through the API an operator uses, before anything else is asked of the
+/// upgraded node. Without them a documented break would read as an upgrade
+/// defect. Returns the primary operator identifier they leave in place.
+///
+/// - A registration names the operator only under a scheme with an EN 18219
+///   clause 6 route (dpp-core 0.23.0), so an operator whose primary identifier
+///   is a VAT or EORI number makes an LEI primary. Its passports keep the
+///   identifier they were signed with; a draft, an amendment's successor
+///   among them, is published under the LEI.
+async fn apply_documented_migrations(node: &Node, release: &str) -> String {
+    const PATH: &str = "/vault/api/v1/operator-identifiers";
+    let (code, identifiers) = node.admin(Method::GET, PATH, None).await;
+    assert_eq!(
+        code,
+        StatusCode::OK,
+        "{release}: list operator identifiers: {identifiers}"
+    );
+    let primary = identifiers
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|identifier| identifier["isPrimary"] == true)
+        .unwrap_or_else(|| panic!("{release}: the fixture has no primary identifier"));
+    if !matches!(primary["scheme"].as_str(), Some("vat" | "eori")) {
+        return primary["value"].as_str().expect("a value").to_owned();
+    }
+    let lei = "529900T8BM49AURSDO55";
+    let (code, body) = node
+        .admin(
+            Method::POST,
+            PATH,
+            Some(json!({ "scheme": "lei", "value": lei, "isPrimary": true })),
+        )
+        .await;
+    assert_eq!(
+        code,
+        StatusCode::CREATED,
+        "{release}: make an LEI the primary identifier: {body}"
+    );
+    lei.to_owned()
+}
+
 /// Suspend, re-activate and amend a passport the release published: the
-/// changes an operator makes to one, which must all still work.
-async fn published_lifecycle(node: &Node, admin: &sqlx::PgPool, release: &str, id: &str) {
+/// changes an operator makes to one, which must all still work. The successor
+/// is published under `primary`, the operator's identifier at the time.
+async fn published_lifecycle(
+    node: &Node,
+    admin: &sqlx::PgPool,
+    release: &str,
+    id: &str,
+    primary: &str,
+) {
     let path = format!("/vault/api/v1/dpp/{id}");
     let (code, body) = node
         .admin(
@@ -604,6 +656,10 @@ async fn published_lifecycle(node: &Node, admin: &sqlx::PgPool, release: &str, i
     assert_eq!(
         successor["productName"], "Corrected after the upgrade",
         "{release}: the successor carries the correction it was amended with"
+    );
+    assert_eq!(
+        successor["operatorIdentifier"], primary,
+        "{release}: the successor is published under the operator's identifier of the day"
     );
     let status: String = sqlx::query_scalar("SELECT status FROM odal.passport WHERE id = $1::uuid")
         .bind(id)
