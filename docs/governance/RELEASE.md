@@ -132,7 +132,10 @@ the Dockerfiles' build command as a supply-chain change.
 4. `odal bootstrap` works against the released images.
 5. **The upgrade fixture is captured**, so the next release is tested upgrading from this
    one: `just capture-upgrade-fixture <version>`, then commit
-   `crates/dpp-node/tests/fixtures/upgrade/v<version>/` in a pull request. It builds the
+   `crates/dpp-node/tests/fixtures/upgrade/v<version>/` in a pull request, with its own
+   test in `crates/dpp-node/tests/operator_paths.rs`
+   (`v<X>_<Y>_<Z>_upgrades_to_this_build`, like the others), which
+   `upgrade_fixture_coverage.rs` requires. It builds the
    tag's own binaries, because a fixture written by later code would agree with that code
    by construction. Skipping it fails the next release's pull request.
 6. The release is announced.
