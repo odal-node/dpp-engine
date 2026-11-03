@@ -285,7 +285,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group data they were signed over to change. The databases are
   captured from each tagged release's own binaries by
   `just capture-upgrade-fixture`, starting with 0.14.0, and a release pull
-  request fails when the release before it has none.
+  request fails when the release before it has none. (#567)
 - **The node serves its own DID document at the root, where `did:web`
   resolves.** The node signs as a pathless `did:web:<host>`, which the did:web
   method resolves to `https://<host>/.well-known/did.json`, and the document was
@@ -1280,7 +1280,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   a commit one past its last release, so the first now pins `master` and the
   second the release, and each version comment beside a pin names the exact
   release. Dependabot waits seven days before proposing an update. No job's
-  effective permissions widened.
+  effective permissions widened. (#552)
 
 ### Known limitations
 
