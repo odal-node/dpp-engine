@@ -554,12 +554,13 @@ async fn register_unreachable_registration_endpoint_is_not_retried() {
 
     // ...but the registration endpoint itself points at a dead port, so the
     // *second* request (not token acquisition) is what hits Unreachable.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead_addr = listener.local_addr().unwrap();
-    drop(listener);
-
+    //
+    // Port 1 is privileged, so no test's server can listen on it. A port taken
+    // with `:0` and released, as this used, could be handed to a mock server in
+    // a test running beside it before the request went out, which then accepted
+    // the registration.
     let mut config = mock_config(&base_url_alive);
-    config.endpoint.base_url = format!("http://{dead_addr}");
+    config.endpoint.base_url = "http://127.0.0.1:1".to_owned();
     let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
