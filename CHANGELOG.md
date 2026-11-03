@@ -499,6 +499,22 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A passport published before an upgrade can change status again.** A status
+  change loads the passport, sets the status and writes the whole document
+  back. What it loads is this build's reading of the record rather than the
+  record: `productGroupData` upcast through the lens chain to the current
+  schema, and `null` for any envelope field added since the passport was stored.
+  On a published passport, writing that back is a change to content its
+  signatures commit to, and the retention guard refuses it. So on a node
+  upgraded from 0.14.0, whose dpp-core 0.20.0 stored a bare `gtin` that 0.22.0
+  reads as a `productIdentifier`, no passport published before the upgrade
+  could change status: `suspend` returned `500`, and `amend` published the
+  successor and then failed to supersede the predecessor, leaving both live. A
+  write to a retention-locked passport now carries only the fields the caller
+  changed, compared with a fresh reading of the row under its lock, so the stored
+  record stays as it was signed. A change to its content is still refused, and a
+  write built from a reading taken before a concurrent publish can no longer
+  clear the passport's retention lock. (#566)
 - **The resolver's metrics can be scraped from the shipped stack, and
   `CACHE_TTL_SECS` and `RATE_LIMIT_RPM` do what `.env.example` says.** The
   metrics listener binds `127.0.0.1:9101` by default, which in a container is

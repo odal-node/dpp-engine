@@ -72,76 +72,6 @@ fn carries(passport: &Passport, identifier: &ProductIdentifier) -> bool {
         .is_some_and(|id| id == identifier)
 }
 
-/// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
-/// transaction. Shared by [`PgPassportRepo::update`] and the transactional
-/// outbox's `commit_publish`, so the publish-write and the outbox insert commit
-/// atomically without duplicating this SQL. Errors `NotFound` if no row matched.
-///
-/// # Why `doc || $2` rather than `doc = $2`
-///
-/// Writing the serialised struct over the whole column erases every stored key
-/// the struct does not model. That is not a stale value in memory — it is gone
-/// from the database. `update_status` is a read-modify-write (`find_by_id`,
-/// mutate, `update`), and publish takes the same path, so the erasure happens on
-/// the one write that matters most: the retention guard tests
-/// `OLD.retention_locked`, which is still false while the row is a draft, so the
-/// guard does not fire, the lossy write lands, and `retention_locked` becomes
-/// true in that same statement. Every later write is guarded, so it can never be
-/// repaired in place.
-///
-/// `||` is a shallow merge at the top level: the struct wins on every key it
-/// models, and keys it does not model survive. That is exactly the
-/// envelope/`productGroupData` split — `productGroupData` is fully modelled and versioned
-/// through the lens chain, so replacing it wholesale is correct; the envelope is
-/// the axis with no such mechanism.
-///
-/// **Constraint this carries:** the `Passport` fields are
-/// `skip_serializing_if = "Option::is_none"`, so a field going `Some` -> `None`
-/// is absent from `$2` and will no longer clear the stored key. No production
-/// path does that today (checked: every envelope-field assignment to `None` is
-/// inside a test). A field that genuinely needs clearing must write an explicit
-/// JSON `null` rather than rely on omission.
-pub(crate) async fn update_passport_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    passport: &Passport,
-) -> Result<(), DppError> {
-    let doc = serde_json::to_value(passport)
-        .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
-    let res = sqlx::query(
-        // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
-        // stored value for the reason the doc comment above gives: an omitted
-        // key is absent, not null, so a column must keep what it has rather
-        // than be cleared by a partial document.
-        //
-        // `retention_until` is the one that matters most here — it is sealed at
-        // publish, so it is never present at create and would stay NULL forever
-        // if only the insert wrote it. `assessed_at` and `ruleset_version`
-        // change whenever the compliance determination is re-run.
-        r#"UPDATE odal.passport SET
-             product_group           = $2->>'productGroup',
-             status           = COALESCE($2->>'status', status),
-             retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
-             schema_version   = COALESCE($2->>'schemaVersion', schema_version),
-             granularity      = COALESCE($2->>'granularity', granularity),
-             retention_until  = COALESCE(NULLIF($2->>'retentionUntil','')::timestamptz, retention_until),
-             product_id       = COALESCE(NULLIF($2->>'productId','')::uuid, product_id),
-             assessed_at      = COALESCE(NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz, assessed_at),
-             ruleset_version  = COALESCE($2->'complianceResult'->>'rulesetVersion', ruleset_version),
-             published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
-             doc              = doc || $2
-           WHERE id = $1"#,
-    )
-    .bind(passport.id.0)
-    .bind(&doc)
-    .execute(&mut **tx)
-    .await
-    .map_err(db_err)?;
-    if res.rows_affected() == 0 {
-        return Err(DppError::NotFound("record not found after update".into()));
-    }
-    Ok(())
-}
-
 /// Insert a new passport inside an open transaction.
 ///
 /// The statement behind [`PgPassportRepo::create`], shared with the state-change
@@ -256,6 +186,135 @@ impl PgPassportRepo {
             .await
             .map_err(db_err)?;
         row.map(|r| self.read_doc(r.get::<serde_json::Value, _>("doc")))
+            .transpose()
+    }
+
+    /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
+    /// transaction. Shared by [`PassportRepository::update`], the state-change
+    /// log, and the transactional outbox's `commit_publish`, so the publish-write
+    /// and the outbox insert commit atomically without duplicating this SQL.
+    /// Errors `NotFound` if no row matched.
+    ///
+    /// # Why `doc || $2` rather than `doc = $2`
+    ///
+    /// Writing the serialised struct over the whole column erases every stored key
+    /// the struct does not model. That is not a stale value in memory — it is gone
+    /// from the database. `update_status` is a read-modify-write (`find_by_id`,
+    /// mutate, `update`), and publish takes the same path, so the erasure happens on
+    /// the one write that matters most: the retention guard tests
+    /// `OLD.retention_locked`, which is still false while the row is a draft, so the
+    /// guard does not fire, the lossy write lands, and `retention_locked` becomes
+    /// true in that same statement. Every later write is guarded, so it can never be
+    /// repaired in place.
+    ///
+    /// `||` is a shallow merge at the top level: the struct wins on every key it
+    /// models, and keys it does not model survive. That is exactly the
+    /// envelope/`productGroupData` split — `productGroupData` is fully modelled and versioned
+    /// through the lens chain, so replacing it wholesale is correct on a draft; the
+    /// envelope is the axis with no such mechanism. A locked row is the exception,
+    /// below.
+    ///
+    /// **Constraint this carries:** the `Passport` fields are
+    /// `skip_serializing_if = "Option::is_none"`, so a field going `Some` -> `None`
+    /// is absent from `$2` and will no longer clear the stored key. No production
+    /// path does that today (checked: every envelope-field assignment to `None` is
+    /// inside a test). A field that genuinely needs clearing must write an explicit
+    /// JSON `null` rather than rely on omission.
+    ///
+    /// # A locked row takes only what the caller changed
+    ///
+    /// `passport` is a *reading* of the row, not its stored bytes. Every read
+    /// upcasts `productGroupData` through the lens chain
+    /// ([`read_doc`](Self::read_doc)), and deserialising fills in whatever the
+    /// current struct models and the stored document predates, such as a `null`
+    /// for a field added since. Written back whole, that difference is a change to
+    /// content the passport's signatures commit to, and `passport_retention_guard`
+    /// refuses it although the caller changed nothing but the status. So a
+    /// passport published before a lens hop could not change status at all: a
+    /// node upgraded from core 0.20.0 to 0.22.0, whose lens rewrites `gtin` as a
+    /// `productIdentifier`, could no longer suspend, retire or supersede anything
+    /// it had published.
+    ///
+    /// So on a locked row the update carries only the top-level keys whose value
+    /// differs from a fresh reading of the stored row, taken under the row lock:
+    /// the ones the caller changed. Everything else stays as stored. A change to
+    /// content still differs from the reading, so it is still written and the
+    /// guard still refuses it: this removes a false refusal, never a true one. A
+    /// draft is written whole, which is how it takes the current shape.
+    ///
+    /// A locked row also stays locked. A write built from a reading taken before
+    /// a concurrent publish carries `retentionLocked: false`, and the guard lets
+    /// that flag change, so it would otherwise unlock the row. The write is
+    /// serialised as locked, which makes the flag an unchanged key.
+    pub(crate) async fn update_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        passport: &Passport,
+    ) -> Result<(), DppError> {
+        let stored = self.locked_reading(tx, passport.id).await?;
+        let mut doc = if stored.is_some() {
+            let mut locked = passport.clone();
+            locked.retention_locked = true;
+            Self::to_doc(&locked)?
+        } else {
+            Self::to_doc(passport)?
+        };
+        if let Some(stored) = &stored
+            && let (Some(written), Some(stored)) = (doc.as_object_mut(), stored.as_object())
+        {
+            written.retain(|key, value| stored.get(key) != Some(value));
+        }
+        let res = sqlx::query(
+            // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
+            // stored value for the reason the doc comment above gives: an omitted
+            // key is absent, not null, so a column must keep what it has rather
+            // than be cleared by a partial document. On a locked row that covers
+            // `product_group` too, since an unchanged key is not sent.
+            //
+            // `retention_until` is the one that matters most here — it is sealed at
+            // publish, so it is never present at create and would stay NULL forever
+            // if only the insert wrote it. `assessed_at` and `ruleset_version`
+            // change whenever the compliance determination is re-run.
+            r#"UPDATE odal.passport SET
+                 product_group    = COALESCE($2->>'productGroup', product_group),
+                 status           = COALESCE($2->>'status', status),
+                 retention_locked = COALESCE(($2->>'retentionLocked')::boolean, retention_locked),
+                 schema_version   = COALESCE($2->>'schemaVersion', schema_version),
+                 granularity      = COALESCE($2->>'granularity', granularity),
+                 retention_until  = COALESCE(NULLIF($2->>'retentionUntil','')::timestamptz, retention_until),
+                 product_id       = COALESCE(NULLIF($2->>'productId','')::uuid, product_id),
+                 assessed_at      = COALESCE(NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz, assessed_at),
+                 ruleset_version  = COALESCE($2->'complianceResult'->>'rulesetVersion', ruleset_version),
+                 published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
+                 doc              = doc || $2
+               WHERE id = $1"#,
+        )
+        .bind(passport.id.0)
+        .bind(&doc)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        if res.rows_affected() == 0 {
+            return Err(DppError::NotFound("record not found after update".into()));
+        }
+        Ok(())
+    }
+
+    /// A fresh reading of the stored row, serialised, when it is retention-locked;
+    /// `None` for a draft or a missing row. Locks the row for the rest of `tx`.
+    async fn locked_reading(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+    ) -> Result<Option<serde_json::Value>, DppError> {
+        let row = sqlx::query(
+            "SELECT doc FROM odal.passport WHERE id = $1 AND retention_locked FOR UPDATE",
+        )
+        .bind(Self::uuid_of(id))
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        row.map(|r| Self::to_doc(&self.read_doc(r.get::<serde_json::Value, _>("doc"))?))
             .transpose()
     }
 
@@ -536,7 +595,7 @@ impl PassportRepository for PgPassportRepo {
     /// Replace the stored doc; errors if no row with the given id exists.
     async fn update(&self, passport: Passport) -> Result<Passport, DppError> {
         let mut tx = self.dal.begin().await?;
-        update_passport_in_tx(&mut tx, &passport).await?;
+        self.update_in_tx(&mut tx, &passport).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(passport)
     }
