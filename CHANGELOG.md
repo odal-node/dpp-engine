@@ -30,7 +30,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
   (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A registration already
   queued under a VAT or EORI number is rejected by the drain the first time it is
-  tried (see **Fixed**).
+  tried (see **Fixed**). (#561)
 
 - **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
   placing date, and from 18 August 2027 with its due diligence declaration.**
@@ -46,14 +46,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   **Migration:** send `placedOnMarketDate` on create, or in the import column of
   that name. The battery CSV templates have no column for `dueDiligenceUrl` or
   `dueDiligenceOperatorScope` yet, so a battery placed from 18 August 2027 cannot
-  be imported into a passport that publishes.
+  be imported into a passport that publishes. (#561)
 
 - **`dpp-core` 0.23.0: an anonymous reader no longer receives a critical raw
   material's weight or country of origin** from a battery passport written at
   schema 2.9.0 or later, or an electronics passport written at 1.5.0 or later.
   Core labels both fields `restricted` from those versions. A passport written
   against an earlier version keeps its classes and the bytes its signatures
-  cover; a new one is written against the new version.
+  cover; a new one is written against the new version. (#561)
 
 ### Fixed
 
@@ -77,13 +77,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   route to ask has been seen. A refusal is recorded with the registry's reasons.
   Before, a reply reporting the record suspended or deactivated closed the row as
   notified. The transfer route's reply is unobserved, so only `registered` is read
-  as an acceptance.
+  as an acceptance. (#561)
 
 - **The resolver's JSON-LD defines a term for every product group field.** It
   carries `dpp-core` 0.23.0's context, so a JSON-LD processor no longer drops a
   product group's data when it expands the document. The context names withheld
   fields too, as terms; their values are not served, and the tests that scan the
-  body for a withheld field now read it without its `@context`.
+  body for a withheld field now read it without its `@context`. (#561)
 
 ## [0.15.0] - 2026-11-03
 

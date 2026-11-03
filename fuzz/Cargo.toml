@@ -24,8 +24,8 @@ dpp-seal = { path = "../crates/dpp-seal" }
 # Core, at the version the workspace pins in its root `Cargo.toml`. A repin moves
 # these with it: the credential target implements dpp-vault's traits over
 # dpp-vc's types, and two versions of one crate do not share a type.
-dpp-domain = "0.22.0"
-dpp-vc = "0.22.0"
+dpp-domain = "0.23.0"
+dpp-vc = "0.23.0"
 async-trait = "0.1"
 base64 = "0.23"
 chrono = "0.4"

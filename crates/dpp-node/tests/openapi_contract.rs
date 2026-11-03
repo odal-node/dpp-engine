@@ -861,7 +861,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.22.0";
+const CORE_VERSION_VERIFIED: &str = "0.23.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
