@@ -70,6 +70,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   and create takes no identifier, so nothing an operator chose is overwritten. A
   re-publish keeps the identifier the passport was signed with. (#561)
 
+- **The core candidate run checks the plugin SDK ABI against the candidate's
+  SDK.** `.cargo/config.toml.example`, which `just core-local` and the run
+  apply, did not patch `dpp-plugin-sdk`, which only the ABI guest uses. So the
+  guest resolved the published SDK, and the run checked that one while 0.15.0's
+  notes said it checked the candidate's, until a guest pinned to an unpublished
+  release could not resolve at all. The override now patches it. (#561)
+
 - **A registration the adapter refuses before sending is rejected, not retried
   for ever.** The registration drain read every error as transient, so a payload
   the adapter's own checks refused backed off and was tried again with no end.
