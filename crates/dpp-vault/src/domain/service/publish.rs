@@ -205,7 +205,18 @@ impl PassportService {
                     .await
                     .unwrap_or(None);
             }
-            if passport.operator_identifier.is_none() {
+            // A draft takes the primary identifier as it stands now, not as it
+            // stood when the draft was created or, for an amendment, when its
+            // predecessor was: an operator that changed its primary, as moving
+            // off a VAT number requires, publishes under the new one. A draft is
+            // not signed yet, and create takes no identifier, so nothing an
+            // operator chose is overwritten. A re-publish keeps the identifier
+            // the passport was signed with.
+            if passport.status == PassportStatus::Draft {
+                if let Some((_, value)) = &primary_identifier {
+                    passport.operator_identifier = Some(value.clone());
+                }
+            } else if passport.operator_identifier.is_none() {
                 passport.operator_identifier =
                     primary_identifier.as_ref().map(|(_, value)| value.clone());
             }

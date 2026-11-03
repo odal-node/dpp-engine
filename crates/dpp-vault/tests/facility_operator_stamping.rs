@@ -403,3 +403,108 @@ async fn an_unregistrable_identity_is_refused_only_before_a_registration_was_que
         }
     }
 }
+
+/// A draft is published under the operator's primary identifier as it stands at
+/// publish, not as it stood when the draft was created or, for an amendment,
+/// when its predecessor was. A draft is not signed yet, and nothing an operator
+/// sent is overwritten: create takes no identifier. Without this, an operator
+/// that moved its primary from a VAT number to an LEI, as the migration for the
+/// clause 6 refusal says to, still published under the VAT number, with a
+/// registration that names no scheme and that the registry was bound to refuse.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_draft_is_published_under_the_operators_current_primary_identifier() {
+    use dpp_dal::pg::PgRegistrySyncRepo;
+    use dpp_domain::passport::PassportId;
+    use dpp_types::RegistrySyncOutbox;
+
+    let pg = start_postgres().await;
+    seed_operator_config(&pg.dal).await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000001");
+    let client = TestClient::new(&vault_url, &token);
+    let outbox = PgRegistrySyncRepo::new(pg.dal.clone());
+
+    let resp = client
+        .post_json(
+            "/api/v1/facilities",
+            serde_json::json!({
+                "name": "Default Plant",
+                "identifierScheme": "gln",
+                "identifierValue": "4012345000009",
+                "country": "DE",
+                "isDefault": true
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let resp = client
+        .post_json(
+            "/api/v1/operator-identifiers",
+            serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            serde_json::json!({
+                "productName": "Portable Cell",
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134390" },
+                    "batteryChemistry": "LFP",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 3.7,
+                    "nominalCapacityAh": 2.5,
+                    "co2ePerUnitKg": 1.8
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let draft = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(
+        draft["operatorIdentifier"], "DE123456789",
+        "create stamps the primary identifier of the moment"
+    );
+    let battery = draft["id"].as_str().expect("an id").to_owned();
+
+    // The migration: an LEI becomes the primary identifier.
+    let resp = client
+        .post_json(
+            "/api/v1/operator-identifiers",
+            serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{battery}/publish"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "{}",
+        resp.text().await.unwrap_or_default()
+    );
+    let published = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(
+        published["operatorIdentifier"], "529900T8BM49AURSDO55",
+        "the draft is published under the primary identifier of the publish"
+    );
+    let row = outbox
+        .pending_for(PassportId(uuid::Uuid::parse_str(&battery).unwrap()))
+        .await
+        .unwrap()
+        .expect("a registration is queued");
+    let payload = row.payload.expect("with its payload").to_string();
+    assert!(
+        payload.contains("529900T8BM49AURSDO55") && !payload.contains("DE123456789"),
+        "the registration names the LEI and not the VAT number: {payload}"
+    );
+}

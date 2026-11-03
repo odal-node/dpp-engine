@@ -30,9 +30,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Facilities are added under a GLN and are not affected.
 
   **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
-  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). A registration already
-  queued under a VAT or EORI number is rejected by the drain the first time it is
-  tried (see **Fixed**). (#561)
+  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). Drafts, and the
+  successor an amendment publishes, then take it; a published passport keeps the
+  identifier it was signed with. A registration already queued under a VAT or
+  EORI number is rejected by the drain the first time it is tried (see
+  **Fixed**). (#561)
 
 - **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
   placing date, and from 18 August 2027 with its due diligence declaration.**
@@ -58,6 +60,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   cover; a new one is written against the new version. (#561)
 
 ### Fixed
+
+- **A draft is published under the operator's primary identifier as it stands
+  at publish.** It kept the one stamped when it was created, and an amendment's
+  successor the one its predecessor was signed with. So an operator that changed
+  its primary, as moving off a VAT number requires, went on publishing under the
+  old one, and a registration built from a value the primary no longer had named
+  no scheme, which the registry was bound to refuse. A draft is not signed yet
+  and create takes no identifier, so nothing an operator chose is overwritten. A
+  re-publish keeps the identifier the passport was signed with. (#561)
 
 - **A registration the adapter refuses before sending is rejected, not retried
   for ever.** The registration drain read every error as transient, so a payload
