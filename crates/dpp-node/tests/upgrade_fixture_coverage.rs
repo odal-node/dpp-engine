@@ -127,3 +127,40 @@ fn the_version_parser_reads_releases_and_refuses_the_rest() {
     assert_eq!(parse("0.15.0.1"), None);
     assert_eq!(parse("0.15.0-rc.1"), None);
 }
+
+/// Each captured release is upgraded by a test of its own in `operator_paths.rs`,
+/// `v<X>_<Y>_<Z>_upgrades_to_this_build`, so each is held to the slow-test budget
+/// alone and a failure names the release. A fixture with no test would be
+/// captured and never upgraded, and a test with no fixture would fail only in the
+/// Docker tier; both are caught here.
+#[test]
+fn every_fixture_has_its_own_upgrade_test() {
+    let tests = include_str!("operator_paths.rs");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade");
+    for entry in fs::read_dir(&root).expect("read tests/fixtures/upgrade") {
+        let name = entry.expect("dir entry").file_name();
+        let name = name.to_str().unwrap_or_default();
+        let test = format!(
+            "async fn {}_upgrades_to_this_build()",
+            name.replace('.', "_")
+        );
+        assert!(
+            tests.contains(&test),
+            "{name} has no upgrade test: add `{test}` to operator_paths.rs, as the others are"
+        );
+    }
+    for line in tests.lines() {
+        let Some(test) = line
+            .trim()
+            .strip_prefix("async fn ")
+            .and_then(|rest| rest.strip_suffix("_upgrades_to_this_build() {"))
+        else {
+            continue;
+        };
+        let release = test.replace('_', ".");
+        assert!(
+            root.join(&release).is_dir(),
+            "operator_paths.rs upgrades from {release}, which has no fixture"
+        );
+    }
+}

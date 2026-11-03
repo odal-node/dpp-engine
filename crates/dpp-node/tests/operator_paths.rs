@@ -26,6 +26,12 @@
 //! `upgrade_fixture_coverage.rs` fails a release pull request whose predecessor
 //! has none.
 //!
+//! Each fixture has a test of its own, `v<X>_<Y>_<Z>_upgrades_to_this_build`, so
+//! each upgrade is held to the slow-test budget alone and a failure names the
+//! release. One test over every fixture grew by a node boot per release and went
+//! over the budget at the second. `upgrade_fixture_coverage.rs` fails when a
+//! fixture has no test here.
+//!
 //! # 🚨 `odal` is another package's binary
 //!
 //! Cargo only exposes a package's own binaries to its tests, so the onboarding
@@ -406,15 +412,9 @@ async fn a_fresh_node_is_onboarded_with_odal() {
 
 // ── Upgrading a node that holds passports ───────────────────────────────────
 
-/// Every captured release, oldest first.
-fn fixtures() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = fs::read_dir(manifest_dir().join("tests/fixtures/upgrade"))
-        .expect("read tests/fixtures/upgrade")
-        .map(|entry| entry.expect("dir entry").path())
-        .filter(|path| path.is_dir())
-        .collect();
-    dirs.sort();
-    dirs
+/// The fixture a release left, `tests/fixtures/upgrade/<release>/`.
+fn fixture(release: &str) -> PathBuf {
+    manifest_dir().join("tests/fixtures/upgrade").join(release)
 }
 
 /// The newest migration this build carries, by its number.
@@ -430,15 +430,13 @@ fn latest_migration() -> i64 {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn every_captured_release_upgrades_to_this_build() {
-    let fixtures = fixtures();
-    assert!(
-        !fixtures.is_empty(),
-        "no upgrade fixtures under tests/fixtures/upgrade"
-    );
-    for fixture in fixtures {
-        upgrade_from(&fixture).await;
-    }
+async fn v0_14_0_upgrades_to_this_build() {
+    upgrade_from(&fixture("v0.14.0")).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn v0_15_0_upgrades_to_this_build() {
+    upgrade_from(&fixture("v0.15.0")).await;
 }
 
 async fn upgrade_from(fixture: &Path) {
