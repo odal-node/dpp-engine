@@ -43,6 +43,7 @@ struct Upload {
 }
 
 /// Read the multipart body. The `Err` is the response to send.
+#[allow(clippy::result_large_err)]
 async fn read_upload(multipart: &mut Multipart) -> Result<Upload, Response> {
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut is_xlsx = false;

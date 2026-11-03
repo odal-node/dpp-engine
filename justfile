@@ -124,7 +124,15 @@ _test-integration-tiers:
     cargo nextest run -p dpp-dal         --features integration-tests
     cargo nextest run -p dpp-vault       --features integration-tests
     cargo nextest run -p dpp-plugin-host --features integration-tests   # fuel test: Linux only
+    # `operator_paths.rs` drives the real `odal`, another package's binary.
+    cargo build -p dpp-cli --bin odal
     cargo nextest run -p dpp-node        --features integration-tests
+
+# Builds the tag unless BIN_DIR holds its `dpp-node` and `odal`. Needs Docker.
+# The next release is tested upgrading from it (docs/governance/RELEASE.md).
+# After tagging a release: capture a database its own binaries wrote
+capture-upgrade-fixture VERSION BIN_DIR='':
+    bash scripts/capture-upgrade-fixture.sh '{{VERSION}}' '{{BIN_DIR}}'
 
 # Run the PostgreSQL integration lane (pg_integration T1–T7; needs Docker)
 test-pg:
@@ -162,8 +170,8 @@ test-seal-db:
 # default-feature pass has to come back.
 #
 # Features are named per package rather than via `--all-features`, which would
-# also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept out of
-# server-side builds on purpose — see cli/Cargo.toml). That is not a gap this
+# also enable `cli/desktop` (pulls in rfd, kept out of server-side builds on
+# purpose — see cli/Cargo.toml). That is not a gap this
 # closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting `tests/sdk_abi.rs`
 # needs no wasm target, only running it does, and the integration tiers run it.
 #
@@ -383,6 +391,12 @@ ci-guard-check:
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
 
+# The gate itself needs a pull request's number, labels and body, so only CI
+# (`.github/workflows/changelog.yml`) runs it.
+# Prove changelog-check still refuses a pull request with no entry of its own.
+changelog-check-self-test:
+    bash scripts/changelog-check.test.sh
+
 # Every fuzz target is built by fuzz/Cargo.toml, run by the nightly fuzz job, and
 # named in fuzz/README.md. The reasoning lives in the script.
 fuzz-targets-check:
@@ -442,7 +456,7 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg

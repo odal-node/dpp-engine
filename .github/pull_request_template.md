@@ -12,6 +12,7 @@
 
 ## Checklist
 
+- [ ] A `CHANGELOG.md` entry under `[Unreleased]` that cites this pull request or the issue it closes, or the `no-changelog` label and a `No changelog: <reason>` line here
 - [ ] Tests added or updated for the new behaviour
 - [ ] `just check` passes locally (format, clippy over every target including the Docker-gated suites, guard scripts, unit tests, audit)
 - [ ] `just test-integration` run if persistence, lifecycle or auth changed (needs Docker)

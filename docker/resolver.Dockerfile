@@ -13,7 +13,7 @@
 # it once and both images stay in lockstep.
 #
 # Builder is pinned to bookworm so the binary's glibc matches the bookworm-slim
-# runtime below (rust:1.96-slim tracks newer Debian and would link glibc 2.38+).
+# runtime below (rust:1.99-slim tracks newer Debian and would link glibc 2.38+).
 #
 # 🚨 The tag's Rust version MUST equal `rust-toolchain.toml`'s channel — see
 # node.Dockerfile for why, and for why the toolchain file is kept out of the
@@ -21,7 +21,7 @@
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.96.0-slim-bookworm AS builder-base
+FROM rust:1.99.1-slim-bookworm AS builder-base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*

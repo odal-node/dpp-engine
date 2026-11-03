@@ -24,7 +24,7 @@ use dpp_domain::{DppError, passport::Passport, passport::PassportId};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 
 use super::repo_audit::append_in_tx;
-use super::repo_passport::{PgPassportRepo, insert_passport_in_tx, update_passport_in_tx};
+use super::repo_passport::{PgPassportRepo, insert_passport_in_tx};
 use super::repo_passport_version::insert_version;
 use super::repo_registry_sync::{queue_registration_in_tx, record_status_intent};
 use super::repo_registry_transfer::queue_transfer_notice;
@@ -78,7 +78,7 @@ impl PgStateChangeLog {
             }
             PassportWrite::Replace(passport) => {
                 self.archive_current(tx, passport.id).await?;
-                update_passport_in_tx(tx, &passport).await?;
+                self.passports.update_in_tx(tx, &passport).await?;
                 Ok(passport)
             }
             PassportWrite::Status(id, status) => {
@@ -94,7 +94,7 @@ impl PgStateChangeLog {
                 }
                 passport.status = status;
                 passport.updated_at = Utc::now();
-                update_passport_in_tx(tx, &passport).await?;
+                self.passports.update_in_tx(tx, &passport).await?;
                 Ok(passport)
             }
             PassportWrite::Patch(id, delta) => {

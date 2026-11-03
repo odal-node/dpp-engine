@@ -112,7 +112,7 @@ jobs:
       # Why the features are on, and how they are named, is on the recipe, next to
       # the command it explains.
       - name: Install just
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: just lint
@@ -134,7 +134,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest
       # Run first, and as its own step, so "the API description no longer
@@ -205,7 +205,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest
       - name: Create results dir
@@ -313,7 +313,10 @@ jobs:
           exit $test_exit
       - name: Node smoke tests
         working-directory: dpp-engine
+        # `operator_paths.rs` drives the real `odal` binary, which belongs to
+        # another package and is not built for this one's tests.
         run: |
+          cargo build --locked -p dpp-cli --bin odal
           set +e
           cargo nextest run --locked -p dpp-node --features integration-tests --no-tests=fail
           test_exit=$?
@@ -605,7 +608,7 @@ jobs:
         with:
           workspaces: dpp-engine/fuzz
       - name: Install just
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: just fuzz-check
@@ -685,7 +688,7 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/check-audit-register.test.sh
       - name: Install cargo-deny
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-deny
       - name: cargo deny (bans, licenses, sources)
@@ -737,7 +740,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest
       - name: PostgreSQL integration tests (check + clippy + pg_integration)

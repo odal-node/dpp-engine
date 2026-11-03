@@ -1,0 +1,118 @@
+# Runs this branch against a dpp-core commit that is not on crates.io yet.
+#
+# A dpp-core release cannot be taken back. A yank only stops new lockfiles
+# resolving to it; the crate stays published. So the moment to find out that a
+# core release breaks this engine is before it is published, and dpp-core cannot
+# find out alone: it has no node, no database and no passports stored by an
+# earlier release. The 0.15.0 upgrade defect came in exactly this way. dpp-core
+# 0.22.0 added a lens that reads a stored `gtin` as a `productIdentifier`; every
+# core suite passed, and a node upgraded over passports published before the
+# repin could no longer change their status.
+#
+# Dispatch it on the repin branch, the one that moves the dpp-core pins and adapts
+# to any break, naming the core release commit as `core_ref`. It applies
+# `just core-local`, the `[patch]` onto a sibling `dpp-core` checkout, and runs
+# the same recipes a developer does: `lint`, `test` and `test-integration`. The
+# last includes `operator_paths.rs`, which upgrades every captured release's
+# database to this build. Then the plugin SDK ABI test, which no recipe runs.
+# docs/governance/RELEASE.md says when it is required.
+#
+# Not a pull-request check: the patch is the point of this run, and a pull
+# request must build against what is published.
+name: Core candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_ref:
+        description: The dpp-core commit, tag or branch to build against, usually its release commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: This branch against an unpublished dpp-core
+    runs-on: ubuntu-latest
+    env:
+      ODAL_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+    steps:
+      # Side by side, as `just core-local` expects: its `[patch]` points at
+      # ../dpp-core.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: odal-node/dpp-core
+          ref: ${{ inputs.core_ref }}
+          path: dpp-core
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: dpp-engine
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: nextest,just
+      - name: Name the candidate
+        working-directory: dpp-core
+        run: echo "Built against dpp-core $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      # The same server ci.yml's integration job starts, so the S3 suites run here
+      # too rather than skipping.
+      - name: Start S3 test server
+        run: |
+          access_key=$(openssl rand -hex 16)
+          secret_key=$(openssl rand -hex 16)
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "ODAL_TEST_S3_ACCESS_KEY=$access_key" >> "$GITHUB_ENV"
+          echo "ODAL_TEST_S3_SECRET_KEY=$secret_key" >> "$GITHUB_ENV"
+          docker run -d --name s3 \
+            -p 9000:9000 \
+            --add-host version.rustfs.com:127.0.0.1 \
+            -e RUSTFS_ACCESS_KEY="$access_key" \
+            -e RUSTFS_SECRET_KEY="$secret_key" \
+            rustfs/rustfs:1.0.0
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 2 http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
+              echo "s3 server ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "s3 server did not become ready in 30s"
+          docker logs s3
+          exit 1
+      # `just` drops `--locked` while the patch is in place: it rewrites the lock
+      # by design (see LOCKED in the justfile).
+      - name: Patch onto the candidate
+        working-directory: dpp-engine
+        run: just core-local
+      - name: Lint
+        working-directory: dpp-engine
+        run: just lint
+      - name: Unit tests
+        working-directory: dpp-engine
+        run: just test
+      - name: Integration tiers, including the upgrade from every captured release
+        working-directory: dpp-engine
+        run: just test-integration
+      # The plugin ABI is dpp-core's, and `test-integration` does not cover it: the
+      # SDK ABI test needs a guest built first, as ci.yml's plugin host step does.
+      # The guest is built here under the same patch, so it carries the
+      # candidate's plugin SDK wherever its pin matches the candidate's version.
+      - name: Plugin SDK ABI against the candidate
+        working-directory: dpp-engine
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --release --target wasm32-wasip1 \
+            --manifest-path crates/dpp-plugin-host/tests/fixtures/abi-echo/Cargo.toml
+          cargo nextest run -p dpp-plugin-host --features integration-tests,wasm-fixture-tests \
+            --test sdk_abi --no-tests=fail
