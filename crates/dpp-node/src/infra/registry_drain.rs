@@ -188,10 +188,20 @@ async fn apply_acknowledgement(
         // payload is. Every failure to reach or hear from the registry arrives as
         // another variant and is retried below.
         Err(dpp_domain::DppError::Validation(e)) => {
-            let _ = outbox
-                .mark_rejected(pid, format!("refused before sending: {e}"))
-                .await;
-            stats.skipped += 1;
+            let reason = format!("refused before sending: {e}");
+            if let Err(write) = outbox.mark_rejected(pid, reason.clone()).await {
+                // Not closed, so it backs off like any failure rather than being
+                // checked again on every pass.
+                tracing::warn!(
+                    passport_id = %pid,
+                    error = %write,
+                    "a refused registration could not be recorded as rejected"
+                );
+                let _ = outbox.mark_attempt_failed(pid, reason).await;
+                stats.retried += 1;
+            } else {
+                stats.skipped += 1;
+            }
         }
         Err(e) => {
             // Transient/unreachable — back off and retry. The row stays.

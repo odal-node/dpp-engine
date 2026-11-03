@@ -24,7 +24,8 @@ pub struct TransferDrainStats {
     pub rejected: u32,
     /// Rows that failed transiently and were backed off for retry.
     pub retried: u32,
-    /// Rows dropped from draining because their payload was corrupt.
+    /// Rows dropped from draining because their payload was corrupt, or refused
+    /// by the adapter's own checks before it was sent.
     pub skipped: u32,
     /// Rows held back because the passport's own registration has not been
     /// accepted by the registry yet, so there is no record to amend.
@@ -113,7 +114,16 @@ pub async fn drain_once(
             // applied, and no route that would say so has been seen, so the row
             // closes on the registry's word that it holds the notification.
             Ok(TransferReport::Accepted | TransferReport::AlreadyHeld) => {
-                let _ = outbox.mark_notified(tid, registry_id.clone()).await;
+                // A failed write leaves the row pending, and the next pass sends
+                // it again under the same key, which the registry answers as
+                // already held. That recovers; this says why it had to.
+                if let Err(e) = outbox.mark_notified(tid, registry_id.clone()).await {
+                    tracing::warn!(
+                        transfer_id = %tid,
+                        error = %e,
+                        "the registry holds the transfer notification but the outbox write failed"
+                    );
+                }
                 stats.notified += 1;
             }
             Ok(TransferReport::Refused { reason }) => {
@@ -164,6 +174,28 @@ pub async fn drain_once(
                     )
                     .await;
                 stats.retried += 1;
+            }
+            // The adapter's own checks refused the notification before sending
+            // it. Its payload was fixed when the transfer was accepted, so sending
+            // it again cannot change that answer: it is rejected with the reason,
+            // as `registry_drain` does with a registration. Every failure to
+            // reach or hear from the registry arrives as another variant and is
+            // retried below.
+            Err(dpp_domain::DppError::Validation(e)) => {
+                let reason = format!("refused before sending: {e}");
+                if let Err(write) = outbox.mark_rejected(tid, reason.clone()).await {
+                    // Not closed, so it backs off like any failure rather than
+                    // being checked again on every pass.
+                    tracing::warn!(
+                        transfer_id = %tid,
+                        error = %write,
+                        "a refused transfer notification could not be recorded as rejected"
+                    );
+                    let _ = outbox.mark_attempt_failed(tid, reason).await;
+                    stats.retried += 1;
+                } else {
+                    stats.skipped += 1;
+                }
             }
             Err(e) => {
                 // Transient/unreachable — back off and retry. The row stays.
@@ -395,6 +427,8 @@ mod tests {
         /// A state the port has no name for.
         Unrecognised,
         Transient,
+        /// The adapter's own checks refused the notification before sending it.
+        RefusedBeforeSending,
     }
 
     struct FakePort {
@@ -438,6 +472,11 @@ mod tests {
                     state: "UNDER_REVIEW".into(),
                 }),
                 Outcome::Transient => Err(DppError::Internal("registry unreachable".into())),
+                Outcome::RefusedBeforeSending => Err(DppError::Validation(
+                    "the incoming operator has no clause 6 route"
+                        .to_owned()
+                        .into(),
+                )),
             }
         }
     }
@@ -591,6 +630,28 @@ mod tests {
         assert_eq!(stats.rejected, 1);
         assert_eq!(outbox.rejected.lock().unwrap().len(), 1);
         assert!(outbox.notified.lock().unwrap().is_empty());
+    }
+
+    /// A notification the adapter's own checks refuse before sending is rejected,
+    /// not retried. Its payload was fixed when the transfer was accepted, so
+    /// sending it again cannot change the answer, and retrying would back off and
+    /// try again with no end. The registration drain treats the same error the
+    /// same way.
+    #[tokio::test]
+    async fn a_notification_the_adapter_refuses_is_rejected_not_retried() {
+        let (outbox, port) = fakes(Outcome::RefusedBeforeSending, vec![row_from(&record())]);
+
+        let stats = run(&outbox, &port).await;
+
+        assert_eq!((stats.skipped, stats.retried), (1, 0));
+        let rejected = outbox.rejected.lock().unwrap();
+        assert_eq!(rejected.len(), 1, "the row is closed as rejected");
+        assert!(
+            rejected[0].starts_with("refused before sending:"),
+            "with the adapter's reason: {}",
+            rejected[0]
+        );
+        assert!(outbox.failed.lock().unwrap().is_empty());
     }
 
     /// 🚨 A state this node has no name for is not an acceptance. Recording it as

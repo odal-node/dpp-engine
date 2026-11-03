@@ -77,13 +77,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   notes said it checked the candidate's, until a guest pinned to an unpublished
   release could not resolve at all. The override now patches it. (#561)
 
-- **A registration the adapter refuses before sending is rejected, not retried
-  for ever.** The registration drain read every error as transient, so a payload
-  the adapter's own checks refused backed off and was tried again with no end.
-  It can never pass: the payload is fixed when the passport is published. Such a
-  row is now marked rejected, with the reason, as a corrupt payload already was.
-  Only the adapter's checks report a `Validation` error; a registry that cannot be
-  reached, or that answers with a failure, is still retried. (#562)
+- **A registration or transfer notification the adapter refuses before sending
+  is rejected, not retried for ever.** Both registry drains read every error as
+  transient, so a payload the adapter's own checks refused backed off and was
+  tried again with no end. It can never pass: a registration's payload is fixed
+  when the passport is published, and a notification's when the transfer is
+  accepted. Such a row is now marked rejected, with the reason, as a corrupt
+  payload already was; if that write fails, the row backs off rather than being
+  checked again on every pass. Only the adapter's checks report a `Validation`
+  error; a registry that cannot be reached, or that answers with a failure, is
+  still retried. (#562, #561)
 
 - **A transfer notification is sent under a stable key, and only an answer that
   says the registry took it closes it.** `dpp-core` 0.23.0's registry port

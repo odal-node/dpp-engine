@@ -1243,7 +1243,7 @@ async fn the_quick_start_battery_sample_creates_and_publishes() {
     let operator_id = client
         .post(format!("{base}/vault/api/v1/operator-identifiers"))
         .bearer_auth(&token)
-        .json(&serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }))
+        .json(&serde_json::json!({ "scheme": "lei", "value": "984500ODALEXAMPLE069", "isPrimary": true }))
         .send()
         .await
         .expect("operator-identifier request failed");

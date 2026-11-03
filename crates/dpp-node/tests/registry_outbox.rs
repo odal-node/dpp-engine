@@ -448,6 +448,97 @@ async fn a_payload_the_adapter_refuses_is_rejected_not_retried() {
     );
 }
 
+/// A refusal whose rejection cannot be written is recorded as a failed attempt
+/// instead, so the row backs off like any failure. Left as it was, it stayed
+/// due and was checked again, and failed again, on every pass.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refusal_whose_rejection_cannot_be_written_backs_off() {
+    /// The real outbox, except that recording a rejection fails.
+    struct RejectionFails(PgRegistrySyncRepo);
+
+    #[async_trait]
+    impl RegistrySyncOutbox for RejectionFails {
+        async fn commit_publish(
+            &self,
+            passport: &Passport,
+            payload: serde_json::Value,
+        ) -> Result<(), DppError> {
+            self.0.commit_publish(passport, payload).await
+        }
+        async fn enqueue_status(
+            &self,
+            passport_id: PassportId,
+            intent: RegistryStatusIntent,
+        ) -> Result<(), DppError> {
+            self.0.enqueue_status(passport_id, intent).await
+        }
+        async fn due(&self, limit: i64) -> Result<Vec<dpp_types::RegistrySyncRow>, DppError> {
+            self.0.due(limit).await
+        }
+        async fn mark_submitted(
+            &self,
+            id: PassportId,
+            registry_id: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_submitted(id, registry_id).await
+        }
+        async fn mark_deactivated(&self, id: PassportId, message: String) -> Result<(), DppError> {
+            self.0.mark_deactivated(id, message).await
+        }
+        async fn mark_registered(
+            &self,
+            id: PassportId,
+            registry_id: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_registered(id, registry_id).await
+        }
+        async fn mark_rejected(&self, _id: PassportId, _message: String) -> Result<(), DppError> {
+            Err(DppError::Internal("the database stopped answering".into()))
+        }
+        async fn mark_attempt_failed(
+            &self,
+            id: PassportId,
+            message: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_attempt_failed(id, message).await
+        }
+        async fn pending_for(
+            &self,
+            id: PassportId,
+        ) -> Result<Option<dpp_types::RegistrySyncRow>, DppError> {
+            self.0.pending_for(id).await
+        }
+        async fn status_counts(
+            &self,
+            stall_threshold: i32,
+        ) -> Result<dpp_types::RegistrySyncCounts, DppError> {
+            self.0.status_counts(stall_threshold).await
+        }
+        async fn unregistered_published_count(&self) -> Result<i64, DppError> {
+            self.0.unregistered_published_count().await
+        }
+    }
+
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let plain: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &plain).await;
+    let outbox: Arc<dyn RegistrySyncOutbox> =
+        Arc::new(RejectionFails(PgRegistrySyncRepo::new(dal.clone())));
+
+    let (port, _) = mock(Outcome::Invalid);
+    let stats = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!((stats.skipped, stats.retried), (0, 1), "{stats:?}");
+
+    let row = plain.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
+    assert_eq!(row.attempts, 1, "a failed attempt, so it backs off");
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "and is not due again on the next pass"
+    );
+}
+
 // ─── 0024 heals rows the old write path already clobbered ─────────────────────
 
 /// Bring a fresh database up to the pre-0024 schema by applying every migration
