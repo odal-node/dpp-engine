@@ -112,6 +112,11 @@ run_case an_entry_atop_a_long_unreleased_section_is_accepted accept \
     "$(with_entry '- **A new fix.** (#12)' | awk '
         { print }
         /\(#12\)/ { for (i = 0; i < 4000; i++) print "  A long earlier entry, line " i, "of padding." }')"
+# Each reason line is a match, so the extraction writes all of them. Taking the
+# first with `head -1` closed the pipe on a writer with more to send, and under
+# `pipefail` a valid reason then failed the gate.
+run_case a_reason_repeated_on_many_lines_is_accepted accept unchanged \
+    PR_LABELS="no-changelog" PR_BODY="$(for i in $(seq 1 2000); do echo "No changelog: a CI pin, line $i."; done)"
 run_case a_reason_atop_a_long_body_is_accepted accept unchanged \
     PR_LABELS="no-changelog" PR_BODY="No changelog: a CI pin
 $(for i in $(seq 1 4000); do echo "More of the body, line $i."; done)"

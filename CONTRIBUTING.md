@@ -197,7 +197,8 @@ checks their bumps.
 
 `.github/workflows/changelog.yml` enforces this (`scripts/changelog-check.sh`).
 The citation is what lets a release be verified: every merged change maps to an
-entry, and every entry to the change that made it true.
+entry or to its stated reason for having none, Dependabot's aside, and every entry
+to the change that made it true.
 
 ### New dependencies
 

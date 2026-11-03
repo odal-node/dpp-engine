@@ -46,9 +46,11 @@ if [ "$author" = "dependabot[bot]" ]; then
 fi
 
 if [[ "$labels" == *",no-changelog,"* ]]; then
+    # `sed -n 1p`, not `head -1`: it reads every match before taking the first,
+    # where `head` exits and breaks the pipe of a writer with more to send.
     reason="$(printf '%s\n' "$body" \
         | sed -nE 's/^[[:space:]]*No changelog:[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' \
-        | head -1)"
+        | sed -n 1p)"
     [ -n "$reason" ] || fail "no-changelog is set, but the body gives no reason." \
         "Add a line to the pull request body:  No changelog: <why this change needs no entry>"
     echo "changelog-check: no entry, because: $reason"
