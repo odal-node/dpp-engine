@@ -248,6 +248,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **Every pull request records itself in this file, or says why it does not.**
+  Of the 81 pull requests merged between 0.14.0 and 0.15.0 that Dependabot did
+  not open, two were cited here by number, so nothing could show that every
+  merged change was described, or that every entry described a change that
+  merged. A pull request now adds an entry under `[Unreleased]` citing its own
+  number or an issue its body closes. A change that needs none carries the
+  `no-changelog` label and a `No changelog: <reason>` line in its body.
+  `.github/workflows/changelog.yml` enforces this and re-runs when a label
+  changes, and `scripts/changelog-check.test.sh` proves each refusal in
+  `just check`. (#568)
 - **A node runs at most two imports at once, and says `429` to a third.**
   Nothing bounded the number of concurrent imports, so each one fanned out
   `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
