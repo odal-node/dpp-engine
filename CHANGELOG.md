@@ -248,6 +248,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A dpp-core release is tested against the engine before it is published.**
+  A published crate cannot be taken back, and dpp-core cannot find out alone that
+  a release breaks a node: it has no database and no passports an earlier release
+  stored. The 0.15.0 upgrade defect came in through exactly such a repin.
+  `.github/workflows/core-candidate.yml`, dispatched on the repin branch with a
+  core commit, patches onto that commit and runs `just lint`, `just test` and
+  `just test-integration`, including the upgrade from every captured release.
+  `docs/governance/RELEASE.md` gains *Repinning dpp-core*, which makes a green
+  run a precondition of the core release. (#569)
 - **A node runs at most two imports at once, and says `429` to a third.**
   Nothing bounded the number of concurrent imports, so each one fanned out
   `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.

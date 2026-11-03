@@ -116,6 +116,30 @@ the Dockerfiles' build command as a supply-chain change.
 4. `odal bootstrap` works against the released images.
 5. The release is announced.
 
+## Repinning dpp-core
+
+A dpp-core release is published to crates.io, and a published crate cannot be taken
+back: a yank only stops new lockfiles resolving to it. So the engine's verdict on a core
+release comes **before** core publishes, not after, and only the engine can give it.
+dpp-core has no node, no database and no passports an earlier release stored. The
+0.15.0 upgrade defect came in exactly this way: core 0.22.0's lens read a stored `gtin`
+as a `productIdentifier`, every core suite passed, and a node upgraded over passports
+published before the repin could no longer change their status.
+
+1. **The previous engine release is captured.** Its upgrade fixture is committed (see
+   *After tagging*), so the repin is tested upgrading from what operators actually run.
+2. **The repin branch builds against the core release commit.** It moves the pins in
+   `Cargo.toml` and `fuzz/Cargo.toml`, adapts to every break core's CHANGELOG lists, and
+   is developed with `just core-local`.
+3. **The candidate run is green.** Dispatch `.github/workflows/core-candidate.yml` on the
+   repin branch with `core_ref` set to the core release commit. It runs `just lint`,
+   `just test` and `just test-integration` against that commit, including
+   `operator_paths.rs`, which upgrades every captured release's database. A red run
+   stops the core release; the fix goes into core before it publishes.
+4. **Core publishes**, on the maintainer's word.
+5. **The repin drops the patch.** It relocks from crates.io, `just check` and CI pass with
+   `--locked`, and it merges like any other pull request.
+
 ## Hotfixes
 
 1. Branch `fix/<description>` from the release tag.
