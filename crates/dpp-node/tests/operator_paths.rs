@@ -108,7 +108,14 @@ impl Node {
             if let Some(status) = self.child.try_wait().expect("poll dpp-node") {
                 panic!("dpp-node exited during boot ({status}):\n{}", self.log());
             }
-            if let Ok(resp) = self.http.get(self.url("/vault/ready")).send().await
+            // Each probe is bounded, so a connection that hangs cannot carry the
+            // loop past its deadline.
+            if let Ok(resp) = self
+                .http
+                .get(self.url("/vault/ready"))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
                 && resp.status().is_success()
             {
                 return;
@@ -593,6 +600,10 @@ async fn published_lifecycle(node: &Node, admin: &sqlx::PgPool, release: &str, i
     assert_eq!(
         successor["supersedesId"], id,
         "{release}: the successor points back"
+    );
+    assert_eq!(
+        successor["productName"], "Corrected after the upgrade",
+        "{release}: the successor carries the correction it was amended with"
     );
     let status: String = sqlx::query_scalar("SELECT status FROM odal.passport WHERE id = $1::uuid")
         .bind(id)

@@ -32,6 +32,8 @@ set -euo pipefail
 
 version="${1:?usage: capture-upgrade-fixture.sh <version> [<bin-dir>]}"
 bin_dir="${2:-}"
+# Absolute: the script runs the binaries from inside its own scratch directory.
+if [ -n "$bin_dir" ]; then bin_dir="$(cd "$bin_dir" && pwd)"; fi
 tag="v$version"
 repo="$(git rev-parse --show-toplevel)"
 out="$repo/crates/dpp-node/tests/fixtures/upgrade/$tag"
@@ -73,10 +75,11 @@ done
 secret() { head -c 24 /dev/urandom | base64 | tr -d '/+='; }
 admin_user="capture-admin"
 admin_pass="$(secret)"
+db_pass="$(secret)"
 
 docker run -d --name "$container" -p "127.0.0.1:$pg_port:5432" \
-    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=capture -e POSTGRES_DB=odal \
-    -e DATABASE_APP_PASS=capture \
+    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="$db_pass" -e POSTGRES_DB=odal \
+    -e DATABASE_APP_PASS="$db_pass" \
     -v "$tree/ops/bootstrap/pg-init.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro" \
     -v "$tree/ops/bootstrap/bootstrap.sql:/opt/odal/bootstrap.sql:ro" \
     postgres:17 > /dev/null
@@ -97,8 +100,8 @@ mkdir -p "$work/node" "$work/home" "$work/plugins"
 (
     cd "$work/node"
     exec env -i PATH="$PATH" HOME="$work/home" \
-        DATABASE_URL="postgres://odal_app:capture@127.0.0.1:$pg_port/odal" \
-        DATABASE_MIGRATE_URL="postgres://postgres:capture@127.0.0.1:$pg_port/odal" \
+        DATABASE_URL="postgres://odal_app:$db_pass@127.0.0.1:$pg_port/odal" \
+        DATABASE_MIGRATE_URL="postgres://postgres:$db_pass@127.0.0.1:$pg_port/odal" \
         KEY_STORE_PATH="$work/keystore.enc" KEY_STORE_PASSPHRASE="$(secret)" \
         DID_WEB_BASE_URL="$base" RESOLVER_BASE_URL="http://127.0.0.1:1" \
         PORT="$node_port" NODE_PORT="$node_port" METRICS_ADDR="" \
@@ -146,13 +149,26 @@ code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$vault/dpp/$draft/retir
 
 mkdir -p "$out"
 echo '{}' > "$work/public.json"
+# Only a `200` is captured, since only a served view has bytes to compare. Every
+# other answer is printed rather than skipped in silence: a suspended passport's
+# `410` is expected, and so, until it is fixed, is the `500` a retired draft that
+# was never published answers. A failed request means the node is not answering,
+# and nothing captured after that could be trusted, so it stops the capture.
 for id in $(docker exec "$container" psql -U postgres -d odal -tAc \
     "SELECT id FROM odal.passport WHERE status <> 'draft' ORDER BY id"); do
-    if [ "$(curl -sS -o "$work/body" -w '%{http_code}' "$base/vault/public/dpp/$id")" = 200 ]; then
-        jq --arg id "$id" --rawfile body "$work/body" '. + {($id): $body}' \
-            "$work/public.json" > "$work/public.next"
-        mv "$work/public.next" "$work/public.json"
-    fi
+    code="$(curl -sS -o "$work/body" -w '%{http_code}' "$base/vault/public/dpp/$id" || true)"
+    case "$code" in
+        200)
+            jq --arg id "$id" --rawfile body "$work/body" '. + {($id): $body}' \
+                "$work/public.json" > "$work/public.next"
+            mv "$work/public.next" "$work/public.json"
+            ;;
+        000)
+            echo "capture: the node did not answer the public read of $id" >&2
+            exit 1
+            ;;
+        *) echo "capture: not captured, $id answered $code" ;;
+    esac
 done
 jq -S . "$work/public.json" > "$out/public.json"
 
@@ -166,6 +182,7 @@ node_pid=""
 {
     echo "-- dpp-engine $tag ($(git -C "$repo" rev-parse --short "$tag^{commit}")), captured by"
     echo "-- scripts/capture-upgrade-fixture.sh on $(date -u +%Y-%m-%d). Do not edit: re-capture."
+    echo "-- Written by dpp-node sha256:$(sha256sum "$bin_dir/dpp-node" | cut -d' ' -f1)"
     docker exec "$container" pg_dump -U postgres -d odal --no-owner --inserts \
         | grep -v -e '^\\restrict ' -e '^\\unrestrict '
 } > "$out/dump.sql"

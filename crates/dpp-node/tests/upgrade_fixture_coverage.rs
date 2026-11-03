@@ -31,13 +31,24 @@ fn repo() -> PathBuf {
 
 /// Every version `CHANGELOG.md` records as released: a `## [X.Y.Z] - <date>`
 /// heading. `[Unreleased]` carries no date and no version, so it is skipped.
+///
+/// Any other heading that does not parse fails rather than being skipped. A
+/// release written as `## [0.14.1] – 2026-11-01`, with an en dash, would drop out
+/// of the list, and the gate would then compare against an older release and pass
+/// without the fixture it exists to require.
 fn released() -> Vec<Version> {
     let changelog = fs::read_to_string(repo().join("CHANGELOG.md")).expect("read CHANGELOG.md");
     changelog
         .lines()
         .filter_map(|line| line.strip_prefix("## ["))
-        .filter_map(|rest| rest.split_once("] - "))
-        .filter_map(|(version, _date)| parse(version))
+        .filter(|rest| !rest.starts_with("Unreleased]"))
+        .map(|rest| {
+            rest.split_once("] - ")
+                .and_then(|(version, _date)| parse(version))
+                .unwrap_or_else(|| {
+                    panic!("CHANGELOG.md heading `## [{rest}` is not `## [X.Y.Z] - <date>`")
+                })
+        })
         .collect()
 }
 

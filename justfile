@@ -132,7 +132,7 @@ _test-integration-tiers:
 # The next release is tested upgrading from it (docs/governance/RELEASE.md).
 # After tagging a release: capture a database its own binaries wrote
 capture-upgrade-fixture VERSION BIN_DIR='':
-    bash scripts/capture-upgrade-fixture.sh {{VERSION}} {{BIN_DIR}}
+    bash scripts/capture-upgrade-fixture.sh '{{VERSION}}' '{{BIN_DIR}}'
 
 # Run the PostgreSQL integration lane (pg_integration T1–T7; needs Docker)
 test-pg:
