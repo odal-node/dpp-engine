@@ -97,6 +97,7 @@ where
 /// caller treats every failure as unverifiable, never a pass. The reason is
 /// logged rather than returned, because [`RefVerification`] deliberately does
 /// not tell a caller *why* a reference was unreachable.
+#[allow(clippy::result_unit_err)]
 pub async fn fetch_public_json(url: String) -> Result<serde_json::Value, ()> {
     match dpp_common::outbound::fetch_json(
         &dpp_common::outbound::guarded_client(),
