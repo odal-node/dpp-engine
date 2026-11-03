@@ -472,6 +472,31 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   generated battery templates carry the column last; an older file without it
   still imports.
 
+### Changed
+
+- **Rust 1.99.1, and every dependency at its newest release that the rest of
+  the graph allows.** The toolchain moves from 1.96.0 to 1.99.1, the latest
+  stable release, and both images build on `rust:1.99.1-slim-bookworm`, so what
+  ships and what CI tests are still one compiler; `rust-version` is 1.99. Six
+  dependencies move a major version: `wasmtime` and `wasmtime-wasi` 49 → 50
+  (which needs Rust 1.97 or later), `xml-sec` 0.1 → 0.4, `async-nats` 0.50 →
+  0.51, `calamine` 0.37 → 0.38 and `rfd` 0.16 → 0.17. Two groups stay where they
+  are because the crates they share types with have not released: `der` 0.7,
+  `x509-cert` 0.2 and `const-oid` 0.9, which the newest `cms` (0.2.3) and
+  `x509-verify` (0.4.8) still require, and `testcontainers` 0.27, which the
+  newest `testcontainers-modules` (0.15.0) requires.
+  - **`xml-sec` is built to verify and nothing else.** It was compiled with its
+    default features, which include XML encryption. Now only `xmldsig` is
+    compiled, on the same `xmloxide` backend. Its `xslt` feature executes a
+    stylesheet named in a `Reference` transform, and it is not compiled, so no
+    trusted list can make the node run one; 0.2.0 is the release that began
+    executing them.
+  - **`rfd` 0.17 drops `ashpd` and `zbus`**, the D-Bus stack behind the CLI's
+    optional file picker. The three "unmaintained" advisories registered against
+    that stack in `.cargo/audit.toml` (RUSTSEC-2026-0370, -0371 and -0372) are
+    removed with it, and so is the `wayland-client` dependency that existed only
+    to load its Wayland library at runtime.
+
 ### Fixed
 
 - **The resolver's metrics can be scraped from the shipped stack, and
