@@ -142,12 +142,14 @@ published before the repin could no longer change their status.
 1. **The previous engine release is captured.** Its upgrade fixture is committed (see
    *After tagging*), so the repin is tested upgrading from what operators actually run.
 2. **The repin branch builds against the core release commit.** It moves the pins in
-   `Cargo.toml` and `fuzz/Cargo.toml`, adapts to every break core's CHANGELOG lists, and
-   is developed with `just core-local`.
+   `Cargo.toml`, `fuzz/Cargo.toml` and the plugin SDK ABI guest
+   (`crates/dpp-plugin-host/tests/fixtures/abi-echo/Cargo.toml`), adapts to every break
+   core's CHANGELOG lists, and is developed with `just core-local`.
 3. **The candidate run is green.** Dispatch `.github/workflows/core-candidate.yml` on the
    repin branch with `core_ref` set to the core release commit. It runs `just lint`,
    `just test` and `just test-integration` against that commit, including
-   `operator_paths.rs`, which upgrades every captured release's database. A red run
+   `operator_paths.rs`, which upgrades every captured release's database, and the plugin
+   SDK ABI test against a guest built with the candidate's SDK. A red run
    stops the core release; the fix goes into core before it publishes.
 4. **Core publishes**, on the maintainer's word.
 5. **The repin drops the patch.** It relocks from crates.io, `just check` and CI pass with

@@ -254,7 +254,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   stored. The 0.15.0 upgrade defect came in through exactly such a repin.
   `.github/workflows/core-candidate.yml`, dispatched on the repin branch with a
   core commit, patches onto that commit and runs `just lint`, `just test` and
-  `just test-integration`, including the upgrade from every captured release.
+  `just test-integration`, including the upgrade from every captured release,
+  and the plugin SDK ABI test against a guest built with the candidate's SDK.
   `docs/governance/RELEASE.md` gains *Repinning dpp-core*, which makes a green
   run a precondition of the core release. (#569)
 - **Every pull request records itself in this file, or says why it does not.**

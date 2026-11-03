@@ -14,7 +14,8 @@
 # `just core-local`, the `[patch]` onto a sibling `dpp-core` checkout, and runs
 # the same recipes a developer does: `lint`, `test` and `test-integration`. The
 # last includes `operator_paths.rs`, which upgrades every captured release's
-# database to this build. docs/governance/RELEASE.md says when it is required.
+# database to this build. Then the plugin SDK ABI test, which no recipe runs.
+# docs/governance/RELEASE.md says when it is required.
 #
 # Not a pull-request check: the patch is the point of this run, and a pull
 # request must build against what is published.
@@ -103,3 +104,15 @@ jobs:
       - name: Integration tiers, including the upgrade from every captured release
         working-directory: dpp-engine
         run: just test-integration
+      # The plugin ABI is dpp-core's, and `test-integration` does not cover it: the
+      # SDK ABI test needs a guest built first, as ci.yml's plugin host step does.
+      # The guest is built here under the same patch, so it carries the
+      # candidate's plugin SDK wherever its pin matches the candidate's version.
+      - name: Plugin SDK ABI against the candidate
+        working-directory: dpp-engine
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --release --target wasm32-wasip1 \
+            --manifest-path crates/dpp-plugin-host/tests/fixtures/abi-echo/Cargo.toml
+          cargo nextest run -p dpp-plugin-host --features integration-tests,wasm-fixture-tests \
+            --test sdk_abi --no-tests=fail
