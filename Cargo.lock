@@ -2188,7 +2188,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-cli"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-common"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2271,7 +2271,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-dal"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-factor-data"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "dpp-calc",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-identity"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-integrator"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2404,7 +2404,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-node"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-plugin-host"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-render"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-resolver"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-seal"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-types"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-vault"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "anyhow",
  "async-trait",

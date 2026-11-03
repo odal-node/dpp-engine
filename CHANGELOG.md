@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-03
+
 ### Breaking
 
 - **`dpp-core` 0.22.0: a key is named by its own thumbprint, and a token
@@ -247,6 +249,52 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   **Migration:** a deployment that sets `NODE_PROFILE` to anything else fixes the
   spelling, or unsets the variable to keep `development`.
 
+- **A node runs at most two imports at once, and says `429` to a third.**
+  Nothing bounded the number of concurrent imports, so each one fanned out
+  `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
+  `IMPORT_MAX_CONCURRENT` (default 2, at least 1) is checked once the caller is
+  authenticated and before the upload is read; an import that finds no free slot
+  gets `429` with `Retry-After`, counted in
+  `import_rejections_total{reason="busy"}`. A `429` is not recorded under an
+  `Idempotency-Key`, so a retry with the same key runs. An import over 100 rows
+  keeps its slot while its background job runs, so the `202` does not free it,
+  and an upload that has not arrived after 120 seconds is refused with `400` and
+  gives its slot back. An upload over 5 MiB is refused with `400` as it is read.
+  A request that carries an `Idempotency-Key` is admitted the same way: its token
+  is checked, its slot taken and its upload read, under the same deadline and
+  size limit, before the idempotency layer sees the body. A keyed upload is
+  therefore bounded as an unkeyed one is, and an import turned away never
+  claims its key. Because admission runs first, a retry under a key is checked
+  against the vault like any other import, so a revoked key can no longer fetch a
+  stored import outcome, and the product group is looked up after the caller is
+  authenticated: an unknown group answers `401` to a caller the vault does not
+  recognise and `404` to one it does. This bounds imports, not request rates:
+  set those at the proxy (the runbook says how the node and the proxy divide the
+  work).
+
+  **Migration:** a client that runs more imports at once than
+  `IMPORT_MAX_CONCURRENT` allows (2 unless set) retries a `429` after its
+  `Retry-After`, or the operator raises the limit. An upload has to arrive within
+  120 seconds.
+
+- **A field that can hold personal data is refused on the write that would store
+  it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
+  2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer
+  personal data in a passport without consent, and a draft is stored. Create,
+  every draft update and the draft an amendment builds now run core's
+  `check_personal_data` before the write and answer `422` naming the field.
+  `personalData` is accepted on create, patchable on a draft through
+  `PUT /dpp/{dppId}` and `amend`, served back on the authenticated read, and
+  frozen at publish. The schema marks the fields: battery
+  `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
+  and textile `repairHistoryUrl`. This node never reads what a field says.
+
+  **Migration:** a client that writes one of these fields adds an entry for it to
+  `personalData`, keyed by the field's dotted path: `{"held": "nothing"}`, or
+  `{"held": "outside", "lawfulBasis": …, "record": …}` when related personal data
+  is kept in an erasable record outside the passport. `POST /dpp/validate`
+  answers with the same `422`, so a body can be checked before it is sent.
+
 ### Added
 
 - **A dpp-core release is tested against the engine before it is published.**
@@ -283,7 +331,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group data they were signed over to change. The databases are
   captured from each tagged release's own binaries by
   `just capture-upgrade-fixture`, starting with 0.14.0, and a release pull
-  request fails when the release before it has none.
+  request fails when the release before it has none. (#567)
 - **The node serves its own DID document at the root, where `did:web`
   resolves.** The node signs as a pathless `did:web:<host>`, which the did:web
   method resolves to `https://<host>/.well-known/did.json`, and the document was
@@ -297,28 +345,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `productGroup`, `totalRows` and the `created`, `updated` and `failedRows`
   counts, or `dpp.import.failed` with a `reason` when it could not. Such a job is
   marked `failed` with that reason, which `GET /imports/{jobId}` reports. (#531)
-- **A node runs at most two imports at once, and says `429` to a third.**
-  Nothing bounded the number of concurrent imports, so each one fanned out
-  `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
-  `IMPORT_MAX_CONCURRENT` (default 2, at least 1) is checked once the caller is
-  authenticated and before the upload is read; an import that finds no free slot
-  gets `429` with `Retry-After`, counted in
-  `import_rejections_total{reason="busy"}`. A `429` is not recorded under an
-  `Idempotency-Key`, so a retry with the same key runs. An import over 100 rows
-  keeps its slot while its background job runs, so the `202` does not free it,
-  and an upload that has not arrived after 120 seconds is refused with `400` and
-  gives its slot back. An upload over 5 MiB is refused with `400` as it is read.
-  A request that carries an `Idempotency-Key` is admitted the same way: its token
-  is checked, its slot taken and its upload read, under the same deadline and
-  size limit, before the idempotency layer sees the body. A keyed upload is
-  therefore bounded as an unkeyed one is, and an import turned away never
-  claims its key. Because admission runs first, a retry under a key is checked
-  against the vault like any other import, so a revoked key can no longer fetch a
-  stored import outcome, and the product group is looked up after the caller is
-  authenticated: an unknown group answers `401` to a caller the vault does not
-  recognise and `404` to one it does. This bounds imports, not request rates:
-  set those at the proxy (the runbook says how the node and the proxy divide the
-  work).
 
 - **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
   reasons recorded for leaving them out were wrong. Electronics'
@@ -334,18 +360,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   passport: an Art. 24 disclosure is recorded through the vault's own
   `unsold-goods` route, and importing it needs a different target and a
   document with a header section.
-
-- **A field that can hold personal data is refused on the write that would store
-  it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
-  2025/2509 Art. 20(10) and Reg. (EU) 2026/405 Art. 22(h) forbid storing customer
-  personal data in a passport without consent, and a draft is stored. Create,
-  every draft update and the draft an amendment builds now run core's
-  `check_personal_data` before the write and answer `422` naming the field.
-  `personalData` is accepted on create, patchable on a draft through
-  `PUT /dpp/{dppId}` and `amend`, served back on the authenticated read, and
-  frozen at publish. The schema marks the fields: battery
-  `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
-  and textile `repairHistoryUrl`. This node never reads what a field says.
 
 - **The records a `held: outside` statement names have a store of their own, and
   an admin credential can erase one.** A published passport is signed, frozen,
@@ -1265,6 +1279,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   cited without its revision, a row nothing cites, and a row without a dated
   status. It proves a citation has a status somebody read, not that the status
   is current, so re-reading the register is now a step of the release checklist.
+
+- **No tool had read the workflows, and two kinds of finding sat in all of
+  them.** `workflow-lint.yml` now runs zizmor (security) and actionlint
+  (correctness) on every pull request, on `main`, weekly and on demand, each
+  downloaded at a pinned version and checked against a recorded SHA-256. What
+  they found is fixed: every `actions/checkout` step kept the job's token in the
+  checkout, and none needs it, so each now sets `persist-credentials: false`;
+  `release.yml` granted `packages: write` to the whole workflow and now grants it
+  to its one publishing job; `dtolnay/rust-toolchain` was pinned to a commit on a
+  branch that has diverged from upstream's `master`, and `Swatinem/rust-cache` to
+  a commit one past its last release, so the first now pins `master` and the
+  second the release, and each version comment beside a pin names the exact
+  release. Dependabot waits seven days before proposing an update. No job's
+  effective permissions widened. (#552)
+
+### Known limitations
+
+- **Two transfers started at the same moment on one passport keep only one in
+  its chain.** `initiate_transfer` reads the transfer chain without a lock and
+  writes the whole chain back, so two initiations that overlap both pass the
+  check for a pending transfer, both return a `TransferRecord`, and both write
+  an audit entry and a `dpp.passport.transferred` event, while the chain holds
+  only the second. Transfers initiated one at a time are not affected. The fix
+  is scheduled for 0.16.0 (#535).
 
 ## [0.14.0] - 2026-09-24
 
