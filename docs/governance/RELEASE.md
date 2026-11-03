@@ -46,6 +46,14 @@ security fix is released as soon as it is verified.
    (`https://www.rfc-editor.org/info/rfcNNNN`), correct `Status as read`, and set `Read`
    to today. The gate proves every citation has a dated status; only this step proves
    the status is still current.
+8. **Verification record.** Write `docs/governance/releases/vX.Y.Z.md` and merge it, with
+   any CHANGELOG corrections it makes, before the release pull request. It traces every
+   pull request merged since the last tag to the entry that describes it, or says why it
+   needs none; checks each entry's claims against the code at the release commit, citing
+   the source or the test that pins it; and checks every issue those pull requests closed
+   against what it asked for. The changelog check proves an entry was written; only this
+   step proves it is still true at release. [`v0.15.0.md`](releases/v0.15.0.md) is the
+   shape to copy.
 
 ## Bumping the version
 
