@@ -313,7 +313,10 @@ jobs:
           exit $test_exit
       - name: Node smoke tests
         working-directory: dpp-engine
+        # `operator_paths.rs` drives the real `odal` binary, which belongs to
+        # another package and is not built for this one's tests.
         run: |
+          cargo build --locked -p dpp-cli --bin odal
           set +e
           cargo nextest run --locked -p dpp-node --features integration-tests --no-tests=fail
           test_exit=$?

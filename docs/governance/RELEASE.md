@@ -21,13 +21,21 @@ security fix is released as soon as it is verified.
 ## Before tagging
 
 1. **Gates green.** `just check` and `just test-integration` (Docker) pass locally, and
-   CI is green on the commit to be tagged.
+   CI is green on the commit to be tagged. The integration tier includes
+   `crates/dpp-node/tests/operator_paths.rs`, which runs the real `dpp-node` and `odal`
+   binaries through the two paths an operator takes: onboarding a fresh node, and
+   upgrading a node that holds passports from every captured release.
 2. **Changelog.** Rename `[Unreleased]` to `[X.Y.Z] - <date>` (Keep a Changelog format).
    Move any breaking-change wording found under *Added*, *Changed* or *Fixed* to
    *Breaking*: a break listed elsewhere is one nobody migrates for.
 3. **Migrations.** Every schema change is a new file in `ops/pg/`, and
    `just migrations-check` passes.
-4. **Onboarding.** `odal bootstrap` provisions the first API key against a fresh node.
+4. **Onboarding and upgrade.** Both are tested by step 1, not by hand: `odal bootstrap`
+   provisions the first API key against a fresh node, and the previous release's database
+   upgrades to this one with every published passport still serving its signed view and
+   still able to change status. The upgrade is only tested from releases that have a
+   fixture, so `upgrade_fixture_coverage.rs` fails this release's pull request if the
+   release before it has none (see *After tagging*).
 5. **README.** The crate table matches `crates/`, the `dpp-core` references match
    `[workspace.dependencies]`, and the resolver routes match
    `crates/dpp-resolver/src/router.rs`.
@@ -114,7 +122,12 @@ the Dockerfiles' build command as a supply-chain change.
 2. The image starts against a fresh PostgreSQL and passes `odal status`.
 3. The attestations are present, and the SBOM lists crates, not only Debian packages.
 4. `odal bootstrap` works against the released images.
-5. The release is announced.
+5. **The upgrade fixture is captured**, so the next release is tested upgrading from this
+   one: `just capture-upgrade-fixture <version>`, then commit
+   `crates/dpp-node/tests/fixtures/upgrade/v<version>/` in a pull request. It builds the
+   tag's own binaries, because a fixture written by later code would agree with that code
+   by construction. Skipping it fails the next release's pull request.
+6. The release is announced.
 
 ## Repinning dpp-core
 

@@ -183,6 +183,22 @@ Sign off every commit under the [DCO](https://developercertificate.org/):
 - CI passes: build, tests, clippy, the guard scripts, the integration tiers.
 - A change to a port implementation names the `dpp-core` version it targets.
 - The pull request title is a Conventional Commit.
+- The pull request records itself in `CHANGELOG.md` (see below).
+
+### The changelog entry
+
+Every pull request adds an entry under `## [Unreleased]` that cites it: its own
+number, or the number of an issue its body closes (`Closes #123`), which is known
+before the pull request exists. An entry it rewrites counts; a citation another change
+already wrote does not. A change that needs no entry, such as a test-only
+change or a CI pin, carries the `no-changelog` label and says why in its body, on a
+line `No changelog: <reason>`. Dependabot's pull requests are exempt; a release
+checks their bumps.
+
+`.github/workflows/changelog.yml` enforces this (`scripts/changelog-check.sh`).
+The citation is what lets a release be verified: every merged change maps to an
+entry or to its stated reason for having none, Dependabot's aside, and every entry
+to the change that made it true.
 
 ### New dependencies
 
