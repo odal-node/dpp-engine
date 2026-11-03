@@ -162,8 +162,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   **`GET /vault/api/v1/dpp/by-identity` takes `identifier`, not `gtin`**, the
   identifier's value under whichever scheme issued it. `batteryPassportNumber`
-  is no longer mandatory battery content (core 0.21.0): the mandatory set is
-  45 fields for an EV battery, 44 for an LMT one and 37 for an industrial one.
+  is no longer mandatory battery content (core 0.21.0). With core 0.22.0's
+  guidance v2.0 (above), the mandatory set in this release is 41 fields for an
+  EV battery, 40 for an LMT one and 33 for an industrial one.
 
 - **The GS1 carrier follows the passport's stated level.** *(Breaking for
   anything that parses `qrCodeUrl`.)* A model-level passport prints
@@ -248,6 +249,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The node serves its own DID document at the root, where `did:web`
+  resolves.** The node signs as a pathless `did:web:<host>`, which the did:web
+  method resolves to `https://<host>/.well-known/did.json`, and the document was
+  served only at `/identity/.well-known/did.json`, so the node's own DID did not
+  resolve without a proxy rewrite. `GET /.well-known/did.json` now serves it at
+  the node root (`getRootDidDocument`), beside the existing path. (#518)
+- **An import job says how it ended.** `dpp.import.completed` and
+  `dpp.import.failed` were defined and never published, and every job ended
+  `completed`, so an import that could not finish said nothing. An apply import
+  now publishes `dpp.import.completed` when its batch finished, with `jobId`,
+  `productGroup`, `totalRows` and the `created`, `updated` and `failedRows`
+  counts, or `dpp.import.failed` with a `reason` when it could not. Such a job is
+  marked `failed` with that reason, which `GET /imports/{jobId}` reports. (#531)
 - **A node runs at most two imports at once, and says `429` to a third.**
   Nothing bounded the number of concurrent imports, so each one fanned out
   `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
@@ -515,6 +529,64 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   record stays as it was signed. A change to its content is still refused, and a
   write built from a reading taken before a concurrent publish can no longer
   clear the passport's retention lock. (#566)
+- **Retention is counted in calendar years, and `retire` keeps the deadline
+  sealed at publish.** The deadline was `published_at` plus 365 days a year, at
+  publish and again in the `retire` guard. That ends a day early for every
+  29 February in the period, so a ten-year period ended two or three days before
+  its anniversary and `retire` let a passport go inside it. It is now counted in
+  calendar months (`retention_deadline`). `retire` also recomputed the deadline
+  from the current catalog period and ignored the `retentionUntil` sealed at
+  publish, so a later dpp-core that shortened a period would have let a passport
+  go early. It now enforces the later of the two (`retirement_deadline`).
+  (#519, #520)
+- **A state change commits its webhook deliveries and its registry status with
+  it.** Webhook deliveries were enqueued after the passport write committed, best
+  effort, and nothing swept for them, so a node stopped between the two had
+  changed a passport and told no subscriber. Suspend, retire and end of life
+  recorded the status the EU registry is owed the same way. Every state change
+  now commits in one transaction: the passport write and the version it
+  replaces, the transfer chain, the registry rows and status intent, the audit
+  entry and the webhook deliveries. Only the event-bus publish still follows the
+  commit. (#529, #530)
+- **A status change rechecks its transition under the lock, and two writers can
+  no longer fork an audit chain.** Suspend, retire, deactivate and supersede
+  checked `can_transition_to` on a read taken before the transaction, so a change
+  committed in between could be undone. The write now rechecks on the locked row
+  and refuses with `InvalidTransition`. The audit chain's head was read with no
+  lock, so two changes that write no passport row, such as a transfer and a bare
+  audit append, could both link to the same head. Appends to one passport's chain
+  are now serialised. (#538)
+- **The standalone vault names the operator's DID as a credential's issuer.**
+  `IdentityHttpClient::sign_passport` wrapped every JWS in a credential whose
+  issuer was the hard-coded `did:web:identity.odal-node.io:operators:{operator_id}`,
+  a DID no document this deployment serves. The issuer is now the DID of the
+  signing key's `kid`. Only the standalone `dpp-vault`, with a separately run
+  `dpp-identity`, reaches this client; `dpp-node` signs in process and was not
+  affected. (#533)
+- **A registry dashboard task without a `taskId` no longer hides every verdict,
+  and `odal snapshot verify` reports a stripped proof as absent.** The dashboard
+  lists all of the operator's tasks in a shape that is not published, and one
+  entry without a `taskId` made the whole list unreadable; the field now
+  defaults. With `--did-url`, a snapshot whose `snapshotJwsSignature` had been
+  removed fetched the DID document and failed with "no verification method is
+  named"; it now says the proof is absent. (#492)
+- **`just build-plugins` and `just check-plugins` use the `product-group-<name>`
+  crates.** They still built and checked `sector-<name>`, so a plugin built this
+  way was named `sector-<name>.wasm`, which the loader skips, and the node took
+  the passthrough path without a word. (#537)
+- **The steel, aluminium and tyre import templates use sample names.** The
+  templates `GET /integrator/api/v1/templates/{productGroup}` serves named real
+  companies and products, with CO2e and recycled-content figures beside them
+  that nothing sourced. They now name samples, such as `Sample Stahlwerk GmbH`.
+  (#428)
+- **`odal --help` says what each command does, and carries nothing meant for
+  maintainers.** `passport transfer initiate --help` and `snapshot verify --help`
+  printed notes written for the next reader of the code. `template --help`
+  listed product groups that no longer matched the templates. `update --help`
+  said it pulls the latest images, where inside a clone it rebuilds from source
+  and outside one pulls `ODAL_VERSION`. Each is corrected, and
+  `no_help_text_carries_a_note_for_maintainers` checks every command's help.
+  (#522, #523, #524, #525)
 - **The resolver's metrics can be scraped from the shipped stack, and
   `CACHE_TTL_SECS` and `RATE_LIMIT_RPM` do what `.env.example` says.** The
   metrics listener binds `127.0.0.1:9101` by default, which in a container is
@@ -733,8 +805,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   chain authorised.** The workspace no longer carries an `xml-sec` fork. It
   existed to raise one constant, the 65 536-entry node-set ceiling that the
   French, Czech, Italian and Spanish lists exceed. Upstream raised it in 0.1.17
-  (`structured-world/xml-sec#158`), and `dpp-seal` now requires 0.1.20 from
-  crates.io. Italy's and France's published lists verify on it end to end.
+  (`structured-world/xml-sec#158`), and `dpp-seal` took 0.1.20 from crates.io.
+  This release then moves it to 0.4.1, built to verify and nothing else (see
+  **Changed**). Italy's and France's published lists verify on 0.4.1 end to end.
 
   Since 0.1.18 `xml-sec` refuses to verify with a key just because the document
   carries it. The verifier now hands it the one certificate this node already
@@ -1022,6 +1095,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   both halves: `sandbox` emitted and undocumented, `staging` documented and
   never emitted.
 
+- **`wasmtime` and `wasmtime-wasi` 48.0.2 → 48.0.3**, clearing RUSTSEC-2026-0314
+  to -0316, published on 24 September. -0315 lets `call_ref` and an exception
+  `catch` drop fuel accounting, which is what bounds every product-group plugin.
+  -0314 lets a guest panic the host through a filesystem datetime overflow.
+  -0316 lets dynamic record lifting allocate beyond the hostcall fuel limit. The
+  existing requirement already permitted the patch. (#426)
 - **`wasmtime` and `wasmtime-wasi` 48.0.3 → 48.0.4**, clearing RUSTSEC-2026-0321
   to RUSTSEC-2026-0327. All seven concern the sandbox sector plugins run inside:
   the WASI preview 0 `poll_oneoff` circumvents fuel consumption (-0321), a guest
@@ -1077,6 +1156,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   such an entry is still classified and scanned. `zip` 9 brings in `nix`, which
   the lockfile did not have.
 
+- **`wasmtime` and `wasmtime-wasi` 49.0.4 → 49.0.5**, clearing RUSTSEC-2026-0420,
+  -0422, -0423 and -0424, published on 29 October against a tree that had not
+  changed: a wasip3 UDP `send` that can reach an address allowed only for
+  receiving, typed functions with `i31` or `nullref` arguments that can panic, a
+  cross-engine type confusion with host-created struct types, and unchecked
+  memory use when borrowed resources move between components. The lock has since
+  moved to 50.0.1 (see **Changed**). (#550)
+- **`rustls` 0.23.45 → 0.23.46**, clearing RUSTSEC-2026-0346 to -0349, published
+  on 14 October, which turned the security audit red on `main`. `rustls` carries
+  every TLS connection the node makes. (#476)
+- **`quinn-proto` 0.11.16 → 0.11.19**, clearing RUSTSEC-2026-0338 to -0342,
+  published on 12 October against 0.11.16, which turned the security audit red on
+  `main`. Lock only. (#454)
+- **`ctutils` 0.4.2 → 0.4.6 and `crypto-bigint` 0.7.5 → 0.7.10**, clearing
+  RUSTSEC-2026-0385 (non-constant-time mask generation and `u128` comparisons)
+  and RUSTSEC-2026-0387 (operations meant to be constant-time could branch on
+  secret values), published on 23 October. (#516)
 - **`rustls-webpki` 0.103.15 → 0.103.16, and `webpki-roots` and
   `webpki-root-certs` 1.0.9 → 1.0.10**, clearing RUSTSEC-2026-0382, -0381 and
   -0383, published on 19 and 20 October, which turned the security audit red on
@@ -1088,17 +1184,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   patches, so no manifest changed for them.
 
   **`async-nats` is declared without its `websockets` feature.** A fourth copy,
-  `webpki-roots` 0.26.11, was first reported under the same -0381 and cannot be
-  moved: it is pulled only by `tokio-websockets` 0.10, which `async-nats` 0.50
-  pins, and 0.50.0 is the newest release. The node reaches NATS over `nats://`
-  and nothing here configures `ws://` or `wss://`, so the transport is switched
-  off and the crate is in no build. A WebSocket NATS URL is no longer supported
-  by the client. The crate stays in `Cargo.lock`, because `async-nats` names it
-  in a weak feature (`tokio-websockets?/ring`) and cargo records that edge
-  whether or not the feature is on. The advisory was registered in
-  `.cargo/audit.toml` as not in the graph until the RustSec database classified
-  that copy as unaffected on 21 October: it holds no roots of its own and
-  re-exports those of the 1.x copy, which must stay at 1.0.10 or later.
+  `webpki-roots` 0.26.11, was first reported under the same -0381. It came only
+  through `tokio-websockets` 0.10, which `async-nats` pins. The node reaches NATS
+  over `nats://` and nothing here configures `ws://` or `wss://`, so the
+  transport is switched off and the crate is in no build. A WebSocket NATS URL is
+  no longer supported by the client. The RustSec database has since classified
+  that copy as unaffected (21 October): it holds no roots of its own and
+  re-exports those of the 1.x copy, which must stay at 1.0.10 or later. With
+  `async-nats` 0.51 (see **Changed**), neither `tokio-websockets` nor the 0.26
+  copy is in `Cargo.lock` any more; the feature stays off for the reason
+  `Cargo.toml` gives.
 
 - **Six guard scripts ran in `just check` and in no workflow, and one CI check
   was a different check from its script.** `grants-check`, `harness-check`,
