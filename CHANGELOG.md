@@ -258,6 +258,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `.github/workflows/changelog.yml` enforces this and re-runs when a label
   changes, and `scripts/changelog-check.test.sh` proves each refusal in
   `just check`. (#568)
+- **Onboarding a fresh node and upgrading from a release are tested on every
+  pull request, with the real binaries.** Both were release checklist items done
+  by hand, and the upgrade found a defect the day it was done (under **Fixed**:
+  a passport published before an upgrade could not change status).
+  `crates/dpp-node/tests/operator_paths.rs` starts the `dpp-node` binary the
+  way a deployment does. One test onboards it with the `odal` binary:
+  `bootstrap`, `whoami`, a facility and an operator identifier, a passport
+  published with the minted key, and a second `bootstrap` refused. The other
+  loads a database a real release wrote, boots this build over it so its
+  migrations run, and requires every public view to come back byte for byte,
+  every published passport to suspend, re-activate and amend, and none of the
+  product group data they were signed over to change. The databases are
+  captured from each tagged release's own binaries by
+  `just capture-upgrade-fixture`, starting with 0.14.0, and a release pull
+  request fails when the release before it has none.
 - **A node runs at most two imports at once, and says `429` to a third.**
   Nothing bounded the number of concurrent imports, so each one fanned out
   `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
