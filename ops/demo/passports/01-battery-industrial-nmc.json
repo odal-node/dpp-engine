@@ -2,9 +2,9 @@
   "productName": "Odal Industrial Battery NMC-48",
   "batchId": "ODL-IND-NMC-2026-Q2-001",
   "manufacturer": {
-    "name": "GreenCell GmbH",
+    "name": "Example Batteries GmbH",
     "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
-    "didWebUrl": "https://greencell.example/.well-known/did.json"
+    "didWebUrl": "https://batteries.example/.well-known/did.json"
   },
   "placedOnMarketDate": "2026-06-01",
   "commodityCode": "85076000",
@@ -72,8 +72,8 @@
       { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
     ],
     "componentPartNumbers": ["GC-CELL-2170-NMC", "GC-BMS-48-V3", "GC-PACK-ENCL-320"],
-    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
-    "disassemblyInstructionsUrl": "https://greencell.example/service/ind-nmc48/disassembly",
+    "sparePartsContacts": "spares@batteries.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://batteries.example/service/ind-nmc48/disassembly",
     "safetyMeasures": "De-energise and wait 15 min before opening. Class 0 gloves. No conductive tools.",
     "testReportResults": "IEC 62619:2022 pass; UN 38.3 pass; report GC-TR-2026-0412",
     "markingInformation": "Separate-collection symbol (crossed-out wheeled bin) per Art. 13(4); capacity 90 Ah / 4.32 kWh",

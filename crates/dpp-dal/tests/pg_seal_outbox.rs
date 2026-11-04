@@ -31,7 +31,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::seal::{SealFormat, SealedEnvelope};
 use dpp_domain::status::PassportStatus;
-use dpp_types::SealOutbox;
+use dpp_types::{SealOutbox, UnsealedCounts};
 
 /// A passport in the state the drain actually finds one in: published, signed,
 /// and retention-locked. The lock is the whole point — an unlocked row would
@@ -579,6 +579,58 @@ async fn the_sweep_ignores_unpublished_passports() {
     repo.create(draft).await.expect("insert draft");
 
     assert_eq!(outbox.enqueue_unsealed(100, 0).await.expect("sweep"), 0);
+}
+
+/// **A passport at the end of its life is counted apart from a live one, and
+/// the sweep still seals it.**
+///
+/// The two halves are one decision and pull in opposite directions, which is
+/// why they are pinned together. The count splits because "3 unsealed" cannot
+/// say whether those are live products or records that ended last year. The
+/// sweep does not split because a retired, superseded or deactivated passport
+/// keeps serving at its public URL, so a seal on it is still a seal on
+/// something a verifier can fetch.
+///
+/// The sealed retired passport is in neither count: ending a passport's life
+/// does not make a seal it already carries any less there.
+#[tokio::test]
+async fn terminal_passports_are_counted_apart_but_still_swept() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let outbox = PgSealOutboxRepo::new(pg.dal.clone());
+
+    // Two that can still change, three that cannot. `Suspended` is the live one
+    // that could be mistaken for the other kind: a suspension is a hold, and it
+    // lifts.
+    for (jws, status) in [
+        ("a.b.published", PassportStatus::Published),
+        ("a.b.suspended", PassportStatus::Suspended),
+        ("a.b.retired", PassportStatus::Retired),
+        ("a.b.superseded", PassportStatus::Superseded),
+        ("a.b.deactivated", PassportStatus::Deactivated),
+    ] {
+        let mut passport = published_passport(jws);
+        passport.status = status;
+        repo.create(passport).await.expect("insert");
+    }
+    let mut sealed = published_passport("a.b.retired-and-sealed");
+    sealed.status = PassportStatus::Retired;
+    sealed.seal = Some(envelope("ALREADY-PAID-FOR"));
+    repo.create(sealed).await.expect("insert sealed");
+
+    assert_eq!(
+        outbox.unsealed_published_counts().await.expect("counts"),
+        UnsealedCounts {
+            live: 2,
+            terminal: 3
+        }
+    );
+
+    assert_eq!(
+        outbox.enqueue_unsealed(100, 0).await.expect("sweep"),
+        5,
+        "the sweep seals terminal passports like any other, and not the one that is sealed"
+    );
 }
 
 /// A transient failure keeps the row drainable rather than dropping a passport's

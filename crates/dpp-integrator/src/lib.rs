@@ -1,6 +1,7 @@
 //! `dpp-integrator` — CSV/XLSX bulk import: parse, validate, and fan out passport
 //! creation requests to `dpp-vault`.
 
+pub mod admission;
 pub mod config;
 pub mod domain;
 pub mod handlers;

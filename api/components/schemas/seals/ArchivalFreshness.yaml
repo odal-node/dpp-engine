@@ -4,7 +4,7 @@ description: >-
 
 
   `evidencedLevel` reports `baseline-lta` from the **presence** of the archival
-  material, and is right to — the material is there. This reports whether it
+  material, and is right to: the material is there. This reports whether it
   still means anything.
 
 
@@ -20,7 +20,7 @@ description: >-
 
   **A signal, not a verdict.** A seal nearing its renewal date still verifies,
   and that window is the only chance to renew without an outage. No threshold is
-  applied — how much notice is enough is a policy question for the reader.
+  applied: how much notice is enough is a policy question for the reader.
 required:
   - state
 properties:
@@ -32,7 +32,7 @@ properties:
       - lapsed
       - unknown
     description: >-
-      `notArchived`: no archival timestamp — a seal below `B-LTA`. Nothing to
+      `notArchived`: no archival timestamp: a seal below `B-LTA`. Nothing to
       renew, which is a different thing from a renewal that has lapsed: such a
       seal was never promised long-term protection.
 
@@ -45,14 +45,14 @@ properties:
 
 
       `unknown`: an archival timestamp is present and could not be read. **Not
-      `current`** — a token that cannot be checked is not a fresh one, and
+      `current`**: a token that cannot be checked is not a fresh one, and
       reporting it as current is how a staleness signal goes quiet at the moment
       it matters.
   expires:
     type: string
     format: date-time
     description: >-
-      When the archival timestamp's authority certificate expires — the date by
+      When the archival timestamp's authority certificate expires: the date by
       which re-timestamping must have happened, read from before or after it
       depending on `state`. One value, so one name: `current` and `lapsed` are
       the same date seen from either side. Absent for `notArchived` and

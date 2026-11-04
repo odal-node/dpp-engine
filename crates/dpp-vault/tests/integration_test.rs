@@ -23,7 +23,7 @@ fn sample_passport() -> serde_json::Value {
     serde_json::json!({
         "productName": "Eco Battery Pack",
         "manufacturer": {
-            "name": "GreenCell GmbH",
+            "name": "Example Batteries GmbH",
             "address": "Berlin, DE"
         },
         "materials": [

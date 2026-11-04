@@ -238,10 +238,8 @@ pub async fn spawn_webhook_drain(outbox: Arc<dyn WebhookOutbox>, allow_private_t
         Err(e) => tracing::warn!(error = %e, "webhook outbox boot reconciliation failed"),
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
+    // Built where a test can reach it: it must not follow redirects.
+    let client = dpp_node::infra::webhook_drain::delivery_client();
 
     tokio::spawn(async move {
         loop {

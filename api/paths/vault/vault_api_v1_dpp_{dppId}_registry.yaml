@@ -6,7 +6,7 @@ get:
     any handover notifications, and who is responsible for it now.
 
     Registration is the legal obligation the rest of the system exists to
-    discharge, and this is where an operator sees whether it has been —
+    discharge, and this is where an operator sees whether it has been:
     the state otherwise lives only in outbox tables, metrics and log lines.
 
     **Absent is not zero.** A deployment without the registry queues reports

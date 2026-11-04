@@ -8,7 +8,7 @@ get:
 
     "Knows of" is wider than "has a schema for". A product group reached by an
     act while carrying no catalog descriptor is listed too, with a `null`
-    `title` — that group has no schema, plugin or template to be discovered from,
+    `title`: that group has no schema, plugin or template to be discovered from,
     so this is the only place it can be asked about.
 
     **Every date is served with its `basis`.** Most of the catalog is undated,
@@ -22,13 +22,13 @@ get:
     the technical requirements do not, in which case nothing is bindingly
     determinable yet however clearly the duty is written.
 
-    Schema versions are not restated here — see `/integrator/api/v1/schemas`,
+    Schema versions are not restated here: see `/integrator/api/v1/schemas`,
     which is their one home.
   tags:
     - Integrator
   # An explicit empty list, not an omitted key. The description has no root
   # `security`, so an operation without one says nothing at all about auth and
-  # `security: []` is the only way to state "no credential is required" — which
+  # `security: []` is the only way to state "no credential is required", which
   # is what this route does. Written here rather than baselined in
   # `.redocly.lint-ignore.yaml`: that file records problems inherited from
   # before the gate existed and is only ever shrunk, and a public route is not

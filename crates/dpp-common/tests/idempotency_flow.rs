@@ -20,11 +20,12 @@ use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
+    response::IntoResponse,
     routing::post,
 };
 use dpp_common::idempotency::{
-    Claim, IdempotencyError, IdempotencyLayerState, IdempotencyStore, RequestKey, StoredResponse,
-    idempotency_middleware,
+    Claim, ClaimToken, IdempotencyError, IdempotencyLayerState, IdempotencyStore, RequestKey,
+    Settled, StoredResponse, idempotency_middleware,
 };
 use tower::ServiceExt;
 
@@ -39,6 +40,7 @@ struct MemStore {
 
 struct Row {
     fingerprint: String,
+    claim: ClaimToken,
     completed: Option<StoredResponse>,
 }
 
@@ -58,14 +60,16 @@ impl IdempotencyStore for MemStore {
         let mut rows = self.rows.lock().unwrap();
         match rows.get(&id(key)) {
             None => {
+                let claim = ClaimToken::mint();
                 rows.insert(
                     id(key),
                     Row {
                         fingerprint: fingerprint.to_owned(),
+                        claim: claim.clone(),
                         completed: None,
                     },
                 );
-                Ok(Claim::Claimed)
+                Ok(Claim::Claimed(claim))
             }
             Some(row) if row.fingerprint != fingerprint => Ok(Claim::FingerprintMismatch),
             Some(row) => match &row.completed {
@@ -78,17 +82,30 @@ impl IdempotencyStore for MemStore {
     async fn complete(
         &self,
         key: &RequestKey,
+        claim: &ClaimToken,
         response: &StoredResponse,
-    ) -> Result<(), IdempotencyError> {
-        if let Some(row) = self.rows.lock().unwrap().get_mut(&id(key)) {
-            row.completed = Some(response.clone());
+    ) -> Result<Settled, IdempotencyError> {
+        match self.rows.lock().unwrap().get_mut(&id(key)) {
+            Some(row) if row.claim == *claim => {
+                row.completed = Some(response.clone());
+                Ok(Settled::Applied)
+            }
+            _ => Ok(Settled::Superseded),
         }
-        Ok(())
     }
 
-    async fn release(&self, key: &RequestKey) -> Result<(), IdempotencyError> {
-        self.rows.lock().unwrap().remove(&id(key));
-        Ok(())
+    async fn release(
+        &self,
+        key: &RequestKey,
+        claim: &ClaimToken,
+    ) -> Result<Settled, IdempotencyError> {
+        let mut rows = self.rows.lock().unwrap();
+        if rows.get(&id(key)).is_some_and(|row| row.claim == *claim) {
+            rows.remove(&id(key));
+            Ok(Settled::Applied)
+        } else {
+            Ok(Settled::Superseded)
+        }
     }
 
     async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
@@ -110,10 +127,15 @@ impl IdempotencyStore for DeadStore {
     ) -> Result<Claim, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
-    async fn complete(&self, _: &RequestKey, _: &StoredResponse) -> Result<(), IdempotencyError> {
+    async fn complete(
+        &self,
+        _: &RequestKey,
+        _: &ClaimToken,
+        _: &StoredResponse,
+    ) -> Result<Settled, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
-    async fn release(&self, _: &RequestKey) -> Result<(), IdempotencyError> {
+    async fn release(&self, _: &RequestKey, _: &ClaimToken) -> Result<Settled, IdempotencyError> {
         Err(IdempotencyError::Unavailable("down".into()))
     }
     async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
@@ -340,6 +362,63 @@ async fn a_claim_still_in_flight_answers_409_with_retry_after() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(response.headers().get("retry-after").unwrap(), "1");
     assert_eq!(calls.0.load(Ordering::SeqCst), 0);
+}
+
+/// The keyed create, turning away its first caller the way a route with a
+/// capacity limit does, then accepting the next.
+fn busy_once_app(store: Arc<dyn IdempotencyStore>, calls: Calls) -> Router {
+    let inner = Router::new()
+        .route(
+            "/dpp",
+            post(move || {
+                let calls = calls.clone();
+                async move {
+                    if calls.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                        (
+                            StatusCode::TOO_MANY_REQUESTS,
+                            [("retry-after", "30")],
+                            "busy",
+                        )
+                            .into_response()
+                    } else {
+                        StatusCode::CREATED.into_response()
+                    }
+                }
+            }),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            IdempotencyLayerState {
+                store,
+                principal: Arc::new(|_| Some("operator@example.com".to_owned())),
+            },
+            idempotency_middleware,
+        ));
+
+    Router::new().nest("/vault", Router::new().nest("/api/v1", inner))
+}
+
+/// 🚨 A `429` says "come back later", not "this body is wrong", so it is not
+/// recorded: the retry the client makes after `Retry-After` has to reach the
+/// handler. Recording it would replay the refusal for 24 hours to the one
+/// caller that did as it was told.
+#[tokio::test]
+async fn a_request_turned_away_with_429_can_be_retried_under_its_key() {
+    let store = Arc::new(MemStore::default());
+    let calls = Calls(Arc::new(AtomicUsize::new(0)));
+
+    let first = busy_once_app(store.clone(), calls.clone())
+        .oneshot(create(Some("k-1"), r#"{"productName":"n"}"#))
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let retry = busy_once_app(store, calls.clone())
+        .oneshot(create(Some("k-1"), r#"{"productName":"n"}"#))
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), StatusCode::CREATED);
+    assert!(retry.headers().get("idempotency-replayed").is_none());
+    assert_eq!(calls.0.load(Ordering::SeqCst), 2, "the retry must run");
 }
 
 /// The scan-telemetry case, which is the one route in the keyed set that

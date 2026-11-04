@@ -4,14 +4,14 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use dpp_domain::passport::PassportId;
-use dpp_registry::{EuRegistryResponse, RegistryStatusCode};
+use dpp_registry::RegistryStatusCode;
 use uuid::Uuid;
 
 use dpp_domain::DppError;
 use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::ports::registry_sync::{
     RegistrationGranularity, RegistrationRequest, RegistryStatus, RegistrySyncPort,
-    SubmissionAcknowledgement, SubmissionReport,
+    SubmissionAcknowledgement, SubmissionReport, TransferReport,
 };
 use dpp_domain::transfer::{TransferReason, TransferRecord};
 
@@ -43,16 +43,14 @@ fn production_config_requires_mtls() {
 }
 
 #[test]
-fn response_to_record_maps_status_correctly() {
-    let resp = EuRegistryResponse {
+fn a_status_reply_of_registered_is_a_registered_record() {
+    let resp = StatusResponse {
         registry_id: "EU-REG-2026-00001".into(),
-        passport_id: Uuid::nil(),
         status: RegistryStatusCode::Registered,
-        message: None,
-        rejection_reasons: None,
         updated_at: Utc::now(),
+        message: None,
     };
-    let record = EuRegistrySync::response_to_record(&resp);
+    let record = EuRegistrySync::status_to_record(&resp);
     assert_eq!(record.status, RegistryStatus::Registered);
     assert_eq!(record.registration_id, "EU-REG-2026-00001");
 }
@@ -62,16 +60,14 @@ fn response_to_record_maps_status_correctly() {
 /// the port has no name for, and carries it as the registry said it rather than
 /// reading it as one of the three it does name.
 #[test]
-fn a_record_reply_of_rejected_is_carried_as_the_registry_said_it() {
-    let resp = EuRegistryResponse {
+fn a_status_reply_of_rejected_is_carried_as_the_registry_said_it() {
+    let resp = StatusResponse {
         registry_id: "EU-REG-2026-00002".into(),
-        passport_id: Uuid::nil(),
         status: RegistryStatusCode::Rejected,
-        message: Some("invalid data".into()),
-        rejection_reasons: Some(vec!["bad GTIN".into()]),
         updated_at: Utc::now(),
+        message: Some("invalid data".into()),
     };
-    let record = EuRegistrySync::response_to_record(&resp);
+    let record = EuRegistrySync::status_to_record(&resp);
     assert_eq!(
         record.status,
         RegistryStatus::Unrecognised("rejected".into())
@@ -105,8 +101,10 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
     RegistrationRequest {
         request_id: Uuid::now_v7(),
         passport_id: PassportId::new(),
-        operator_identifier: "did:web:test.example".into(),
-        operator_identifier_scheme: "did".into(),
+        // An LEI, one of the three schemes with an EN 18219 clause 6 route,
+        // which is what a registration now has to carry.
+        operator_identifier: "529900T8BM49AURSDO55".into(),
+        operator_identifier_scheme: "lei".into(),
         operator_name: "Test Operator GmbH".into(),
         facility_identifier: "LEGACY-FAC".into(),
         facility,
@@ -137,6 +135,7 @@ fn valid_request() -> RegistrationRequest {
         name: "Default Plant".into(),
         country: "DE".into(),
         address: Some("1 Allee, Berlin".into()),
+        identifier: None,
     }))
 }
 
@@ -157,6 +156,7 @@ fn facility_identifier_prefers_full_snapshot() {
         name: "Default Plant".into(),
         country: "DE".into(),
         address: Some("1 Allee, Berlin".into()),
+        identifier: None,
     }));
     let fid = facility_identifier_for(&request);
     assert_eq!(fid.scheme, "gln");
@@ -286,6 +286,9 @@ mod mock_server {
         pub(super) task_results_read: Mutex<VecDeque<String>>,
         pub(super) task_pages_asked: Mutex<VecDeque<String>>,
         pub(super) transfer_queue: Mutex<VecDeque<(StatusCode, Value)>>,
+        /// The `Idempotency-Key` header of each transfer notification, `None`
+        /// when the request carried none.
+        pub(super) transfer_keys: Mutex<VecDeque<Option<String>>>,
         /// Bodies the registry actually received on `/transfer`. Asserting on
         /// the wire body is the only way to catch a field the adapter silently
         /// drops — a status-code assertion passes either way.
@@ -362,8 +365,15 @@ mod mock_server {
     async fn transfer_handler(
         State(state): State<Arc<MockState>>,
         Path(_id): Path<String>,
+        headers: HeaderMap,
         Json(body): Json<Value>,
     ) -> Response {
+        state.transfer_keys.lock().await.push_back(
+            headers
+                .get(IDEMPOTENCY_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
+        );
         state.transfer_bodies.lock().await.push_back(body);
         pop_or_500(&state.transfer_queue).await
     }
@@ -554,12 +564,13 @@ async fn register_unreachable_registration_endpoint_is_not_retried() {
 
     // ...but the registration endpoint itself points at a dead port, so the
     // *second* request (not token acquisition) is what hits Unreachable.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead_addr = listener.local_addr().unwrap();
-    drop(listener);
-
+    //
+    // Port 1 is privileged, so no test's server can listen on it. A port taken
+    // with `:0` and released, as this used, could be handed to a mock server in
+    // a test running beside it before the request went out, which then accepted
+    // the registration.
     let mut config = mock_config(&base_url_alive);
-    config.endpoint.base_url = format!("http://{dead_addr}");
+    config.endpoint.base_url = "http://127.0.0.1:1".to_owned();
     let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
@@ -962,12 +973,210 @@ async fn notify_transfer_success() {
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let record = sync
+    let report = sync
         .notify_transfer(&completed_transfer(), "EU-REG-4")
         .await
         .expect("notify_transfer should succeed");
 
-    assert_eq!(record.status, RegistryStatus::Registered);
+    // The record stays in service with the handover applied: that is the
+    // registry taking the notification, not a status to be passed on.
+    assert_eq!(report, TransferReport::Accepted);
+}
+
+/// 🚨 The notification is sent under the handover's own identity. Three of the
+/// answers end in the drain sending it again, and the key is what makes that the
+/// same notification and not a second: it must be the transfer's, and the same
+/// on every attempt.
+#[tokio::test]
+async fn a_transfer_notification_carries_the_transfers_id_as_its_idempotency_key() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    let transfer = completed_transfer();
+
+    sync.notify_transfer(&transfer, "EU-REG-K").await.unwrap();
+    sync.notify_transfer(&transfer, "EU-REG-K").await.unwrap();
+
+    let expected = transfer.transfer_id.to_string();
+    assert_eq!(
+        state
+            .transfer_keys
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![Some(expected.clone()), Some(expected)],
+        "every attempt presents the same key, and it is the transfer's"
+    );
+}
+
+/// A different handover is a different notification, so it is a different key.
+#[tokio::test]
+async fn two_transfers_do_not_share_a_key() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+        queue.push_back((axum::http::StatusCode::OK, registered_response("EU-REG-K")));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .unwrap();
+    sync.notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .unwrap();
+
+    let keys = state.transfer_keys.lock().await;
+    assert_eq!(keys.len(), 2);
+    assert_ne!(keys[0], keys[1]);
+}
+
+/// The registry's answer to a notification is read as an answer to it: whether
+/// it took the notification, and not where a registration stands. Each status is
+/// its own report, a state nobody has named is carried as it came, and none is
+/// read as an acceptance it did not say.
+#[tokio::test]
+async fn the_registrys_answer_to_a_notification_is_read_as_one() {
+    fn reply(status: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "registryId": "EU-REG-R",
+            "passportId": Uuid::now_v7(),
+            "status": status,
+            "updatedAt": Utc::now().to_rfc3339(),
+        });
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    }
+
+    let cases = [
+        (
+            reply("registered", serde_json::json!({})),
+            TransferReport::Accepted,
+        ),
+        (
+            reply("pending", serde_json::json!({})),
+            TransferReport::Processing,
+        ),
+        (
+            reply(
+                "rejected",
+                serde_json::json!({"rejectionReasons": ["no such record", "  ", "operator not verified"]}),
+            ),
+            TransferReport::Refused {
+                reason: "no such record; operator not verified".into(),
+            },
+        ),
+        (
+            reply(
+                "rejected",
+                serde_json::json!({"message": "refused by the registry"}),
+            ),
+            TransferReport::Refused {
+                reason: "refused by the registry".into(),
+            },
+        ),
+        (
+            reply("rejected", serde_json::json!({})),
+            TransferReport::Refused {
+                reason: "the registry refused the notification and gave no reason".into(),
+            },
+        ),
+        // A record the registry reports out of service is not a notification
+        // taken, or refused: it is a state to show as it came.
+        (
+            reply("suspended_by_authority", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "suspended_by_authority".into(),
+            },
+        ),
+        (
+            reply("deactivated", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "deactivated".into(),
+            },
+        ),
+        (
+            reply("UNDER_REVIEW", serde_json::json!({})),
+            TransferReport::Unrecognised {
+                state: "UNDER_REVIEW".into(),
+            },
+        ),
+    ];
+
+    let state = Arc::new(MockState::default());
+    {
+        let mut queue = state.transfer_queue.lock().await;
+        for (body, _) in &cases {
+            queue.push_back((axum::http::StatusCode::OK, body.clone()));
+        }
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    for (body, expected) in cases {
+        let report = sync
+            .notify_transfer(&completed_transfer(), "EU-REG-R")
+            .await
+            .expect("every reply is an answer");
+        assert_eq!(report, expected, "for {body}");
+    }
+}
+
+/// A replayed key is the registry saying it already holds the notification: an
+/// earlier attempt got through and its answer was lost, or was one this node
+/// could not settle on. Neither a failure nor grounds to send it a third time.
+#[tokio::test]
+async fn a_replayed_transfer_key_means_the_registry_already_holds_it() {
+    let state = Arc::new(MockState::default());
+    state
+        .transfer_queue
+        .lock()
+        .await
+        .push_back((axum::http::StatusCode::CONFLICT, key_reused_body()));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync
+        .notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .expect("a replayed key is not a failure");
+
+    assert_eq!(report, TransferReport::AlreadyHeld);
+    assert_eq!(
+        state.transfer_bodies.lock().await.len(),
+        1,
+        "a replayed key is not retried"
+    );
+}
+
+/// Only the one `subCode` is read as "already done". Any other conflict says
+/// nothing about whether the notification was taken.
+#[tokio::test]
+async fn a_transfer_conflict_that_is_not_a_replayed_key_is_still_an_error() {
+    let state = Arc::new(MockState::default());
+    state.transfer_queue.lock().await.push_back((
+        axum::http::StatusCode::CONFLICT,
+        serde_json::json!({"subCode": "SOME_OTHER_CONFLICT", "traceId": "trace-x"}),
+    ));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let err = sync
+        .notify_transfer(&completed_transfer(), "EU-REG-K")
+        .await
+        .expect_err("another conflict is a refusal to be seen, not an acceptance");
+    assert!(err.to_string().contains("409"), "{err}");
 }
 
 // ── Payload validation is fail-closed ───────────────────────────────────────
@@ -1177,6 +1386,7 @@ fn responsible(did: &str, name: &str, country: &str) -> ResponsibleOperator {
         postal_address: None,
         electronic_address: None,
         country: country.to_owned(),
+        identifier: None,
     }
 }
 
@@ -1305,24 +1515,19 @@ async fn a_pending_transfer_reports_its_initiation_time() {
 /// a false statement `validate` cannot catch, because `did` is the one scheme
 /// accepted without structural verification.
 #[tokio::test]
-async fn a_vat_operator_is_not_submitted_as_a_did() {
+async fn an_lei_operator_is_not_submitted_as_a_did() {
     let state = Arc::new(MockState::default());
     state
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-V")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-L")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let request = RegistrationRequest {
-        operator_identifier: "DE811234567".into(),
-        operator_identifier_scheme: "vat".into(),
-        ..valid_request()
-    };
-    sync.register(request)
+    sync.register(valid_request())
         .await
-        .expect("a VAT-scheme operator must register");
+        .expect("an LEI-scheme operator must register");
 
     let sent = state
         .register_bodies
@@ -1331,15 +1536,45 @@ async fn a_vat_operator_is_not_submitted_as_a_did() {
         .pop_front()
         .expect("the registry must have received a payload");
     let operator = &sent["submission"][0]["operatorId"];
-    assert_eq!(operator["scheme"], "vat");
-    assert_eq!(operator["value"], "DE811234567");
+    assert_eq!(operator["scheme"], "lei");
+    assert_eq!(operator["value"], "529900T8BM49AURSDO55");
     assert!(
         operator.get("did").is_none(),
-        "a VAT number is not a DID and must not be sent as one: {operator}"
+        "an LEI is not a DID and must not be sent as one: {operator}"
     );
 }
 
-/// A genuine DID still travels in the `did` field.
+/// 🚨 A VAT number and a DID are well formed and have no EN 18219 clause 6 route:
+/// an EU-wide VAT number has no ICD, and a DID is scheme 8 only with a credential
+/// a register has issued. dpp-core 0.23.0 refuses such a registration, and the
+/// adapter fails closed on that, so nothing reaches the registry.
+#[tokio::test]
+async fn an_operator_scheme_with_no_clause_6_route_is_refused_before_it_is_sent() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    for (scheme, value) in [("vat", "DE811234567"), ("did", "did:web:test.example")] {
+        let request = RegistrationRequest {
+            operator_identifier: value.into(),
+            operator_identifier_scheme: scheme.into(),
+            ..valid_request()
+        };
+        let err = sync
+            .register(request)
+            .await
+            .expect_err("a scheme with no clause 6 route must be refused");
+        assert!(
+            matches!(&err, DppError::Validation(_)) && err.to_string().contains("clause 6"),
+            "a '{scheme}' operator must be refused for its scheme, got: {err:?}"
+        );
+    }
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
+}
+
+/// A genuine DID still travels in the `did` field, where an operator has chosen
+/// to submit a payload that fails validation (`allow_invalid_payloads`), which is
+/// now the only way a DID reaches the registry.
 #[tokio::test]
 async fn a_did_operator_keeps_its_did_field() {
     let state = Arc::new(MockState::default());
@@ -1349,11 +1584,20 @@ async fn a_did_operator_keeps_its_did_field() {
         .await
         .push_back((axum::http::StatusCode::OK, accepted_response("CORR-D")));
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    let sync = EuRegistrySync::new(EuRegistrySyncConfig {
+        allow_invalid_payloads: true,
+        ..mock_config(&base_url)
+    })
+    .unwrap();
 
-    sync.register(valid_request())
+    let request = RegistrationRequest {
+        operator_identifier: "did:web:test.example".into(),
+        operator_identifier_scheme: "did".into(),
+        ..valid_request()
+    };
+    sync.register(request)
         .await
-        .expect("a did-scheme operator must register");
+        .expect("a did-scheme operator is submitted when the operator allows it");
 
     let sent = state.register_bodies.lock().await.pop_front().unwrap();
     let operator = &sent["submission"][0]["operatorId"];
@@ -1429,18 +1673,6 @@ fn a_counterparty_without_an_eu_identifier_falls_back_to_its_did() {
 /// service, which resubmitting does not fix.
 #[test]
 fn a_deactivated_record_is_not_reported_as_rejected() {
-    let resp = EuRegistryResponse {
-        registry_id: "EU-REG-D".into(),
-        passport_id: Uuid::nil(),
-        status: RegistryStatusCode::Deactivated,
-        message: None,
-        rejection_reasons: None,
-        updated_at: Utc::now(),
-    };
-    let mapped = EuRegistrySync::response_to_record(&resp).status;
-    assert_eq!(mapped, RegistryStatus::Deactivated);
-    assert_ne!(mapped, RegistryStatus::Unrecognised("rejected".into()));
-
     let status = StatusResponse {
         registry_id: "EU-REG-D".into(),
         status: RegistryStatusCode::Deactivated,

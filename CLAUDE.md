@@ -105,7 +105,7 @@ write into this repo (or into a PR/issue on it):
 - **Commercial state**: pricing, quotes, contract terms, minimums, per-unit rates, negotiation status, vendor lead times.
 - **Named third parties in a non-public arrangement**: which sub-providers sit behind a vendor for *us*, who introduced whom, individual contact names at partners.
 - **Anything a private document marks as private**, including material merely quoted or summarised from it.
-- **The text of a licensed standard** — the CEN/CENELEC ENs (EN 18219, EN 18221, …) and ISO/IEC documents are sold per reader. Cite the clause number and say what it requires in your own words; never quote it, not even one sentence. EU legislation from the Official Journal is free to quote. `ops/pg/0040` still carries two sentences of EN 18221 only because an applied migration cannot be edited without breaking its sqlx checksum — do not copy from it.
+- **The text of a licensed standard** — the CEN/CENELEC ENs (EN 18219, EN 18221, …) and ISO/IEC documents are sold per reader. Cite the clause number and say what it requires in your own words; never quote it, not even one sentence. EU legislation from the Official Journal is free to quote.
 
 **Write the substance, drop the pointer.** The technical reasoning is usually public-safe and belongs in the code; the citation to where it was decided is not. "CAdES carries the same eIDAS Art. 35 presumption" is fine — "see ADR-0NN §N" is not. When a fact came from a vendor's *published* docs, cite those instead.
 
@@ -390,7 +390,7 @@ Implementations:
 - `NoOpEventBus` (default when `NATS_URL` is absent) — discards silently
 - `NatsEventBus` (in `dpp-node/src/infra/`) — publishes to NATS JetStream stream `DPP_EVENTS` with subject pattern `dpp.>`, 7-day retention, file storage
 
-Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,failed}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
+Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,deactivated,transferred}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
 
 ### Job Store
 
@@ -481,6 +481,7 @@ unprotected one. Read the table in the code.
 | POST | `/vault/api/v1/unsold-goods` | Bearer **(write)** | Record an ESPR Art. 24 disclosure line for unsold consumer products discarded in a financial year. Not a passport — Art. 24's subject is an operator over a year. `exemptDestruction` requires a justification (Art. 25 bans the destruction outright from 19 July 2026); any other destination refuses one |
 | GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | List those lines, newest first, optionally filtered by financial year |
 | POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
+| DELETE | `/vault/api/v1/personal-data/{record}` | Bearer (admin) | Erase a record a passport's `personalData` statement names, keeping a tombstone, and answer the receipt. Idempotent: a retry gets the first receipt; `404` for a record this node never held. Touches neither the passport nor its statement. **No route reads a record** — they are in `odal.personal_data_record` (migration 0043) only, never in the passport, archive or back-up copy |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
 | POST | `/vault/api/v1/ruleset/reload` | Bearer (admin) | Re-read the **signed** compliance-ruleset channel and hot-swap a verified bundle |
 | GET | `/vault/api/v1/webhooks` | Bearer (admin) | List webhook subscriptions |
@@ -500,6 +501,7 @@ unprotected one. Read the table in the code.
 | GET | `/identity/health` | None | Identity health |
 | GET | `/identity/ready` | None | Identity ready |
 | GET | `/identity/.well-known/did.json` | None | DID document |
+| GET | `/.well-known/did.json` | None | The same DID document, at the path the did:web method resolves the node's pathless DID to |
 | GET | `/integrator/health` | None | Integrator health |
 | GET | `/integrator/api/v1/templates/{productGroup}` | None | CSV template download |
 | POST | `/integrator/api/v1/import/{productGroup}` | Bearer (forwarded) | File upload import |

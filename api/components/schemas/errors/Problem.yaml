@@ -43,6 +43,6 @@ properties:
       single field. Publishing a battery that is missing its Annex XIII content
       produces upwards of thirty entries here.
 
-      Omitted entirely — never `[]` — on problems that are not about fields.
+      Omitted entirely (never `[]`) on problems that are not about fields.
     items:
       $ref: ./ProblemFieldError.yaml

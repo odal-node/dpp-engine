@@ -43,7 +43,11 @@ use dpp_domain::{
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
-use dpp_types::{audit::PassportAuditEntry, auth::AuthContext};
+use dpp_types::{
+    audit::PassportAuditEntry,
+    auth::AuthContext,
+    state_change::{PassportWrite, StateChange},
+};
 
 use super::PassportService;
 use super::create::{apply_compliance, apply_lint, apply_patch, guard_personal_data};
@@ -206,13 +210,42 @@ impl PassportService {
     ) -> Result<Passport, DppError> {
         let prev_status = predecessor.status.to_string();
 
+        let mut entry = PassportAuditEntry::new(
+            &predecessor.id.to_string(),
+            "superseded",
+            &auth.user_id,
+            Some(&prev_status),
+            Some(&PassportStatus::Superseded.to_string()),
+        );
+        let mut metadata = serde_json::json!({ "successorId": successor_id.to_string() });
+        if let Some(r) = reason
+            && let Some(obj) = metadata.as_object_mut()
+        {
+            obj.insert("reason".into(), serde_json::Value::String(r));
+        }
+        entry = entry.with_metadata(metadata);
+        let event = Self::event(
+            event::subjects::PASSPORT_SUPERSEDED,
+            serde_json::json!({
+                "passportId": predecessor.id.to_string(),
+                "successorId": successor_id.to_string(),
+                "status": PassportStatus::Superseded.to_string(),
+                "previousStatus": prev_status,
+            }),
+        );
+
         // The one write that can leave the node inconsistent: the successor is
         // published and live, so a failure here means two live passports for one
         // product. Logged with a stable code and both ids so the pair can be
         // reconciled — the successor is valid and must not be discarded.
         let superseded = match self
-            .repo
-            .update_status(predecessor.id, PassportStatus::Superseded)
+            .commit_passport_change(
+                StateChange::new(entry).with_passport(PassportWrite::Status(
+                    predecessor.id,
+                    PassportStatus::Superseded,
+                )),
+                event,
+            )
             .await
         {
             Ok(p) => p,
@@ -228,33 +261,6 @@ impl PassportService {
                 return Err(e);
             }
         };
-
-        let mut entry = PassportAuditEntry::new(
-            &superseded.id.to_string(),
-            "superseded",
-            &auth.user_id,
-            Some(&prev_status),
-            Some(&PassportStatus::Superseded.to_string()),
-        );
-        let mut metadata = serde_json::json!({ "successorId": successor_id.to_string() });
-        if let Some(r) = reason
-            && let Some(obj) = metadata.as_object_mut()
-        {
-            obj.insert("reason".into(), serde_json::Value::String(r));
-        }
-        entry = entry.with_metadata(metadata);
-        self.audit.append(entry).await?;
-
-        self.emit(
-            event::subjects::PASSPORT_SUPERSEDED,
-            serde_json::json!({
-                "passportId": superseded.id.to_string(),
-                "successorId": successor_id.to_string(),
-                "status": PassportStatus::Superseded.to_string(),
-                "previousStatus": prev_status,
-            }),
-        )
-        .await;
 
         // A superseded passport keeps serving publicly, like a retired or
         // deactivated one — products made under the old specification are still

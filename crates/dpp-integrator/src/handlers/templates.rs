@@ -95,6 +95,16 @@ fn templates() -> Vec<Template> {
             source: Source::Embedded(include_str!("../../templates/construction-v1.csv")),
             filename: "odal-construction-template.csv",
         },
+        Template {
+            key: "electronics",
+            source: Source::Embedded(include_str!("../../templates/electronics-v1.csv")),
+            filename: "odal-electronics-template.csv",
+        },
+        Template {
+            key: "detergent",
+            source: Source::Embedded(include_str!("../../templates/detergent-v1.csv")),
+            filename: "odal-detergent-template.csv",
+        },
     ];
     // Derived from the category list rather than written out, so a category
     // added to the contract gets a route without anyone remembering to add one.
@@ -315,10 +325,12 @@ mod template_publishes {
             };
 
             let json = serde_json::to_value(&*data).expect("battery data serialises");
-            let missing: Vec<&str> =
-                dpp_rules::batteries::passport_content::mandatory_fields(category.as_str())
-                    .filter(|f| json.get(*f).is_none_or(serde_json::Value::is_null))
-                    .collect();
+            let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
+                category.as_str(),
+                crate::domain::battery_template::facts_before_due_diligence(),
+            )
+            .filter(|f| json.get(*f).is_none_or(serde_json::Value::is_null))
+            .collect();
             assert!(
                 missing.is_empty(),
                 "the {} template imports a passport still missing {} mandatory data point(s): \

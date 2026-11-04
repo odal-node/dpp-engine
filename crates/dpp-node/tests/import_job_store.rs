@@ -60,7 +60,7 @@ async fn job_lifecycle_persists_and_is_retrievable() {
             message: "O'Brien said \"invalid\"".into(),
         }],
     };
-    store.complete(id, batch).await.expect("complete job");
+    store.complete(id, batch, None).await.expect("complete job");
 
     let done = store.get(id).await.expect("completed job retrievable");
     assert!(matches!(done.status, JobStatus::Completed));
@@ -136,4 +136,90 @@ async fn record_report_persists_and_survives_sql_round_trip() {
         report.rows[1].findings[0].message, "O'Brien said \"invalid\"",
         "finding message must survive SQL round-trip intact"
     );
+}
+
+/// A subscriber to both import subjects, so every job outcome owes a delivery.
+async fn subscribe_to_imports(dal: &dpp_dal::pg::PgDal) {
+    use dpp_types::webhook::{CreateWebhookRequest, WebhookSubscriptionStore};
+    dpp_dal::pg::PgWebhookRepo::new(dal.clone())
+        .create(
+            &CreateWebhookRequest {
+                url: "https://receiver.example/hook".into(),
+                events: vec!["dpp.import.completed".into(), "dpp.import.failed".into()],
+                description: None,
+            },
+            "a-signing-secret",
+        )
+        .await
+        .expect("create subscription");
+}
+
+async fn pending_deliveries(dal: &dpp_dal::pg::PgDal) -> Vec<String> {
+    use dpp_types::webhook::WebhookOutbox;
+    dpp_dal::pg::PgWebhookRepo::new(dal.clone())
+        .due(100)
+        .await
+        .expect("read due deliveries")
+        .into_iter()
+        .map(|d| d.event_type)
+        .collect()
+}
+
+fn notice(event_type: &str) -> dpp_types::state_change::WebhookEvent {
+    dpp_types::state_change::WebhookEvent {
+        event_type: event_type.into(),
+        body: "{}".into(),
+    }
+}
+
+/// Completing a job queues its webhook deliveries in the same write.
+#[tokio::test(flavor = "multi_thread")]
+async fn completing_a_job_queues_its_webhook_deliveries() {
+    let pg = start_pg().await;
+    subscribe_to_imports(&pg.dal).await;
+    let store = PgJobStore::new(pg.dal.clone());
+    let id = Uuid::now_v7();
+    store.insert(ImportJob::new(id, 1)).await.expect("insert");
+
+    let batch = BatchResult {
+        created: vec![],
+        updated: vec![],
+        errors: vec![],
+    };
+    store
+        .complete(id, batch, Some(notice("dpp.import.completed")))
+        .await
+        .expect("complete");
+
+    assert!(matches!(
+        store.get(id).await.unwrap().status,
+        JobStatus::Completed
+    ));
+    assert_eq!(pending_deliveries(&pg.dal).await, ["dpp.import.completed"]);
+}
+
+/// A job that could not finish is marked failed with its reason, and queues
+/// its webhook deliveries in the same write.
+#[tokio::test(flavor = "multi_thread")]
+async fn failing_a_job_records_why_and_queues_its_webhook_deliveries() {
+    let pg = start_pg().await;
+    subscribe_to_imports(&pg.dal).await;
+    let store = PgJobStore::new(pg.dal.clone());
+    let id = Uuid::now_v7();
+    store.insert(ImportJob::new(id, 1)).await.expect("insert");
+
+    store
+        .fail(
+            id,
+            "the import stopped before it finished".into(),
+            Some(notice("dpp.import.failed")),
+        )
+        .await
+        .expect("fail");
+
+    match store.get(id).await.unwrap().status {
+        JobStatus::Failed(reason) => assert_eq!(reason, "the import stopped before it finished"),
+        other => panic!("expected a failed job, got {other:?}"),
+    }
+    assert_eq!(pending_deliveries(&pg.dal).await, ["dpp.import.failed"]);
 }

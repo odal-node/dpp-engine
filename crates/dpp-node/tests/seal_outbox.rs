@@ -234,6 +234,7 @@ fn draft_passport() -> Passport {
             name: "Odal Simulation Plant".into(),
             country: "MK".into(),
             address: Some("Skopje, MK".into()),
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,
@@ -1109,8 +1110,8 @@ async fn a_seal_corrupted_at_rest_is_found_and_repaired() {
 
     // ── Every existing count still calls it healthy ─────────────────────────
     assert_eq!(
-        seal_outbox.unsealed_published_count().await.unwrap(),
-        0,
+        seal_outbox.unsealed_published_counts().await.unwrap(),
+        dpp_types::UnsealedCounts::default(),
         "the count asks whether a seal is present, and a corrupt one is"
     );
 
@@ -1716,7 +1717,10 @@ async fn a_seal_made_under_an_invalid_certificate_is_found_and_not_called_broken
         dpp_types::SealBinding::CoversThisSignature,
         "the signature still holds — that is what makes this invisible"
     );
-    assert_eq!(seal_outbox.unsealed_published_count().await.unwrap(), 0);
+    assert_eq!(
+        seal_outbox.unsealed_published_counts().await.unwrap(),
+        dpp_types::UnsealedCounts::default()
+    );
 
     // ── The audit sees it, and files it apart from broken ───────────────────
     let (audit, _) = dpp_node::infra::seal_drain::audit_seals_once(

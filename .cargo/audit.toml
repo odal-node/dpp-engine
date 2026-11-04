@@ -43,61 +43,31 @@
 #             by a verifier whose RSA implementation carries no advisory
 #             (ring / aws-lc-rs), or this workspace stops verifying RSA
 #             signatures.
-# --- RUSTSEC-2026-0371 --------------------------------------------------
-# crate:      zbus_names 4.3.4
-# path:       dpp-cli [feature desktop] -> rfd -> ashpd -> zbus -> zbus_names
-# class:      not-in-graph
-# rationale:  An "unmaintained" notice, not a vulnerability: the crate was
-#             merged into `zbus` 6.0.0 as its `names` module. It reaches this
-#             workspace only through the opt-in `desktop` feature of the CLI
-#             (rfd's xdg-portal backend, for the native file picker), which is
-#             off by default and which neither the node image nor any CI build
-#             enables: CI names features per package precisely so that
-#             `cli/desktop` stays out. `cargo audit` reports it because it
-#             scans the whole lockfile, optional features included. The class
-#             check holds the claim: the crate is absent from both the default
-#             graph and the shipped node build.
-#             THIS ENTRY IS VOID THE MOMENT `desktop` BECOMES A DEFAULT FEATURE
-#             OR ANY SHIPPED BUILD ENABLES IT.
-# anchor:     cli/Cargo.toml::desktop
+# --- RUSTSEC-2026-0387 --------------------------------------------------
+# crate:      crypto-bigint 0.5.5
+# path:       dpp-seal -> x509-verify -> p256 / p384 / p521 0.13 ->
+#             elliptic-curve 0.13 -> crypto-bigint 0.5
+# class:      reachable-but-mitigated
+# rationale:  Operations meant to be constant-time (subtraction, division,
+#             Montgomery multiplication) could branch on the values they
+#             compute, which leaks a secret integer through timing. The 0.5
+#             line has no fix: the advisory is patched from 0.7.6, and the
+#             0.7 copy in this lockfile is past it. 0.5 is reached only
+#             through `x509-verify`, whose ECDSA code checks a certificate's
+#             signature with the issuer's public key. Verification holds no
+#             secret, so a timing channel has nothing to leak. The node's own
+#             P-256 signing keys (the local development sealer and its
+#             timestamp authority) are on `p256` 0.14, a direct dependency of
+#             dpp-seal, and so on the patched crypto-bigint 0.7.
+#             THIS ENTRY IS VOID THE MOMENT ANY CODE SIGNS, DERIVES A SHARED
+#             SECRET OR GENERATES A KEY WITH THE 0.13 CURVE CRATES.
+# anchor:     crates/dpp-seal/src/cades/signature.rs::VerifyingKey
 # owner:      LKSNDRTMLKV
-# recorded:   2026-10-20
-# expires:    2027-01-18
-# release-on: `rfd` moves to a release that no longer depends on `ashpd` and
-#             `zbus` (0.17 drops both), or `ashpd` moves to `zbus` 6.
-# --- RUSTSEC-2026-0370 --------------------------------------------------
-# crate:      zvariant 5.13.1
-# path:       dpp-cli [feature desktop] -> rfd -> ashpd -> zbus -> zvariant
-# class:      not-in-graph
-# rationale:  Same as RUSTSEC-2026-0371: an "unmaintained" notice, merged into
-#             `zbus` 6.0.0 as its `wire` module, reached only through the
-#             opt-in `desktop` feature of the CLI and absent from the default
-#             and shipped graphs.
-#             THIS ENTRY IS VOID THE MOMENT `desktop` BECOMES A DEFAULT FEATURE
-#             OR ANY SHIPPED BUILD ENABLES IT.
-# anchor:     cli/Cargo.toml::desktop
-# owner:      LKSNDRTMLKV
-# recorded:   2026-10-20
-# expires:    2027-01-18
-# release-on: As RUSTSEC-2026-0371.
-# --- RUSTSEC-2026-0372 --------------------------------------------------
-# crate:      zvariant_derive 5.13.1
-# path:       dpp-cli [feature desktop] -> rfd -> ashpd -> zbus -> zvariant -> zvariant_derive
-# class:      not-in-graph
-# rationale:  Same as RUSTSEC-2026-0371: the derive half of `zvariant`, merged
-#             into `zbus` 6.0.0, reached only through the opt-in `desktop`
-#             feature of the CLI and absent from the default and shipped
-#             graphs.
-#             THIS ENTRY IS VOID THE MOMENT `desktop` BECOMES A DEFAULT FEATURE
-#             OR ANY SHIPPED BUILD ENABLES IT.
-# anchor:     cli/Cargo.toml::desktop
-# owner:      LKSNDRTMLKV
-# recorded:   2026-10-20
-# expires:    2027-01-18
-# release-on: As RUSTSEC-2026-0371.
+# recorded:   2026-10-27
+# expires:    2027-04-27
+# release-on: `x509-verify` moves to the 0.14 curve crates, or is replaced by
+#             a verifier that does not pull crypto-bigint 0.5.
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0370",
-    "RUSTSEC-2026-0371",
-    "RUSTSEC-2026-0372",
+    "RUSTSEC-2026-0387",
 ]

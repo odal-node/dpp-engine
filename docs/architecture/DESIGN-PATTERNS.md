@@ -1,169 +1,155 @@
-# Design Patterns
+# Design patterns
 
-This document describes the architectural patterns used in dpp-engine and the reasoning behind each choice.
+The patterns that recur across the engine, what each one does, and why it was chosen.
 
----
+## 1. Ports in core, adapters in the engine
 
-## 1. Hexagonal Architecture — Platform as Adapters
+`dpp-core` defines the domain types and the port traits (`PassportRepository`,
+`IdentityPort`, `ComplianceRegistry`, `SealPort`, `RegistrySyncPort` and others). The
+engine implements every adapter and wires them together; it does not change the
+domain.
 
-dpp-core defines the domain and the port traits. dpp-engine implements every adapter:
-
-```
-         +---------------------------------------------+
-         |             Driving Adapters                 |
-         |  Axum HTTP handlers, CSV parser, CLI         |
-         +---------------------+------------------------+
-                               |  <- Port traits (defined in dpp-core)
-                   +-----------v-----------+
-                   |    Domain / Core      |
-                   |  (dpp-core repo)      |
-                   |  - Passport types     |
-                   |  - Lifecycle rules    |
-                   |  - Schema validation  |
-                   |  - Signing logic      |
-                   +-----------+-----------+
-                               |  <- Port traits (defined in dpp-core)
-         +---------------------v------------------------+
-         |             Driven Adapters                  |
-         |  PostgreSQL repos, NATS event bus,           |
-         |  Wasm plugin host, identity HTTP client      |
-         +---------------------------------------------+
+```mermaid
+flowchart TB
+    subgraph Driving["Driving adapters (engine)"]
+        H[Axum handlers] --- I[CSV/XLSX importer] --- CLI[odal CLI over HTTP]
+    end
+    subgraph Core["dpp-core"]
+        D[Passport model, lifecycle rules,<br/>schemas, disclosure policy, signing]
+    end
+    subgraph Driven["Driven adapters (engine)"]
+        P[PostgreSQL repositories] --- N[NATS event bus] --- W[Wasm plugin host] --- S[Seal and registry backends]
+    end
+    Driving -->|port traits| Core
+    Core -->|port traits| Driven
 ```
 
-The platform never modifies the domain. It only implements traits and wires dependencies.
+The test for where code belongs: if it changes because a regulation changed, it goes
+in `dpp-core`. If it changes because of how the node is deployed, stored or operated,
+it stays here.
 
----
+## 2. Document repositories
 
-## 2. Serde-Driven Repositories
+Every PostgreSQL repository in `dpp-dal/src/pg/` stores its entity's full `serde`
+JSON in a `doc JSONB` column and copies the fields that queries need into real
+columns. Reads deserialise `doc`.
 
-All repositories follow the same serde-driven pattern in the PostgreSQL backend (`dpp-dal/src/pg/`): the entity serialises to its full JSON document (`doc JSONB`), extracted columns are written alongside it, and reads deserialise the document back via serde.
+- Field names come from `#[serde(rename_all = "camelCase")]`, so there is no
+  hand-written column mapping to keep in sync.
+- Indexed columns (status, product group, identifiers, timestamps) serve list
+  queries and constraints.
+- `api_key` reads through an internal `ApiKeyRow`, because the stored row carries a
+  `keyHash` that the public `ApiKey` type does not expose.
 
-**Why this pattern:**
-- All field mapping is handled by `#[serde(rename_all = "camelCase")]` on the structs — no manual column name mapping
-- The `doc JSONB` column stores the full entity; extracted columns (e.g. `operator_id`, `status`) exist for indexed queries
+[DATA-MODEL.md](DATA-MODEL.md) lists the tables.
 
-The `api_key` repository is a variation: it uses an internal `ApiKeyRow` struct for deserialisation because the DB row contains `keyHash` which is not part of the public `ApiKey` type.
+## 3. Authentication routed by scheme
 
----
+`middleware/auth.rs` in `dpp-vault` picks the provider by the `Authorization`
+scheme, and a credential only ever reaches the provider for its own scheme:
 
-## 3. Composite Authentication
+| Scheme | Provider |
+|---|---|
+| `Bearer odal_sk_…` | `CompositeAuthProvider`, currently wrapping `ApiKeyAuthProvider` (SHA-256 hash lookup) |
+| `Basic base64(user:pass)` | `LocalAuthProvider` (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) |
 
-Authentication is a chain of providers, not a single strategy:
+The split is a security property. `LocalAuthProvider` decodes whatever string it is
+given, so if it sat in the Bearer chain, a `Bearer base64(user:pass)` token would
+authenticate as admin.
 
-```rust
-pub struct CompositeAuthProvider {
-    providers: Vec<Box<dyn AuthProvider>>,
-}
+`CompositeAuthProvider` tries its providers in order and returns the first success;
+a `Suspended` result stops the chain so no later provider can override it. A future
+Bearer-scheme provider (OAuth, for example) is added to that list without touching
+the middleware. Details: [AUTH.md](AUTH.md).
 
-impl AuthProvider for CompositeAuthProvider {
-    async fn authenticate(&self, request: &Request) -> Result<AuthContext, AuthError> {
-        for provider in &self.providers {
-            match provider.authenticate(request).await {
-                Ok(ctx) => return Ok(ctx),
-                Err(AuthError::NotApplicable) => continue,  // Try next provider
-                Err(e) => return Err(e),                     // Hard failure
-            }
-        }
-        Err(AuthError::Unauthenticated)
-    }
-}
-```
+## 4. Outboxes
 
-**Current chain:**
-1. `ApiKeyAuthProvider` — matches `Bearer odal_sk_...` tokens, SHA-256 hash lookup
-2. `LocalAuthProvider` — matches HTTP Basic auth against env var credentials
+Side effects that leave the node are queued as outbox rows and delivered by a
+background drainer in `dpp-node` with retry and backoff. How a row is written depends
+on how much a lost row would cost:
 
-**Why composite:** Adding a new auth method (OAuth, mTLS, OIDC) is a single `push` to the provider list. No changes to the middleware or existing providers.
+| Outbox | Delivers | Written |
+|---|---|---|
+| `registry_sync` | EU registry registration of a published passport, and later status changes | Registration: in the publish transaction. Status changes (suspend, retire, end of life): after commit |
+| `registry_transfer` | Registry notification of a transfer of responsibility | In the accept transaction |
+| `seal_outbox` | eIDAS seal requests | After commit. A periodic sweep queues any published passport still unsealed |
+| `snapshot_outbox` | Continuity snapshots to object storage | After commit. A periodic sweep re-queues missed reconciles |
+| `webhook_delivery` | Signed webhook deliveries | After commit, best effort, alongside the event bus publish |
 
----
+For the two registry outboxes, a crash between commit and delivery loses nothing:
+the row was committed with the passport change. The registration intent is kept
+even while the registry adapter is a stub, so switching to a live adapter later
+delivers the backlog. Once any row is queued, delivery is retried until it succeeds
+or exhausts its attempts.
 
-## 4. Fire-After-Commit Events
+## 5. Events after commit
 
-Events are published *after* the database write succeeds:
+Domain events (`dpp.passport.published` and others) are published on the event bus
+after the database write commits. A publish failure is logged at `WARN` and never
+returned to the caller: the database is the source of truth, and the operation has
+already succeeded.
 
-```rust
-// In PassportService::publish()
-let passport = self.repo.update(passport).await?;  // DB write
-self.emit("dpp.passport.published", &auth.operator_id, &passport);  // Event
-// If emit() fails: logged, NOT propagated. DB is source of truth.
-```
+Publishing before the write would leave an event for a change that may then fail.
+Publishing after it means an event can be lost if the process dies between commit and
+publish, so the obligations that must not be lost (EU registry registration and
+transfer notification) are written inside the transaction instead (pattern 4).
+Webhook deliveries are queued at the same point as the event publish, so the same
+caveat applies to them until the row is queued. See [EVENT-BUS.md](EVENT-BUS.md).
 
-**Why fire-after-commit:**
-- The database is the source of truth. If the event publish fails, the passport is still published.
-- If we published events *before* the DB write, a failed write would leave a dangling event.
-- Consumers must be idempotent — events may be delivered more than once (at-least-once via NATS JetStream).
-
-**Failure handling:** `emit()` catches all errors, logs them at WARN level, and continues. The passport operation succeeds regardless of event bus health.
-
----
-
-## 5. Versioned Event Envelope
-
-Every event carries a schema version:
+## 6. Versioned event envelope
 
 ```json
 {
   "version": 1,
-  "eventId": "01964f3a-...",
+  "eventId": "0196f3a2-7c1e-7b3a-9f10-2d4e6c8a0b12",
   "eventType": "dpp.passport.published",
   "timestamp": "2026-05-27T14:30:00Z",
   "operatorId": "self_hosted",
-  "data": { "passportId": "...", "status": "active" }
+  "data": { "passportId": "…", "status": "active" }
 }
 ```
 
-**Why:** When the event payload shape changes (new fields, renamed fields), the version increments. Consumers can branch on `version` to handle both old and new shapes during migration. Without versioning, every consumer would break simultaneously on a payload change.
+`version` increases when the payload shape changes, so a consumer can handle old and
+new shapes side by side instead of breaking on the release that changes it.
 
----
+## 7. Stub adapters with reported modes
 
-## 6. NoOp Fallback Pattern
+Optional or not-yet-available dependencies have a stub implementation, so the same
+code path runs with or without them:
 
-Infrastructure dependencies that are optional use a NoOp implementation:
-
-| Dependency | Real Implementation | Fallback |
+| Port | Real adapter | Stub |
 |---|---|---|
-| Event bus | `NatsEventBus` | `NoOpEventBus` (discards events) |
-| Compliance | Wasm product group plugin | `PassthroughRegistry` (accepts all) |
-| EU Registry | `EuRegistrySync` (HTTP, when the Commission publishes) | `GhostRegistrySync` — but registration intent is **never lost**: it lives in the durable outbox regardless of adapter tier |
-| Qualified seal | A `SealBackend` selected by `SEAL_PROVIDER` (`dpp-seal`): a hosted QTSP, or a local dev sealer that is real CMS and no legal weight | `GhostSeal` — clearly marked placeholder |
+| Event bus | `NatsEventBus` | `NoOpEventBus`: discards events |
+| Compliance | Signed Wasm plugin per product group | `PassthroughRegistry`: no compliance check |
+| EU registry | Registry HTTP client, when credentials are set | `GhostRegistrySync`: accepts and records nothing remotely. Outbox rows are still written |
+| Seal | `SealBackend` chosen by `SEAL_PROVIDER` | `GhostSeal`: no seal |
 
-**Why:** Self-hosted single-node deployments should work without NATS. The NoOp pattern means the code paths are identical — no `if nats_enabled { ... }` branches. The trait dispatch handles it.
+Each trust-relevant port reports its mode (`live`, `sandbox`, or `ghost` for a stub)
+on the authenticated `GET /vault/api/v1/node/state` and as a `trust_mode` gauge on
+the private metrics listener. The public `/health` reports liveness only, so it does
+not advertise which ports are degraded. Under `NODE_PROFILE=production` the node
+refuses to start while a required port resolves to a stub (fail-fast startup
+validation).
 
-**The honesty rule on top:** every fallback reports its tier per port — as `trustMode` on the authenticated `/vault/api/v1/node/state`, and as a `trust_mode` gauge on the private `/metrics` listener (not on the public `/health`, which answers liveness only: a degraded port is a targeting signal) — and a `NODE_PROFILE=production` node **refuses to boot** while a trust-critical port resolves to a ghost. Fallbacks keep development friction-free; they are never allowed to impersonate the real thing.
+## 8. One process, nested routers
 
----
+`dpp-node` nests the vault, identity and integrator routers under one listener and
+one PostgreSQL pool:
 
-## 7. Localhost Inter-Service Communication
+- **Signing is in-process.** The vault signs through `dpp-vc`'s
+  `LocalIdentityService`; the node exposes no signing endpoint.
+- **The integrator calls the vault over loopback HTTP**
+  (`http://localhost:<NODE_PORT>/vault`), forwarding the caller's API key, so every
+  imported row goes through the same validation, scope checks and audit as a direct
+  API call.
+- **Each service still has its own binary** (`dpp-vault`, `dpp-identity`,
+  `dpp-integrator`) and HTTP contract, so a service can be split onto its own host
+  later. No deployment does that today.
 
-In the single-binary MVP, vault, identity, and integrator are separate Axum routers nested under one listener. They communicate via localhost HTTP:
+## 9. Import jobs
 
-```rust
-// Vault calls identity for signing during publish
-let identity_client = IdentityHttpClient::new("http://localhost:8001/identity");
-let signed = identity_client.sign(passport_payload).await?;
-```
-
-**Why localhost HTTP instead of direct function calls:**
-- Each service can be deployed independently later without code changes
-- The HTTP contract is the same whether services are co-located or distributed
-- Integration tests exercise the real HTTP layer, catching serialisation bugs
-
-**Trade-off:** ~0.1ms overhead per localhost call. Acceptable for DPP operations (not latency-critical).
-
----
-
-## 8. Job Store Pattern
-
-Bulk imports use a two-phase pattern: synchronous validation + asynchronous processing.
-
-```
-1. POST /import/{productGroup} — validate file, create job (queued), return job_id
-2. Background task processes rows (queued -> processing -> completed/failed)
-3. GET /imports/{job_id} — poll for status and progress
-```
-
-Two implementations exist:
-- `InMemoryJobStore` — for tests and single-request development
-- `PgJobStore` — production, persists job state to `import_job` table
-
-A background cleanup task runs every 6 hours, removing completed/failed jobs older than 30 days.
+Imports of up to 100 valid rows run inside the request. Larger ones return a job id
+and run in the background (`queued`, `processing`, `completed` or `failed`); the
+client polls `GET /integrator/api/v1/imports/{job_id}`. In the node, jobs live in
+PostgreSQL (`PgJobStore`), so they survive restarts; a clean-up task removes finished
+jobs older than 30 days. Tests and the standalone integrator use `InMemoryJobStore`.

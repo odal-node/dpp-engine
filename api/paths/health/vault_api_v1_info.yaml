@@ -2,7 +2,7 @@ get:
   operationId: vaultInfo
   summary: Service info
   description: |
-    What this build is and what it supports — for a client deciding which
+    What this build is and what it supports, for a client deciding which
     features to offer before it has authenticated.
 
     Carries four things: the vault's own `version`, the `dpp-core` version it
@@ -14,7 +14,7 @@ get:
     before it can, and the values here are properties of the build rather than
     of the operator or their data.
 
-    `coreVersion` is the useful one when two deployments disagree — the vault
+    `coreVersion` is the useful one when two deployments disagree: the vault
     version alone does not tell you which regulatory rules were compiled in.
   tags:
     - Health

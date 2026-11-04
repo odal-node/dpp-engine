@@ -3,6 +3,8 @@
 mod aluminium;
 mod battery;
 mod construction;
+mod detergent;
+mod electronics;
 mod furniture;
 mod mattress;
 mod steel;
@@ -13,6 +15,8 @@ mod tyre;
 pub use aluminium::validate_aluminium_row;
 pub use battery::validate_battery_row;
 pub use construction::validate_construction_row;
+pub use detergent::validate_detergent_row;
+pub use electronics::validate_electronics_row;
 pub use furniture::validate_furniture_row;
 pub use mattress::validate_mattress_row;
 pub use steel::validate_steel_row;
@@ -127,6 +131,8 @@ pub fn columns_for(product_group: &str) -> Option<Vec<Column>> {
         "furniture" => furniture::COLUMNS,
         "toy" => toy::COLUMNS,
         "construction" => construction::COLUMNS,
+        "electronics" => electronics::COLUMNS,
+        "detergent" => detergent::COLUMNS,
         _ => return None,
     };
     Some(
@@ -141,23 +147,13 @@ pub fn columns_for(product_group: &str) -> Option<Vec<Column>> {
 /// pre-upload product group check, [`validate_row`] and [`columns_for`] all
 /// read, so they cannot silently drift apart.
 ///
-/// **Not exhaustive over the catalog, and deliberately so.** Two product groups
-/// have a typed shape that a row of CSV cannot carry, and adding them means
-/// inventing a wire format rather than filling a gap:
-///
-/// - `detergent` requires `surfactants`, a list of `{name, biodegradable,
-///   concentrationBand}`. Flattening a variable-length list of three-field
-///   records into fixed columns means either a delimiter convention inside a
-///   cell or a column-per-index cap, and both are formats an operator has to be
-///   taught. Worth doing deliberately, not as a side effect of this list.
-/// - `unsold-goods` is not a product row at all. An Art. 24 disclosure is one
-///   undertaking, one financial year, and N discard lines — a spreadsheet of
-///   them is a different document with a header section, not a passport per
-///   row. It needs its own import shape.
-///
-/// `electronics` is absent for a smaller reason: its `productCategory` and
-/// `energyEfficiencyClass` are typed enums in core with no string parse path,
-/// so a validator would have to invent one. That is a core-shaped decision.
+/// **Not exhaustive over the catalog, and deliberately so.** `unsold-goods` is
+/// absent because it is not a passport. Every validator here produces a
+/// [`CreatePassportRequest`]; an Art. 24 disclosure is one undertaking over one
+/// financial year with N discard lines, recorded through the vault's own
+/// `unsold-goods` route and never as a passport. Importing it needs a
+/// different target and a document with a header section, not a passport per
+/// row.
 pub const SUPPORTED_PRODUCT_GROUPS: &[&str] = &[
     "battery",
     "textile",
@@ -168,6 +164,8 @@ pub const SUPPORTED_PRODUCT_GROUPS: &[&str] = &[
     "furniture",
     "toy",
     "construction",
+    "electronics",
+    "detergent",
 ];
 
 /// Whether `key` names something this crate can import.
@@ -236,6 +234,8 @@ pub fn validate_row(
             "furniture" => validate_furniture_row(row, row_num),
             "toy" => validate_toy_row(row, row_num),
             "construction" => validate_construction_row(row, row_num),
+            "electronics" => validate_electronics_row(row, row_num),
+            "detergent" => validate_detergent_row(row, row_num),
             _ => return Err(RowValidationError::UnsupportedProductGroup),
         };
     result.map_err(RowValidationError::Invalid)
@@ -424,8 +424,8 @@ mod tests {
 
     /// Every importer must route its country column to `manufacturer.country`.
     ///
-    /// Nine validators build `ManufacturerInfo` and only four carry a valid-row
-    /// test of their own, so dropping the mapping from one of the other five
+    /// Every validator builds `ManufacturerInfo` and not every one carries a
+    /// valid-row test of its own, so dropping the mapping from one without
     /// would have been caught by nothing. Driven from the templates for the same
     /// reason the test above is: it reaches every importer that ships one,
     /// including the ones with no test module.

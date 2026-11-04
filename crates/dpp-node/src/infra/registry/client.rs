@@ -20,6 +20,12 @@
 //! the submission exists, and the adapter reports it as pending so the drain
 //! polls for the verdict instead of posting it a third time.
 //!
+//! A transfer notification carries the transfer's own identifier in the same
+//! header. It is what makes sending one again after an answer the node could not
+//! settle on (still processing, or a state it has no name for) the same
+//! notification rather than a second, and a 409 naming the key is read the same
+//! way: the registry already holds it.
+//!
 //! # Unreachable registry
 //!
 //! If the registry is unreachable (connection refused, DNS failure) the adapter
