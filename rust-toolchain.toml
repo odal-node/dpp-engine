@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.96.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 # Deploy target is Linux (images build via docker/*.Dockerfile). No wasm targets:
 # the platform *loads* prebuilt product group plugins through the Wasm host, it does not

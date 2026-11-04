@@ -3,7 +3,7 @@ get:
   summary: Get DPP audit history
   description: |
     Returns the chronological audit trail for a passport: creation,
-    status transitions, field updates, etc. Unbounded — returns the full
+    status transitions, field updates, etc. Unbounded: returns the full
     trail with no pagination or limit.
   tags:
     - DPP Management

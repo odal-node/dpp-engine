@@ -3,7 +3,7 @@ delete:
   summary: Remove a facility
   description: >-
     Retires the facility (soft-delete): the row is kept as Annex III provenance
-    for passports that already stamped its identifier — never hard-deleted.
+    for passports that already stamped its identifier, never hard-deleted.
     Requires an admin-scoped key.
   tags:
     - Facilities

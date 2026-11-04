@@ -2,7 +2,7 @@
 
 The checks `just check` runs, and the few helpers the `justfile` calls. Each
 script's header comment says what it enforces and why; `just --list` shows which
-recipe runs it. A `*.test.sh` beside a script proves that gate actually fails —
+recipe runs it. A `*.test.sh` beside a script proves that gate actually fails:
 a check that has never been seen red proves nothing.
 
 These are repository tooling, not something an operator runs.

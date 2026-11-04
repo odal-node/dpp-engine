@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0044 — admit the `abandoned` registry state and the `registry_abandoned`
+-- 0046 — admit the `abandoned` registry state and the `registry_abandoned`
 -- audit action.
 --
 -- A registration the registry never accepted can stall for good: the payload is

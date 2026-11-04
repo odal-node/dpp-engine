@@ -438,12 +438,25 @@ async fn access_tier_header_cannot_unlock_restricted_fields() {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        let s = String::from_utf8_lossy(&body);
+        let s = without_context(&body);
         assert!(
             !s.contains("svhcSubstances") && !s.contains("disassemblyInstructions"),
             "tier header '{tier}' must not unlock restricted fields, got: {s}"
         );
     }
+}
+
+/// A JSON-LD body as text, without its top-level `@context`.
+///
+/// The inline context defines a term for every field the product group can
+/// carry, served or withheld, so a field's name in it says nothing about what was
+/// served. A scan for a withheld field reads the document without it.
+fn without_context(body: &[u8]) -> String {
+    let mut doc: serde_json::Value = serde_json::from_slice(body).expect("a JSON-LD body");
+    if let Some(object) = doc.as_object_mut() {
+        object.remove("@context");
+    }
+    doc.to_string()
 }
 
 // ─── AAS door ─────────────────────────────────────────────────────────────────
@@ -775,11 +788,15 @@ async fn the_aas_door_projects_the_signed_payload_not_the_live_row() {
 
 // ─── cross-door agreement ─────────────────────────────────────────────────────
 
-/// Every object key in `value`, at any depth.
+/// Every object key in `value`, at any depth, outside a JSON-LD `@context`.
+///
+/// A context's term definitions are keyed by field name and name every field the
+/// product group can carry, served or withheld, so they are not the document's
+/// fields.
 fn keys_at_any_depth(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
     match value {
         serde_json::Value::Object(map) => {
-            for (key, child) in map {
+            for (key, child) in map.iter().filter(|(key, _)| key.as_str() != "@context") {
                 out.insert(key.clone());
                 keys_at_any_depth(child, out);
             }

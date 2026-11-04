@@ -127,7 +127,7 @@ async fn published(client: &TestClient) -> String {
     let resp = client
         .post_json(
             "/api/v1/operator-identifiers",
-            serde_json::json!({ "scheme": "vat", "value": "DE123456789", "isPrimary": true }),
+            serde_json::json!({ "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true }),
         )
         .await;
     assert_eq!(

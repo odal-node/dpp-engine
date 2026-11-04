@@ -88,15 +88,55 @@ pub enum NodeProfile {
     Production,
 }
 
+/// A `NODE_PROFILE` that was set to something other than a profile.
+///
+/// Refused rather than read as `development`: a value that was set is a
+/// statement of intent, and reading `Production` or `prod` as the permissive
+/// profile would boot a node the operator meant to be strict without a word.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "NODE_PROFILE={value:?} is not a profile. Use exactly `development`, `sandbox` or \
+     `production`, or leave it unset for `development`"
+)]
+pub struct UnknownProfile {
+    /// What the variable held, lossily decoded if it was not valid UTF-8.
+    pub value: String,
+}
+
 impl NodeProfile {
-    /// Read `NODE_PROFILE` from the environment. Anything other than
-    /// `production` or `sandbox` (including unset) is `Development`.
-    #[must_use]
-    pub fn from_env() -> Self {
-        match std::env::var("NODE_PROFILE").ok().as_deref() {
-            Some("production") => Self::Production,
-            Some("sandbox") => Self::Sandbox,
-            _ => Self::Development,
+    /// Read `NODE_PROFILE` from the environment.
+    ///
+    /// Unset or empty is `Development`, the documented default (an empty value
+    /// is a blanked template variable, read as unset). `development`, `sandbox`
+    /// and `production` are the three profiles, matched exactly.
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownProfile`] for any other value, so a misspelling cannot boot as
+    /// the permissive profile.
+    pub fn from_env() -> Result<Self, UnknownProfile> {
+        match std::env::var("NODE_PROFILE") {
+            Ok(raw) => Self::parse(Some(&raw)),
+            Err(std::env::VarError::NotPresent) => Self::parse(None),
+            Err(std::env::VarError::NotUnicode(raw)) => Err(UnknownProfile {
+                value: raw.to_string_lossy().into_owned(),
+            }),
+        }
+    }
+
+    /// The profile a raw `NODE_PROFILE` value names. See [`Self::from_env`].
+    ///
+    /// # Errors
+    ///
+    /// [`UnknownProfile`] for a value that is none of the three profiles.
+    pub fn parse(raw: Option<&str>) -> Result<Self, UnknownProfile> {
+        match raw {
+            None | Some("" | "development") => Ok(Self::Development),
+            Some("sandbox") => Ok(Self::Sandbox),
+            Some("production") => Ok(Self::Production),
+            Some(other) => Err(UnknownProfile {
+                value: other.to_owned(),
+            }),
         }
     }
 
@@ -245,6 +285,52 @@ mod tests {
                 required: false,
             },
         ]
+    }
+
+    #[test]
+    fn each_profile_name_parses_to_its_profile() {
+        assert_eq!(
+            NodeProfile::parse(Some("development")),
+            Ok(NodeProfile::Development)
+        );
+        assert_eq!(
+            NodeProfile::parse(Some("sandbox")),
+            Ok(NodeProfile::Sandbox)
+        );
+        assert_eq!(
+            NodeProfile::parse(Some("production")),
+            Ok(NodeProfile::Production)
+        );
+    }
+
+    /// Unset is the documented default, and an empty value is a blanked
+    /// template variable: both stay `Development`.
+    #[test]
+    fn unset_and_empty_are_development() {
+        assert_eq!(NodeProfile::parse(None), Ok(NodeProfile::Development));
+        assert_eq!(NodeProfile::parse(Some("")), Ok(NodeProfile::Development));
+    }
+
+    /// 🚨 Each of these used to boot as `Development` — the profile that allows
+    /// ghost trust ports and unsigned plugins — with nothing said.
+    #[test]
+    fn a_misspelled_profile_is_refused_and_named() {
+        for bad in [
+            "Production",
+            "PRODUCTION",
+            "prod",
+            "production ",
+            " production",
+            "Sandbox",
+            "staging",
+            "live",
+        ] {
+            let err = NodeProfile::parse(Some(bad)).expect_err(bad);
+            assert_eq!(err.value, bad);
+            // The value is quoted, so a stray space is visible in the message.
+            assert!(err.to_string().contains(&format!("{bad:?}")), "{err}");
+            assert!(err.to_string().contains("`production`"), "{err}");
+        }
     }
 
     #[test]

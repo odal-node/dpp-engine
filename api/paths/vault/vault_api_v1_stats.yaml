@@ -3,7 +3,7 @@ get:
   summary: Operator-wide scan telemetry rollup
   description: |
     Aggregate resolution counts across all of the operator's passports over
-    a trailing window — the "your passports were resolved N times" figure.
+    a trailing window: the "your passports were resolved N times" figure.
     Scans and QR-image renders are separate; nothing about the scanner is
     collected.
   tags:

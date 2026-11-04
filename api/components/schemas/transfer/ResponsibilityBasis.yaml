@@ -23,7 +23,7 @@ oneOf:
     required:
       - otherUnionLaw
     description: >-
-      "Similar tasks pursuant to other Union law applicable to the product" —
+      "Similar tasks pursuant to other Union law applicable to the product":
       Annex III(k)'s own catch-all.
     properties:
       otherUnionLaw:

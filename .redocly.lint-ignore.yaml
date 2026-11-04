@@ -15,9 +15,9 @@
 #
 # What is left is what the linter is wrong about, and each group says why:
 #
-# - `operation-4xx-response` (11) — health, readiness, info, `did.json`, and two
-#   parameterless list routes reading compiled-in catalogs. None can produce a
-#   `4XX`. `/vault/ready` does document its `503`, which is a 5xx and does not
+# - `operation-4xx-response` (12) — health, readiness, info, both `did.json`
+#   paths, and two parameterless list routes reading compiled-in catalogs. None
+#   can produce a `4XX`. `/vault/ready` does document its `503`, which is a 5xx and does not
 #   satisfy this rule. Adding a `4XX` to satisfy it would document a response the
 #   code cannot return.
 # - `no-server-example.com` (6) — the server list is a template an operator
@@ -35,6 +35,7 @@ api/openapi.bundled.yaml:
     - '#/paths/~1vault~1ready/get/responses'
     - '#/paths/~1vault~1api~1v1~1info/get/responses'
     - '#/paths/~1identity~1.well-known~1did.json/get/responses'
+    - '#/paths/~1.well-known~1did.json/get/responses'
     - '#/paths/~1identity~1health/get/responses'
     - '#/paths/~1identity~1ready/get/responses'
     - '#/paths/~1integrator~1health/get/responses'

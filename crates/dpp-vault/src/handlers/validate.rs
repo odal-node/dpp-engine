@@ -3,9 +3,12 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::Serialize;
 
+use dpp_domain::DppError;
+
 use crate::state::AppState;
 
 use super::create::CreatePassportRequest;
+use super::error::field_validation_error;
 use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
@@ -64,10 +67,24 @@ pub async fn validate_handler(
     if let Some(rejection) = super::create::carrier_serial_conflict(&state, &body).await {
         return rejection;
     }
+    // The draft create would store, and what the service asks of it before it
+    // does: core's own invariants, then the personal-data check. Both are judged
+    // on the assembled passport, not the body, so the preview builds the same
+    // one rather than restating how it is put together. Neither reads a store, so
+    // both belong in a dry run. Without them the preview would pass a draft
+    // create refuses: one whose marked field has a value and no statement, or a
+    // battery whose two placing-on-market dates disagree.
+    let passport = match super::create::assemble_passport(body) {
+        Ok(passport) => passport,
+        Err(rejection) => return rejection,
+    };
+    if let Err(DppError::Validation(errors)) = crate::domain::service::check_new_draft(&passport) {
+        return field_validation_error(&errors);
+    }
 
     // Create would accept it. Now the stricter publish gate, so the caller
     // learns now rather than at publish time.
-    let publish_blocker = match body.product_group_data.as_ref() {
+    let publish_blocker = match passport.product_group_data.as_ref() {
         Some(product_group_data) => state
             .service
             .publish_readiness(product_group_data)

@@ -9,7 +9,7 @@ properties:
     minimum: 0
     description: >-
       The amount, in `unit`. Refused on create and update when it is negative or
-      not finite — a non-finite number cannot be serialised into the signed
+      not finite: a non-finite number cannot be serialised into the signed
       publish payload, so an unchecked one fails much later with an error that
       names serialisation rather than the field that caused it.
     example: 2.0

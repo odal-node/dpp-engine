@@ -107,6 +107,17 @@ pub struct AppState {
     /// ESPR Art. 24 unsold-goods disclosure lines. A bare port like `scan_repo`
     /// — a row is written once and read back, with no lifecycle to orchestrate.
     pub unsold_goods_repo: Arc<dyn dpp_types::UnsoldGoodsStore>,
+    /// The records a passport's `personalData` statements name, held where they
+    /// can be erased (migration 0043). Not optional, unlike the ports that are
+    /// absent on a deployment without a composition root: a node that cannot
+    /// erase a record it was given cannot honour a withdrawn consent, and an
+    /// erasure route that answered `501` would say so only when someone needed it.
+    ///
+    /// Used by the erasure route and by nothing that builds a passport view. A
+    /// record is never served by a read route, never archived and never part of
+    /// the back-up copy, which is why this is a port of its own and not a method
+    /// of the passport repository.
+    pub personal_data: Arc<dyn dpp_domain::PersonalDataPort>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
     /// Runtime plugin administration (the Wasm plugin host). `None` on

@@ -20,11 +20,11 @@ properties:
     description: >-
       True when the moment came from a timestamp token inside the seal, whose
       signature and imprint were both checked. False means it is the node's own
-      clock — the validation time, not the signing time.
+      clock: the validation time, not the signing time.
 
 
       This separates a failure from an open question. ETSI EN 319 102-1 treats a
       time nothing proves as no time at all, which is why a verdict resting on an
       unattested moment is reported with a `NO_POE` sub-indication rather than as
-      `totalFailed`. Without it, every seal whose certificate has since expired —
-      eventually all of them — would read as invalid.
+      `totalFailed`. Without it, every seal whose certificate has since expired
+      (eventually all of them) would read as invalid.

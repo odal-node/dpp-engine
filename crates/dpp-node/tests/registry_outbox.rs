@@ -124,6 +124,7 @@ fn draft_passport() -> Passport {
             name: "Outbox Plant".into(),
             country: "DE".into(),
             address: None,
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,
@@ -166,14 +167,17 @@ async fn outbox_row_count(dal: &PgDal, id: PassportId) -> i64 {
 
 /// What the registry says. A submission is answered with `Accepted`, `Held` or
 /// `Transient`; the poll that follows with `Registered`, `Rejected`,
-/// `Processing` or `Transient`. The two steps are different questions with
-/// different answers, which is the shape of a real asynchronous registration.
+/// `Processing`, `Unrecognised` or `Transient`. The two steps are different
+/// questions with different answers, which is the shape of a real asynchronous
+/// registration.
 #[derive(Clone, Copy)]
 enum Outcome {
     /// Submission accepted, under a correlation identifier.
     Accepted,
     /// A replayed submission: the registry holds it and gave no handle for it.
     Held,
+    /// The adapter's own checks refused the payload before anything was sent.
+    Invalid,
     /// The registry could not be reached.
     Transient,
     /// Poll: the registry ruled and generated a registration identifier.
@@ -230,6 +234,11 @@ impl RegistrySyncPort for MockPort {
                 correlation_id: CORRELATION_ID.into(),
             }),
             Outcome::Held => Ok(SubmissionAcknowledgement::AlreadyHeld),
+            Outcome::Invalid => Err(DppError::Validation(
+                "EU registry payload failed validation: the operator identifier scheme 'vat' \
+                 has no EN 18219 clause 6 route in this build"
+                    .into(),
+            )),
             Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
             other => panic!("not an answer to a submission: {}", other as u8),
         }
@@ -447,6 +456,149 @@ async fn drain_backs_off_on_transient_and_marks_terminal_rejection() {
             .is_some_and(|m| m.contains("NOT_RESOLVABLE_UPI")),
         "the registry's reason reaches the row for a human: {:?}",
         row.message
+    );
+}
+
+/// 🚨 A payload the adapter refuses before sending is refused for good. It was
+/// fixed when the passport was published, so sending it again cannot change the
+/// answer, and retrying it would leave the row backing off for ever with nobody
+/// told why. It is rejected with the reason, and never offered to the port again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_payload_the_adapter_refuses_is_rejected_not_retried() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+
+    let id = create_and_publish(&dal, &outbox).await;
+    let (port, calls) = mock(Outcome::Invalid);
+    let stats = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(stats.skipped, 1, "{stats:?}");
+    assert_eq!(stats.retried, 0, "a refusal is not a transient failure");
+
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Rejected);
+    assert!(
+        row.message
+            .as_deref()
+            .is_some_and(|m| m.contains("clause 6")),
+        "the reason reaches the row for a human: {:?}",
+        row.message
+    );
+
+    make_due(&dal, id).await;
+    drain_once(&outbox, &port, None, 50).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "never offered to the port again"
+    );
+}
+
+/// A refusal whose rejection cannot be written is recorded as a failed attempt
+/// instead, so the row backs off like any failure. Left as it was, it stayed
+/// due and was checked again, and failed again, on every pass.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refusal_whose_rejection_cannot_be_written_backs_off() {
+    /// The real outbox, except that recording a rejection fails.
+    struct RejectionFails(PgRegistrySyncRepo);
+
+    #[async_trait]
+    impl RegistrySyncOutbox for RejectionFails {
+        async fn commit_publish(
+            &self,
+            passport: &Passport,
+            payload: serde_json::Value,
+        ) -> Result<(), DppError> {
+            self.0.commit_publish(passport, payload).await
+        }
+        async fn enqueue_status(
+            &self,
+            passport_id: PassportId,
+            intent: RegistryStatusIntent,
+        ) -> Result<(), DppError> {
+            self.0.enqueue_status(passport_id, intent).await
+        }
+        async fn due(&self, limit: i64) -> Result<Vec<dpp_types::RegistrySyncRow>, DppError> {
+            self.0.due(limit).await
+        }
+        async fn mark_submitted(
+            &self,
+            id: PassportId,
+            registry_id: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_submitted(id, registry_id).await
+        }
+        async fn mark_submitted_noting(
+            &self,
+            id: PassportId,
+            message: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_submitted_noting(id, message).await
+        }
+        async fn record_handle(
+            &self,
+            id: PassportId,
+            correlation_id: &str,
+        ) -> Result<bool, DppError> {
+            self.0.record_handle(id, correlation_id).await
+        }
+        async fn abandon(&self, id: PassportId, message: String) -> Result<bool, DppError> {
+            self.0.abandon(id, message).await
+        }
+        async fn mark_deactivated(&self, id: PassportId, message: String) -> Result<(), DppError> {
+            self.0.mark_deactivated(id, message).await
+        }
+        async fn mark_registered(
+            &self,
+            id: PassportId,
+            registry_id: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_registered(id, registry_id).await
+        }
+        async fn mark_rejected(&self, _id: PassportId, _message: String) -> Result<(), DppError> {
+            Err(DppError::Internal("the database stopped answering".into()))
+        }
+        async fn mark_attempt_failed(
+            &self,
+            id: PassportId,
+            message: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_attempt_failed(id, message).await
+        }
+        async fn pending_for(
+            &self,
+            id: PassportId,
+        ) -> Result<Option<dpp_types::RegistrySyncRow>, DppError> {
+            self.0.pending_for(id).await
+        }
+        async fn status_counts(
+            &self,
+            stall_threshold: i32,
+        ) -> Result<dpp_types::RegistrySyncCounts, DppError> {
+            self.0.status_counts(stall_threshold).await
+        }
+        async fn unregistered_published_count(&self) -> Result<i64, DppError> {
+            self.0.unregistered_published_count().await
+        }
+    }
+
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let plain: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &plain).await;
+    let outbox: Arc<dyn RegistrySyncOutbox> =
+        Arc::new(RejectionFails(PgRegistrySyncRepo::new(dal.clone())));
+
+    let (port, _) = mock(Outcome::Invalid);
+    let stats = drain_once(&outbox, &port, None, 50).await;
+    assert_eq!((stats.skipped, stats.retried), (0, 1), "{stats:?}");
+
+    let row = plain.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
+    assert_eq!(row.attempts, 1, "a failed attempt, so it backs off");
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "and is not due again on the next pass"
     );
 }
 
@@ -823,6 +975,51 @@ async fn a_submission_still_being_checked_keeps_being_polled() {
     let row = outbox.pending_for(id).await.unwrap().unwrap();
     assert_eq!(row.status, RegistrySyncStatus::Submitted);
     assert_eq!(row.registry_id.as_deref(), Some(CORRELATION_ID));
+}
+
+/// 🚨 A state the node has no name for is not a verdict. The registry's status
+/// words are inferred from its interface, so a new one is expected sooner or
+/// later, and the row it arrives on belongs to a submission that may well have
+/// succeeded. Rejecting the row would drop that registration for good, and
+/// recording one would invent it, so the row stays `submitted` with the handle
+/// the registry gave, backed off and counted like any poll that gets no ruling.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_state_the_node_has_no_name_for_is_not_a_verdict() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, calls, polls) = mock_with_poll(Outcome::Accepted, Outcome::Unrecognised);
+    drain_once(&outbox, &port, None, 10).await;
+    let mut attempts = outbox.pending_for(id).await.unwrap().unwrap().attempts;
+    for polled in 1..=2 {
+        make_due(&dal, id).await;
+        let stats = drain_once(&outbox, &port, None, 10).await;
+        assert_eq!(stats.submitted, 1);
+        assert_eq!(
+            (stats.registered, stats.rejected, stats.retried),
+            (0, 0, 0),
+            "neither a registration, a refusal, nor a failed attempt"
+        );
+        assert_eq!(polls.load(Ordering::SeqCst), polled);
+
+        let row = outbox.pending_for(id).await.unwrap().unwrap();
+        assert_eq!(row.status, RegistrySyncStatus::Submitted);
+        assert_eq!(
+            row.registry_id.as_deref(),
+            Some(CORRELATION_ID),
+            "the handle is kept, so the next poll can still ask"
+        );
+        assert!(
+            row.next_attempt_at > Utc::now(),
+            "a poll with no ruling backs the row off"
+        );
+        assert!(row.attempts > attempts, "and counts as an attempt");
+        attempts = row.attempts;
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "never resubmitted");
 }
 
 /// A replayed idempotency key is answered without an id: the registry holds the

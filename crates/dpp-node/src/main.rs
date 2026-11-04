@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Read once and handed to both gates that depend on it — the plugin signing
     // policy below and the trust report — so the two cannot disagree about it.
-    let profile = NodeProfile::from_env();
+    let profile = NodeProfile::from_env().context("Invalid NODE_PROFILE")?;
 
     // ── Wasm plugin host ──────────────────────────────────────────────────────
     let plugin_host =
@@ -258,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
         identity.clone(),
         compliance,
         db.audit_repo.clone(),
-        event_bus,
+        event_bus.clone(),
         registry_sync,
         backup,
         operator,
@@ -271,7 +271,8 @@ async fn main() -> anyhow::Result<()> {
     .with_transfer_store(db.transfer_store.clone())
     .with_transfer_outbox(db.transfer_outbox.clone())
     .with_evidence_store(db.evidence_store.clone())
-    .with_webhooks(db.webhook_outbox.clone());
+    .with_webhooks(db.webhook_outbox.clone())
+    .with_state_changes(db.state_changes.clone());
     if let Some(base) = cfg.snapshot_public_base_url.clone() {
         passport_service = passport_service.with_snapshot_public_base_url(base);
     }
@@ -398,6 +399,7 @@ async fn main() -> anyhow::Result<()> {
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
         unsold_goods_repo: db.unsold_goods_repo.clone(),
+        personal_data: db.personal_data.clone(),
         plugin_admin: Some(plugin_admin),
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the
         // public `/health` — see `dpp_node::router::node_health`.
@@ -417,6 +419,8 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        import_slots: Arc::new(tokio::sync::Semaphore::new(cfg.import_max_concurrent)),
+        events: event_bus,
         idempotency: Some(db.idempotency.clone()),
     };
 

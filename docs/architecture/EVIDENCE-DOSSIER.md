@@ -1,82 +1,135 @@
-# Evidence Dossier — format v1
+# Evidence dossier, format v1
 
-The evidence dossier is a self-contained, signed snapshot of a passport's full
-proof chain. It is generated and persisted by `POST /dpp/{id}/evidence`, listed
-and fetched via `GET /dpp/{id}/evidence` / `GET /evidence/{id}`, and verified —
-either a stored dossier (`POST /evidence/{id}/verify`) or an uploaded document
-(`POST /evidence/verify`) — by the checks in `dpp-vault`'s `domain::verify`
-module. The `odal verify <dossier-id | file>` CLI command drives the same two
-verify endpoints.
+An evidence dossier is a single signed JSON document holding everything needed to
+check a passport's proof chain offline: the signed payloads, the DID documents that
+verify them, the hash-chained audit trail, the transfer chain and the seal.
 
-`format_version` is currently `"1"`. This document describes that version.
+```bash
+odal passport evidence <passport-id> -o dossier.json   # generate and store
+odal verify <dossier-id>                                # verify a stored dossier
+odal verify dossier.json                                # verify a file
+```
+
+| Operation | Route |
+|---|---|
+| Generate and store | `POST /vault/api/v1/dpp/{id}/evidence` (write scope) |
+| List for a passport | `GET /vault/api/v1/dpp/{id}/evidence` |
+| Fetch one | `GET /vault/api/v1/evidence/{id}` |
+| Verify a stored dossier | `POST /vault/api/v1/evidence/{id}/verify` |
+| Verify an uploaded dossier | `POST /vault/api/v1/evidence/verify` |
+
+`formatVersion` is `"1"`. The machine-readable schema is
+[`evidence-dossier-v1.schema.json`](evidence-dossier-v1.schema.json); the reference
+verifier is `crates/dpp-vault/src/domain/verify/engine.rs`; the wire types are in
+`crates/dpp-types/src/evidence.rs`.
 
 ## Members
 
-| Field | Type | Meaning |
+| Field | Type | Contents |
 |---|---|---|
-| `manifest` | `DossierManifest` | Signed metadata binding every other member into one atomic unit. |
-| `manifestJws` | string | Compact EdDSA JWS over the JCS-canonical bytes of `manifest`. |
-| `fullView` | `SignedLayer` | The full (non-redacted) passport payload as it was actually signed, plus that signature. |
-| `publicView` | `SignedLayer` | The public (redacted) passport payload as it was actually signed, plus that signature. |
-| `didDocuments` | map\<DID, DID document\> | Snapshot of every DID document needed to verify every signature in the dossier — the issuer's own, plus any transfer-chain counterparties'. |
-| `auditEntries` | `PassportAuditEntry[]` | The full hash-chained audit trail, oldest first. |
-| `transferChain` | `TransferChain?` | Present iff the passport has ever changed responsible operator. |
-| `eolEvent` | object? | Present iff the passport was declared end-of-life. |
-| `checkpoint` | object? | **Always `null` in v1** — the signed-checkpoint layer is not yet built. |
-| `calcReceipts` | array | **Always `[]` in v1** — `dpp-calc` invocation is not yet wired end to end (pending a licensed emission-factor data source). |
-| `componentGraph` | object? | The recursive component-tree (bill-of-materials) verification report. Present iff the passport declares `componentRefs`. |
-| `qualifiedSeal` | object? | The eIDAS qualified seal over the full-payload signature, plus `signedOverJws` and `payloadHash` so a verifier holding only this document has the CAdES **and** the preimage to check it against. Present iff the passport carries a seal; absent — never a placeholder — while one is queued or when no QTSP is configured. **Not reachable any other way from a dossier**: the seal is stripped from every audience view, including `publicView` and `fullView`, because it covers the full-payload signature rather than any redaction. It is also the dossier's one member carrying an Art. 35(2) presumption. |
+| `manifest` | `DossierManifest` | Signed metadata that binds every other member (below) |
+| `manifestJws` | string | Compact EdDSA JWS over the JCS-canonical bytes of `manifest` |
+| `fullView` | `SignedLayer` | The full passport payload exactly as signed, and its JWS |
+| `publicView` | `SignedLayer` | The public (redacted) payload exactly as signed, and its JWS |
+| `didDocuments` | map of DID to DID document | Every DID document needed to verify the signatures: the issuer's, and any transfer counterparties' |
+| `auditEntries` | `PassportAuditEntry[]` | The full hash-chained audit trail, oldest first |
+| `transferChain` | `TransferChain`, optional | Present when responsibility for the passport has ever been transferred |
+| `eolEvent` | object, optional | Present when end of life was declared |
+| `checkpoint` | object | Always `null` in v1: signed checkpoints are not built yet |
+| `calcReceipts` | array | Always `[]` in v1: calculations are not yet recorded in the dossier |
+| `componentGraph` | object, optional | The component-tree (bill of materials) verification report. Present when the passport has `componentRefs` |
+| `qualifiedSeal` | object, optional | The eIDAS seal over the full-view signature, with `signedOverJws` and `payloadHash` so it can be checked from this document alone. Present only when the passport carries a seal. The seal is stripped from every audience view, so the dossier is the place it travels with its preimage |
 
 ### `DossierManifest`
 
-| Field | Meaning |
+| Field | Contents |
 |---|---|
-| `formatVersion` | `"1"`. |
-| `passportId` | The passport this dossier is for. |
-| `issuerDid` | The `did:web` DID that signed `manifest`, `fullView`, and `publicView` — the node operator's own identity. Transfer-chain signatures carry their own signer DIDs on each record instead. |
-| `createdAt` | When this dossier was assembled. |
-| `nodeVersion` | The engine version that produced it. |
-| `rulesetVersion` | The `dpp-calc` ruleset version, when a determination ran. Omitted for passthrough-only passports. |
-| `contentHashes` | map\<member name, hex SHA-256\> — see below. |
+| `formatVersion` | `"1"` |
+| `passportId` | The passport |
+| `issuerDid` | The operator's `did:web` DID, which signed `manifest`, `fullView` and `publicView`. Transfer records carry their own signer DIDs |
+| `createdAt` | When the dossier was assembled |
+| `nodeVersion` | The engine version that produced it |
+| `rulesetVersion` | The ruleset version, when a compliance determination ran |
+| `contentHashes` | Member name to hex SHA-256 of that member's JCS-canonical bytes |
 
 ### `SignedLayer`
 
-`{ payload, jws }` — the exact JSON value that was signed, alongside the JWS over it. The dossier embeds this pair directly rather than have a verifier reconstruct "what should have been signed": engine-side transforms (e.g. the full-view payload forces `status` to `"active"`; the public-view payload is redacted) are engine-internal, and reconstructing them independently is both extra surface for the two sides to disagree on and, in practice, was found to be a source of a real bug (see "Why `SignedLayer` embeds the payload" below).
+`{ payload, jws }`: the exact JSON value that was signed, and the JWS over it.
 
-## Why the manifest hashes every member (`contentHashes`)
+The verifier does not reconstruct the signed payload from the passport record. A
+passport's `status` changes after publish (suspend, retire, end of life) without
+re-signing, so a payload rebuilt from the current record would no longer match the
+signature, and a legitimate passport would be reported as tampered. Embedding the
+signed payload means the verifier only checks that the signature covers this payload.
 
-Each member is independently verifiable on its own — its own JWS, or its own hash chain. That is not sufficient by itself: without a binding mechanism, an attacker could mix genuinely-signed-but-stale members from two different generations of the *same* passport — for example, pairing a current, validly-signed `fullView` with an older `auditEntries` array that omits a later suspension event. Each individual signature would still verify.
+## The checks
 
-`manifest.contentHashes` is a map from member name to the hex SHA-256 of that member's JCS-canonical bytes. Because the manifest itself is signed (`manifestJws`), tampering with any member's content — even by swapping in another genuinely-signed artifact — is caught: the recomputed hash won't match what the signed manifest commits to.
+`odal verify` and the verify routes run these checks and print one line per check.
 
-## Why `SignedLayer` embeds the payload
+| Check | Passes when |
+|---|---|
+| `manifest_signature` | `manifestJws` verifies against the issuer's DID document |
+| `content_integrity` | Every member's SHA-256 matches `manifest.contentHashes` |
+| `full_view_signature` | `fullView.jws` covers `fullView.payload` |
+| `public_view_signature` | `publicView.jws` covers `publicView.payload` |
+| `audit_chain` | The audit hash chain is unbroken |
+| `transfer_chain` | Every transfer record's signatures verify. Not applicable without a chain |
+| `checkpoint` | Not applicable in v1 |
+| `calc_receipts` | Not applicable in v1 |
+| `component_graph` | The embedded tree report shows no integrity violation. A component that was unreachable when the dossier was built is reported as incomplete, not failed |
+| `qualified_seal` | The seal covers the JWS it is served with, recomputed from `signedOverJws` rather than read from the dossier's own `payloadHash`. Not applicable without a seal |
+| `input_fidelity` | The canonical bytes of the input equal the canonical bytes of the parsed dossier (below) |
 
-An earlier version of this format had the verifier reconstruct the full/public view payloads from the passport record itself. This was found to be unreliable: `jws_signature`/`public_jws_signature` are frozen at publish time, but a passport's `status` (and other fields) mutate afterward on suspend/retire/end-of-life — those transitions never re-sign. A verifier reconstructing "the current record" would produce a payload that no longer matches what was actually signed, and falsely report tamper on a perfectly legitimate, unmodified signature. Embedding the exact signed payload sidesteps this: verification only has to confirm the signature covers *this* payload, never derive what the payload should be.
+Exit codes: `0` every check passed or was not applicable, `1` a check failed, `2` the
+input could not be read or parsed. The verify routes answer `422` for input that
+cannot be parsed.
+
+### Why the manifest hashes every member
+
+Each member can be verified on its own, but that alone would allow mixing genuinely
+signed members from two generations of the same passport: for example, a current
+`fullView` with an older `auditEntries` that omits a later suspension. Each signature
+would still verify. `contentHashes` is inside the signed manifest, so replacing any
+member, even with another genuinely signed one, changes its hash and fails
+`content_integrity`.
+
+### Why `input_fidelity` exists
+
+The dossier's own types (`DossierV1`, `DossierManifest`, `SignedLayer`,
+`PassportAuditEntry`) reject unknown fields. Some members are not strict:
+`didDocuments`, `checkpoint` and `calcReceipts` are untyped JSON, and
+`transferChain` uses `dpp-core` domain types that tolerate unknown fields elsewhere.
+An unknown field nested there would be dropped silently while parsing, and because
+content hashes are computed from the parsed structure, no hash would change.
+`input_fidelity` compares the canonical bytes of the raw input with the re-serialised
+parse, so content lost anywhere in the tree fails the check.
+
+This is why every optional field is omitted when absent rather than written as
+`null`: the round trip must reproduce the input byte for byte.
 
 ## Trust model
 
-Verification is an integrity check of a dossier — stored or uploaded — against its own signatures and hash chains. A green report proves: no member was altered since the dossier was generated; every signature covers exactly the payload it's paired with; the audit trail's hash chain is unbroken; every present transfer-chain signature is valid; the whole bundle is atomically bound (no mix-and-match).
+A passing report shows that:
 
-Trust is anchored to the DID documents embedded in the dossier at generation time — the report's `trustAnchorNote` states this and the snapshot date explicitly. This is honest, not exhaustive: it does not independently confirm those DID documents are still the operator's *real*, current keys, and running the check through this node's own API does not make the node a disinterested third party.
+- no member changed since the dossier was generated;
+- every signature covers exactly the payload it is paired with;
+- the audit trail's hash chain is unbroken, and every transfer signature is valid;
+- the members belong together.
 
-What it does not prove, in any case: that the *issuing* operator didn't rewrite their own audit history before generating the dossier. An operator who regenerates their entire hash chain from genesis with altered content produces a dossier that is internally, perfectly self-consistent. Closing this requires an independent observation of the chain head at an earlier point in time — the signed-checkpoint layer (`checkpoint`, currently always `null`) exists for exactly this and is not yet built. Anyone relying on a dossier for a high-stakes claim should know the honest line: *tamper-evident against everyone except the issuer, until checkpoints ship.*
+Trust is anchored in the DID documents embedded at generation time; the report's
+`trustAnchorNote` says so and gives the snapshot date. The check does not confirm
+those keys are still the operator's current keys, and running it through the
+issuing node's API does not make the node an independent party.
 
-## Strictness
-
-Every dossier-owned type (`DossierV1`, `DossierManifest`, `SignedLayer`, `PassportAuditEntry`) rejects unknown fields at deserialization. An unrecognised field anywhere in one of these types is treated as malformed input (`odal verify` exit code 2 / HTTP 422 from the verify endpoints), not silently ignored — it may mean the dossier was produced by a newer format version this verifier doesn't understand, and a verifier must never silently pass over content it didn't check.
-
-This alone is not sufficient: `didDocuments`, `checkpoint`, and `calcReceipts` are untyped JSON by design (forward-compatible placeholders), and `transferChain` embeds `dpp-domain` types (`TransferChain`, `TransferRecord`, `ResponsibleOperator`) that are *not* strict, because they are core domain types shared with contexts where tolerance is correct. An unknown field nested inside one of those would parse successfully and be silently dropped by serde — and because content hashes are computed from the *parsed* structure, the dropped content would not be reflected in a hash mismatch either.
-
-`verify_dossier_json` closes this gap with a 9th check, **`input_fidelity`**: it compares the canonical (JCS) bytes of the raw input against the canonical bytes of the parsed dossier, re-serialized. Any content lost anywhere in the tree — not just in the strict types — fails this check.
-
-**Corollary rule: optional fields are omitted, never emitted as explicit `null`.** Every optional field in this format uses `skip_serializing_if`, so a value that's genuinely absent doesn't appear in the JSON at all. This is what makes the fidelity round-trip exact — an explicit `"field": null` versus an omitted field would otherwise be indistinguishable content that still produces different canonical bytes.
+**Limit:** a dossier cannot show that the issuing operator did not rewrite its own
+audit history before generating it. An operator that rebuilds its hash chain from
+the first entry produces a dossier that is internally consistent. Detecting that
+needs an independent record of the chain head at an earlier time, which is what the
+`checkpoint` member is reserved for. Until checkpoints exist, a dossier is
+tamper-evident against everyone except its issuer.
 
 ## Versioning
 
-A breaking change to this format bumps `format_version`. A verifier that doesn't recognise a `format_version` (or, per the strictness rule above, encounters any field it doesn't understand) must refuse the dossier as malformed rather than attempt a best-effort partial verification. An honest refusal ("this dossier may require a newer verifier") is always the correct failure mode — never a false green.
-
-## See also
-
-- [`evidence-dossier-v1.schema.json`](evidence-dossier-v1.schema.json) — machine-readable JSON Schema for this format.
-- `crates/dpp-vault/src/domain/verify/engine.rs` — the reference implementation of every check described above.
-- `crates/dpp-types/src/evidence.rs` — the wire format and persistence types.
+A breaking change increments `formatVersion`. A verifier that meets an unknown
+`formatVersion`, or any field it does not understand, refuses the dossier as
+malformed (exit code 2) instead of attempting a partial check.

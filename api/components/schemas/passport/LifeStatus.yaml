@@ -1,6 +1,6 @@
 type: string
 description: >-
-  Where a unit sits in its product life — original, or the second-life operation
+  Where a unit sits in its product life: original, or the second-life operation
   that produced it, or waste. Regulation (EU) 2023/1542, Annex XIII point 4(c).
 
   Orthogonal to `status`, which is the passport record's own lifecycle

@@ -20,10 +20,10 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use uuid::Uuid;
 
-use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope};
+use dpp_domain::{DppError, passport::PassportId, seal::SealedEnvelope, status::PassportStatus};
 use dpp_types::{
     SealAuditProgress, SealAuditReport, SealAuditStore, SealOutbox, SealOutboxCounts, SealRow,
-    SealedPassport,
+    SealedPassport, UnsealedCounts,
 };
 
 use super::{PgDal, db_err, require_updated};
@@ -38,6 +38,26 @@ impl PgSealOutboxRepo {
     pub fn new(dal: PgDal) -> Self {
         Self { dal }
     }
+}
+
+/// The statuses a passport never leaves: nothing in core's transition table
+/// starts from them.
+///
+/// Derived from [`PassportStatus::can_transition_to`] rather than written out,
+/// so this is core's answer to "which states end a passport's life" and not a
+/// second one kept here. `the_terminal_statuses_are_retired_superseded_and_deactivated`
+/// pins today's answer: a core release that changes it fails there, which is the
+/// moment to decide what the count should make of the change.
+fn terminal_statuses() -> Vec<PassportStatus> {
+    PassportStatus::ALL
+        .iter()
+        .filter(|from| {
+            !PassportStatus::ALL
+                .iter()
+                .any(|to| from.can_transition_to(to))
+        })
+        .cloned()
+        .collect()
 }
 
 #[async_trait]
@@ -85,6 +105,12 @@ impl SealOutbox for PgSealOutboxRepo {
         // The candidate query is `doc->'seal' IS NULL`: a published passport that
         // carries no seal at all. That covers the lost enqueue (no row) and the
         // exhausted row (re-armed by `enqueue`).
+        //
+        // It does not look at `status`, and that is a decision rather than an
+        // omission. A retired, superseded or deactivated passport still serves at
+        // its public URL (`dpp_vault::public_view::serves_publicly`), so a seal on
+        // it is still a seal on something a verifier can fetch. The *count* does
+        // distinguish them (`unsealed_published_counts`); the repair does not.
         //
         // Deliberately NOT covered: a passport whose seal is over a *superseded*
         // signature, which needs a digest comparison in SQL and therefore the
@@ -314,7 +340,7 @@ impl SealOutbox for PgSealOutboxRepo {
         })
     }
 
-    async fn unsealed_published_count(&self) -> Result<i64, DppError> {
+    async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError> {
         // The same three conditions `enqueue_unsealed` selects on, and only
         // those. Its two `NOT EXISTS` guards hold back rows the drain already
         // owns or that failed recently — they shape *when to retry*, not whether
@@ -324,17 +350,28 @@ impl SealOutbox for PgSealOutboxRepo {
         // No digest comparison, matching the sweep: a seal over a superseded
         // signature is still a valid attestation of the signature it covers, and
         // `/dpp/{id}/seal` reports that per passport as `coverage`.
+        //
+        // The status is read from the column, which the repo keeps equal to
+        // `doc.status` on every write and constrains to the wire strings. The
+        // split is one statement so both halves describe the same instant.
+        let terminal: Vec<String> = terminal_statuses().iter().map(|s| s.to_string()).collect();
         let row = sqlx::query(
-            r#"SELECT count(*) AS unsealed
+            r#"SELECT
+                 count(*) FILTER (WHERE NOT (p.status = ANY($1))) AS live,
+                 count(*) FILTER (WHERE p.status = ANY($1))       AS terminal
                FROM odal.passport p
                WHERE p.published_at IS NOT NULL
                  AND p.doc->'seal' IS NULL
                  AND p.doc->>'jwsSignature' IS NOT NULL"#,
         )
+        .bind(&terminal)
         .fetch_one(self.dal.pool())
         .await
         .map_err(db_err)?;
-        Ok(row.get::<i64, _>("unsealed"))
+        Ok(UnsealedCounts {
+            live: row.get::<i64, _>("live"),
+            terminal: row.get::<i64, _>("terminal"),
+        })
     }
 
     async fn rearm_sealed(
@@ -526,5 +563,29 @@ impl SealAuditStore for PgSealAuditRepo {
         .await
         .map_err(db_err)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Which passports the unsealed count calls terminal is core's call, and
+    /// this is what core says today.**
+    ///
+    /// `Retired`, `Superseded` and `Deactivated` have no way out; `Draft`,
+    /// `Published` and `Suspended` do. A `Suspended` passport is the one that
+    /// could be mistaken for the other kind, and it is live: a suspension is a
+    /// hold that lifts. If a core release adds a transition out of one of these
+    /// or a status with none, this fails, and what the count and the summary
+    /// route should say about it needs deciding rather than inheriting.
+    #[test]
+    fn the_terminal_statuses_are_retired_superseded_and_deactivated() {
+        let mut wire: Vec<String> = terminal_statuses()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        wire.sort();
+        assert_eq!(wire, ["deactivated", "retired", "superseded"]);
     }
 }

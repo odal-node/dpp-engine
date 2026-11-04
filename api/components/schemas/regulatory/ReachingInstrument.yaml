@@ -6,7 +6,7 @@ description: |
   Distinct from the entries recorded on a passport, which carry no status: a
   passport freezes its applicable set at issuance and re-deriving status later
   would misstate what governed the product when it was placed on the market.
-  Here nothing is frozen — the question is what the catalog holds now — so the
+  Here nothing is frozen (the question is what the catalog holds now) so the
   statuses are what let a caller tell an adopted duty from a reading.
 properties:
   instrument:
@@ -24,7 +24,7 @@ properties:
   recorded:
     $ref: ../passport/RecordedBasis.yaml
     description: >-
-      Always `catalog` here — this reports what the embedded catalog holds, and
+      Always `catalog` here: this reports what the embedded catalog holds, and
       an operator assertion is recorded on a passport, not against the catalog.
       Shared with the passport's own instrument entries so the two stay one
       shape.

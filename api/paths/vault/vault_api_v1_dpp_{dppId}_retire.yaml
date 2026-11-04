@@ -6,7 +6,7 @@ post:
     Retired DPPs are immutable and retained for regulatory record-keeping.
     No request body is required.
 
-    🚨 **Not archiving.** EN 18221 clause 4.2 archiving is the retention of
+    **Not archiving.** EN 18221 clause 4.2 archiving is the retention of
     historical versions of a passport that is still live, and it is served by
     `GET /dpp/{dppId}/versions`. This route ends a record's publication life.
   tags:

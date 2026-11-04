@@ -36,19 +36,31 @@ impl TransferStore for PgTransferRepo {
     }
 
     async fn save_chain(&self, chain: &TransferChain) -> Result<(), DppError> {
-        let doc = serde_json::to_value(chain)
-            .map_err(|e| DppError::Internal(format!("serialize transfer chain: {e}")))?;
-        sqlx::query(
-            r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
-               VALUES ($1, $2, now())
-               ON CONFLICT (passport_id)
-               DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
-        )
-        .bind(chain.passport_id.0)
-        .bind(&doc)
-        .execute(self.dal.pool())
-        .await
-        .map_err(db_err)?;
-        Ok(())
+        upsert_chain(self.dal.pool(), chain).await
     }
+}
+
+/// Write `chain` whole, as the passport's transfer chain.
+///
+/// One statement for every caller: [`TransferStore::save_chain`] on the pool,
+/// and the registry transfer outbox and the state-change log inside the
+/// transaction that also queues what the handover owes.
+pub(crate) async fn upsert_chain<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    chain: &TransferChain,
+) -> Result<(), DppError> {
+    let doc = serde_json::to_value(chain)
+        .map_err(|e| DppError::Internal(format!("serialize transfer chain: {e}")))?;
+    sqlx::query(
+        r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (passport_id)
+           DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
+    )
+    .bind(chain.passport_id.0)
+    .bind(&doc)
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
+    Ok(())
 }
