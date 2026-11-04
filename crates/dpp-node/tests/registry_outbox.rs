@@ -39,7 +39,8 @@ use dpp_domain::{
     ports::passport_repo::PassportRepository,
     ports::registry_sync::{
         RegisteringOperator, RegistrationGranularity, RegistrationRequest, RegistryRecord,
-        RegistrySyncPort, SubmissionAcknowledgement, SubmissionReport, TransferReport,
+        RegistrySyncPort, SubmissionAcknowledgement, SubmissionLookup, SubmissionReport,
+        TransferReport,
     },
     product_group::{ProductGroup, ProductGroupData},
     status::PassportStatus,
@@ -204,10 +205,25 @@ struct MockPort {
     polls: Arc<AtomicUsize>,
     /// What a poll reports.
     poll_outcome: Outcome,
+    /// What a lookup of a submission by what was submitted finds.
+    lookup: SubmissionLookup,
+    /// Calls to `find_submission`, and for which passport each was made, so a
+    /// test can prove the drain looked, and looked for the right row.
+    lookups: Arc<AtomicUsize>,
+    looked_for: Arc<std::sync::Mutex<Vec<PassportId>>>,
 }
 
 #[async_trait]
 impl RegistrySyncPort for MockPort {
+    async fn find_submission(
+        &self,
+        request: &RegistrationRequest,
+    ) -> Result<SubmissionLookup, DppError> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        self.looked_for.lock().unwrap().push(request.passport_id);
+        Ok(self.lookup.clone())
+    }
+
     async fn register(
         &self,
         _req: RegistrationRequest,
@@ -242,7 +258,7 @@ impl RegistrySyncPort for MockPort {
             }),
             Outcome::Processing => Ok(SubmissionReport::Processing),
             Outcome::Unrecognised => Ok(SubmissionReport::Unrecognised {
-                state: "ON_HOLD".into(),
+                state: "UNDER_REVIEW".into(),
             }),
             Outcome::Transient => Err(DppError::Internal("EU registry transient failure".into())),
             other => panic!("not an answer to a poll: {}", other as u8),
@@ -277,15 +293,45 @@ fn mock_with_poll(
     Arc<AtomicUsize>,
     Arc<AtomicUsize>,
 ) {
+    let (port, calls, polls, _) =
+        mock_with_lookup(outcome, poll_outcome, SubmissionLookup::Unsupported);
+    (port, calls, polls)
+}
+
+/// What a recovery test watches: the lookups made, and for which passports.
+struct Lookups {
+    count: Arc<AtomicUsize>,
+    looked_for: Arc<std::sync::Mutex<Vec<PassportId>>>,
+}
+
+/// A port that also answers a lookup of a submission by what was submitted — the
+/// recovery path for a handle a replayed key left us without.
+fn mock_with_lookup(
+    outcome: Outcome,
+    poll_outcome: Outcome,
+    lookup: SubmissionLookup,
+) -> (
+    Arc<dyn RegistrySyncPort>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+    Lookups,
+) {
     let calls = Arc::new(AtomicUsize::new(0));
     let polls = Arc::new(AtomicUsize::new(0));
+    let lookups = Lookups {
+        count: Arc::new(AtomicUsize::new(0)),
+        looked_for: Arc::new(std::sync::Mutex::new(Vec::new())),
+    };
     let port: Arc<dyn RegistrySyncPort> = Arc::new(MockPort {
         outcome,
         calls: calls.clone(),
         polls: polls.clone(),
         poll_outcome,
+        lookup,
+        lookups: lookups.count.clone(),
+        looked_for: lookups.looked_for.clone(),
     });
-    (port, calls, polls)
+    (port, calls, polls, lookups)
 }
 
 /// Make every row due again, as the passage of the backoff would.
@@ -481,6 +527,23 @@ async fn a_refusal_whose_rejection_cannot_be_written_backs_off() {
             registry_id: String,
         ) -> Result<(), DppError> {
             self.0.mark_submitted(id, registry_id).await
+        }
+        async fn mark_submitted_noting(
+            &self,
+            id: PassportId,
+            message: String,
+        ) -> Result<(), DppError> {
+            self.0.mark_submitted_noting(id, message).await
+        }
+        async fn record_handle(
+            &self,
+            id: PassportId,
+            correlation_id: &str,
+        ) -> Result<bool, DppError> {
+            self.0.record_handle(id, correlation_id).await
+        }
+        async fn abandon(&self, id: PassportId, message: String) -> Result<bool, DppError> {
+            self.0.abandon(id, message).await
         }
         async fn mark_deactivated(&self, id: PassportId, message: String) -> Result<(), DppError> {
             self.0.mark_deactivated(id, message).await
@@ -1007,6 +1070,597 @@ async fn a_submission_the_registry_already_holds_is_submitted_without_an_id() {
     assert!(
         row.attempts > attempts,
         "and each pass counts as an attempt"
+    );
+}
+
+// ─── a handle a replayed key left us without ────────────────────────────────
+
+/// 🚨 The registry holds a submission and a replayed key did not say under which
+/// handle. The drain looks for it, by what the passport was submitted under, and
+/// when it is found the row takes the handle *and* the ruling in the same pass: a
+/// passport that would have waited for a person is registered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_is_recovered_and_the_ruling_applied() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, calls, polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Registered {
+                registration_id: REGISTRATION_ID.into(),
+            },
+        },
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(stats.recovered, 1);
+    assert_eq!(stats.registered, 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "submitted once");
+    assert_eq!(polls.load(Ordering::SeqCst), 0, "found, so not polled");
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        lookups.looked_for.lock().unwrap().as_slice(),
+        [id],
+        "it looked for this passport's submission, from its own frozen payload"
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Registered);
+    assert_eq!(row.registry_id.as_deref(), Some(REGISTRATION_ID));
+}
+
+/// A submission found while the registry is still checking it gives the handle
+/// and nothing else: the row keeps the handle, stays `submitted`, and the next
+/// pass polls it as it would any submission it holds the handle of.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_found_while_still_being_checked_is_polled_next() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Processing,
+        },
+    );
+    let first = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        (first.recovered, first.submitted, first.registered),
+        (1, 1, 0)
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        row.registry_id.as_deref(),
+        Some(CORRELATION_ID),
+        "the handle is recorded, whatever the ruling turns out to be"
+    );
+
+    // From here it is an ordinary submitted row: polled by its handle, and the
+    // lookup is not asked again.
+    make_due(&dal, id).await;
+    let second = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(second.registered, 1);
+    assert_eq!(polls.load(Ordering::SeqCst), 1);
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Registered);
+}
+
+/// 🚨 Two submissions report the passport's identifier, so the handle is not
+/// chosen: choosing would give the passport another's registration. The row waits
+/// for a person, backed off and counted, with nothing recorded as a handle.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ambiguous_lost_handle_is_not_guessed() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, polls, _lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Ambiguous {
+            candidates: vec!["CORR-OLD".into(), "CORR-NEW".into()],
+        },
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(
+        (stats.recovered, stats.registered, stats.submitted),
+        (0, 0, 1)
+    );
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        0,
+        "no handle, so nothing to poll"
+    );
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        row.registry_id, None,
+        "no candidate is recorded as the handle"
+    );
+    assert!(
+        row.next_attempt_at > Utc::now(),
+        "backed off, so it does not sort to the head of the queue every pass"
+    );
+    // The reason is on the row, where the per-passport registry route reads it,
+    // and not only in a log: both candidates, and what to do about them.
+    let message = row.message.expect("a row waiting for a person says why");
+    assert!(
+        message.contains("CORR-OLD") && message.contains("CORR-NEW"),
+        "the candidates are named: {message}"
+    );
+    assert!(
+        message.contains("odal registry handle"),
+        "and so is the way to settle it: {message}"
+    );
+}
+
+/// 🚨 The whole way through: a row waiting for a person says why, a handle
+/// recorded by hand is polled like any other, the ruling is applied by the drain,
+/// and the row's old stall does not outlive the intervention.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handle_recorded_by_hand_is_polled_and_ruled_on_by_the_drain() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (blind, _, _, _) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Ambiguous {
+            candidates: vec!["CORR-OLD".into(), CORRELATION_ID.into()],
+        },
+    );
+    drain_once(&outbox, &blind, None, 10).await;
+    let waiting = outbox.pending_for(id).await.unwrap().unwrap();
+    assert!(waiting.attempts > 0 && waiting.message.is_some());
+
+    assert!(
+        outbox.record_handle(id, CORRELATION_ID).await.unwrap(),
+        "a submitted row with no handle takes one"
+    );
+    let recorded = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(recorded.registry_id.as_deref(), Some(CORRELATION_ID));
+    assert_eq!(recorded.status, RegistrySyncStatus::Submitted);
+    assert_eq!(
+        recorded.attempts, 0,
+        "a new poll on a checked handle is not the stall that came before"
+    );
+    assert_eq!(
+        recorded.message, None,
+        "the reason was about the missing handle"
+    );
+    assert!(
+        recorded.next_attempt_at <= Utc::now(),
+        "due at once, not after the backoff the missing handle earned"
+    );
+
+    // The drain polls by the recorded handle and applies the ruling.
+    let (seeing, calls, polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Registered,
+        SubmissionLookup::Unsupported,
+    );
+    let stats = drain_once(&outbox, &seeing, None, 10).await;
+    assert_eq!(stats.registered, 1);
+    assert_eq!(polls.load(Ordering::SeqCst), 1, "polled by the handle");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "never submitted again");
+    assert_eq!(
+        lookups.count.load(Ordering::SeqCst),
+        0,
+        "nothing to look for"
+    );
+    let ruled = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(ruled.status, RegistrySyncStatus::Registered);
+    assert_eq!(ruled.registry_id.as_deref(), Some(REGISTRATION_ID));
+}
+
+/// 🚨 `record_handle` takes a handle only for a `submitted` row that holds none.
+/// It never overwrites one the registry gave, never reaches a row that has been
+/// ruled on, and never makes a handle of a row that has not been submitted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handle_is_recorded_only_on_a_submitted_row_that_holds_none() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // Pending: the registry has not accepted it, so there is no handle to record.
+    assert!(!outbox.record_handle(id, "CORR-X").await.unwrap());
+    let pending = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(
+        (pending.status, pending.registry_id),
+        (RegistrySyncStatus::Pending, None)
+    );
+
+    // Submitted with no handle: it takes one…
+    outbox.mark_submitted(id, String::new()).await.unwrap();
+    assert!(outbox.record_handle(id, "CORR-FIRST").await.unwrap());
+    // …and only one: a second is not stacked on the first.
+    assert!(!outbox.record_handle(id, "CORR-SECOND").await.unwrap());
+    assert!(
+        !outbox.record_handle(id, "CORR-FIRST").await.unwrap(),
+        "even the same one: the answer is that nothing was written"
+    );
+    assert_eq!(
+        outbox
+            .pending_for(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .registry_id
+            .as_deref(),
+        Some("CORR-FIRST")
+    );
+
+    // Ruled on: the registration identifier is not to be replaced by a handle.
+    outbox
+        .mark_registered(id, REGISTRATION_ID.into())
+        .await
+        .unwrap();
+    assert!(!outbox.record_handle(id, "CORR-LATE").await.unwrap());
+    assert_eq!(
+        outbox
+            .pending_for(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .registry_id
+            .as_deref(),
+        Some(REGISTRATION_ID)
+    );
+
+    // And a rejected row, which holds no handle worth recording.
+    let other = {
+        let repo = PgPassportRepo::new(dal.clone());
+        let mut p = draft_passport();
+        p.id = PassportId::new();
+        repo.create(p.clone()).await.expect("create second draft");
+        p.status = PassportStatus::Published;
+        p.published_at = Some(Utc::now());
+        let payload = serde_json::to_value(
+            RegistrationRequest::from_published_passport(
+                &p,
+                test_operator(),
+                RegistrationGranularity::Item,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        outbox.commit_publish(&p, payload).await.unwrap();
+        p.id
+    };
+    outbox.mark_rejected(other, "refused".into()).await.unwrap();
+    assert!(!outbox.record_handle(other, "CORR-Y").await.unwrap());
+}
+
+/// 🚨 `abandon` ends only a row the drain has tried and is not about to try again:
+/// `pending`, attempted at least once, and backed off. A new row is due, a row
+/// being attempted is still due, and a `submitted` row is one the registry holds.
+/// Each is what stops this write racing the drain or orphaning a registration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_is_abandoned_only_after_a_failed_attempt_and_while_it_waits() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // Never tried: due now, and indistinguishable from a row about to be submitted.
+    assert!(!outbox.abandon(id, "withdrawn".into()).await.unwrap());
+
+    // Tried and failed: backed off, so the drain is not about to touch it.
+    outbox
+        .mark_attempt_failed(id, "the registry refused the payload".into())
+        .await
+        .unwrap();
+    // …but a row the backoff has run out on is due again, and so is not abandoned.
+    make_due(&dal, id).await;
+    assert!(
+        !outbox.abandon(id, "withdrawn".into()).await.unwrap(),
+        "due again: the drain may be in the middle of trying it"
+    );
+    outbox
+        .mark_attempt_failed(id, "the registry refused the payload".into())
+        .await
+        .unwrap();
+
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Abandoned);
+    assert_eq!(row.message.as_deref(), Some("withdrawn"));
+    assert_eq!(row.attempts, 2, "what it took to give up on is kept");
+
+    // And only once.
+    assert!(!outbox.abandon(id, "again".into()).await.unwrap());
+    assert_eq!(
+        outbox
+            .pending_for(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .message
+            .as_deref(),
+        Some("withdrawn")
+    );
+
+    // A submitted row is one the registry holds; a ruled-on one needs nothing.
+    let held = create_and_publish(&dal, &outbox).await;
+    outbox.mark_submitted(held, "CORR-X".into()).await.unwrap();
+    assert!(!outbox.abandon(held, "no".into()).await.unwrap());
+    outbox
+        .mark_registered(held, REGISTRATION_ID.into())
+        .await
+        .unwrap();
+    assert!(!outbox.abandon(held, "no".into()).await.unwrap());
+    assert_eq!(
+        outbox.pending_for(held).await.unwrap().unwrap().status,
+        RegistrySyncStatus::Registered
+    );
+}
+
+/// 🚨 Abandoned is terminal for the drain. It is never offered a row in that state,
+/// and nothing it writes can move one out of it: a pass that read a row before it
+/// was abandoned would otherwise record its outcome over the decision.
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_the_drain_writes_resurrects_an_abandoned_row() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+    outbox
+        .mark_attempt_failed(id, "refused".into())
+        .await
+        .unwrap();
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+    make_due(&dal, id).await;
+
+    // A pass finds nothing to do, and submits nothing.
+    let (port, calls, polls, lookups) = mock_with_lookup(
+        Outcome::Accepted,
+        Outcome::Registered,
+        SubmissionLookup::Unsupported,
+    );
+    let stats = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        (
+            stats.registered,
+            stats.submitted,
+            stats.rejected,
+            stats.retried
+        ),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "never submitted");
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 0);
+
+    // And every write the drain makes about a row bounces off.
+    assert!(outbox.mark_submitted(id, "CORR".into()).await.is_err());
+    assert!(
+        outbox
+            .mark_submitted_noting(id, "waiting".into())
+            .await
+            .is_err()
+    );
+    assert!(
+        outbox
+            .mark_registered(id, REGISTRATION_ID.into())
+            .await
+            .is_err()
+    );
+    assert!(outbox.mark_rejected(id, "refused".into()).await.is_err());
+    assert!(
+        outbox
+            .mark_attempt_failed(id, "failed".into())
+            .await
+            .is_err()
+    );
+    assert!(!outbox.record_handle(id, "CORR").await.unwrap());
+
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Abandoned);
+    assert_eq!(row.message.as_deref(), Some("withdrawn"));
+    assert_eq!(row.registry_id, None);
+}
+
+/// An abandoned registration is counted, so a published passport that will not be
+/// registered is visible and not read as still owed, and it does not count as
+/// stalled work for anyone to do.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_abandoned_registration_is_counted_and_is_not_stalled() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+    for _ in 0..3 {
+        outbox
+            .mark_attempt_failed(id, "refused".into())
+            .await
+            .unwrap();
+    }
+    let before = outbox.status_counts(2).await.unwrap();
+    assert_eq!(
+        (before.pending, before.abandoned, before.stalled),
+        (1, 0, 1)
+    );
+
+    assert!(outbox.abandon(id, "withdrawn".into()).await.unwrap());
+
+    let after = outbox.status_counts(2).await.unwrap();
+    assert_eq!(
+        (after.pending, after.abandoned, after.stalled),
+        (0, 1, 0),
+        "no longer owed, and no longer asking for a person"
+    );
+}
+
+/// Publishing the passport again is a new obligation to register it, and the only
+/// way back: it queues the registration afresh, as it does one the registry
+/// rejected.
+#[tokio::test(flavor = "multi_thread")]
+async fn publishing_again_queues_an_abandoned_registration_afresh() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let repo = PgPassportRepo::new(dal.clone());
+    let mut p = draft_passport();
+    repo.create(p.clone()).await.expect("create draft");
+    p.status = PassportStatus::Published;
+    p.published_at = Some(Utc::now());
+    let payload = serde_json::to_value(
+        RegistrationRequest::from_published_passport(
+            &p,
+            test_operator(),
+            RegistrationGranularity::Item,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    outbox.commit_publish(&p, payload.clone()).await.unwrap();
+    outbox
+        .mark_attempt_failed(p.id, "refused".into())
+        .await
+        .unwrap();
+    assert!(outbox.abandon(p.id, "withdrawn".into()).await.unwrap());
+
+    outbox.commit_publish(&p, payload).await.unwrap();
+
+    let row = outbox.pending_for(p.id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Pending);
+    assert_eq!(row.attempts, 0);
+    assert_eq!(
+        row.message, None,
+        "whatever it said belonged to the old one"
+    );
+    assert!(row.next_attempt_at <= Utc::now(), "due at once");
+}
+
+/// A state nobody has named keeps the row polling and says what it was, so an
+/// operator is not left to find it in a log.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unrecognised_submission_state_is_kept_on_the_row() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // The row is submitted under a handle, then polled.
+    outbox
+        .mark_submitted(id, CORRELATION_ID.into())
+        .await
+        .unwrap();
+    make_due(&dal, id).await;
+    let (port, _, _) = mock_with_poll(Outcome::Held, Outcome::Unrecognised);
+    let stats = drain_once(&outbox, &port, None, 10).await;
+
+    assert_eq!(stats.submitted, 1);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    let message = row.message.expect("the state is on the row");
+    assert!(message.contains("UNDER_REVIEW"), "{message}");
+
+    // And a later answer that is just "still checking" takes the note away: it
+    // was about a state the registry has since left.
+    make_due(&dal, id).await;
+    let (port, _, _) = mock_with_poll(Outcome::Held, Outcome::Processing);
+    drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(outbox.pending_for(id).await.unwrap().unwrap().message, None);
+}
+
+/// Not finding it is not an answer, so the lookup is repeated on a later pass,
+/// each one counted as an attempt: a row that is never found reaches the stalled
+/// count that tells an operator it needs a person.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_handle_that_is_not_found_is_looked_for_again_and_counted() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    let (port, _calls, _polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::NotFound { exhaustive: false },
+    );
+    drain_once(&outbox, &port, None, 10).await;
+    let first_attempts = outbox.pending_for(id).await.unwrap().unwrap().attempts;
+
+    let idle = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!(
+        idle.submitted, 0,
+        "backed off: not looked for on the very next pass"
+    );
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+
+    make_due(&dal, id).await;
+    let again = drain_once(&outbox, &port, None, 10).await;
+    assert_eq!((again.submitted, again.recovered), (1, 0));
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 2, "looked for again");
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert!(row.attempts > first_attempts, "every look is an attempt");
+    assert_eq!(row.status, RegistrySyncStatus::Submitted);
+    assert_eq!(row.registry_id, None);
+    let message = row.message.expect("a row that cannot be found says so");
+    assert!(
+        message.contains("not found among its tasks") && message.contains("absence proves nothing"),
+        "{message}"
+    );
+}
+
+/// A submitted row with no handle that was left by an earlier pass is recovered
+/// too, not only one that was just told so: the row's frozen payload is what says
+/// what to look for.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handleless_row_from_an_earlier_pass_is_recovered_from_its_payload() {
+    let _c = start_pg().await;
+    let dal = _c.dal.clone();
+    let outbox: Arc<dyn RegistrySyncOutbox> = Arc::new(PgRegistrySyncRepo::new(dal.clone()));
+    let id = create_and_publish(&dal, &outbox).await;
+
+    // The first pass finds nothing: the registry's list does not show it yet.
+    let (blind, _, _, _) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::NotFound { exhaustive: false },
+    );
+    drain_once(&outbox, &blind, None, 10).await;
+    assert_eq!(
+        outbox.pending_for(id).await.unwrap().unwrap().registry_id,
+        None
+    );
+
+    // A later pass, once it is listed, finds it, and does not submit again.
+    let (seeing, calls, _polls, lookups) = mock_with_lookup(
+        Outcome::Held,
+        Outcome::Processing,
+        SubmissionLookup::Found {
+            correlation_id: CORRELATION_ID.into(),
+            report: SubmissionReport::Processing,
+        },
+    );
+    make_due(&dal, id).await;
+    let stats = drain_once(&outbox, &seeing, None, 10).await;
+
+    assert_eq!(stats.recovered, 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "not submitted again");
+    assert_eq!(lookups.count.load(Ordering::SeqCst), 1);
+    let row = outbox.pending_for(id).await.unwrap().unwrap();
+    assert_eq!(row.registry_id.as_deref(), Some(CORRELATION_ID));
+    assert_eq!(
+        row.message, None,
+        "found, so the reason it was waiting is gone"
     );
 }
 

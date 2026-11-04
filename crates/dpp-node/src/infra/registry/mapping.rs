@@ -3,7 +3,7 @@
 //! types, and makes the actual REST calls via `EuRegistrySync`.
 
 use super::client::{EuRegistrySync, RetryableError};
-use super::dashboard::{TaskPage, TaskResult, report_for};
+use super::dashboard::{Task, TaskPage, order_of, plan_pages, report_for};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
@@ -11,8 +11,8 @@ use dpp_domain::{
     operator::ResponsibleOperator,
     ports::registry_sync::{
         RegistrationGranularity, RegistrationRequest, RegistryRecord, RegistryStatus,
-        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionReport,
-        TransferReport,
+        RegistrySyncPort, ServiceProviderRef, SubmissionAcknowledgement, SubmissionConfirmation,
+        SubmissionLookup, SubmissionReport, TransferReport,
     },
     transfer::TransferRecord,
 };
@@ -21,8 +21,8 @@ use dpp_registry::{
     IDEMPOTENCY_KEY_HEADER, OperatorIdentifier, ProductIdentifier, ProductItemIdentifier,
     REGISTRATION_PATH, RegistrationLevel, RegistrationPayload, RegistrationSubmission,
     RegistryErrorBody, RegistryStatusCode, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
-    ServiceProviderReference, StatusResponse, SubmissionOutcome, SubmissionReceipt,
-    TASK_RESULT_PATH_TEMPLATE, TASKS_PATH, TRANSFER_PATH_TEMPLATE, TransferNotification,
+    ServiceProviderReference, StatusResponse, SubmissionReceipt, TASK_RESULT_PATH_TEMPLATE,
+    TASKS_PATH, TASKS_SORT_NEWEST_FIRST, TRANSFER_PATH_TEMPLATE, TransferNotification,
 };
 
 /// Map the port's service provider onto the registry's reference to one.
@@ -44,6 +44,23 @@ const TASK_PAGE_SIZE: usize = 50;
 
 /// How many pages of the dashboard list are read looking for a submission.
 pub(super) const MAX_TASK_PAGES: u32 = 20;
+
+/// How many finished tasks' results one lookup reads from the registry. A task
+/// already read costs nothing; this bounds what a single pass can spend on the
+/// ones that are new.
+const MAX_RESULT_READS: usize = 100;
+
+/// What reading the dashboard's task list found.
+struct TaskSearch {
+    /// The tasks read, in the order they were read.
+    tasks: Vec<Task>,
+    /// Where in `tasks` the first one the caller was looking for is.
+    hit: Option<usize>,
+    /// Whether every task in the list was read. `false` means the list is longer
+    /// than the search reads, so a task that is not in `tasks` may still be on
+    /// it.
+    complete: bool,
+}
 
 /// The URL of one of the registry's routes beneath `base_url`, with `{id}`
 /// replaced by `id`.
@@ -159,6 +176,71 @@ fn refusal_reason(resp: &EuRegistryResponse) -> String {
 }
 
 impl EuRegistrySync {
+    /// One page of the operator's dashboard tasks.
+    async fn task_page(&self, tasks_url: &str, page: u32) -> Result<TaskPage, DppError> {
+        // Newest first, as the registry's own interface asks for it. What comes back
+        // is checked on the first page ([`order_of`]) and not assumed.
+        let query = [
+            ("page", page.to_string()),
+            ("size", TASK_PAGE_SIZE.to_string()),
+            ("sort", TASKS_SORT_NEWEST_FIRST.to_owned()),
+        ];
+        self.with_retry(|| self.get_json(tasks_url, &query, "task list"))
+            .await
+            .map_err(RetryableError::into_dpp_error)
+    }
+
+    /// Read the dashboard's task list until `is_hit` is satisfied, or until the
+    /// pages worth reading have been.
+    ///
+    /// The first page says how long the list is and, from its `submittedAt` times,
+    /// whether it came back newest first, and [`plan_pages`] decides what else is
+    /// read: all of a list that fits the cap, the front of a long one verified
+    /// newest first, and both ends of one whose order the page did not show.
+    async fn search_tasks(&self, is_hit: impl Fn(&Task) -> bool) -> Result<TaskSearch, DppError> {
+        let tasks_url = url_for(&self.config.endpoint.dashboard_base_url, TASKS_PATH, "")?;
+
+        let first = self.task_page(&tasks_url, 0).await?;
+        let total = first.total_elements;
+        let plan = plan_pages(
+            total,
+            TASK_PAGE_SIZE,
+            MAX_TASK_PAGES,
+            order_of(&first.content),
+        );
+        let mut tasks = first.content;
+        let mut hit = tasks.iter().position(&is_hit);
+        let mut complete = plan.covers_all;
+
+        // A reply that gave no length ends where a page is short: nothing more
+        // is listed, so what was read is all of it.
+        let first_was_last = total.is_none() && tasks.len() < TASK_PAGE_SIZE;
+        if first_was_last {
+            complete = true;
+        }
+        if hit.is_none() && !first_was_last {
+            for page in plan.pages {
+                let more = self.task_page(&tasks_url, page).await?.content;
+                let short = more.len() < TASK_PAGE_SIZE;
+                let from = tasks.len();
+                tasks.extend(more);
+                hit = tasks[from..].iter().position(&is_hit).map(|at| from + at);
+                if hit.is_some() {
+                    break;
+                }
+                if total.is_none() && short {
+                    complete = true;
+                    break;
+                }
+            }
+        }
+        Ok(TaskSearch {
+            tasks,
+            hit,
+            complete,
+        })
+    }
+
     /// Map a bridge `StatusResponse` to a domain `RegistryRecord`.
     pub(super) fn status_to_record(resp: &StatusResponse) -> RegistryRecord {
         RegistryRecord {
@@ -517,43 +599,24 @@ impl RegistrySyncPort for EuRegistrySync {
     #[tracing::instrument(skip(self))]
     async fn check_submission(&self, correlation_id: &str) -> Result<SubmissionReport, DppError> {
         let dashboard = &self.config.endpoint.dashboard_base_url;
-        let tasks_url = url_for(dashboard, TASKS_PATH, "")?;
 
         // The registry's interface finds a submission's task by paging the
         // operator's tasks: no route that takes a correlation identifier has
-        // been seen. The page cap bounds the walk for an operator with a long
-        // history. A walk that reaches it with every page full has not shown the
-        // task to be unlisted, only that the search ran out, and says so below.
-        let mut found = None;
-        let mut cut_short = false;
-        for page in 0..MAX_TASK_PAGES {
-            let query = [
-                ("page", page.to_string()),
-                ("size", TASK_PAGE_SIZE.to_string()),
-            ];
-            let tasks: TaskPage = self
-                .with_retry(|| self.get_json(&tasks_url, &query, "task list"))
-                .await
-                .map_err(RetryableError::into_dpp_error)?;
-            let listed = tasks.content.len();
-            found = tasks
-                .content
-                .into_iter()
-                .find(|task| task.is_submission(correlation_id));
-            if found.is_some() || listed < TASK_PAGE_SIZE {
-                break;
-            }
-            cut_short = page + 1 == MAX_TASK_PAGES;
-        }
-        let Some(task) = found else {
+        // been seen.
+        let search = self
+            .search_tasks(|task| task.is_submission(correlation_id))
+            .await?;
+        let Some(task) = search.hit.map(|at| &search.tasks[at]) else {
             // Not a verdict either way, so the poll goes on. A task the list does
-            // not show yet is `Processing`; one the search stopped short of is
-            // reported as that, so the operator is told why it is not resolving.
-            if cut_short {
+            // not show yet is `Processing`. A search that read only part of a
+            // longer list has not shown it to be unlisted, only that it ran out,
+            // and says so, so the operator is told why it is not resolving.
+            if !search.complete {
                 return Ok(SubmissionReport::Unrecognised {
                     state: format!(
-                        "not found within the {MAX_TASK_PAGES} pages of {TASK_PAGE_SIZE} \
-                         tasks the search reads; the dashboard may list it further on"
+                        "not found within the {} tasks the search read; the dashboard list \
+                         is longer than that and may hold it further on",
+                        search.tasks.len()
                     ),
                 });
             }
@@ -562,11 +625,8 @@ impl RegistrySyncPort for EuRegistrySync {
 
         // A task the registry has not finished has no result worth reading, and
         // one whose state this node cannot name is reported as it stands.
-        if !matches!(
-            task.status,
-            Some(SubmissionOutcome::Success | SubmissionOutcome::Failure)
-        ) {
-            return Ok(report_for(&task, None));
+        if !task.is_finished() {
+            return Ok(report_for(task, None));
         }
         let Some(task_id) = task.id_segment() else {
             return Ok(SubmissionReport::Unrecognised {
@@ -574,11 +634,172 @@ impl RegistrySyncPort for EuRegistrySync {
             });
         };
         let result_url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
-        let result: TaskResult = self
-            .with_retry(|| self.get_json(&result_url, &[], "task result"))
-            .await
-            .map_err(RetryableError::into_dpp_error)?;
-        Ok(report_for(&task, Some(&result)))
+        let result = self.finished_result(&result_url, &task_id).await?;
+        Ok(report_for(task, Some(result.as_ref())))
+    }
+
+    /// Find the submission a request made, by what the registry reports each
+    /// passport against: the unique product identifier it was submitted under.
+    ///
+    /// For a submission whose handle was lost, which a replayed idempotency key
+    /// leaves: the registry holds it and does not say under which handle. Every
+    /// finished registration task's result lists its passports, and the one that
+    /// lists this request's identifier is the submission.
+    ///
+    /// Three things keep it from guessing. A match is by that identifier and
+    /// nothing nearer. More than one task reporting it is
+    /// [`Ambiguous`](SubmissionLookup::Ambiguous), because a successor can be
+    /// submitted under its predecessor's identifier and choosing would give a
+    /// passport another's registration. And a task still being checked reports no
+    /// passport, so it may be the one and cannot be told from one that is not:
+    /// while any such task is on the list, not finding the identifier does not
+    /// say the registry holds none, and finding it once does not say it is this
+    /// request's. A successor's own task may still be checked while its
+    /// predecessor's finished task matches, so one match is
+    /// [`Found`](SubmissionLookup::Found) only when every task was read.
+    #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
+    async fn find_submission(
+        &self,
+        request: &RegistrationRequest,
+    ) -> Result<SubmissionLookup, DppError> {
+        let dashboard = &self.config.endpoint.dashboard_base_url;
+        let upi = request.data_carrier_uri.as_str();
+
+        let search = self.search_tasks(|_| false).await?;
+        let mut exhaustive = search.complete;
+        let mut matches: Vec<(&Task, std::sync::Arc<super::dashboard::TaskResult>)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut network_reads = 0usize;
+
+        for task in search.tasks.iter().filter(|task| task.is_registration()) {
+            if !task.is_finished() {
+                exhaustive = false;
+                continue;
+            }
+            let (Some(task_id), Some(correlation_id)) =
+                (task.id_segment(), task.correlation_id.as_deref())
+            else {
+                // A finished task with no way to read it, or to poll it by, may
+                // be this one, and nothing here can say.
+                exhaustive = false;
+                continue;
+            };
+            // The list is read a page at a time while the registry may add to
+            // it, so one task can be listed twice, at the end of one page and the
+            // start of the next. One submission is one candidate however often
+            // it was listed; counted twice, it would read as two and be left for
+            // a person.
+            if !seen.insert(correlation_id) {
+                continue;
+            }
+            let result = if let Some(kept) = self.cached_finished_result(&task_id).await {
+                kept
+            } else if network_reads < MAX_RESULT_READS {
+                network_reads += 1;
+                let url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
+                self.read_finished_result(&url, &task_id).await?
+            } else {
+                exhaustive = false;
+                continue;
+            };
+            if result
+                .unique_product_identifiers()
+                .any(|reported| reported == upi)
+            {
+                matches.push((task, result));
+            }
+        }
+
+        match matches.as_slice() {
+            [] => Ok(SubmissionLookup::NotFound { exhaustive }),
+            // A second match may be among the tasks not read. Named, so the
+            // operator who reconciles the row by hand has the candidate.
+            [(task, _)] if !exhaustive => {
+                tracing::warn!(
+                    candidate = task.correlation_id.as_deref().unwrap_or_default(),
+                    "one registry submission reports this passport's unique product identifier, \
+                     and not every task was read, so it is not known to be this request's — not \
+                     recording it"
+                );
+                Ok(SubmissionLookup::NotFound { exhaustive })
+            }
+            [(task, result)] => Ok(SubmissionLookup::Found {
+                correlation_id: task.correlation_id.clone().unwrap_or_default(),
+                report: report_for(task, Some(result.as_ref())),
+            }),
+            several => {
+                tracing::warn!(
+                    candidates = several.len(),
+                    "more than one registry submission reports this passport's unique product \
+                     identifier — not choosing between them"
+                );
+                Ok(SubmissionLookup::Ambiguous {
+                    candidates: several
+                        .iter()
+                        .filter_map(|(task, _)| task.correlation_id.clone())
+                        .collect(),
+                })
+            }
+        }
+    }
+
+    /// Whether a handle a person supplied is this request's submission, by reading
+    /// the submission it names and the identifiers it reports.
+    ///
+    /// The opposite question to [`find_submission`](Self::find_submission), which
+    /// has an answer only while the registry's records hold exactly one candidate.
+    /// This one has an answer whenever the registry will say what the submission
+    /// contains: its task is found by the handle, and a finished one lists each
+    /// passport against the unique product identifier it was submitted under.
+    ///
+    /// A task still being checked reports no passport, so it is
+    /// [`StillChecking`](SubmissionConfirmation::StillChecking) and not a
+    /// mismatch. A handle no task carries is
+    /// [`Unlisted`](SubmissionConfirmation::Unlisted), and says whether the whole
+    /// list was read, because a list too long to read may hold it further on.
+    #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
+    async fn confirm_submission(
+        &self,
+        request: &RegistrationRequest,
+        correlation_id: &str,
+    ) -> Result<SubmissionConfirmation, DppError> {
+        let dashboard = &self.config.endpoint.dashboard_base_url;
+        let upi = request.data_carrier_uri.as_str();
+
+        let search = self
+            .search_tasks(|task| task.is_submission(correlation_id))
+            .await?;
+        let Some(task) = search.hit.map(|at| &search.tasks[at]) else {
+            return Ok(SubmissionConfirmation::Unlisted {
+                exhaustive: search.complete,
+            });
+        };
+        if !task.is_finished() {
+            return Ok(SubmissionConfirmation::StillChecking);
+        }
+        let Some(task_id) = task.id_segment() else {
+            // A finished task with nothing to read its result by: what it
+            // contains cannot be seen, which is neither a match nor a mismatch.
+            tracing::warn!(
+                correlation_id,
+                "a finished registry task carries no identifier to read its result by"
+            );
+            return Ok(SubmissionConfirmation::Unsupported);
+        };
+        let result_url = url_for(dashboard, TASK_RESULT_PATH_TEMPLATE, &task_id)?;
+        let result = self.finished_result(&result_url, &task_id).await?;
+
+        let reported: Vec<String> = result
+            .unique_product_identifiers()
+            .map(str::to_owned)
+            .collect();
+        if reported.iter().any(|identifier| identifier == upi) {
+            Ok(SubmissionConfirmation::Confirmed {
+                report: report_for(task, Some(result.as_ref())),
+            })
+        } else {
+            Ok(SubmissionConfirmation::Mismatch { reported })
+        }
     }
 
     async fn check_status(&self, registration_id: &str) -> Result<RegistryRecord, DppError> {

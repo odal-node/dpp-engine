@@ -1,0 +1,22 @@
+type: object
+description: >-
+  The result of giving up on a registration the registry never accepted.
+required:
+  - passportId
+  - alreadyAbandoned
+  - note
+properties:
+  passportId:
+    type: string
+  alreadyAbandoned:
+    type: boolean
+    description: >-
+      `true` when the registration was already abandoned, in which case nothing
+      was read from the registry and nothing was written. `false` when this
+      request abandoned it.
+  note:
+    type: string
+    description: >-
+      Stated rather than implied: the registration is abandoned, the passport
+      stays published and is counted as abandoned, and publishing it again queues
+      it afresh.

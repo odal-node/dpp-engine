@@ -130,8 +130,10 @@ odal credential issue did:web:repairs.example \
 
 `--role` defaults to `authorised_repairer`; `recycler`, `remanufacturer`,
 `preparer_for_reuse` and `distributor` are the other named roles. `--product-groups`
-narrows the credential. The command prints a JWS, which the holder sends as the
-`X-DPP-Credential` header.
+narrows the credential, and `--product-categories` narrows it further within those
+groups, e.g. `--product-groups battery --product-categories ev`. The node refuses a
+category none of the named groups' passports can state. The command prints a JWS,
+which the holder sends as the `X-DPP-Credential` header.
 
 Authority roles (market surveillance, customs, notified bodies) are refused. The
 node publishes no revocation list, so a credential lives at most 90 days.
@@ -145,6 +147,11 @@ curl -H "X-DPP-Credential: <jws>" http://localhost:8001/vault/credential/dpp/<dp
 
 The second response adds the Annex XIII point 2 and point 4 content the first omits:
 dismantling and safety information, state of health and use history.
+
+If it matches the first, run it with `curl -i`. An `X-DPP-Credential-Out-Of-Scope`
+header means the credential verified but does not cover this passport, and its value
+names why: `product-group`, `product-category` or `no-product-category`. No header
+means the node never verified the credential: check `CREDENTIAL_ISSUERS_SELF` above.
 
 ### It works on a laptop
 

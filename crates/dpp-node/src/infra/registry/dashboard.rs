@@ -26,6 +26,121 @@ pub(super) struct TaskPage {
     /// The tasks on this page.
     #[serde(default)]
     pub content: Vec<Task>,
+    /// How many tasks the list holds in all, which the registry's interface
+    /// reads to page it. Observed, but a reply without it is read as a list of
+    /// unknown length rather than refused.
+    #[serde(default)]
+    pub total_elements: Option<u64>,
+}
+
+/// Which pages of the list to read, and whether reading them covers it all.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct PagePlan {
+    /// The page numbers after the first, in the order to read them.
+    pub pages: Vec<u32>,
+    /// Whether every task in the list is on a page that will be read.
+    pub covers_all: bool,
+}
+
+/// How the list is ordered, as the first page shows it.
+///
+/// The list is asked for newest first ([`TASKS_SORT_NEWEST_FIRST`](dpp_registry::TASKS_SORT_NEWEST_FIRST), what
+/// the registry's own interface sends), but what was asked for is not what was
+/// delivered, so the order is **checked on the data**, not assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListOrder {
+    /// The first page's tasks run from the latest submission to the earliest, so
+    /// a task just submitted is on the front of the list.
+    NewestFirst,
+    /// The page does not show it: too few tasks to compare, a submission time that
+    /// is missing or unreadable, a run that is ascending, or one that is not
+    /// monotonic. Nothing is concluded about where a new task is.
+    Unknown,
+}
+
+/// Read the order off a page of tasks.
+///
+/// [`ListOrder::NewestFirst`] only when at least two tasks carry a readable
+/// `submittedAt`, no later task is newer than an earlier one, and at least one
+/// is strictly older. A page of equal times, or of one task, says nothing about
+/// direction. Every task that carries a time is compared; one that carries none
+/// is skipped, not guessed at.
+pub(super) fn order_of(tasks: &[Task]) -> ListOrder {
+    let times: Vec<chrono::DateTime<chrono::Utc>> = tasks
+        .iter()
+        .filter_map(|task| task.submitted_at.as_deref())
+        .map(|text| chrono::DateTime::parse_from_rfc3339(text).map(|t| t.to_utc()))
+        .collect::<Result<_, _>>()
+        .unwrap_or_default();
+    let descending = times.windows(2).all(|pair| pair[0] >= pair[1]);
+    let some_older = times.windows(2).any(|pair| pair[0] > pair[1]);
+    if times.len() >= 2 && descending && some_older {
+        ListOrder::NewestFirst
+    } else {
+        ListOrder::Unknown
+    }
+}
+
+/// Decide which pages to read after the first, given how long the list is and how
+/// it is ordered.
+///
+/// A list short enough for `cap` pages is read in full, whatever its order. A
+/// longer one is read according to what the first page showed:
+///
+/// - [`ListOrder::NewestFirst`]: from the **front**, `cap` pages deep. A task just
+///   submitted is on the first page, so the budget goes where the answer is, and
+///   covers the most recent submissions twice as deep as splitting it would.
+/// - [`ListOrder::Unknown`]: from **both ends**, interleaved. A task just submitted
+///   is at the front of a newest-first list and at the back of an oldest-first
+///   one, and reading only the front never finds it in the second kind once the
+///   list outgrows the cap.
+///
+/// A reply that gave no length is read from the front only, `cap` pages deep,
+/// and covers nothing it cannot show.
+pub(super) fn plan_pages(
+    total_elements: Option<u64>,
+    page_size: usize,
+    cap: u32,
+    order: ListOrder,
+) -> PagePlan {
+    let Some(total) = total_elements else {
+        return PagePlan {
+            pages: (1..cap).collect(),
+            covers_all: false,
+        };
+    };
+    let page_size = u64::try_from(page_size.max(1)).unwrap_or(u64::MAX);
+    let total_pages = total.div_ceil(page_size);
+    if total_pages <= u64::from(cap) {
+        return PagePlan {
+            pages: (1..u32::try_from(total_pages).unwrap_or(cap)).collect(),
+            covers_all: true,
+        };
+    }
+
+    if order == ListOrder::NewestFirst {
+        return PagePlan {
+            pages: (1..cap).collect(),
+            covers_all: false,
+        };
+    }
+
+    let last = u32::try_from(total_pages - 1).unwrap_or(u32::MAX);
+    let front = cap.div_ceil(2);
+    let back = cap - front;
+    let mut pages = Vec::new();
+    for i in 0..front.max(back) {
+        if i > 0 && i < front {
+            pages.push(i);
+        }
+        if i < back {
+            pages.push(last - i);
+        }
+    }
+    PagePlan {
+        pages,
+        covers_all: false,
+    }
 }
 
 /// One dashboard task, as far as finding a submission needs it.
@@ -49,6 +164,11 @@ pub(super) struct Task {
     /// Where the submission has got to.
     #[serde(default)]
     pub status: Option<SubmissionOutcome>,
+    /// When the task was submitted. What the list is sorted by, and what
+    /// [`order_of`] reads the order off. Kept as it came: a value that is not an
+    /// RFC 3339 time is read as no order shown, never as an error.
+    #[serde(default)]
+    pub submitted_at: Option<String>,
 }
 
 impl Task {
@@ -59,6 +179,23 @@ impl Task {
                 .task_type
                 .as_deref()
                 .is_none_or(|kind| kind == REGISTRATION_TASK_TYPE)
+    }
+
+    /// Whether this is a registration request. A task that names no type is read
+    /// as one, as [`is_submission`](Self::is_submission) reads it.
+    pub(super) fn is_registration(&self) -> bool {
+        self.task_type
+            .as_deref()
+            .is_none_or(|kind| kind == REGISTRATION_TASK_TYPE)
+    }
+
+    /// Whether the registry has finished with this task, so it has a result that
+    /// names passports. A task still being checked reports none.
+    pub(super) fn is_finished(&self) -> bool {
+        matches!(
+            self.status,
+            Some(SubmissionOutcome::Success | SubmissionOutcome::Failure)
+        )
     }
 
     /// The task identifier as a path segment.
@@ -81,6 +218,53 @@ pub(super) struct TaskResult {
     /// What the registry reported about the submission.
     #[serde(default)]
     pub result_payload: Option<ResultPayload>,
+}
+
+impl TaskResult {
+    /// The unique product identifier of each passport this result reports on.
+    ///
+    /// What a result is matched to a passport by, and the only thing it is: the
+    /// registry reports each passport against the URL it was submitted under, and
+    /// nothing published says results come back in submission order.
+    pub(super) fn unique_product_identifiers(&self) -> impl Iterator<Item = &str> {
+        self.result_payload
+            .iter()
+            .filter_map(|p| p.report.as_ref())
+            .flat_map(|r| r.item_details.iter())
+            .map(|item| item.unique_product_identifier.as_str())
+    }
+
+    /// Whether this result says all it will, so it can be kept and not read
+    /// again: a refusal, or a report on its passports in which each one accepted
+    /// carries its registration identifier.
+    ///
+    /// Nothing says a finished task's result is whole when first read. A success
+    /// that names no passport, or names one with no registration identifier, is
+    /// what [`report_for`] keeps the poll going on, and the poll is only worth
+    /// keeping if the next read can find more.
+    pub(super) fn is_complete(&self) -> bool {
+        let refused = matches!(
+            self.result_payload
+                .as_ref()
+                .and_then(|p| p.outcome_result.as_ref())
+                .or(self.status.as_ref()),
+            Some(SubmissionOutcome::Failure)
+        );
+        let items = self
+            .result_payload
+            .as_ref()
+            .and_then(|p| p.report.as_ref())
+            .map_or(&[][..], |r| r.item_details.as_slice());
+        refused
+            || (!items.is_empty()
+                && items.iter().all(|item| {
+                    item.outcome == Some(PassportOutcome::Rejected)
+                        || item
+                            .registration_identifier
+                            .as_deref()
+                            .is_some_and(|id| !id.trim().is_empty())
+                }))
+    }
 }
 
 /// The body of a task result.
@@ -346,6 +530,263 @@ mod tests {
             SubmissionReport::Unrecognised {
                 state: "ON_HOLD".to_owned()
             }
+        );
+    }
+
+    // ── which pages are read ─────────────────────────────────────────────────
+
+    /// A list that fits the cap is read whole, and says so.
+    #[test]
+    fn a_short_list_is_read_in_full() {
+        // 120 tasks at 50 a page is three pages; page 0 is already read.
+        assert_eq!(
+            plan_pages(Some(120), 50, 20, ListOrder::Unknown),
+            PagePlan {
+                pages: vec![1, 2],
+                covers_all: true
+            }
+        );
+        // An empty list and a one-page list need nothing more.
+        for total in [0, 1, 50] {
+            assert_eq!(
+                plan_pages(Some(total), 50, 20, ListOrder::Unknown),
+                PagePlan {
+                    pages: vec![],
+                    covers_all: true
+                },
+                "{total} tasks"
+            );
+        }
+        // Exactly the cap is still covered.
+        assert!(plan_pages(Some(20 * 50), 50, 20, ListOrder::Unknown).covers_all);
+    }
+
+    /// 🚨 A list longer than the cap is read from both ends. The registry's
+    /// order is not known, and a task just submitted is at the front of a
+    /// newest-first list and at the back of an oldest-first one: reading only the
+    /// front never finds it in the second kind.
+    #[test]
+    fn a_long_list_is_read_from_both_ends() {
+        // 5 000 tasks is 100 pages; the cap of 20 is split between the ends.
+        let plan = plan_pages(Some(5_000), 50, 20, ListOrder::Unknown);
+        assert!(!plan.covers_all, "it cannot cover what it does not read");
+
+        let mut pages = plan.pages.clone();
+        pages.sort_unstable();
+        pages.dedup();
+        assert_eq!(pages.len(), plan.pages.len(), "no page is read twice");
+        assert_eq!(
+            plan.pages.len() + 1,
+            20,
+            "page 0 plus the rest is exactly the cap"
+        );
+
+        assert!(plan.pages.contains(&99), "the last page is read");
+        assert!(plan.pages.contains(&90), "and the ten before it");
+        assert!(plan.pages.contains(&9), "and the front, past page 0");
+        assert!(
+            !plan.pages.contains(&50),
+            "the middle is not read, and the plan does not claim it was"
+        );
+
+        // Interleaved, so a hit at either end is found as early as at the other.
+        assert_eq!(&plan.pages[..4], &[99, 1, 98, 2]);
+    }
+
+    /// A page of tasks carrying these submission times, in this order.
+    fn page_submitted(times: &[Option<&str>]) -> Vec<Task> {
+        times
+            .iter()
+            .enumerate()
+            .map(|(n, time)| {
+                serde_json::from_value(json!({ "taskId": n, "submittedAt": time })).expect("a task")
+            })
+            .collect()
+    }
+
+    /// 🚨 Newest first is concluded from the data, never from having asked: the
+    /// times run from the latest to the earliest, and at least one step is real.
+    #[test]
+    fn a_page_running_from_latest_to_earliest_is_newest_first() {
+        let page = page_submitted(&[
+            Some("2026-10-20T12:00:00Z"),
+            Some("2026-10-20T11:00:00Z"),
+            Some("2026-10-19T09:30:00Z"),
+        ]);
+        assert_eq!(order_of(&page), ListOrder::NewestFirst);
+
+        // Offsets are times, not text: the same instant written two ways is equal,
+        // and 11:00 at +02:00 is earlier than 12:00Z.
+        let mixed = page_submitted(&[
+            Some("2026-10-20T12:00:00Z"),
+            Some("2026-10-20T11:00:00+02:00"),
+        ]);
+        assert_eq!(order_of(&mixed), ListOrder::NewestFirst);
+    }
+
+    /// Everything short of that concludes nothing about where a new task is, so the
+    /// plan falls back to both ends: an ascending page (the sort was ignored, or
+    /// honoured the other way), one that is not monotonic, one too short to compare,
+    /// one of equal times, and a time that is missing or not a time.
+    #[test]
+    fn anything_short_of_newest_first_is_unknown() {
+        let unknown = |times: &[Option<&str>]| order_of(&page_submitted(times));
+
+        assert_eq!(
+            unknown(&[Some("2026-10-19T09:00:00Z"), Some("2026-10-20T09:00:00Z")]),
+            ListOrder::Unknown,
+            "ascending: a new task is at the back"
+        );
+        assert_eq!(
+            unknown(&[
+                Some("2026-10-20T09:00:00Z"),
+                Some("2026-10-19T09:00:00Z"),
+                Some("2026-10-20T10:00:00Z"),
+            ]),
+            ListOrder::Unknown,
+            "not monotonic"
+        );
+        assert_eq!(unknown(&[Some("2026-10-20T09:00:00Z")]), ListOrder::Unknown);
+        assert_eq!(unknown(&[]), ListOrder::Unknown);
+        assert_eq!(
+            unknown(&[Some("2026-10-20T09:00:00Z"), Some("2026-10-20T09:00:00Z")]),
+            ListOrder::Unknown,
+            "equal times say nothing about direction"
+        );
+        assert_eq!(
+            unknown(&[Some("2026-10-20T09:00:00Z"), Some("yesterday-ish")]),
+            ListOrder::Unknown,
+            "a time that is not a time shows nothing, and is not skipped past"
+        );
+        assert_eq!(
+            unknown(&[None, None, None]),
+            ListOrder::Unknown,
+            "tasks that carry no time at all"
+        );
+        // One task without a time among ones with is skipped, not guessed at.
+        assert_eq!(
+            unknown(&[
+                Some("2026-10-20T10:00:00Z"),
+                None,
+                Some("2026-10-20T09:00:00Z"),
+            ]),
+            ListOrder::NewestFirst
+        );
+    }
+
+    /// 🚨 A long list verified newest first is read from the front, the whole budget
+    /// where the answer is. A new submission is on the first page of such a list, and
+    /// splitting the budget with the back would halve how far into the recent past
+    /// the search reaches.
+    #[test]
+    fn a_long_list_verified_newest_first_is_read_from_the_front() {
+        let plan = plan_pages(Some(5_000), 50, 20, ListOrder::NewestFirst);
+        assert_eq!(plan.pages, (1..20).collect::<Vec<_>>());
+        assert!(!plan.covers_all, "it cannot cover what it does not read");
+        assert!(
+            !plan.pages.contains(&99),
+            "the back is not read: a new task is not there"
+        );
+    }
+
+    /// The order changes where the budget goes and nothing about what is covered: a
+    /// list that fits the cap is read in full whichever order it came in.
+    #[test]
+    fn the_order_does_not_change_what_a_short_list_covers() {
+        for order in [ListOrder::NewestFirst, ListOrder::Unknown] {
+            assert_eq!(
+                plan_pages(Some(120), 50, 20, order),
+                PagePlan {
+                    pages: vec![1, 2],
+                    covers_all: true
+                },
+                "{order:?}"
+            );
+        }
+    }
+
+    /// A reply without a length is read from the front only and claims nothing.
+    #[test]
+    fn a_list_of_unknown_length_covers_nothing_it_cannot_show() {
+        let plan = plan_pages(None, 50, 20, ListOrder::Unknown);
+        assert_eq!(plan.pages, (1..20).collect::<Vec<_>>());
+        assert!(!plan.covers_all);
+    }
+
+    #[test]
+    fn a_result_is_matched_by_the_identifier_it_reports() {
+        let result = result(json!({
+            "status": "SUCCESS",
+            "resultPayload": { "report": { "itemDetails": [
+                accepted(Some("A")),
+                {
+                    "uniqueProductIdentifier": "https://id.example.com/01/09506000134369",
+                    "outcome": "ACCEPTED",
+                    "registrationIdentifier": "B",
+                },
+            ] } },
+        }));
+        assert_eq!(
+            result.unique_product_identifiers().collect::<Vec<_>>(),
+            [
+                "https://id.example.com/01/09506000134352",
+                "https://id.example.com/01/09506000134369"
+            ]
+        );
+        // A result with nothing in it names nothing.
+        assert_eq!(
+            self::result(json!({})).unique_product_identifiers().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_task_without_a_type_is_read_as_a_registration_and_one_of_another_kind_is_not() {
+        let untyped: Task = serde_json::from_value(json!({ "taskId": 1 })).expect("a task");
+        assert!(untyped.is_registration());
+        let other: Task =
+            serde_json::from_value(json!({ "taskId": 2, "type": "ENROLMENT" })).expect("a task");
+        assert!(!other.is_registration());
+        assert!(!untyped.is_finished(), "no status is not a finished task");
+        assert!(task("SUCCESS").is_finished() && task("FAILURE").is_finished());
+        assert!(!task("PROCESSING").is_finished());
+    }
+
+    /// A result is kept only once it says all it will. A success that names no
+    /// passport, or an accepted one with no registration identifier, may yet,
+    /// and is the case the poll keeps going on.
+    #[test]
+    fn a_result_is_complete_once_it_names_every_registration_or_refuses() {
+        let success = |items: serde_json::Value| {
+            result(json!({
+                "status": "SUCCESS",
+                "resultPayload": { "report": { "itemDetails": items } },
+            }))
+        };
+        assert!(success(json!([accepted(Some("REG-1"))])).is_complete());
+        assert!(!success(json!([accepted(None)])).is_complete());
+        assert!(!success(json!([accepted(Some("  "))])).is_complete());
+        assert!(!success(json!([])).is_complete());
+        assert!(!result(json!({ "status": "SUCCESS" })).is_complete());
+        assert!(
+            success(json!([
+                accepted(Some("REG-1")),
+                {
+                    "uniqueProductIdentifier": "https://id.example.com/01/09506000134369",
+                    "outcome": "REJECTED",
+                    "errorCode": "E1",
+                },
+            ]))
+            .is_complete(),
+            "a rejected passport has no registration to wait for"
+        );
+        assert!(
+            result(json!({ "status": "FAILURE" })).is_complete(),
+            "a refusal is a verdict, whatever it names"
+        );
+        assert!(
+            result(json!({ "resultPayload": { "outcomeResult": "FAILED" } })).is_complete(),
+            "in the result spelling too"
         );
     }
 }

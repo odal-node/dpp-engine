@@ -3,8 +3,8 @@
 use crate::cli_args::{
     Commands, CredentialCommands, FacilityCommands, KeyCommands, OperatorCommands,
     OperatorIdCommands, PassportCommands, PluginCommands, ProductGroupCommands, ProfileCommands,
-    RulesetCommands, SchemaCommands, SealCommands, SnapshotCommands, TransferCommands,
-    UnsoldGoodsCommands, WebhookCommands,
+    RegistryCommands, RulesetCommands, SchemaCommands, SealCommands, SnapshotCommands,
+    TransferCommands, UnsoldGoodsCommands, WebhookCommands,
 };
 use crate::commands::{
     bootstrap::run_bootstrap,
@@ -36,7 +36,10 @@ use crate::commands::{
         run_profile_show, run_profile_use,
     },
     publish::run_publish,
-    registry::{run_facility_audit, run_operator_id_audit, run_registry},
+    registry::{
+        run_facility_audit, run_operator_id_audit, run_registry, run_registry_abandon,
+        run_registry_handle,
+    },
     ruleset::run_ruleset_reload,
     schema::run_schema,
     seal::{run_seal_repair, run_seal_status},
@@ -206,6 +209,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     role,
                     country,
                     product_groups,
+                    product_categories,
                     valid_for_days,
                 },
         } => {
@@ -215,6 +219,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                 role,
                 country,
                 product_groups,
+                product_categories,
                 valid_for_days,
             })
             .await
@@ -435,7 +440,20 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             product_group,
             output,
         } => run_template(&product_group, output.as_deref()).await,
-        Commands::Registry { id, json } => run_registry(id.as_deref(), json).await,
+        Commands::Registry {
+            command:
+                Some(RegistryCommands::Handle {
+                    id,
+                    correlation_id,
+                    json,
+                }),
+            ..
+        } => run_registry_handle(&id, &correlation_id, json).await,
+        Commands::Registry {
+            command: Some(RegistryCommands::Abandon { id, reason, json }),
+            ..
+        } => run_registry_abandon(&id, &reason, json).await,
+        Commands::Registry { id, json, .. } => run_registry(id.as_deref(), json).await,
         Commands::Verify { target } => run_verify(&target).await,
         Commands::Snapshot {
             command:
