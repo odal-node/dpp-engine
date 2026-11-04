@@ -43,6 +43,8 @@ use crate::{
         public_read_by_gtin::public_read_by_gtin_handler,
         publish::publish_handler,
         read::read_handler,
+        registry_abandon::abandon_registration_handler,
+        registry_handle::record_registry_handle_handler,
         registry_identity::{
             facilities_audit_handler, facilities_create_handler, facilities_delete_handler,
             facilities_list_handler, facilities_set_default_handler, operator_ids_audit_handler,
@@ -143,6 +145,14 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/stats", get(passport_stats_handler))
         .route("/stats", get(operator_stats_handler))
         .route("/dpp/{dppId}/registry", get(passport_registry_handler))
+        .route(
+            "/dpp/{dppId}/registry/handle",
+            post(record_registry_handle_handler),
+        )
+        .route(
+            "/dpp/{dppId}/registry/abandon",
+            post(abandon_registration_handler),
+        )
         .route("/registry", get(registry_rollup_handler))
         .route(
             "/dpp/{dppId}/evidence",

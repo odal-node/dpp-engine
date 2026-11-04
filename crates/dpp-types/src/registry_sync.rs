@@ -76,6 +76,16 @@ pub enum RegistrySyncStatus {
     /// rejection is a defective submission an operator can correct, a
     /// deactivation is not.
     Deactivated,
+    /// The operator gave up on registering this passport, after the registry was
+    /// shown to hold no submission for it (terminal; needs no one, and is
+    /// visible).
+    ///
+    /// Kept apart from [`Self::Rejected`]: a rejection is the registry refusing a
+    /// submission, and this is nobody refusing anything. The registry never
+    /// received the passport, or never accepted it, and a person decided to stop
+    /// asking. Nothing the drain writes can move a row out of it; only a
+    /// re-publish queues the passport again.
+    Abandoned,
 }
 
 impl RegistrySyncStatus {
@@ -88,6 +98,7 @@ impl RegistrySyncStatus {
             Self::Registered => "registered",
             Self::Rejected => "rejected",
             Self::Deactivated => "deactivated",
+            Self::Abandoned => "abandoned",
         }
     }
 
@@ -100,6 +111,7 @@ impl RegistrySyncStatus {
             "registered" => Self::Registered,
             "rejected" => Self::Rejected,
             "deactivated" => Self::Deactivated,
+            "abandoned" => Self::Abandoned,
             _ => Self::Pending,
         }
     }
@@ -186,6 +198,10 @@ pub struct RegistrySyncCounts {
     pub registered: i64,
     /// Rows terminally rejected (need attention).
     pub rejected: i64,
+    /// Rows the operator gave up on after the registry was shown to hold nothing
+    /// for them. Counted so a published passport that will not be registered is
+    /// visible, and not read as one that is still owed.
+    pub abandoned: i64,
     /// Rows carrying an outstanding status intent. Independent of the counts
     /// above — a row can be `pending` *and* carry an intent.
     pub status_intents: i64,
@@ -257,6 +273,66 @@ pub trait RegistrySyncOutbox: Send + Sync {
         passport_id: PassportId,
         registry_id: String,
     ) -> Result<(), DppError>;
+
+    /// A `submitted` row that cannot be moved on by the drain, and the reason.
+    ///
+    /// Backed off and counted as an attempt exactly as [`Self::mark_submitted`]
+    /// is, so it stops sorting to the head of the queue and reaches the stalled
+    /// count that tells an operator it needs looking at. What differs is the
+    /// `message`: it is **kept** and read back by the per-passport registry
+    /// route, where `mark_submitted` clears it. A row waiting for a person, or
+    /// for a state nobody has named, would otherwise show no reason, and the
+    /// operator would have to find it in a log. The registry id the row holds is
+    /// left as it is.
+    async fn mark_submitted_noting(
+        &self,
+        passport_id: PassportId,
+        message: String,
+    ) -> Result<(), DppError>;
+
+    /// A person has established the correlation identifier of a `submitted` row
+    /// that holds none: record it, so the drain polls the submission by it.
+    ///
+    /// Returns whether the row took it. It takes it only while the row is
+    /// `submitted` **and** holds no identifier, so it can never overwrite one the
+    /// registry gave, never touch a row that has been ruled on, and loses a race
+    /// with another writer rather than stacking on it. `false` means the row was
+    /// not in that state when the write was made.
+    ///
+    /// The row's attempts start again and it is due at once. The poll that follows
+    /// is a new one, run on a handle somebody checked, so the count that earned
+    /// the stall belongs to what came before and must not keep the row reported
+    /// as stalled while it is being polled. The message is cleared: whatever it
+    /// said was about the missing handle.
+    async fn record_handle(
+        &self,
+        passport_id: PassportId,
+        correlation_id: &str,
+    ) -> Result<bool, DppError>;
+
+    /// A person has decided not to register this passport, and the registry has
+    /// been shown to hold nothing for it: end the row as `abandoned`, keeping
+    /// `message` as the account of why.
+    ///
+    /// Returns whether the row took it. It takes it only while the row is
+    /// `pending`, has been **tried at least once**, and is **backed off**
+    /// (`next_attempt_at` in the future). Each condition is a safety, not a
+    /// convenience:
+    ///
+    /// - `pending` means the registry never acknowledged it. A `submitted` row is
+    ///   one the registry holds, and ending that row would orphan a registration.
+    /// - tried at least once means the drain has asked the registry about it and
+    ///   been refused or failed, so the row is not simply new.
+    /// - backed off means the drain is not about to pick it up, and is not in the
+    ///   middle of doing so: a row being attempted is still due, and only a
+    ///   finished attempt pushes it out. Without this an abandon could land
+    ///   between the drain's read of the row and its `register` call, and the
+    ///   registry would accept a passport this node had just recorded as given up.
+    ///
+    /// `false` means the row was not in that state when the write was made, and
+    /// is the answer to a lost race as much as to a wrong state. Nothing the
+    /// drain writes can move a row out of `abandoned` afterwards.
+    async fn abandon(&self, passport_id: PassportId, message: String) -> Result<bool, DppError>;
 
     /// Terminal: the registry withdrew the record from service. Distinct from
     /// [`Self::mark_rejected`] — nothing about the submission was defective, so

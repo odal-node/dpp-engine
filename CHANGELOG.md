@@ -61,6 +61,99 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **A lost submission handle is found again.** A replayed idempotency key is
+  answered with the conflict and not the submission, so a node whose first
+  attempt got through and whose record of the answer was lost, by a crash
+  between the `POST` and the row write or a failed write, held a `submitted` row
+  it could never poll. The drain now calls `dpp-core` 0.23.0's
+  `find_submission`, which reads the dashboard and matches the passport by the
+  unique product identifier it was submitted under, the one thing the registry
+  reports each passport against, and answers with the handle and the ruling
+  together, so a recovered passport is registered in the same pass. It does not
+  guess: an identifier is not unique to a passport, since a successor can be
+  submitted under its predecessor's, so more than one submission reporting it is
+  `Ambiguous`, listed for a person, and a task still being checked reports no
+  passport, so not finding one while any is on the list is never read as the
+  registry holding none, and a single match is taken only from a search that
+  read every task. A row that is not found is backed off and counted as an
+  attempt, so it reaches the stalled count instead of sorting to the head of the
+  queue, and so is one whose recovered handle could not be written down.
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
+
+- **A registration waiting for a person says why, and a person can settle it.**
+  The drain recovers a lost submission handle itself where it can, and leaves
+  three cases alone because choosing would give a passport another passport's
+  registration: several submissions report its identifier, none could be placed,
+  and an adapter that cannot look a submission up. Such a row stayed `submitted`
+  and said nothing: the candidates and the reason were in a log, and nothing
+  could record the right handle.
+
+  *The reason is on the row.* `message` now holds why the row is waiting, and
+  `GET /vault/api/v1/dpp/{dppId}/registry` shows it: the candidates of an
+  ambiguous lookup, that the handle was not found and whether all of the task list
+  was read, or a submission state this node has no name for.
+  `mark_submitted` still clears it; a new `mark_submitted_noting` backs the row off
+  and counts the attempt as it does, and keeps the message.
+
+  *A person can record the handle.* `POST /vault/api/v1/dpp/{dppId}/registry/handle`
+  (admin scope; `odal registry handle <passport-id> <correlation-id>`) takes the
+  correlation identifier read off the registry's own interface. It does not take
+  the operator's word for it: the submission it names is read back from the
+  registry through `dpp-core` 0.23.0's `confirm_submission`, and the request is
+  refused with `422` unless that submission reports the unique product identifier
+  this passport was submitted under. The refusal says what the registry did show:
+  another passport's identifier, none, a submission still being checked, or no
+  such handle among the tasks read. It writes only to a `submitted` row that
+  holds no handle, in one conditional statement, so a handle the registry gave is
+  never overwritten (`409`) and a row already ruled on is not touched. The
+  attempts start again, so the row stops reading as stalled while the new poll
+  runs. The ruling is not applied by the route: the drain applies it on its next
+  pass, which keeps what a registration, a refusal or an unnamed state does to a
+  row in one place. Recording the same handle again is a `200` that changes
+  nothing, so a retry after a lost response does not fail on its own success. The
+  write is audited as `registry_handle_recorded`, with who recorded which handle
+  and what the registry reported (migration `0045` admits the action). (#487)
+
+- **A registration the registry never accepted can be abandoned, once the
+  registry is shown to hold nothing for it.** A `pending` row is retried with
+  backoff for as long as the passport stays published, so a payload the registry
+  refuses every time, or a product withdrawn before it was ever registered, kept
+  the queue asking forever and left a database edit as the only way off it.
+  `POST /vault/api/v1/dpp/{dppId}/registry/abandon` (admin scope;
+  `odal registry abandon <passport-id> --reason "…"`) ends the row as the new
+  `abandoned` status.
+
+  *The danger is what it can be wrong about.* A `pending` row whose first attempt
+  got through and whose reply was lost looks exactly like one that never did, and
+  abandoning it would leave a registration the registry may grant that the node
+  believes it dropped. So the route does not take the operator's word for it: it
+  reads the registry's task list through `find_submission`, and refuses unless
+  **all** of it was read and none of it reports the unique product identifier the
+  passport was submitted under. A submission the registry does hold is a `409`
+  naming its correlation identifier or its candidates. A list too long to read in
+  full, a task still being checked, and an adapter that cannot look are each a
+  `422`, because none of them shows the registry to hold nothing.
+
+  *It cannot race the drain.* The write is one conditional statement that takes a
+  row only while it is `pending`, has been tried at least once, and is backed off
+  (`next_attempt_at` in the future). A row being attempted is still due, and only
+  a finished attempt pushes it out, so an abandon cannot land between the drain
+  reading a row and submitting it. And nothing the drain writes can move a row out
+  of `abandoned`: its updates carry `status <> 'abandoned'`, and the due set never
+  offered it.
+
+  *What it ends.* The queue row, not the passport: the passport stays published,
+  the rollup counts the registration as `abandoned` (and the
+  `registry_outbox_abandoned` gauge) so it is not read as still owed, and it
+  stops counting as stalled. Publishing the passport again, or re-activating a
+  suspended one, queues it afresh, as it does a rejected one. A reason is
+  required and kept on the row; the write is audited as `registry_abandoned` with
+  who, why, how many attempts, and what the row had been saying. Abandoning an
+  already-abandoned row is a `200` that changes nothing. Migration `0046` admits
+  the status and the action. (#489)
+
 - **This node issues category-scoped credentials.** `POST /api/v1/credentials`
   accepts `productCategories`, so an operator that places both EV and LMT
   batteries can vouch for a repairer of one and not the other. Until now every
@@ -88,6 +181,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   out of scope is a `200` and never a `401`, and the read is still audited.
   `VerifiedCredential::audience_for` returns `Result<Audience, OutOfScope>`.
   (#502)
+
+### Changed
+
+- **The registry's task list is asked for newest first, and read from the front
+  once the first page shows it came back that way.** The adapter read a long list
+  from both ends because the registry's order was not known: a task just
+  submitted is at the front of a newest-first list and at the back of an
+  oldest-first one. The registry's own client was read again on 2026-10-20 and
+  sends `sort` as `submittedAt,desc` on every read, so the adapter now sends the
+  same, `dpp-core` 0.23.0's `TASKS_SORT_NEWEST_FIRST`.
+
+  *What was asked for is not trusted.* The first page's `submittedAt` times are
+  read, and the list is treated as newest first only when at least two are
+  readable, none is newer than the one before it, and at least one is strictly
+  older. Then a long list is read from the front, all twenty pages, which reaches
+  twice as far into the recent past as splitting the budget with the back did,
+  and the back is never asked for. Anything else (a registry that ignored the
+  sort, a page too short to compare, equal times, a time that is not an RFC 3339
+  time, a run that is not monotonic) leaves the order unknown and the list is
+  read from both ends, as before. A list that fits the cap is read in full
+  whichever way it came.
+
+  Nothing about what a search *covers* changes: a long list is still never
+  reported as read in full. (#490)
 
 ### Fixed
 
@@ -137,6 +254,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group's data when it expands the document. The context names withheld
   fields too, as terms; their values are not served, and the tests that scan the
   body for a withheld field now read it without its `@context`. (#561)
+
+- **A submission past the first thousand tasks on the dashboard is found.** The
+  dashboard's task list was read from the front for twenty pages, so once an
+  operator had more than a thousand tasks a new submission on an oldest-first
+  list was never found and was polled forever. The first page says how long the
+  list is (`totalElements`), and a longer one is now read from both ends,
+  interleaved, since the order is not recorded. A search that ran out says so
+  instead of reporting the registry as still working. (#484)
+
+- **An access credential that fails authentication is told which of seven
+  things to fix:** a token that is not a compact JWS, no key for its `kid`, a
+  signature that does not verify, a header or signature that cannot be read, a
+  token not typed as a VC-JWT, a payload that is not a credential, or an issuer
+  other than its document's. They read the same before, so an issuer whose
+  tooling had not yet set `typ` was sent to debug a sound signature. The
+  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
+  sentence. (#484)
 
 ## [0.15.0] - 2026-11-03
 

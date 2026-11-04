@@ -27,6 +27,31 @@ fn configured_home(origin: &str) -> TempDir {
     home
 }
 
+/// A handle the node will not record is a command that failed, not a verdict to
+/// print: the operator asked for a write and it did not happen. The node's own
+/// reason is the part worth reading.
+#[test]
+fn a_handle_the_node_refuses_is_an_error_that_says_why() {
+    const REFUSED: &str = r#"{"type":"about:blank","title":"Unprocessable Entity","status":422,"detail":"The registry has that submission and it reports no passport. The handle was not recorded.","requestId":"01a024b2-f555-7bb2-8d87-a5f33466315d"}"#;
+    let origin = problem_server("422 Unprocessable Entity", REFUSED);
+    let home = configured_home(&origin);
+
+    let run = odal(
+        home.path(),
+        &[
+            "registry",
+            "handle",
+            "0198f000-0000-7000-8000-000000000000",
+            "CORR-1",
+        ],
+    );
+
+    assert_ne!(run.code, 0, "{}", run.output());
+    let output = run.output();
+    assert!(output.contains("Handle not recorded"), "{output}");
+    assert!(output.contains("reports no passport"), "{output}");
+}
+
 #[test]
 fn every_command_renders_one_problem_body_the_same_way() {
     let origin = problem_server("401 Unauthorized", PROBLEM);

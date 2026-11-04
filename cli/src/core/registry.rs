@@ -1,6 +1,6 @@
 //! EU registry sync status — the operator-wide rollup, or one passport's record.
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use super::types::{ProvenanceEntry, RegistryStatusReport};
@@ -120,4 +120,69 @@ pub async fn action_provenance(
             }
         })
         .collect())
+}
+
+/// `POST /api/v1/dpp/{id}/registry/abandon` — give up on a registration the
+/// registry never accepted.
+///
+/// Every non-success is an error, including the `409` that means the registry
+/// holds a submission for the passport and the `422` that means it could not be
+/// shown to hold none. The operator asked for a write and it did not happen, and
+/// the node's `detail` says which: the registry's own answer is the part worth
+/// reading.
+///
+/// The node decides, not the CLI: it reads the registry's task list at the moment
+/// of the request, so there is nothing here to pre-check that would not be stale
+/// by the time it was acted on.
+///
+/// Requires an admin credential.
+pub async fn action_registry_abandon(
+    id: &str,
+    reason: &str,
+    client: &OdalClient,
+    cfg: &Config,
+) -> Result<Value> {
+    let (status, body) = client
+        .post_json(
+            &format!("{}/api/v1/dpp/{id}/registry/abandon", cfg.vault_url),
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await?;
+    if !status.is_success() {
+        bail!("Not abandoned: {}", describe_error(status, &body));
+    }
+    serde_json::from_str(&body).context("registry abandon response was not JSON")
+}
+
+/// `POST /api/v1/dpp/{id}/registry/handle` — record the registry's correlation
+/// identifier for a submission the node lost the handle of.
+///
+/// Every non-success is an error, including the `422` that means the registry
+/// did not show the handle to be this passport's. The operator asked for a
+/// write and it did not happen, and the node's `detail` says which of the
+/// several reasons it was: the submission reports other passports, it is still
+/// being checked, nothing is listed under that identifier, or the node's
+/// registry connection cannot read a submission's contents.
+///
+/// The node decides, not the CLI: it reads the submission back from the registry
+/// at the moment of the request, so there is nothing here to pre-check that would
+/// not be stale by the time it was acted on.
+///
+/// Requires an admin credential.
+pub async fn action_registry_handle(
+    id: &str,
+    correlation_id: &str,
+    client: &OdalClient,
+    cfg: &Config,
+) -> Result<Value> {
+    let (status, body) = client
+        .post_json(
+            &format!("{}/api/v1/dpp/{id}/registry/handle", cfg.vault_url),
+            &serde_json::json!({ "correlationId": correlation_id }),
+        )
+        .await?;
+    if !status.is_success() {
+        bail!("Handle not recorded: {}", describe_error(status, &body));
+    }
+    serde_json::from_str(&body).context("registry handle response was not JSON")
 }

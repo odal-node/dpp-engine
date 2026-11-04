@@ -35,7 +35,7 @@ const STALL_THRESHOLD: i32 = 5;
 #[serde(rename_all = "camelCase")]
 pub struct RegistrationView {
     /// Queue state: `pending`, `submitted`, `registered`, `rejected`,
-    /// `deactivated`.
+    /// `abandoned`, `deactivated`.
     pub status: &'static str,
     /// The registry's own record id, once it has issued one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,6 +147,10 @@ pub struct RegistrationCounts {
     pub submitted: i64,
     pub registered: i64,
     pub rejected: i64,
+    /// Rows an operator gave up on after the registry was shown to hold nothing
+    /// for them. Published passports that will not be registered, kept visible
+    /// instead of read as still owed.
+    pub abandoned: i64,
     pub deactivated: i64,
     /// Status changes owed to the registry. Nothing drains these — the registry
     /// publishes no status-push API — so they are held durably and counted here
@@ -301,6 +305,7 @@ pub async fn registry_rollup_handler(
             submitted: c.submitted,
             registered: c.registered,
             rejected: c.rejected,
+            abandoned: c.abandoned,
             deactivated: c.deactivated,
             status_intents: c.status_intents,
             stalled: c.stalled,
