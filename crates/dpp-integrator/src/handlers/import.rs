@@ -987,6 +987,18 @@ mod tests {
             (StatusCode::OK, Json(serde_json::json!({"items": []}))).into_response()
         }
 
+        /// The scope the mock grants: admission asks for it to decide write access.
+        async fn whoami_handler(State(state): State<Arc<State_>>) -> Response {
+            if !state.accepts_tokens.load(Ordering::SeqCst) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"userId": "api-key", "scope": "admin"})),
+            )
+                .into_response()
+        }
+
         async fn create_handler(
             State(state): State<Arc<State_>>,
             Json(mut body): Json<serde_json::Value>,
@@ -1077,6 +1089,7 @@ mod tests {
             let state = Arc::new(State_::default());
             let app = Router::new()
                 .route("/api/v1/dpps", get(verify_handler))
+                .route("/api/v1/whoami", get(whoami_handler))
                 .route("/api/v1/dpp", post(create_handler))
                 .route("/api/v1/dpp/by-identity", get(find_by_identity_handler))
                 .route("/api/v1/dpp/{id}", put(update_handler))

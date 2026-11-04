@@ -86,9 +86,15 @@ pub fn render_page(
     let qr_svg = carrier_uri(p)
         .map(|uri| build_qr_svg(&uri))
         .unwrap_or_default();
+    // The base URL comes from configuration, not from the passport, but it lands
+    // in a double-quoted attribute all the same. Escape the whole URL, not only
+    // the id, so that no caller-supplied base can close the attribute.
+    let page_url = esc(&format!(
+        "{}/dpp/{dpp_id}",
+        resolver_base_url.trim_end_matches('/')
+    ));
     // Escape the id for HTML contexts (the QR above encodes the carrier URI).
     let dpp_id = esc(dpp_id);
-    let page_url = format!("{}/dpp/{dpp_id}", resolver_base_url.trim_end_matches('/'));
 
     format!(
         r#"<!DOCTYPE html>
@@ -357,6 +363,23 @@ mod tests {
             "unescaped id leaked a tag: {html}"
         );
         assert!(html.contains("&lt;script&gt;"));
+    }
+
+    /// The resolver base URL is configuration, but it lands in a double-quoted
+    /// attribute, so a base that closes the attribute must not break out of it.
+    #[test]
+    fn the_resolver_base_url_cannot_close_the_og_url_attribute() {
+        let html = render_page(
+            "abc",
+            &unredacted_passport(),
+            "https://id.example\"><script>alert(1)</script>",
+            SnapshotNotice::Live,
+        );
+        assert!(
+            !html.contains("<script>alert"),
+            "base URL broke out: {html}"
+        );
+        assert!(html.contains("&quot;&gt;&lt;script&gt;"));
     }
 
     /// Renamed from `build_qr_svg_encodes_the_carrier_uri`, which claimed more

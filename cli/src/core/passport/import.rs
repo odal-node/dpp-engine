@@ -44,6 +44,15 @@ pub async fn action_import(
         )
     })?;
 
+    // The value is read from the file and becomes a path segment of a request sent
+    // with the operator's credential. A product-group key is lowercase letters,
+    // digits and hyphens. Anything else would send the upload to another route.
+    anyhow::ensure!(
+        is_product_group_key(&product_group),
+        "`{product_group}` in {} is not a product group key",
+        params.file
+    );
+
     if let Some(f) = progress {
         f(ProgressEvent::Started { total: None });
     }
@@ -132,6 +141,15 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
 /// Uses a real CSV reader so a quoted field containing the delimiter (e.g. an
 /// address `"Street 1, City, DE"`) does not shift the column positions — a naive
 /// `split` would mis-locate the product group value.
+/// Whether `key` is a product-group key as the catalog spells one: non-empty,
+/// lowercase letters, digits and hyphens only.
+fn is_product_group_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 pub fn detect_product_group(bytes: &[u8]) -> Option<String> {
     let first_line = bytes.split(|&b| b == b'\n').next().unwrap_or(bytes);
     let delim = if first_line.contains(&b'\t') {
@@ -259,6 +277,18 @@ fn error_entries(errors: Option<&serde_json::Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The product group read from a file becomes a path segment of an
+    /// authenticated request, so only a plain key may pass.
+    #[test]
+    fn a_file_cannot_name_a_route_through_its_product_group() {
+        assert!(is_product_group_key("battery"));
+        assert!(is_product_group_key("unsold-goods"));
+        assert!(!is_product_group_key(""));
+        assert!(!is_product_group_key("battery/publish"));
+        assert!(!is_product_group_key("battery?x=1"));
+        assert!(!is_product_group_key("Battery"));
+    }
 
     #[test]
     fn detect_product_group_reads_product_group_column() {

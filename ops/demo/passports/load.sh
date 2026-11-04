@@ -12,6 +12,17 @@ VAULT_URL="${ODAL_VAULT_URL:-http://localhost:8001/vault}"
 PUBLISH=1
 [ "${1:-}" = "--draft" ] && PUBLISH=0
 
+# The key travels as a Bearer credential, so plain HTTP is allowed only to this
+# machine. Anything else must be HTTPS.
+case "$VAULT_URL" in
+  https://*) ;;
+  http://localhost|http://localhost[:/]*|http://127.0.0.1|http://127.0.0.1[:/]*|http://\[::1\]|http://\[::1\][:/]*) ;;
+  *)
+    echo "refusing to send ODAL_API_KEY over plain HTTP to $VAULT_URL" >&2
+    exit 1
+    ;;
+esac
+
 if [ -z "${ODAL_API_KEY:-}" ]; then
   echo "ODAL_API_KEY is not set — mint a write/admin key first (see README.md)." >&2
   exit 1

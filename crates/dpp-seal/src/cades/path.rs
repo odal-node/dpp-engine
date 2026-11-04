@@ -182,6 +182,16 @@ pub(super) fn path_to(signed: &Signed, anchor_certificate_der: &[u8]) -> IssuerC
             };
             match verified_under(candidate, &key, current) {
                 IssuerCheck::Verified => {
+                    // A signature proves the key signed, not that its holder may
+                    // issue. Without the authority bits any end-entity certificate
+                    // could issue a leaf that qualifies as a listed CA's.
+                    if !may_issue_certificates(candidate) {
+                        unverifiable.get_or_insert_with(|| {
+                            "an embedded certificate that signed this one is not a certificate authority"
+                                .to_owned()
+                        });
+                        continue;
+                    }
                     verified_next = Some(candidate);
                     break;
                 }
@@ -208,6 +218,38 @@ pub(super) fn path_to(signed: &Signed, anchor_certificate_der: &[u8]) -> IssuerC
     IssuerCheck::Unverifiable(format!(
         "the certificate path is longer than {MAX_PATH_LENGTH} links"
     ))
+}
+
+/// `id-ce-basicConstraints` (RFC 5280 section 4.2.1.9).
+const ID_CE_BASIC_CONSTRAINTS: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("2.5.29.19");
+
+/// `id-ce-keyUsage` (RFC 5280 section 4.2.1.3).
+const ID_CE_KEY_USAGE: const_oid::ObjectIdentifier =
+    const_oid::ObjectIdentifier::new_unwrap("2.5.29.15");
+
+/// Whether `cert` may sign other certificates: its BasicConstraints must assert
+/// `cA`, and a KeyUsage extension, when present, must allow `keyCertSign`. A
+/// certificate that signed a leaf without either was an end-entity certificate
+/// acting as an authority.
+fn may_issue_certificates(cert: &Certificate) -> bool {
+    use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
+
+    let find = |oid| {
+        cert.tbs_certificate
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.iter().find(|e| e.extn_id == oid))
+    };
+    let is_ca = find(ID_CE_BASIC_CONSTRAINTS)
+        .and_then(|ext| BasicConstraints::from_der(ext.extn_value.as_bytes()).ok())
+        .is_some_and(|constraints| constraints.ca);
+    let may_sign_certificates = match find(ID_CE_KEY_USAGE) {
+        None => true,
+        Some(ext) => KeyUsage::from_der(ext.extn_value.as_bytes())
+            .is_ok_and(|usage| usage.0.contains(KeyUsages::KeyCertSign)),
+    };
+    is_ca && may_sign_certificates
 }
 
 /// The signature-algorithm family an OID belongs to, where it is one this

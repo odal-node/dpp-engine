@@ -237,9 +237,18 @@ fn qualified_seal_status(
         );
     };
 
+    // The seal section names a signature of its own, and that name is only as
+    // trustworthy as the dossier that carries it. The seal must cover the full
+    // view this dossier verifies, so the digest is taken from that view and the
+    // section's name for it is checked against it.
+    if jws != dossier.full_view.jws {
+        return CheckStatus::Fail(
+            "the seal covers a signature other than the full view this dossier carries".into(),
+        );
+    }
     // Recomputed, never read off the dossier: a `payloadHash` taken on trust
     // would let an edited one make a mismatched seal look sound.
-    let expected = dpp_types::digest_for_jws(jws);
+    let expected = dpp_types::digest_for_jws(&dossier.full_view.jws);
 
     match seals.binding(&envelope, &expected) {
         dpp_types::SealBinding::CoversThisSignature => {

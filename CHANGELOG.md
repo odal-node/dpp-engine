@@ -61,6 +61,34 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **An API key's idempotent replays belong to that key.** Every Bearer key used to
+  share one replay namespace, so a read-scoped key could replay an administrator's
+  cached response. Retries made with a rotated key now re-execute. (#576)
+- **The local admin credential is refused from another origin.** A state change
+  arriving with a cross-origin `Origin` header and a Basic credential is refused
+  before the credential is read. Bearer keys are unaffected. (#576)
+- **Imports need a write-scoped key.** A read-only key is refused with `403`
+  before any job or report is recorded. (#576)
+- **Seal and trust checks.** A seal must cover the dossier's own full view, a CA
+  path must pass through certificates that may sign certificates, the list of
+  trusted lists is verified before its pointers are used, and a verified copy older
+  than 14 days is reported unchecked. (#576)
+- **Guarded outbound requests** disable system proxies, refuse redirects for
+  address literals, and refuse 198.18.0.0/15. Status lists are fetched through the
+  pinned helper. (#576)
+- **Plugin artifacts** are verified and loaded from the same bytes, and a guest's
+  log text is escaped in the host's log output. (#576)
+- **Dossier and tree verification** refuse a URI that is referenced with two
+  different pins, and a node listing more than 256 children. (#576)
+- **Command-line and script hardening:** verify and import take only well-formed
+  identifiers and keys, the credential file and exports are owner-only from creation,
+  credentials are not sent over plain HTTP to a remote host, and terminal output is
+  stripped of control characters. (#576)
+- **Pointing a profile at another node** clears the credential the previous node
+  issued, so the next request does not send it to a node that never issued it. (#576)
+- **A workbook's namespace-prefixed cells** are measured with the same dense-range
+  check as unprefixed ones, and a declared shared-string count is capped. (#576)
+
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
   successor the one its predecessor was signed with. So an operator that changed

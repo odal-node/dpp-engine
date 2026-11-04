@@ -180,13 +180,22 @@ pub async fn start_pg() -> TestPg {
     }
 }
 
-/// Swap the database name in a Postgres URL.
+/// Swap the database name in a Postgres URL, keeping its query string. The query
+/// carries `sslmode` and the certificate settings, which a derived connection must
+/// keep: dropping them would connect without the verification the caller asked for.
 fn with_database(url: &str, database: &str) -> String {
-    let base = url.split('?').next().unwrap_or(url);
+    let (base, query) = match url.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (url, None),
+    };
     let trimmed = base.trim_end_matches('/');
-    match trimmed.rfind('/') {
+    let swapped = match trimmed.rfind('/') {
         Some(i) => format!("{}/{database}", &trimmed[..i]),
         None => format!("{trimmed}/{database}"),
+    };
+    match query {
+        Some(query) => format!("{swapped}?{query}"),
+        None => swapped,
     }
 }
 
@@ -410,4 +419,26 @@ pub async fn start_pg_before(stop_before: &str) -> RawPg {
     );
 
     raw
+}
+
+#[cfg(test)]
+mod with_database_tests {
+    use super::with_database;
+
+    #[test]
+    fn the_derived_url_keeps_the_tls_settings_of_the_admin_url() {
+        let admin = "postgres://u:p@db.internal:5432/admin?sslmode=verify-full&sslrootcert=/ca.pem";
+        assert_eq!(
+            with_database(admin, "odal_test_x"),
+            "postgres://u:p@db.internal:5432/odal_test_x?sslmode=verify-full&sslrootcert=/ca.pem"
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_query_is_swapped_as_before() {
+        assert_eq!(
+            with_database("postgres://u:p@h:5432/admin/", "x"),
+            "postgres://u:p@h:5432/x"
+        );
+    }
 }
