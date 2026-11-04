@@ -62,3 +62,33 @@ fn each_lifecycle_command_posts_to_the_route_the_api_description_names() {
         );
     }
 }
+
+/// `odal registry handle` posts to the route the description names, with the
+/// handle in the body the route reads, and says what the node answered.
+#[test]
+fn the_registry_handle_command_posts_to_the_route_the_api_description_names() {
+    let path = described_path("recordDppRegistryHandle");
+    assert!(
+        path.ends_with("/registry/handle"),
+        "the described route moved: {path}"
+    );
+    let origin = static_server(vec![(
+        path.clone(),
+        format!(
+            r#"{{"passportId":"{ID}","correlationId":"CORR-1","recorded":true,"registry":{{"outcome":"processing"}},"note":"the handle is recorded and nothing else"}}"#
+        ),
+    )]);
+    let home = configured_home(&origin);
+
+    let run = odal(home.path(), &["registry", "handle", ID, "CORR-1"]);
+
+    assert_eq!(
+        run.code,
+        0,
+        "`odal registry handle` did not reach {path}:\n{}",
+        run.output()
+    );
+    let output = run.output();
+    assert!(output.contains("CORR-1"), "{output}");
+    assert!(output.contains("not finished checking"), "{output}");
+}

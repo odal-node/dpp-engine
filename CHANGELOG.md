@@ -78,8 +78,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   read every task. A row that is not found is backed off and counted as an
   attempt, so it reaches the stalled count instead of sorting to the head of the
   queue, and so is one whose recovered handle could not be written down.
-  Finished tasks' results are kept in a bounded cache, because they do not
-  change and the lookup repeats every pass. (#484)
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
+
+- **A registration waiting for a person says why, and a person can settle it.**
+  The drain recovers a lost submission handle itself where it can, and leaves
+  three cases alone because choosing would give a passport another passport's
+  registration: several submissions report its identifier, none could be placed,
+  and an adapter that cannot look a submission up. Such a row stayed `submitted`
+  and said nothing: the candidates and the reason were in a log, and nothing
+  could record the right handle.
+
+  *The reason is on the row.* `message` now holds why the row is waiting, and
+  `GET /vault/api/v1/dpp/{dppId}/registry` shows it: the candidates of an
+  ambiguous lookup, that the handle was not found and whether all of the task list
+  was read, or a submission state this node has no name for.
+  `mark_submitted` still clears it; a new `mark_submitted_noting` backs the row off
+  and counts the attempt as it does, and keeps the message.
+
+  *A person can record the handle.* `POST /vault/api/v1/dpp/{dppId}/registry/handle`
+  (admin scope; `odal registry handle <passport-id> <correlation-id>`) takes the
+  correlation identifier read off the registry's own interface. It does not take
+  the operator's word for it: the submission it names is read back from the
+  registry through `dpp-core` 0.23.0's `confirm_submission`, and the request is
+  refused with `422` unless that submission reports the unique product identifier
+  this passport was submitted under. The refusal says what the registry did show:
+  another passport's identifier, none, a submission still being checked, or no
+  such handle among the tasks read. It writes only to a `submitted` row that
+  holds no handle, in one conditional statement, so a handle the registry gave is
+  never overwritten (`409`) and a row already ruled on is not touched. The
+  attempts start again, so the row stops reading as stalled while the new poll
+  runs. The ruling is not applied by the route: the drain applies it on its next
+  pass, which keeps what a registration, a refusal or an unnamed state does to a
+  row in one place. Recording the same handle again is a `200` that changes
+  nothing, so a retry after a lost response does not fail on its own success. The
+  write is audited as `registry_handle_recorded`, with who recorded which handle
+  and what the registry reported (migration `0045` admits the action). (#487)
 
 ### Changed
 

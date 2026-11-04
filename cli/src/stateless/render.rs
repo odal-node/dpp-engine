@@ -1117,6 +1117,50 @@ pub fn render_seal_repair(repair: &serde_json::Value, id: &str) {
     println!("  The node's drain buys it; watch `odal seal status {id}`.");
 }
 
+/// Render what recording a registry handle by hand did.
+///
+/// Says what the registry reported when the node checked the handle, because that
+/// is the part an operator cannot see until the drain's next pass otherwise, and
+/// says plainly that the ruling has not been applied: the handle is recorded and
+/// nothing else. The node's own note travels with the response and is printed
+/// rather than paraphrased.
+pub fn render_registry_handle(recorded: &serde_json::Value, id: &str) {
+    let handle = field(recorded, "correlationId").unwrap_or_default();
+    let written = recorded
+        .get("recorded")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !written {
+        println!(
+            "{} already holds {handle}; nothing was checked or written",
+            plain(id)
+        );
+        return;
+    }
+    println!("Recorded the registry's handle for {}", plain(id));
+    println!("  Handle:   {handle}");
+    if let Some(registry) = recorded.get("registry") {
+        let outcome = field(registry, "outcome").unwrap_or_default();
+        let said = match outcome.as_str() {
+            "registered" => format!(
+                "registered as {}",
+                field(registry, "registrationId").unwrap_or_default()
+            ),
+            "refused" => format!("refused: {}", field(registry, "reason").unwrap_or_default()),
+            "unrecognised" => format!(
+                "in a state this node has no name for: {}",
+                field(registry, "state").unwrap_or_default()
+            ),
+            _ => "not finished checking it".to_owned(),
+        };
+        println!("  Registry: {said}");
+    }
+    if let Some(note) = field(recorded, "note") {
+        println!("  {note}");
+    }
+    println!("  Watch `odal registry {id}`.");
+}
+
 /// Render the operator-wide sealing summary.
 ///
 /// Leads with the passport count, not the row counts. An operator asking about

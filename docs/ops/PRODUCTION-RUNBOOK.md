@@ -285,21 +285,29 @@ lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands.
   identifier the passport was submitted under, and logs *recovered the correlation
   identifier* when it finds it. Nothing more is needed then.
 
-Three log lines mean a person is needed:
+Two cases mean a person is needed, and the row's `message` says which:
 
 - *More than one registry submission reports this passport's unique product
-  identifier* lists the candidates. A successor can be submitted under its
+  identifier* names the candidates. A successor can be submitted under its
   predecessor's identifier, so the node does not choose between them.
-- *One registry submission reports this passport's unique product identifier, and not
-  every task was read* names one candidate. It may be a predecessor's, beside this
+- *Not found among its tasks* is looked for again on every attempt, and a row that
+  never finds it stalls. The message says whether all of the task list was read. When
+  it was not, and one submission among the tasks read reports the identifier, the log
+  line *one registry submission reports this passport's unique product identifier,
+  and not every task was read* names it. It may be a predecessor's, beside this
   passport's own task that is still being checked or was not read, so the node does
-  not record it, and looks again on every attempt.
-- *Not found among the tasks read* is retried on every attempt, and a row that never
-  finds it stalls.
+  not record it.
 
-There is no node-side way yet to record a correlation identifier by hand. Compare the
-candidates with the registry's own dashboard and raise it with the registry; the row
-stays where it is and loses nothing.
+Either way, read the right correlation identifier off the registry's own dashboard and
+record it: `odal registry handle <passport-id> <correlation-id>`
+(`POST /vault/api/v1/dpp/{dppId}/registry/handle`, admin scope). The node reads that
+submission back from the registry and **refuses unless it reports this passport's
+unique product identifier**, so a typo or a neighbouring passport's handle is not
+recorded and the row stays as it was; the refusal names what the registry did show.
+Once recorded, the drain polls the submission by it and applies the registry's ruling
+on its next pass, and the row stops reading as stalled. The write is in the passport's
+audit trail as `registry_handle_recorded`. A row that already holds a handle the
+registry gave is refused: that is never overwritten.
 
 A stalled **transfer notification** is one the registry answered with something the
 node could not read as accepted or refused: still processing, or a state the row's

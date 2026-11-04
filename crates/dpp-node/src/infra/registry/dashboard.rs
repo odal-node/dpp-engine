@@ -233,6 +233,38 @@ impl TaskResult {
             .flat_map(|r| r.item_details.iter())
             .map(|item| item.unique_product_identifier.as_str())
     }
+
+    /// Whether this result says all it will, so it can be kept and not read
+    /// again: a refusal, or a report on its passports in which each one accepted
+    /// carries its registration identifier.
+    ///
+    /// Nothing says a finished task's result is whole when first read. A success
+    /// that names no passport, or names one with no registration identifier, is
+    /// what [`report_for`] keeps the poll going on, and the poll is only worth
+    /// keeping if the next read can find more.
+    pub(super) fn is_complete(&self) -> bool {
+        let refused = matches!(
+            self.result_payload
+                .as_ref()
+                .and_then(|p| p.outcome_result.as_ref())
+                .or(self.status.as_ref()),
+            Some(SubmissionOutcome::Failure)
+        );
+        let items = self
+            .result_payload
+            .as_ref()
+            .and_then(|p| p.report.as_ref())
+            .map_or(&[][..], |r| r.item_details.as_slice());
+        refused
+            || (!items.is_empty()
+                && items.iter().all(|item| {
+                    item.outcome == Some(PassportOutcome::Rejected)
+                        || item
+                            .registration_identifier
+                            .as_deref()
+                            .is_some_and(|id| !id.trim().is_empty())
+                }))
+    }
 }
 
 /// The body of a task result.
@@ -718,5 +750,43 @@ mod tests {
         assert!(!untyped.is_finished(), "no status is not a finished task");
         assert!(task("SUCCESS").is_finished() && task("FAILURE").is_finished());
         assert!(!task("PROCESSING").is_finished());
+    }
+
+    /// A result is kept only once it says all it will. A success that names no
+    /// passport, or an accepted one with no registration identifier, may yet,
+    /// and is the case the poll keeps going on.
+    #[test]
+    fn a_result_is_complete_once_it_names_every_registration_or_refuses() {
+        let success = |items: serde_json::Value| {
+            result(json!({
+                "status": "SUCCESS",
+                "resultPayload": { "report": { "itemDetails": items } },
+            }))
+        };
+        assert!(success(json!([accepted(Some("REG-1"))])).is_complete());
+        assert!(!success(json!([accepted(None)])).is_complete());
+        assert!(!success(json!([accepted(Some("  "))])).is_complete());
+        assert!(!success(json!([])).is_complete());
+        assert!(!result(json!({ "status": "SUCCESS" })).is_complete());
+        assert!(
+            success(json!([
+                accepted(Some("REG-1")),
+                {
+                    "uniqueProductIdentifier": "https://id.example.com/01/09506000134369",
+                    "outcome": "REJECTED",
+                    "errorCode": "E1",
+                },
+            ]))
+            .is_complete(),
+            "a rejected passport has no registration to wait for"
+        );
+        assert!(
+            result(json!({ "status": "FAILURE" })).is_complete(),
+            "a refusal is a verdict, whatever it names"
+        );
+        assert!(
+            result(json!({ "resultPayload": { "outcomeResult": "FAILED" } })).is_complete(),
+            "in the result spelling too"
+        );
     }
 }

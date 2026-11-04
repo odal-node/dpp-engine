@@ -1,0 +1,42 @@
+type: object
+description: >-
+  What the registry reported about a submission, read by its correlation
+  identifier.
+required:
+  - outcome
+properties:
+  outcome:
+    type: string
+    enum:
+      - processing
+      - registered
+      - refused
+      - unrecognised
+    description: >-
+      `processing`: the registry has not finished checking the submission.
+
+
+      `registered`: the submission succeeded and the passport is registered;
+      `registrationId` is the identifier the registry generated for it.
+
+
+      `refused`: the submission was refused, as a whole, so a passport can be
+      refused for another passport's fault; `reason` is what the registry said.
+
+
+      `unrecognised`: the registry reported a state this node has no name for;
+      `state` is that state exactly as reported. Not a verdict.
+  registrationId:
+    type: string
+    description: >-
+      The identifier the registry generated for the passport. Present only on
+      `registered`.
+  reason:
+    type: string
+    description: >-
+      The registry's description of the refusal. Present only on `refused`.
+  state:
+    type: string
+    description: >-
+      The state exactly as the registry reported it. Present only on
+      `unrecognised`.
