@@ -137,10 +137,14 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     async fn set_default_facility(&self, operator_id: &str, id: Uuid) -> Result<bool, DppError> {
         // One statement flips the chosen row to default and all other live rows
         // off. Retired facilities are excluded so a retired row can never carry
-        // the default flag and can never be re-defaulted.
+        // the default flag and can never be re-defaulted. The target must itself
+        // be live, checked in the same statement: an absent or retired target
+        // leaves every current selection as it was.
         let res = sqlx::query(
             "UPDATE odal.facility SET is_default = (id = $2), updated_at = now() \
-             WHERE operator_id = $1 AND retired_at IS NULL",
+             WHERE operator_id = $1 AND retired_at IS NULL \
+               AND EXISTS (SELECT 1 FROM odal.facility \
+                           WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL)",
         )
         .bind(operator_id)
         .bind(id)
@@ -250,9 +254,13 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     ) -> Result<bool, DppError> {
         // Flip the chosen live row to primary and all other live rows off; retired
         // rows are excluded so a retired identifier can never carry the primary flag.
+        // The target must be live, checked in the same statement, so an absent or
+        // retired target clears nothing.
         let res = sqlx::query(
             "UPDATE odal.operator_identifier SET is_primary = (id = $2) \
-             WHERE operator_id = $1 AND retired_at IS NULL",
+             WHERE operator_id = $1 AND retired_at IS NULL \
+               AND EXISTS (SELECT 1 FROM odal.operator_identifier \
+                           WHERE operator_id = $1 AND id = $2 AND retired_at IS NULL)",
         )
         .bind(operator_id)
         .bind(id)
