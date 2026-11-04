@@ -29,6 +29,7 @@ cd "$ROOT"
 
 # "<script>|<why it does not run in CI>"
 local_only=(
+  "capture-upgrade-fixture.sh|a release step, not a gate: it runs once per tag, against that tag's own binaries, and its output is committed. What enforces it is upgrade_fixture_coverage.rs, which CI runs"
   "coderabbit-check.sh|validates .coderabbit.yaml against a schema fetched over the network, and reads a file a service owns; a local aid, not a gate on the code"
   "shared-test-pg.sh|starts a local Postgres for \`just test-integration\`; CI's integration job has its own service container"
   "test-changed.sh|an iteration aid that skips tests on purpose; CI runs the whole suite"

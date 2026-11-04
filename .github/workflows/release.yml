@@ -13,12 +13,16 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   publish:
     name: Build & push ${{ matrix.image }}
     runs-on: ubuntu-latest
+    # The one job that pushes images, so the one that may write packages. Granted
+    # here and not for the whole workflow, so a job added later does not inherit it.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -39,14 +43,15 @@ jobs:
               Administration Shell. No authentication required.
             readme: crates/dpp-resolver/README.md
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: dpp-engine
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -54,7 +59,7 @@ jobs:
 
       - name: Compute tags & labels
         id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/odal-node/${{ matrix.image }}
           # `latest` is applied automatically for non-prerelease semver tags
@@ -83,7 +88,7 @@ jobs:
       # Context is the workspace root holding both checked-out repos. BuildKit
       # honours docker/<dockerfile>.dockerignore to keep the context small.
       - name: Build & push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}

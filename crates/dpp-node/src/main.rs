@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Read once and handed to both gates that depend on it — the plugin signing
     // policy below and the trust report — so the two cannot disagree about it.
-    let profile = NodeProfile::from_env();
+    let profile = NodeProfile::from_env().context("Invalid NODE_PROFILE")?;
 
     // ── Wasm plugin host ──────────────────────────────────────────────────────
     let plugin_host =
@@ -419,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
         vault_client,
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
+        import_slots: Arc::new(tokio::sync::Semaphore::new(cfg.import_max_concurrent)),
         events: event_bus,
         idempotency: Some(db.idempotency.clone()),
     };

@@ -28,6 +28,9 @@ async fn test_battery_create_publish_resolve() {
         "materials": [
             {"name": "Lithium Iron Phosphate", "weightKg": 1.2}
         ],
+        // An industrial battery publishes only with its placing date: the due
+        // diligence row is answered as of it, and the gate refuses without it.
+        "placedOnMarketDate": "2026-07-15",
         // The complete content the Battery Regulation makes mandatory for an
         // industrial battery — 38 fields, not the six that merely satisfy the
         // schema. This is the one test whose subject *is* a battery passport, so
@@ -186,8 +189,14 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
         "the refusal must say what is wrong and for which category: {body}"
     );
     // Reported together, not one per attempt: an operator fixing these one at a
-    // time would need a publish round-trip per field.
-    for field in ["batteryModelId", "manufacturingPlace", "cathodeMaterial"] {
+    // time would need a publish round-trip per field. The missing placing date is
+    // among them, since the due diligence row cannot be answered without it.
+    for field in [
+        "batteryModelId",
+        "manufacturingPlace",
+        "cathodeMaterial",
+        "placedOnMarketDate",
+    ] {
         assert!(
             body.contains(field),
             "every missing field is named at once; `{field}` is absent from: {body}"

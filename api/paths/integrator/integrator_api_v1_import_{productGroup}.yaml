@@ -76,3 +76,5 @@ post:
       $ref: ../../components/responses/BadRequest.yaml
     '409':
       $ref: ../../components/responses/IdempotentRequestInFlight.yaml
+    '429':
+      $ref: ../../components/responses/ImportBusy.yaml

@@ -2,3 +2,6 @@ target
 corpus
 artifacts
 coverage
+# Derived, not kept: CI and `just fuzz-check` copy the workspace Cargo.lock here
+# before building, so the targets compile against the graph that ships.
+Cargo.lock

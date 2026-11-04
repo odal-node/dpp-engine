@@ -85,6 +85,25 @@ LOCKED := if path_exists(justfile_directory() + "/.cargo/config.toml") == "true"
 test:
     cargo nextest run --workspace
 
+# Run the Criterion benches that need no infrastructure
+#
+# Not `--workspace`: that would also build every crate's unit tests in bench mode.
+# The ones that need Docker are `just bench-infra`.
+bench:
+    cargo bench --benches -p dpp-render -p dpp-integrator -p dpp-common -p dpp-plugin-host
+
+# Run the Criterion benches that need Docker (dal, vault, node)
+#
+# One shared Postgres for the whole run, as `just test-integration` has: the DAL
+# and vault benches go through the shared harness, which clones a database on
+# the server `ODAL_TEST_PG_ADMIN_URL` names. The NATS bench starts a container of
+# its own.
+#
+# The targets are named rather than `--benches`, which would also run each crate's
+# unit tests again in bench mode.
+bench-infra:
+    bash scripts/shared-test-pg.sh cargo bench -p dpp-dal -p dpp-vault -p dpp-node --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-node/integration-tests --bench pg_repo --bench publish_serve --bench nats_throughput
+
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 #
 # One shared Postgres for the whole run rather than one container per test.
@@ -105,7 +124,15 @@ _test-integration-tiers:
     cargo nextest run -p dpp-dal         --features integration-tests
     cargo nextest run -p dpp-vault       --features integration-tests
     cargo nextest run -p dpp-plugin-host --features integration-tests   # fuel test: Linux only
+    # `operator_paths.rs` drives the real `odal`, another package's binary.
+    cargo build -p dpp-cli --bin odal
     cargo nextest run -p dpp-node        --features integration-tests
+
+# Builds the tag unless BIN_DIR holds its `dpp-node` and `odal`. Needs Docker.
+# The next release is tested upgrading from it (docs/governance/RELEASE.md).
+# After tagging a release: capture a database its own binaries wrote
+capture-upgrade-fixture VERSION BIN_DIR='':
+    bash scripts/capture-upgrade-fixture.sh '{{VERSION}}' '{{BIN_DIR}}'
 
 # Run the PostgreSQL integration lane (pg_integration T1–T7; needs Docker)
 test-pg:
@@ -143,8 +170,8 @@ test-seal-db:
 # default-feature pass has to come back.
 #
 # Features are named per package rather than via `--all-features`, which would
-# also enable `cli/desktop` (pulls rfd's ashpd/Wayland subtree, kept out of
-# server-side builds on purpose — see cli/Cargo.toml). That is not a gap this
+# also enable `cli/desktop` (pulls in rfd, kept out of server-side builds on
+# purpose — see cli/Cargo.toml). That is not a gap this
 # closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting `tests/sdk_abi.rs`
 # needs no wasm target, only running it does, and the integration tiers run it.
 #
@@ -364,6 +391,36 @@ ci-guard-check:
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
 
+# The gate itself needs a pull request's number, labels and body, so only CI
+# (`.github/workflows/changelog.yml`) runs it.
+# Prove changelog-check still refuses a pull request with no entry of its own.
+changelog-check-self-test:
+    bash scripts/changelog-check.test.sh
+
+# Every fuzz target is built by fuzz/Cargo.toml, run by the nightly fuzz job, and
+# named in fuzz/README.md. The reasoning lives in the script.
+fuzz-targets-check:
+    bash scripts/fuzz-targets-check.sh
+
+# Prove fuzz-targets-check still refuses what it claims to.
+fuzz-targets-check-self-test:
+    bash scripts/fuzz-targets-check.test.sh
+
+# Format-check and lint the fuzz targets on the pinned stable toolchain.
+#
+# The fuzz crate is its own workspace, so `fmt-check` and `lint` never see it,
+# and until this ran on pull requests only the nightly fuzz job compiled it: a
+# change that broke a target was found the morning after it merged. It starts
+# from the workspace lock, as the nightly job does (fuzz/.gitignore says why),
+# so it cannot pass `--locked`: cargo prunes that lock to the fuzz crate's graph.
+#
+# Not in `check`, because it builds a second workspace from cold; CI runs it on
+# every pull request, as it does `openapi-check`.
+fuzz-check:
+    cp Cargo.lock fuzz/Cargo.lock
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
+    cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings
+
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
 # The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
@@ -399,7 +456,7 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test check-plugins test audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg

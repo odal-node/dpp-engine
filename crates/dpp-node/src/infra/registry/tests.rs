@@ -101,8 +101,10 @@ fn request_with_facility(facility: Option<dpp_domain::FacilitySnapshot>) -> Regi
     RegistrationRequest {
         request_id: Uuid::now_v7(),
         passport_id: PassportId::new(),
-        operator_identifier: "did:web:test.example".into(),
-        operator_identifier_scheme: "did".into(),
+        // An LEI, one of the three schemes with an EN 18219 clause 6 route,
+        // which is what a registration now has to carry.
+        operator_identifier: "529900T8BM49AURSDO55".into(),
+        operator_identifier_scheme: "lei".into(),
         operator_name: "Test Operator GmbH".into(),
         facility_identifier: "LEGACY-FAC".into(),
         facility,
@@ -133,6 +135,7 @@ fn valid_request() -> RegistrationRequest {
         name: "Default Plant".into(),
         country: "DE".into(),
         address: Some("1 Allee, Berlin".into()),
+        identifier: None,
     }))
 }
 
@@ -153,6 +156,7 @@ fn facility_identifier_prefers_full_snapshot() {
         name: "Default Plant".into(),
         country: "DE".into(),
         address: Some("1 Allee, Berlin".into()),
+        identifier: None,
     }));
     let fid = facility_identifier_for(&request);
     assert_eq!(fid.scheme, "gln");
@@ -570,12 +574,13 @@ async fn register_unreachable_registration_endpoint_is_not_retried() {
 
     // ...but the registration endpoint itself points at a dead port, so the
     // *second* request (not token acquisition) is what hits Unreachable.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dead_addr = listener.local_addr().unwrap();
-    drop(listener);
-
+    //
+    // Port 1 is privileged, so no test's server can listen on it. A port taken
+    // with `:0` and released, as this used, could be handed to a mock server in
+    // a test running beside it before the request went out, which then accepted
+    // the registration.
     let mut config = mock_config(&base_url_alive);
-    config.endpoint.base_url = format!("http://{dead_addr}");
+    config.endpoint.base_url = "http://127.0.0.1:1".to_owned();
     let sync = EuRegistrySync::new(config).unwrap();
 
     let err = sync
@@ -1708,6 +1713,7 @@ fn responsible(did: &str, name: &str, country: &str) -> ResponsibleOperator {
         postal_address: None,
         electronic_address: None,
         country: country.to_owned(),
+        identifier: None,
     }
 }
 
@@ -1836,24 +1842,19 @@ async fn a_pending_transfer_reports_its_initiation_time() {
 /// a false statement `validate` cannot catch, because `did` is the one scheme
 /// accepted without structural verification.
 #[tokio::test]
-async fn a_vat_operator_is_not_submitted_as_a_did() {
+async fn an_lei_operator_is_not_submitted_as_a_did() {
     let state = Arc::new(MockState::default());
     state
         .register_queue
         .lock()
         .await
-        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-V")));
+        .push_back((axum::http::StatusCode::OK, accepted_response("CORR-L")));
     let base_url = mock_server::spawn(state.clone()).await;
     let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
 
-    let request = RegistrationRequest {
-        operator_identifier: "DE811234567".into(),
-        operator_identifier_scheme: "vat".into(),
-        ..valid_request()
-    };
-    sync.register(request)
+    sync.register(valid_request())
         .await
-        .expect("a VAT-scheme operator must register");
+        .expect("an LEI-scheme operator must register");
 
     let sent = state
         .register_bodies
@@ -1862,15 +1863,45 @@ async fn a_vat_operator_is_not_submitted_as_a_did() {
         .pop_front()
         .expect("the registry must have received a payload");
     let operator = &sent["submission"][0]["operatorId"];
-    assert_eq!(operator["scheme"], "vat");
-    assert_eq!(operator["value"], "DE811234567");
+    assert_eq!(operator["scheme"], "lei");
+    assert_eq!(operator["value"], "529900T8BM49AURSDO55");
     assert!(
         operator.get("did").is_none(),
-        "a VAT number is not a DID and must not be sent as one: {operator}"
+        "an LEI is not a DID and must not be sent as one: {operator}"
     );
 }
 
-/// A genuine DID still travels in the `did` field.
+/// 🚨 A VAT number and a DID are well formed and have no EN 18219 clause 6 route:
+/// an EU-wide VAT number has no ICD, and a DID is scheme 8 only with a credential
+/// a register has issued. dpp-core 0.23.0 refuses such a registration, and the
+/// adapter fails closed on that, so nothing reaches the registry.
+#[tokio::test]
+async fn an_operator_scheme_with_no_clause_6_route_is_refused_before_it_is_sent() {
+    let state = Arc::new(MockState::default());
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    for (scheme, value) in [("vat", "DE811234567"), ("did", "did:web:test.example")] {
+        let request = RegistrationRequest {
+            operator_identifier: value.into(),
+            operator_identifier_scheme: scheme.into(),
+            ..valid_request()
+        };
+        let err = sync
+            .register(request)
+            .await
+            .expect_err("a scheme with no clause 6 route must be refused");
+        assert!(
+            matches!(&err, DppError::Validation(_)) && err.to_string().contains("clause 6"),
+            "a '{scheme}' operator must be refused for its scheme, got: {err:?}"
+        );
+    }
+    assert_eq!(state.register_hits.load(Ordering::SeqCst), 0);
+}
+
+/// A genuine DID still travels in the `did` field, where an operator has chosen
+/// to submit a payload that fails validation (`allow_invalid_payloads`), which is
+/// now the only way a DID reaches the registry.
 #[tokio::test]
 async fn a_did_operator_keeps_its_did_field() {
     let state = Arc::new(MockState::default());
@@ -1880,11 +1911,20 @@ async fn a_did_operator_keeps_its_did_field() {
         .await
         .push_back((axum::http::StatusCode::OK, accepted_response("CORR-D")));
     let base_url = mock_server::spawn(state.clone()).await;
-    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+    let sync = EuRegistrySync::new(EuRegistrySyncConfig {
+        allow_invalid_payloads: true,
+        ..mock_config(&base_url)
+    })
+    .unwrap();
 
-    sync.register(valid_request())
+    let request = RegistrationRequest {
+        operator_identifier: "did:web:test.example".into(),
+        operator_identifier_scheme: "did".into(),
+        ..valid_request()
+    };
+    sync.register(request)
         .await
-        .expect("a did-scheme operator must register");
+        .expect("a did-scheme operator is submitted when the operator allows it");
 
     let sent = state.register_bodies.lock().await.pop_front().unwrap();
     let operator = &sent["submission"][0]["operatorId"];

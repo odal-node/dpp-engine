@@ -21,13 +21,21 @@ security fix is released as soon as it is verified.
 ## Before tagging
 
 1. **Gates green.** `just check` and `just test-integration` (Docker) pass locally, and
-   CI is green on the commit to be tagged.
+   CI is green on the commit to be tagged. The integration tier includes
+   `crates/dpp-node/tests/operator_paths.rs`, which runs the real `dpp-node` and `odal`
+   binaries through the two paths an operator takes: onboarding a fresh node, and
+   upgrading a node that holds passports from every captured release.
 2. **Changelog.** Rename `[Unreleased]` to `[X.Y.Z] - <date>` (Keep a Changelog format).
    Move any breaking-change wording found under *Added*, *Changed* or *Fixed* to
    *Breaking*: a break listed elsewhere is one nobody migrates for.
 3. **Migrations.** Every schema change is a new file in `ops/pg/`, and
    `just migrations-check` passes.
-4. **Onboarding.** `odal bootstrap` provisions the first API key against a fresh node.
+4. **Onboarding and upgrade.** Both are tested by step 1, not by hand: `odal bootstrap`
+   provisions the first API key against a fresh node, and the previous release's database
+   upgrades to this one with every published passport still serving its signed view and
+   still able to change status. The upgrade is only tested from releases that have a
+   fixture, so `upgrade_fixture_coverage.rs` fails this release's pull request if the
+   release before it has none (see *After tagging*).
 5. **README.** The crate table matches `crates/`, the `dpp-core` references match
    `[workspace.dependencies]`, and the resolver routes match
    `crates/dpp-resolver/src/router.rs`.
@@ -38,6 +46,14 @@ security fix is released as soon as it is verified.
    (`https://www.rfc-editor.org/info/rfcNNNN`), correct `Status as read`, and set `Read`
    to today. The gate proves every citation has a dated status; only this step proves
    the status is still current.
+8. **Verification record.** Write `docs/governance/releases/vX.Y.Z.md` and merge it, with
+   any CHANGELOG corrections it makes, before the release pull request. It traces every
+   pull request merged since the last tag to the entry that describes it, or says why it
+   needs none; checks each entry's claims against the code at the release commit, citing
+   the source or the test that pins it; and checks every issue those pull requests closed
+   against what it asked for. The changelog check proves an entry was written; only this
+   step proves it is still true at release. [`v0.15.0.md`](releases/v0.15.0.md) is the
+   shape to copy.
 
 ## Bumping the version
 
@@ -114,7 +130,41 @@ the Dockerfiles' build command as a supply-chain change.
 2. The image starts against a fresh PostgreSQL and passes `odal status`.
 3. The attestations are present, and the SBOM lists crates, not only Debian packages.
 4. `odal bootstrap` works against the released images.
-5. The release is announced.
+5. **The upgrade fixture is captured**, so the next release is tested upgrading from this
+   one: `just capture-upgrade-fixture <version>`, then commit
+   `crates/dpp-node/tests/fixtures/upgrade/v<version>/` in a pull request, with its own
+   test in `crates/dpp-node/tests/operator_paths.rs`
+   (`v<X>_<Y>_<Z>_upgrades_to_this_build`, like the others), which
+   `upgrade_fixture_coverage.rs` requires. It builds the
+   tag's own binaries, because a fixture written by later code would agree with that code
+   by construction. Skipping it fails the next release's pull request.
+6. The release is announced.
+
+## Repinning dpp-core
+
+A dpp-core release is published to crates.io, and a published crate cannot be taken
+back: a yank only stops new lockfiles resolving to it. So the engine's verdict on a core
+release comes **before** core publishes, not after, and only the engine can give it.
+dpp-core has no node, no database and no passports an earlier release stored. The
+0.15.0 upgrade defect came in exactly this way: core 0.22.0's lens read a stored `gtin`
+as a `productIdentifier`, every core suite passed, and a node upgraded over passports
+published before the repin could no longer change their status.
+
+1. **The previous engine release is captured.** Its upgrade fixture is committed (see
+   *After tagging*), so the repin is tested upgrading from what operators actually run.
+2. **The repin branch builds against the core release commit.** It moves the pins in
+   `Cargo.toml`, `fuzz/Cargo.toml` and the plugin SDK ABI guest
+   (`crates/dpp-plugin-host/tests/fixtures/abi-echo/Cargo.toml`), adapts to every break
+   core's CHANGELOG lists, and is developed with `just core-local`.
+3. **The candidate run is green.** Dispatch `.github/workflows/core-candidate.yml` on the
+   repin branch with `core_ref` set to the core release commit. It runs `just lint`,
+   `just test` and `just test-integration` against that commit, including
+   `operator_paths.rs`, which upgrades every captured release's database, and the plugin
+   SDK ABI test against a guest built with the candidate's SDK. A red run
+   stops the core release; the fix goes into core before it publishes.
+4. **Core publishes**, on the maintainer's word.
+5. **The repin drops the patch.** It relocks from crates.io, `just check` and CI pass with
+   `--locked`, and it merges like any other pull request.
 
 ## Hotfixes
 

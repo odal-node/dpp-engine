@@ -11,13 +11,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dpp_common::idempotency::{
-    Claim, IdempotencyError, IdempotencyStore, RequestKey, StoredResponse,
+    Claim, ClaimToken, IdempotencyError, IdempotencyStore, RequestKey, Settled, StoredResponse,
 };
 use sqlx::Row;
 
 use super::PgDal;
 
-/// PostgreSQL implementation of [`IdempotencyStore`] (migration 0036).
+/// PostgreSQL implementation of [`IdempotencyStore`] (migrations 0036 and 0044).
 pub struct PgIdempotencyRepo {
     dal: PgDal,
 }
@@ -33,6 +33,17 @@ impl PgIdempotencyRepo {
 /// type deliberately — `dpp-common` has no domain dependency.
 fn err(e: sqlx::Error) -> IdempotencyError {
     IdempotencyError::Unavailable(e.to_string())
+}
+
+/// What an outcome or a release did, from the number of rows it touched. One
+/// row is the claim it named; none means that claim is no longer the key's,
+/// because it was reclaimed or the row was swept.
+fn settled(rows_affected: u64) -> Settled {
+    if rows_affected == 0 {
+        Settled::Superseded
+    } else {
+        Settled::Applied
+    }
 }
 
 /// Seconds as an interval, saturating rather than panicking on an absurd value.
@@ -64,13 +75,18 @@ impl IdempotencyStore for PgIdempotencyRepo {
         //
         // `xmax = 0` is the standard way to tell an insert from an update in a
         // single `RETURNING`: it is zero on a freshly inserted tuple.
+        //
+        // The token is minted here and written with the claim, and a reclaim
+        // replaces it, so the previous holder's token matches nothing.
+        let token = ClaimToken::mint();
         let inserted = sqlx::query(
             r#"INSERT INTO odal.idempotency_key
                  (principal, method, path, idem_key, fingerprint, state,
-                  lease_expires_at, expires_at)
-               VALUES ($1,$2,$3,$4,$5,'in_flight', now() + $6, now() + $7)
+                  lease_expires_at, expires_at, claim_token)
+               VALUES ($1,$2,$3,$4,$5,'in_flight', now() + $6, now() + $7, $8)
                ON CONFLICT (principal, method, path, idem_key) DO UPDATE
                  SET fingerprint      = EXCLUDED.fingerprint,
+                     claim_token      = EXCLUDED.claim_token,
                      state            = 'in_flight',
                      response_status  = NULL,
                      response_body    = NULL,
@@ -91,13 +107,14 @@ impl IdempotencyStore for PgIdempotencyRepo {
         .bind(fingerprint)
         .bind(as_interval(lease))
         .bind(as_interval(retention))
+        .bind(token.as_uuid())
         .fetch_optional(self.dal.pool())
         .await
         .map_err(err)?;
 
         if inserted.is_some() {
             // Either a brand-new row, or a reclaimed one. Both are ours to run.
-            return Ok(Claim::Claimed);
+            return Ok(Claim::Claimed(token));
         }
 
         // The conflict target existed and was not reclaimable. Read what stands
@@ -154,9 +171,10 @@ impl IdempotencyStore for PgIdempotencyRepo {
     async fn complete(
         &self,
         key: &RequestKey,
+        claim: &ClaimToken,
         response: &StoredResponse,
-    ) -> Result<(), IdempotencyError> {
-        sqlx::query(
+    ) -> Result<Settled, IdempotencyError> {
+        let result = sqlx::query(
             r#"UPDATE odal.idempotency_key
                SET state = 'completed',
                    response_status = $5,
@@ -164,7 +182,8 @@ impl IdempotencyStore for PgIdempotencyRepo {
                    content_type    = $7,
                    completed_at    = now()
                WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4
-                 AND state = 'in_flight'"#,
+                 AND state = 'in_flight'
+                 AND claim_token = $8"#,
         )
         .bind(&key.principal)
         .bind(&key.method)
@@ -173,29 +192,36 @@ impl IdempotencyStore for PgIdempotencyRepo {
         .bind(i16::try_from(response.status).unwrap_or(500))
         .bind(&response.body)
         .bind(&response.content_type)
+        .bind(claim.as_uuid())
         .execute(self.dal.pool())
         .await
         .map_err(err)?;
-        Ok(())
+        Ok(settled(result.rows_affected()))
     }
 
-    async fn release(&self, key: &RequestKey) -> Result<(), IdempotencyError> {
+    async fn release(
+        &self,
+        key: &RequestKey,
+        claim: &ClaimToken,
+    ) -> Result<Settled, IdempotencyError> {
         // Deleted, not marked: an `in_flight` row left behind would hold the key
         // hostage for the rest of its lease, and the point of releasing is that
         // the caller may try again now.
-        sqlx::query(
+        let result = sqlx::query(
             r#"DELETE FROM odal.idempotency_key
                WHERE principal = $1 AND method = $2 AND path = $3 AND idem_key = $4
-                 AND state = 'in_flight'"#,
+                 AND state = 'in_flight'
+                 AND claim_token = $5"#,
         )
         .bind(&key.principal)
         .bind(&key.method)
         .bind(&key.path)
         .bind(&key.key)
+        .bind(claim.as_uuid())
         .execute(self.dal.pool())
         .await
         .map_err(err)?;
-        Ok(())
+        Ok(settled(result.rows_affected()))
     }
 
     async fn purge_expired(&self) -> Result<u64, IdempotencyError> {

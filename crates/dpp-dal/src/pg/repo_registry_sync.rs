@@ -20,17 +20,21 @@ use dpp_types::{
     RegistrySyncStatus,
 };
 
-use super::{PgDal, db_err, repo_passport::update_passport_in_tx, require_updated};
+use super::{PgDal, PgPassportRepo, db_err, require_updated};
 
 /// PostgreSQL implementation of [`RegistrySyncOutbox`].
 pub struct PgRegistrySyncRepo {
     dal: PgDal,
+    passports: PgPassportRepo,
 }
 
 impl PgRegistrySyncRepo {
     /// Construct a repo sharing the given pool handle.
     pub fn new(dal: PgDal) -> Self {
-        Self { dal }
+        Self {
+            passports: PgPassportRepo::new(dal.clone()),
+            dal,
+        }
     }
 
     fn row_to_sync(row: &sqlx::postgres::PgRow) -> RegistrySyncRow {
@@ -138,7 +142,7 @@ impl RegistrySyncOutbox for PgRegistrySyncRepo {
     ) -> Result<(), DppError> {
         let mut tx = self.dal.begin().await?;
         // Same transaction as the passport write — the atomicity guarantee.
-        update_passport_in_tx(&mut tx, passport).await?;
+        self.passports.update_in_tx(&mut tx, passport).await?;
         queue_registration_in_tx(&mut tx, passport.id, &payload).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(())

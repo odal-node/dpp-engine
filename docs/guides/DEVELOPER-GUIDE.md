@@ -30,7 +30,7 @@ set -a; . ./.env; set +a
 just cli -- bootstrap --legal-name "Example GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 just cli -- facility add --name "Main plant" --value 4012345000009 --country DE --default
-just cli -- operator-id add --scheme vat --value DE123456789 --primary
+just cli -- operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
 just cli -- passport import ops/demo/samples/battery-full.json
 just cli -- passport validate
 just cli -- passport publish
@@ -92,7 +92,7 @@ binary, with its default and its reasoning. The ones you need to run the node:
 | `DID_WEB_BASE_URL` | `http://localhost:8001` | Origin of the `did:web` identifier |
 | `RESOLVER_BASE_URL` | `http://localhost:8003` | Origin printed into QR codes. Required; no default |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | | Local admin credential for `odal bootstrap`. Leave unset once a key exists if you do not want the path |
-| `NODE_PROFILE` | `development` (default) | `sandbox` refuses to start while a required trust adapter is a stub; `production` also refuses sandbox adapters |
+| `NODE_PROFILE` | `development` (default) | Exactly `development`, `sandbox` or `production`; any other value refuses to start. `sandbox` refuses to start while a required trust adapter is a stub; `production` also refuses sandbox adapters |
 | `LOG_LEVEL` | `info` | A `tracing` filter, so `dpp_vault=debug,info` also works |
 | `LOG_FORMAT` | unset | `pretty` for readable terminal output; JSON otherwise |
 

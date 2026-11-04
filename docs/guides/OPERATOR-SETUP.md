@@ -70,7 +70,7 @@ odal --profile prod operator set --legal-name "Example GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 odal --profile prod facility add --name "Berlin plant" --scheme gln \
   --value 4012345000009 --country DE --default
-odal --profile prod operator-id add --scheme vat --value DE123456789 --primary
+odal --profile prod operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
 ```
 
 - `bootstrap` mints the first API key, prints it once and saves it to
@@ -264,6 +264,7 @@ Serve the resolver (port 8003) on the `RESOLVER_BASE_URL` host.
 | Node stays `starting`; logs repeat *"password authentication failed for user odal_app"* | The role-provisioning hook was not mounted on first start | Make sure `ops/bootstrap/` is beside `docker/`, then recreate the database volume (the hook runs only on first initialisation) |
 | *"No profile configured yet"* | Nothing configured on this machine | `odal init` or `odal profile create <name> --node-url <url>` |
 | Publish fails `422` *"missing required registry identity"* | No default facility or primary operator identifier | `odal facility add … --default`, `odal operator-id add … --primary` |
+| Publish fails `422` *"the operator identifier cannot be registered"* | The primary operator identifier is a VAT or EORI number, which the EU registry does not take | Make an LEI or a D-U-N-S number primary: `odal operator-id add --scheme lei … --primary` |
 | Import rejects every row on `gtin` | 13-digit GTINs, or wrong check digits | Use GTIN-14; the error names the expected digit |
 | Retire fails *"retention policy forbids retiring before …"* | The retention window is still running | Suspend instead |
 | `odal verify <id>`: *"Dossier not found"* | A passport id was passed | Pass a dossier id from `odal passport evidence <passport-id>` |

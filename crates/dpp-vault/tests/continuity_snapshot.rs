@@ -281,6 +281,7 @@ fn draft_passport() -> Passport {
             name: "Test Facility".into(),
             country: "DE".into(),
             address: None,
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,

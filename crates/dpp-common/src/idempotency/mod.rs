@@ -37,6 +37,6 @@ pub use middleware::{
 };
 pub use policy::{RoutePolicy, keyed_routes, policy_for};
 pub use store::{
-    Claim, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore, RequestKey,
-    StoredResponse, fingerprint,
+    Claim, ClaimToken, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore,
+    RequestKey, Settled, StoredResponse, fingerprint,
 };

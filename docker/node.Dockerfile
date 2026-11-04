@@ -13,7 +13,7 @@
 # it once and both images stay in lockstep.
 #
 # Builder is pinned to bookworm so the binary's glibc matches the bookworm-slim
-# runtime below (rust:1.96-slim tracks newer Debian and would link glibc 2.38+).
+# runtime below (rust:1.99-slim tracks newer Debian and would link glibc 2.38+).
 #
 # 🚨 The tag's Rust version MUST equal `rust-toolchain.toml`'s channel — the
 # toolchain CI tests with. The images job fails when they differ. The toolchain
@@ -25,7 +25,7 @@
 ARG BUILD_MODE=published
 
 # ── Build deps shared by both modes ─────────────────────────────────────────────
-FROM rust:1.96.0-slim-bookworm AS builder-base
+FROM rust:1.99.1-slim-bookworm AS builder-base
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 

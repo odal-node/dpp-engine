@@ -58,3 +58,8 @@ quick-xml     = "0.42"
 dpp-rules     = { workspace = true }
 tower         = { workspace = true, features = ["util"] }
 proptest      = { workspace = true }
+criterion     = { workspace = true }
+
+[[bench]]
+name    = "import_parse"
+harness = false

@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     // adapter when configured) — so a production profile must refuse to boot
     // here too, or this binary would silently run with placeholder trust.
     let trust = NodeTrustReport::new(
-        NodeProfile::from_env(),
+        NodeProfile::from_env().context("Invalid NODE_PROFILE")?,
         vec![
             TrustPort {
                 port: "registry_sync",

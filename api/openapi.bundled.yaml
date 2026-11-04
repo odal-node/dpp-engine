@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Odal Node API
-  version: 0.14.0
+  version: 0.15.0
   description: |
     The HTTP API of a self-hosted Odal Node: create, validate, sign, publish and
     serve EU Digital Product Passports. Pre-production: the API can still change
@@ -3339,6 +3339,8 @@ paths:
           $ref: '#/components/responses/IdempotentRequestInFlight'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/ImportBusy'
   /integrator/api/v1/imports/{job_id}:
     get:
       operationId: getImportJobStatus
@@ -8428,9 +8430,11 @@ components:
 
         The mandatory-content half is the reason this exists. It is the gate that most
         often refuses a battery (41 data points for an electric-vehicle one, 40 for
-        an LMT battery, 33 for an industrial one) and it could not previously be
-        previewed anywhere: it is reachable only from a stored passport, and the only
-        dry-run the API offered takes an unsaved request body.
+        an LMT battery, 33 for an industrial one, and one more for each placed from
+        18 August 2027, when the due diligence report falls due unless Art. 47 exempts
+        the battery) and it could not previously be previewed anywhere: it is
+        reachable only from a stored passport, and the only dry-run the API offered
+        takes an unsaved request body.
       required:
         - ready
         - blockers
@@ -9293,6 +9297,31 @@ components:
             title: Gone
             status: 410
             detail: This passport is suspended and is not publicly available.
+    ImportBusy:
+      description: |
+        The node is already running as many imports as it allows.
+
+        Returned after the caller is authenticated and before the handler reads the
+        upload, so nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT`
+        (default 2). An import over the synchronous threshold keeps its place until its
+        background job finishes, so the `202` does not free it. Retry after the delay in
+        `Retry-After`. The `429` is not recorded under an `Idempotency-Key`, so a retry
+        with the same key runs.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/too-many-requests
+            title: Too Many Requests
+            status: 429
+            detail: This node is already running as many imports as it allows. Retry once one has finished.
     NotAcceptable:
       description: |
         No representation matches the request's `Accept` header. The response

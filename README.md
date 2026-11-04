@@ -89,7 +89,7 @@ set -a; . ./.env; set +a
 odal bootstrap --legal-name "Example Batteries GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 odal facility add --name "Berlin plant" --value 4012345000009 --country DE --default
-odal operator-id add --scheme vat --value DE123456789 --primary
+odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
 ```
 
 `bootstrap` prints an API key once and saves it to `~/.config/odal/credentials.toml`.

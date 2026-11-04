@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Odal Node API",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "description": "The HTTP API of a self-hosted Odal Node: create, validate, sign, publish and\nserve EU Digital Product Passports. Pre-production: the API can still change\nbetween minor versions.\n\nTwo deployables serve it:\n\n- **Node** (`http://localhost:8001`): one process with three route groups,\n  `/vault/*` (passport lifecycle), `/identity/*` (`did:web` document) and\n  `/integrator/*` (CSV/XLSX import).\n- **Resolver** (`http://localhost:8003`): the public, unauthenticated reader\n  that GS1 Digital Link scans land on.\n\nAuthenticated vault routes are under `/vault/api/v1/`. Send an API key as\n`Authorization: Bearer odal_sk_...`; each key has the scope `read`, `write`\nor `admin`. The local admin credential (HTTP Basic) exists to mint the first\nkey. Errors are RFC 9457 problem documents.\n\nRegulations implemented: Regulation (EU) 2024/1781 (ESPR) and Regulation\n(EU) 2023/1542 (batteries). Identity follows W3C DID Core 1.0 and the W3C\nVerifiable Credentials Data Model 2.0.\n",
     "contact": {
       "name": "Odal Support",
@@ -4051,6 +4051,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "429": {
+            "$ref": "#/components/responses/ImportBusy"
           }
         }
       }
@@ -9796,7 +9799,7 @@
       },
       "PublishReadiness": {
         "type": "object",
-        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run, so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery (41 data points for an electric-vehicle one, 40 for\nan LMT battery, 33 for an industrial one) and it could not previously be\npreviewed anywhere: it is reachable only from a stored passport, and the only\ndry-run the API offered takes an unsaved request body.\n",
+        "description": "Whether the passport would clear the publish gates that can be answered\nwithout attempting the transition: the category **mandatory-content** gate and\nthe product-group data/schema gates.\n\nDeliberately not the whole of publish. The registry-identity requirement is\noperator state rather than passport state, and the binding-compliance gate\nneeds a determination this route does not run, so `ready: true` means \"these\ngates pass\", not \"publish will certainly succeed\".\n\nThe mandatory-content half is the reason this exists. It is the gate that most\noften refuses a battery (41 data points for an electric-vehicle one, 40 for\nan LMT battery, 33 for an industrial one, and one more for each placed from\n18 August 2027, when the due diligence report falls due unless Art. 47 exempts\nthe battery) and it could not previously be previewed anywhere: it is\nreachable only from a stored passport, and the only dry-run the API offered\ntakes an unsaved request body.\n",
         "required": [
           "ready",
           "blockers",
@@ -10554,6 +10557,31 @@
               "title": "Gone",
               "status": 410,
               "detail": "This passport is suspended and is not publicly available."
+            }
+          }
+        }
+      },
+      "ImportBusy": {
+        "description": "The node is already running as many imports as it allows.\n\nReturned after the caller is authenticated and before the handler reads the\nupload, so nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT`\n(default 2). An import over the synchronous threshold keeps its place until its\nbackground job finishes, so the `202` does not free it. Retry after the delay in\n`Retry-After`. The `429` is not recorded under an `Idempotency-Key`, so a retry\nwith the same key runs.\n",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/too-many-requests",
+              "title": "Too Many Requests",
+              "status": 429,
+              "detail": "This node is already running as many imports as it allows. Retry once one has finished."
             }
           }
         }

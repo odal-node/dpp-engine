@@ -84,13 +84,16 @@ before the first publish.
 - Firewall: allow 22, 80 (ACME) and 443; deny the rest.
 - `fail2ban` and unattended security upgrades.
 - **Bind the containers to loopback**, so only the proxy reaches them. The shipped
-  Compose file publishes on all interfaces; change the two mappings:
+  Compose file publishes on all interfaces; change the node's mapping and the
+  resolver's first one, and keep the resolver's second, which publishes its metrics
+  listener on loopback only. The resolver's per-address limit relies on this too (see
+  [Limiting request rates](#limiting-request-rates)):
 
   ```yaml
   node:
     ports: ["127.0.0.1:${NODE_PORT:-8001}:8000"]
   resolver:
-    ports: ["127.0.0.1:${RESOLVER_PORT:-8003}:8003"]
+    ports: ["127.0.0.1:${RESOLVER_PORT:-8003}:8003", "127.0.0.1:9101:9101"]
   ```
 
 ### 3. TLS proxy
@@ -106,6 +109,81 @@ dpp.operator.example {
 
 Caddy obtains and renews the certificates.
 
+#### Limiting request rates
+
+The node limits one thing itself: how many bulk imports run at once.
+`IMPORT_MAX_CONCURRENT` (default 2) is checked after the caller is authenticated and
+before the upload is read. An import that finds no free slot gets `429` with a
+`Retry-After`, and `import_rejections_total{reason="busy"}` counts it. An import over
+100 rows keeps its slot while its background job runs, so the `202` does not free it,
+and an upload that has not arrived after 120 seconds is refused with `400` and gives
+its slot back. An upload over 5 MiB is refused with `400` as it is read. A request
+that carries an `Idempotency-Key` is admitted the same way, ahead of the idempotency
+layer, so a keyed upload is held to the same cap, deadline and size limit as an
+unkeyed one. `BATCH_CONCURRENCY` bounds the rows one import writes at a time.
+
+**The node does not limit request rates.** The public passport reads, the credential
+read (which is unauthenticated and fetches the issuer's DID document) and the
+authenticated API accept whatever reaches them. Set per-address and per-credential
+rates in front of the node, at the proxy or a network service. The node does not read
+`X-Forwarded-For`, so a limit inside it would see one address, the proxy's.
+
+**The resolver does limit per address.** It allows `RATE_LIMIT_RPM` requests a minute
+from one address (default 120, in a fixed one-minute window), answers the rest with
+`429` and `Retry-After: 60`, and counts them in `rate_limit_rejections_total`. Health
+and readiness probes are exempt. Compose passes `RATE_LIMIT_RPM` and
+`TRUST_FORWARDED_FOR` from `.env` to the resolver container, with those defaults.
+
+Which address it counts is the decision to make. With `TRUST_FORWARDED_FOR` unset or
+`false` it counts the TCP peer, which behind the proxy is the proxy: every visitor
+shares one `RATE_LIMIT_RPM` budget, so the whole public gets 120 requests a minute.
+**Set `TRUST_FORWARDED_FOR=true` in `.env` for this topology.** The resolver then counts
+the last address in `X-Forwarded-For`, the one the proxy put there. That is safe only
+when both of these hold:
+
+- **The proxy is the only way in.** With the resolver port bound to loopback (step 2)
+  it is. A client that can reach the resolver directly can send any `X-Forwarded-For`
+  and take a fresh budget on every request.
+- **The proxy sets the header.** It may replace what the client sent or add to it:
+  either way its own entry is the last, and that is the one counted. Caddy's
+  `reverse_proxy` replaces it by default and adds to it when the connecting address is
+  in `trusted_proxies` (checked on Caddy 2.11). nginx does either, with
+  `proxy_set_header X-Forwarded-For $remote_addr;` or `$proxy_add_x_forwarded_for`. A
+  proxy that passes the client's header through untouched makes the count the
+  client's choice. If a proxy adds its entry as a separate header line, the last line
+  is the one read.
+
+Behind a CDN or another proxy in front of yours, the last entry is that proxy's
+address, not the visitor's, so visitors who arrive through the same address share one
+budget. Limit at that layer instead.
+
+To check it behind your proxy, send ten more requests than the limit from one machine,
+inside one minute, then one request from a second machine. Set `LIMIT` to your
+`RATE_LIMIT_RPM` and `URL` to a published passport's address:
+
+```bash
+LIMIT=120
+URL='https://dpp.operator.example/dpp/<a-published-id>'
+for i in $(seq $((LIMIT + 10))); do
+  curl -s -o /dev/null -w '%{http_code}\n' "$URL"
+done | sort | uniq -c
+```
+
+The first machine sees `429` for the requests past `LIMIT`, and the second machine's
+request must not. If it does, the resolver is counting the proxy's address.
+
+For the limits you set in front of the node:
+
+- **Caddy** has no rate-limiting handler in its standard build. The usual one is a
+  third-party module compiled in with `xcaddy`, which is not part of the Caddy
+  project and keeps its counters in memory only. A custom build is also not updated by
+  the distribution's package, so you take on patching Caddy yourself.
+- **nginx** limits requests with `limit_req_zone` and `limit_req`, and `limit_conn`
+  bounds open connections. Return `429` with `limit_req_status`.
+
+Whichever you use, test it: send more than the limit and confirm the extra requests are
+refused, since a limit that was never exceeded is untested.
+
 ### 4. Configuration
 
 `.env` is the contract between you and the node. Set `chmod 600 .env`.
@@ -119,8 +197,11 @@ Caddy obtains and renews the certificates.
 | `KEY_STORE_PATH` | Set by Compose | Leave it on the `node-data` volume; anywhere else, a container recreate generates a new key |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | For onboarding | Remove them once API keys exist, unless you want the recovery path available |
 | `ODAL_VERSION` | Yes | A release number without the tag's `v` (tag `v0.14.0` is image `0.14.0`). Never `latest`. Record the image digest you deploy, and pin the PostgreSQL image digest too |
-| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live |
-| `METRICS_ADDR` | No | Keep on loopback. See [METRICS-PLAN.md](METRICS-PLAN.md) |
+| `NODE_PROFILE` | No | Leave unset (`development`) until every required trust port can be live. A value that is not exactly `development`, `sandbox` or `production` stops the node at boot |
+| `TRUST_FORWARDED_FOR` | For the reference proxy | `true`, so the resolver rate-limits each visitor and not the proxy. Only with the resolver bound to loopback and a proxy that sets `X-Forwarded-For`; see [Limiting request rates](#limiting-request-rates) |
+| `RATE_LIMIT_RPM` | No | Requests a minute per address at the resolver. Default 120 |
+| `CACHE_TTL_SECS` | No | The resolver's cache lifetime in seconds, default 30. It is also the longest a suspension or recall takes to reach a scanner, so raise it only knowing that |
+| `METRICS_ADDR` | No | The node's listener only; keep it on loopback. The Compose file fixes the resolver's own. See [METRICS-PLAN.md](METRICS-PLAN.md) |
 | `PLUGINS_DIR` | Set by Compose (`/plugins`) | Put the signed product group `.wasm` files and their `.sig` files on the `node-plugins` volume, and set `PLUGIN_SIGNING_KEY` |
 | `RULESET_BUNDLE_PATH`, `RULESET_PUBLISHER_PUBKEY` | No | Both or neither. A bad bundle keeps the last good one and increments `ruleset_load_failures_total`. A new bundle is taken within `RULESET_POLL_INTERVAL_SECS` (default 300), or at once with `odal ruleset reload` |
 | `DATABASE_MIGRATE_URL` | No | With it, migrations run at every start. For a stricter setup, start once with it set to apply migrations, then remove it so the long-running node holds only the application role |
@@ -178,7 +259,12 @@ untested backup is not a backup.
 | Probe | Where it runs | What it can check |
 |---|---|---|
 | External uptime check on `https://dpp.operator.example/health` and one known passport | Any uptime service | Liveness only. Do not give an external service an API key: even a `read` key reads every passport |
-| `trust_mode` and the other series on the metrics listener | On the VM (Prometheus, or a cron job reading `/metrics`) | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
+| `trust_mode` and the other series on the metrics listener | The resolver's: on the VM (Prometheus, or a cron job reading `/metrics`). The node's: only inside its own container, until the Compose file publishes it | Trust mode per port, signing failures, outbox backlogs, ruleset failures. Needs no credential |
+
+The Compose file publishes the resolver's metrics listener on the VM's
+`127.0.0.1:9101`, which is where `rate_limit_rejections_total` and the resolver's
+other series are read. It does not publish the node's listener; see
+[METRICS-PLAN.md](METRICS-PLAN.md#where-metrics-are-served).
 
 Alert at least on: `trust_mode` below its expected value for any port,
 `signing_failures_total` increasing, `registry_outbox_stalled > 0`,
@@ -243,6 +329,24 @@ The test `signature_signed_before_rotation_still_verifies_after` in `dpp-identit
 covers this. Follow the archive-then-generate order documented on
 `rotate_key_handler`.
 
+### The DID domain is a trust root
+
+A passport is verified against the operator's `did:web` document, which is fetched
+over HTTPS from the operator's domain. Whoever controls that domain's DNS records or
+its TLS endpoint can change which keys the document names, and so which signatures
+verify. The resolver caches a fetched document for five minutes. Nothing in the node
+detects a changed document today, and a verifier that trusts only the document trusts
+your DNS. Protect the domain accordingly:
+
+- Turn on the registrar's transfer lock and two-factor sign-in for the registrar and
+  the DNS provider, and keep the number of people with access small.
+- Sign the zone (DNSSEC) where the registrar supports it.
+- Publish CAA records that name the certificate authority you use, so no other issuer
+  is asked to certify the domain.
+- After every key rotation, fetch your DID document and record the thumbprints it
+  names. Compare a fresh fetch against that record on a schedule and treat a
+  difference you did not make as an incident.
+
 ### Key custody
 
 Decide and write down who holds `KEY_STORE_PASSPHRASE`:
@@ -252,6 +356,20 @@ Decide and write down who holds `KEY_STORE_PASSPHRASE`:
 - **The administrator holds it** in a password manager, with a sealed offline copy.
 
 Either way, the custody arrangement belongs in the operator's records.
+
+What protects the key while the node runs:
+
+- The key store is an encrypted file (AES-256-GCM, key derived from the passphrase
+  with Argon2id). The node reads the passphrase from the `KEY_STORE_PASSPHRASE`
+  environment variable and nowhere else, so anyone who can read the node's
+  environment (`docker inspect`, the Compose file, a copy of `.env`) holds the
+  passphrase, and the encrypted file plus the passphrase is the signing identity.
+- Keep `.env` readable by the deploy user only (mode `0600`), keep it out of
+  version control, and keep it out of any backup that leaves the host. Back up the
+  key store file and the passphrase separately.
+- The decrypted key is held in the node's memory. There is no hardware-backed or
+  remote-signer option today, so a host compromise is a key compromise. Rotate the
+  key if the host may have been exposed.
 
 ## Go-live checklist
 
