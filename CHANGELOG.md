@@ -59,6 +59,29 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   against an earlier version keeps its classes and the bytes its signatures
   cover; a new one is written against the new version. (#561)
 
+### Added
+
+- **A lost submission handle is found again.** A replayed idempotency key is
+  answered with the conflict and not the submission, so a node whose first
+  attempt got through and whose record of the answer was lost, by a crash
+  between the `POST` and the row write or a failed write, held a `submitted` row
+  it could never poll. The drain now calls `dpp-core` 0.23.0's
+  `find_submission`, which reads the dashboard and matches the passport by the
+  unique product identifier it was submitted under, the one thing the registry
+  reports each passport against, and answers with the handle and the ruling
+  together, so a recovered passport is registered in the same pass. It does not
+  guess: an identifier is not unique to a passport, since a successor can be
+  submitted under its predecessor's, so more than one submission reporting it is
+  `Ambiguous`, listed for a person, and a task still being checked reports no
+  passport, so not finding one while any is on the list is never read as the
+  registry holding none, and a single match is taken only from a search that
+  read every task. A row that is not found is backed off and counted as an
+  attempt, so it reaches the stalled count instead of sorting to the head of the
+  queue, and so is one whose recovered handle could not be written down.
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
+
 ### Fixed
 
 - **A draft is published under the operator's primary identifier as it stands
@@ -107,6 +130,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group's data when it expands the document. The context names withheld
   fields too, as terms; their values are not served, and the tests that scan the
   body for a withheld field now read it without its `@context`. (#561)
+
+- **A submission past the first thousand tasks on the dashboard is found.** The
+  dashboard's task list was read from the front for twenty pages, so once an
+  operator had more than a thousand tasks a new submission on an oldest-first
+  list was never found and was polled forever. The first page says how long the
+  list is (`totalElements`), and a longer one is now read from both ends,
+  interleaved, since the order is not recorded. A search that ran out says so
+  instead of reporting the registry as still working. (#484)
+
+- **An access credential that fails authentication is told which of seven
+  things to fix:** a token that is not a compact JWS, no key for its `kid`, a
+  signature that does not verify, a header or signature that cannot be read, a
+  token not typed as a VC-JWT, a payload that is not a credential, or an issuer
+  other than its document's. They read the same before, so an issuer whose
+  tooling had not yet set `typ` was sent to debug a sound signature. The
+  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
+  sentence. (#484)
 
 ## [0.15.0] - 2026-11-03
 
