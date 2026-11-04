@@ -1365,6 +1365,33 @@ mod label_resolution {
         }
     }
 
+    /// Whatever its serial number, for the same reason. This node states none,
+    /// but a passport stating one, another, or only one of the two is a second
+    /// holder of the identifier all the same: the old lookup narrowed to the
+    /// passport's own serial number as well as its lot.
+    #[tokio::test]
+    async fn a_second_passport_under_one_link_or_did_and_another_serial_cannot_go_live() {
+        for identifier in [did(), link()] {
+            for (held, wanted) in [
+                (Some("SN-1"), Some("SN-2")),
+                (Some("SN-1"), None),
+                (None, Some("SN-1")),
+            ] {
+                let repo = InMemoryPassportRepo::default();
+                let mut first = passport_identified(identifier.clone(), PassportStatus::Published);
+                first.serial_number = held.map(str::to_owned);
+                let mut second = passport_identified(identifier.clone(), PassportStatus::Draft);
+                second.serial_number = wanted.map(str::to_owned);
+                store(&repo, &[&first, &second]).await;
+
+                assert!(
+                    live_elsewhere(&repo, &second).await,
+                    "{identifier} held under serial {held:?} must refuse {wanted:?}"
+                );
+            }
+        }
+    }
+
     /// The other direction, so the case above is not a check that refuses every
     /// link and DID: another value, a superseded holder and a chain are all free.
     #[tokio::test]

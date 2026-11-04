@@ -525,6 +525,16 @@ impl PassportRepository for PgPassportRepo {
     ///
     /// Filtered afterwards by the port's own rule, for the reason
     /// [`find_by_identifier`](Self::find_by_identifier) gives.
+    ///
+    /// # A row that cannot be read fails the lookup
+    ///
+    /// Every row carrying the identifier is read, whatever its lot or status,
+    /// and one that does not decode fails the whole lookup rather than being
+    /// skipped. Publish asks this whether the identifier is already held, and a
+    /// row it cannot read is one it cannot rule out: skipped, it could be the
+    /// live holder, and two live holders of one identifier cannot be repaired,
+    /// where a publish refused for it can be retried once the row reads. The
+    /// two lookups above read their rows the same way.
     async fn find_by_product_identifier(
         &self,
         identifier: &ProductIdentifier,

@@ -681,6 +681,47 @@ async fn a_link_or_did_finds_every_passport_carrying_it() {
     assert_eq!(found(&link).await, [link_holder.id]);
 }
 
+/// A row carrying the identifier that does not read fails the lookup, rather
+/// than being left out of it.
+///
+/// Publish asks this lookup whether a link or a DID is already held. A row it
+/// cannot read might be the live holder, so the lookup fails closed: a publish
+/// refused for it can be retried once the row reads, and two live holders of
+/// one identifier cannot be repaired.
+#[tokio::test]
+async fn a_row_carrying_the_identifier_that_cannot_be_read_fails_the_lookup() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let did = dpp_domain::ProductIdentifier::did("did:web:acme.example:b:1").expect("did");
+
+    // A document that names the DID and nothing else a passport needs.
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .connect(&pg.admin_url)
+        .await
+        .expect("admin");
+    sqlx::query(
+        "INSERT INTO odal.passport
+           (id, product_group, status, retention_locked, schema_version, version,
+            created_at, updated_at, doc)
+         VALUES ($1, 'battery', 'draft', false, '1.0.0', 1, now(), now(), $2)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(serde_json::json!({
+        "productGroupData": {
+            "productGroup": "battery",
+            "productIdentifier": { "scheme": "did", "did": did.as_str() }
+        }
+    }))
+    .execute(&admin)
+    .await
+    .expect("insert the unreadable row");
+
+    assert!(
+        repo.find_by_product_identifier(&did).await.is_err(),
+        "an unreadable row carrying the identifier must fail the lookup, not vanish from it"
+    );
+}
+
 // T8 — grant coverage: the app role can read every table a migration creates.
 // Catches the "0010's grants were a snapshot" lesson (0017 had to re-grant): a
 // migration that adds a table after 0010 must ship its own odal_app grant, or
