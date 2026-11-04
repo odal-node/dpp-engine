@@ -3,7 +3,7 @@
 //! types, and makes the actual REST calls via `EuRegistrySync`.
 
 use super::client::{EuRegistrySync, RetryableError};
-use super::dashboard::{Task, TaskPage, plan_pages, report_for};
+use super::dashboard::{Task, TaskPage, order_of, plan_pages, report_for};
 use async_trait::async_trait;
 use chrono::Utc;
 use dpp_domain::{
@@ -22,7 +22,7 @@ use dpp_registry::{
     REGISTRATION_PATH, RegistrationLevel, RegistrationPayload, RegistrationSubmission,
     RegistryErrorBody, RegistryStatusCode, STATUS_IDEMPOTENCY_KEY_REUSED, STATUS_PATH_TEMPLATE,
     ServiceProviderReference, StatusResponse, SubmissionReceipt, TASK_RESULT_PATH_TEMPLATE,
-    TASKS_PATH, TRANSFER_PATH_TEMPLATE, TransferNotification,
+    TASKS_PATH, TASKS_SORT_NEWEST_FIRST, TRANSFER_PATH_TEMPLATE, TransferNotification,
 };
 
 /// Map the port's service provider onto the registry's reference to one.
@@ -178,9 +178,12 @@ fn refusal_reason(resp: &EuRegistryResponse) -> String {
 impl EuRegistrySync {
     /// One page of the operator's dashboard tasks.
     async fn task_page(&self, tasks_url: &str, page: u32) -> Result<TaskPage, DppError> {
+        // Newest first, as the registry's own interface asks for it. What comes back
+        // is checked on the first page ([`order_of`]) and not assumed.
         let query = [
             ("page", page.to_string()),
             ("size", TASK_PAGE_SIZE.to_string()),
+            ("sort", TASKS_SORT_NEWEST_FIRST.to_owned()),
         ];
         self.with_retry(|| self.get_json(tasks_url, &query, "task list"))
             .await
@@ -190,15 +193,21 @@ impl EuRegistrySync {
     /// Read the dashboard's task list until `is_hit` is satisfied, or until the
     /// pages worth reading have been.
     ///
-    /// The first page says how long the list is, and [`plan_pages`] decides what
-    /// else is read: all of a list that fits the cap, and both ends of one that
-    /// does not, since the registry's order is not known.
+    /// The first page says how long the list is and, from its `submittedAt` times,
+    /// whether it came back newest first, and [`plan_pages`] decides what else is
+    /// read: all of a list that fits the cap, the front of a long one verified
+    /// newest first, and both ends of one whose order the page did not show.
     async fn search_tasks(&self, is_hit: impl Fn(&Task) -> bool) -> Result<TaskSearch, DppError> {
         let tasks_url = url_for(&self.config.endpoint.dashboard_base_url, TASKS_PATH, "")?;
 
         let first = self.task_page(&tasks_url, 0).await?;
         let total = first.total_elements;
-        let plan = plan_pages(total, TASK_PAGE_SIZE, MAX_TASK_PAGES);
+        let plan = plan_pages(
+            total,
+            TASK_PAGE_SIZE,
+            MAX_TASK_PAGES,
+            order_of(&first.content),
+        );
         let mut tasks = first.content;
         let mut hit = tasks.iter().position(&is_hit);
         let mut complete = plan.covers_all;
