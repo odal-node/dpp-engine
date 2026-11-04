@@ -36,11 +36,11 @@ use dpp_domain::{
     DppError,
     passport::{Passport, PassportId},
     status::PassportStatus,
-    transfer::TransferChain,
 };
 
 use crate::audit::PassportAuditEntry;
 use crate::registry_sync::RegistryStatusIntent;
+use crate::transfer::VersionedChain;
 
 /// The write a state change makes to the passport itself.
 #[derive(Debug, Clone)]
@@ -71,8 +71,9 @@ pub struct WebhookEvent {
 pub struct StateChange {
     /// The passport write, if the change touches the passport row.
     pub passport: Option<PassportWrite>,
-    /// The passport's transfer chain, written whole, if the change touches it.
-    pub transfer_chain: Option<TransferChain>,
+    /// The passport's transfer chain, written whole over the revision it was
+    /// read at, if the change touches it.
+    pub transfer_chain: Option<VersionedChain>,
     /// The EU registry registration a publish owes: the serialised
     /// `RegistrationRequest`. Queued as `registry_sync` rows are by publish.
     pub registration: Option<serde_json::Value>,
@@ -112,9 +113,9 @@ impl StateChange {
         self
     }
 
-    /// Write the passport's transfer chain.
+    /// Write the passport's transfer chain over the revision it was read at.
     #[must_use]
-    pub fn with_transfer_chain(mut self, chain: TransferChain) -> Self {
+    pub fn with_transfer_chain(mut self, chain: VersionedChain) -> Self {
         self.transfer_chain = Some(chain);
         self
     }
@@ -157,7 +158,10 @@ pub trait StateChangeLog: Send + Sync {
     ///
     /// # Errors
     /// [`DppError::NotFound`] when a write that replaces, patches or sets the
-    /// status of a passport finds none; otherwise whatever the storage reports.
-    /// Nothing is written in either case.
+    /// status of a passport finds none; [`stale_chain`] when the transfer chain
+    /// has been written since the revision this change read; otherwise whatever
+    /// the storage reports. Nothing is written in any case.
+    ///
+    /// [`stale_chain`]: crate::transfer::stale_chain
     async fn commit(&self, change: StateChange) -> Result<Option<Passport>, DppError>;
 }

@@ -61,6 +61,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Two transfer steps that overlap no longer overwrite each other's chain.** A
+  passport's transfer chain was read, changed in memory and written back whole,
+  with a signature in between, and the write had no condition. Two initiations
+  started together on one published passport both found nothing pending and both
+  signed a handover; the second write replaced the first, so both callers got a
+  record, both left an audit entry and a `dpp.passport.transferred` event, and
+  the chain held one. An accept, a reject or a cancel racing another step on the
+  same chain lost an update the same way. Each write now names the revision of
+  the chain row it read (`odal.passport_transfer.revision`, migration `0047`) and
+  is refused when the row has moved on: the request that loses answers `422`,
+  writes nothing, and can be sent again, and the chain keeps the step that won. A
+  chain stored before this release starts at revision 0. (#535)
+
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
   successor the one its predecessor was signed with. So an operator that changed

@@ -68,7 +68,7 @@ use dpp_types::{
     seal::SealOutbox,
     snapshot::SnapshotOutbox,
     state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent},
-    transfer::TransferStore,
+    transfer::{TransferStore, VersionedChain},
     webhook::WebhookOutbox,
 };
 
@@ -495,7 +495,10 @@ impl PassportService {
         {
             outbox.enqueue_status(p.id, intent).await?;
         }
-        if let Some(chain) = transfer_chain {
+        // The revision the chain was read at is not checked here: this path
+        // writes through ports that take the chain alone, and only the
+        // state-change log refuses a chain written since it was read.
+        if let Some(VersionedChain { chain, .. }) = transfer_chain {
             match (transfer_notice, &self.transfer_outbox) {
                 (Some((transfer_id, payload)), Some(outbox)) => {
                     outbox.commit_accept(&chain, transfer_id, payload).await?;

@@ -242,7 +242,8 @@ pub async fn passport_registry_handler(
     // and echoing it here would imply a handover that never happened.
     let current_operator = match state.service.transfer_store.as_ref() {
         Some(store) => match store.get_chain(passport_id).await {
-            Ok(Some(chain)) if chain.transfer_count() > 0 => {
+            Ok(Some(stored)) if stored.chain.transfer_count() > 0 => {
+                let chain = stored.chain;
                 let op = chain.current_operator();
                 Some(CurrentOperatorView {
                     did: op.did.clone(),
