@@ -108,3 +108,20 @@ fn a_mixed_cache_yields_both_halves() {
     assert_eq!(lists.len(), 2);
     assert_eq!(unchecked.len(), 1);
 }
+
+/// A verified copy past the age limit is not relied on, and the territory is
+/// reported unchecked rather than dropped.
+#[test]
+fn a_verified_copy_past_the_age_limit_is_unchecked() {
+    let now = chrono::Utc::now();
+    let stale = CachedTrustedList::Verified {
+        content: serde_json::json!({ "territory": "FI", "providers": [] }),
+        signed_by: "a base64 digest".to_owned(),
+        verified_at: now - MAX_CACHED_LIST_AGE - chrono::Duration::days(1),
+    };
+    let (lists, unchecked) = from_cache_at(&cache(vec![("FI", stale)]), now);
+
+    assert!(lists.is_empty());
+    assert_eq!(unchecked.len(), 1);
+    assert_eq!(unchecked[0].territory, "FI");
+}

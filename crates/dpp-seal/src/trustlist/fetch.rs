@@ -3,7 +3,8 @@
 use dpp_common::outbound::{FetchError, fetch_text, guarded_client};
 
 use super::model::{TrustedListPointer, UnverifiedTrustedList};
-use super::parse::{parse_lotl, parse_trusted_list};
+use super::parse::parse_trusted_list;
+use super::verify::verify_lotl;
 use crate::error::SealError;
 
 /// Where the Commission publishes the list of trusted lists.
@@ -96,7 +97,16 @@ pub async fn fetch_lotl_pointers() -> Result<Vec<TrustedListPointer>, SealError>
     let xml = fetch_text(&client, EU_LOTL_URL, MAX_TRUSTED_LIST_BYTES)
         .await
         .map_err(|e| fetch_failed(EU_LOTL_URL, &e))?;
-    parse_lotl(&xml)
+    // The pointers name the national lists and the certificates allowed to sign
+    // them, so they are taken only from a LOTL whose signature verifies against
+    // the pinned anchor. Read from an unverified document, they would let whoever
+    // replaced the document choose which lists, and which signers, are trusted.
+    let verified = verify_lotl(&xml).map_err(|e| {
+        SealError::Backend(format!(
+            "the list of trusted lists at {EU_LOTL_URL} does not verify: {e}"
+        ))
+    })?;
+    Ok(verified.pointers().to_vec())
 }
 
 /// `TSLType` of a Member State's trusted list.

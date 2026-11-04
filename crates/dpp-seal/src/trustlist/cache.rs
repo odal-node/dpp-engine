@@ -3,6 +3,11 @@
 use super::model::UnverifiedTrustedList;
 use super::verify::VerifiedTrustedList;
 
+/// The longest a verified trusted list is relied on without being verified again.
+/// Past this, the copy is treated as unverified until a refresh succeeds. The
+/// value is a policy choice, not a figure from the regulation.
+pub const MAX_CACHED_LIST_AGE: chrono::Duration = chrono::Duration::days(14);
+
 /// Turn a node's trusted-list cache into what [`crate::qualification::qualify`]
 /// consults.
 ///
@@ -22,9 +27,25 @@ use super::verify::VerifiedTrustedList;
 /// and absent means the list of trusted lists never named it. The cache is this
 /// node's own writing, so this should not happen — and if it does, the verdict
 /// says the territory could not be consulted rather than quietly narrowing.
+///
+/// A verified copy older than [`MAX_CACHED_LIST_AGE`] is reported unavailable as
+/// well. The list is evidence only as fresh as its verification, and a refresh
+/// that keeps failing must not let a service withdrawn since then keep qualifying.
 #[must_use]
 pub fn from_cache(
     cached: &std::collections::BTreeMap<String, dpp_types::trust::CachedTrustedList>,
+) -> (
+    Vec<VerifiedTrustedList>,
+    Vec<dpp_types::qualification::UncheckedTerritory>,
+) {
+    from_cache_at(cached, chrono::Utc::now())
+}
+
+/// [`from_cache`] judged at `now`, so the age limit can be tested.
+#[must_use]
+pub fn from_cache_at(
+    cached: &std::collections::BTreeMap<String, dpp_types::trust::CachedTrustedList>,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> (
     Vec<VerifiedTrustedList>,
     Vec<dpp_types::qualification::UncheckedTerritory>,
@@ -34,6 +55,18 @@ pub fn from_cache(
 
     for (territory, entry) in cached {
         match entry {
+            dpp_types::trust::CachedTrustedList::Verified { verified_at, .. }
+                if now - *verified_at > MAX_CACHED_LIST_AGE =>
+            {
+                unchecked.push(dpp_types::qualification::UncheckedTerritory {
+                    territory: territory.clone(),
+                    reason: format!(
+                        "the cached copy was verified {} days ago, past the {}-day limit",
+                        (now - *verified_at).num_days(),
+                        MAX_CACHED_LIST_AGE.num_days(),
+                    ),
+                });
+            }
             dpp_types::trust::CachedTrustedList::Verified {
                 content, signed_by, ..
             } => match serde_json::from_value::<UnverifiedTrustedList>(content.clone()) {
