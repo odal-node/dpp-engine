@@ -78,8 +78,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   read every task. A row that is not found is backed off and counted as an
   attempt, so it reaches the stalled count instead of sorting to the head of the
   queue, and so is one whose recovered handle could not be written down.
-  Finished tasks' results are kept in a bounded cache, because they do not
-  change and the lookup repeats every pass. (#484)
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
 
 ### Fixed
 

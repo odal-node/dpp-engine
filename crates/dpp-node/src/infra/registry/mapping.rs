@@ -659,6 +659,7 @@ impl RegistrySyncPort for EuRegistrySync {
         let search = self.search_tasks(|_| false).await?;
         let mut exhaustive = search.complete;
         let mut matches: Vec<(&Task, std::sync::Arc<super::dashboard::TaskResult>)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut network_reads = 0usize;
 
         for task in search.tasks.iter().filter(|task| task.is_registration()) {
@@ -666,13 +667,22 @@ impl RegistrySyncPort for EuRegistrySync {
                 exhaustive = false;
                 continue;
             }
-            let (Some(task_id), Some(_)) = (task.id_segment(), task.correlation_id.as_deref())
+            let (Some(task_id), Some(correlation_id)) =
+                (task.id_segment(), task.correlation_id.as_deref())
             else {
                 // A finished task with no way to read it, or to poll it by, may
                 // be this one, and nothing here can say.
                 exhaustive = false;
                 continue;
             };
+            // The list is read a page at a time while the registry may add to
+            // it, so one task can be listed twice, at the end of one page and the
+            // start of the next. One submission is one candidate however often
+            // it was listed; counted twice, it would read as two and be left for
+            // a person.
+            if !seen.insert(correlation_id) {
+                continue;
+            }
             let result = if let Some(kept) = self.cached_finished_result(&task_id).await {
                 kept
             } else if network_reads < MAX_RESULT_READS {

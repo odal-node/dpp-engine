@@ -109,7 +109,8 @@ impl EuRegistrySync {
         self.read_finished_result(results_url, task_id).await
     }
 
-    /// Read a finished task's result from the registry and keep it.
+    /// Read a finished task's result from the registry, and keep it once it is
+    /// [complete](TaskResult::is_complete).
     pub(super) async fn read_finished_result(
         &self,
         results_url: &str,
@@ -120,6 +121,9 @@ impl EuRegistrySync {
             .await
             .map_err(RetryableError::into_dpp_error)?;
         let result = Arc::new(result);
+        if !result.is_complete() {
+            return Ok(result);
+        }
         let mut kept = self.finished_results.lock().await;
         if kept.len() >= FINISHED_RESULTS_KEPT {
             kept.clear();

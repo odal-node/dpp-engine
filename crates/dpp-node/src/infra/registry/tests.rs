@@ -1161,6 +1161,40 @@ async fn two_submissions_reporting_one_identifier_are_not_chosen_between() {
     );
 }
 
+/// The list is read a page at a time while the registry may add to it, so one
+/// task can be listed twice. One submission listed twice is still one
+/// submission: found, not left for a person as two.
+#[tokio::test]
+async fn a_submission_listed_twice_is_one_candidate() {
+    let request = valid_request();
+    let upi = request.data_carrier_uri.clone();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-B", 2, "SUCCESS"),
+            registration_task("CORR-B", 2, "SUCCESS"),
+        ])),
+    );
+    state.results_by_task.lock().await.insert(
+        "2".into(),
+        result_naming(&[upi.as_str()], Some("REG-FOUND")),
+    );
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.find_submission(&request).await.expect("a lookup"),
+        SubmissionLookup::Found {
+            correlation_id: "CORR-B".into(),
+            report: SubmissionReport::Registered {
+                registration_id: "REG-FOUND".into()
+            },
+        }
+    );
+}
+
 /// A task still being checked reports no passport, so it may be the one and
 /// cannot be told from one that is not. Not finding the identifier while one is
 /// on the list does not say the registry holds none.
@@ -1272,6 +1306,45 @@ async fn a_finished_result_is_read_once_however_often_the_lookup_runs() {
         state.task_results_read.lock().await.len(),
         2,
         "two tasks, three lookups, two reads"
+    );
+}
+
+/// A finished task whose result names no registration yet is the case the poll
+/// keeps going on, so it is not kept: the next poll reads it again and takes the
+/// registration once the registry has written it. Kept, it would answer the
+/// first read until the node restarted.
+#[tokio::test]
+async fn a_result_that_names_no_registration_yet_is_read_again() {
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([registration_task(
+            "CORR-1", 7, "SUCCESS"
+        )])),
+    );
+    state
+        .results_by_task
+        .lock()
+        .await
+        .insert("7".into(), result_naming(&[SOMEONE_ELSES], None));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let first = sync.check_submission("CORR-1").await.expect("a poll");
+    assert!(
+        matches!(first, SubmissionReport::Unrecognised { .. }),
+        "no registration yet: {first:?}"
+    );
+
+    state.results_by_task.lock().await.insert(
+        "7".into(),
+        result_naming(&[SOMEONE_ELSES], Some("REG-LATE")),
+    );
+    assert_eq!(
+        sync.check_submission("CORR-1").await.expect("a poll"),
+        SubmissionReport::Registered {
+            registration_id: "REG-LATE".into()
+        }
     );
 }
 
