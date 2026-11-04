@@ -58,6 +58,10 @@ struct RateLimiter {
     /// making it the slowest test in the workspace by a factor of ~500.
     max_buckets: usize,
     buckets: Mutex<HashMap<IpAddr, (Instant, u32)>>,
+    /// When the expiry sweep last ran. The sweep scans the whole map under the
+    /// lock, so once the map is past its threshold it runs at most once per
+    /// window rather than on every request.
+    last_sweep: Mutex<Instant>,
 }
 
 impl RateLimiter {
@@ -68,6 +72,7 @@ impl RateLimiter {
             trust_forwarded_for,
             max_buckets: MAX_BUCKETS,
             buckets: Mutex::new(HashMap::new()),
+            last_sweep: Mutex::new(Instant::now()),
         }
     }
 
@@ -82,10 +87,17 @@ impl RateLimiter {
     fn check(&self, ip: IpAddr) -> bool {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap();
-        // Bound memory: drop expired buckets once the map grows large.
-        if buckets.len() > self.max_buckets / SWEEP_DIVISOR {
+        // Bound memory: drop expired buckets once the map grows large. A bucket
+        // that has expired is unused whether or not it is still stored, so one
+        // sweep per window reclaims everything the next window would.
+        let mut last_sweep = self.last_sweep.lock().unwrap();
+        if buckets.len() > self.max_buckets / SWEEP_DIVISOR
+            && now.duration_since(*last_sweep) >= self.window
+        {
             buckets.retain(|_, (start, _)| now.duration_since(*start) < self.window);
+            *last_sweep = now;
         }
+        drop(last_sweep);
         // Hard cap: under a flood of fresh (spoofed) IPs none are expired, so the
         // expiry retain above can't shrink the map. Clear it to stay bounded.
         if buckets.len() > self.max_buckets {
