@@ -224,12 +224,21 @@ fn v4_is_disallowed(ip: Ipv4Addr) -> bool {
         || ip.is_unspecified()
         || ip.is_multicast()
         || is_cgnat_v4(ip)
+        || is_benchmarking_v4(ip)
 }
 
 /// 100.64.0.0/10 — carrier-grade NAT (RFC 6598).
 fn is_cgnat_v4(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
     o[0] == 100 && (o[1] & 0xc0) == 64
+}
+
+/// 198.18.0.0/15 — reserved for network benchmarking and not globally routable.
+/// The standard library's `is_benchmarking` is still unstable, so the range is
+/// written out here.
+fn is_benchmarking_v4(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 198 && (o[1] & 0xfe) == 18
 }
 
 /// fc00::/7 — unique local addresses.
@@ -245,6 +254,16 @@ fn is_link_local_v6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 198.18.0.0/15 is benchmarking space, not a public destination. It was
+    /// once accepted, and a webhook could then name an internal network range.
+    #[test]
+    fn the_benchmarking_range_is_not_a_public_destination() {
+        assert!(ip_is_disallowed("198.18.0.1".parse().unwrap()));
+        assert!(ip_is_disallowed("198.19.255.255".parse().unwrap()));
+        assert!(!ip_is_disallowed("198.20.0.1".parse().unwrap()));
+        assert!(!ip_is_disallowed("198.17.255.255".parse().unwrap()));
+    }
 
     #[test]
     fn rejects_non_https_and_private_literals() {
