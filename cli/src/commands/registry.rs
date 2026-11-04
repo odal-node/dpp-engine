@@ -4,7 +4,10 @@
 
 use anyhow::Result;
 
-use crate::core::registry::{action_provenance, action_registry_status};
+use crate::{
+    core::registry::{action_provenance, action_registry_handle, action_registry_status},
+    stateless::render::render_registry_handle,
+};
 
 pub async fn run_registry(id: Option<&str>, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
@@ -66,6 +69,20 @@ pub async fn run_registry(id: Option<&str>, json: bool) -> Result<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// `odal registry handle <id> <correlation-id>` — record the registry's handle for a
+/// submission this node lost it for, once the node has read the submission back
+/// from the registry and found it to be this passport's.
+pub async fn run_registry_handle(id: &str, correlation_id: &str, json: bool) -> Result<()> {
+    let (client, cfg) = crate::http::load_client()?;
+    let recorded = action_registry_handle(id, correlation_id, &client, &cfg).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&recorded)?);
+    } else {
+        render_registry_handle(&recorded, id);
     }
     Ok(())
 }

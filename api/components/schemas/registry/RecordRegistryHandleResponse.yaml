@@ -1,0 +1,26 @@
+type: object
+description: >-
+  The result of recording a registry submission's correlation identifier by hand.
+required:
+  - passportId
+  - correlationId
+  - recorded
+  - note
+properties:
+  passportId:
+    type: string
+  correlationId:
+    type: string
+    description: The correlation identifier the registration now holds.
+  recorded:
+    type: boolean
+    description: >-
+      `true` when this request recorded the handle. `false` when the registration
+      already held it, in which case nothing was checked or written.
+  registry:
+    $ref: SubmissionReport.yaml
+  note:
+    type: string
+    description: >-
+      Stated rather than implied: the handle is recorded and nothing else. The
+      node's drain applies the registry's ruling on its next pass.
