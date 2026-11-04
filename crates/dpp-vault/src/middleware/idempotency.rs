@@ -20,10 +20,13 @@ use crate::middleware::auth::AuthContext;
 /// request rather than silently keying it to nobody, and the mistake surfaces
 /// on the first keyed call instead of as a cross-caller key collision later.
 ///
-/// `user_id`, not the key id: a caller that rotates its API key mid-retry is
-/// the same caller, and its retry must still find its own key. No operator is
-/// folded in either: a node serves exactly one operator, so the operator is the
-/// same for every key this store holds.
+/// A Bearer key's replays belong to that key alone. Every API key authenticates
+/// as the same `user_id`, so keying on that would let a read-scoped key replay an
+/// administrator's cached response, and the replay runs before the handler's
+/// scope check. A retry made with a rotated key therefore re-executes, which is
+/// the correct outcome for a different credential. Local-admin Basic auth carries
+/// no key id and is keyed by its user id. No operator is folded in: a node serves
+/// exactly one operator.
 #[must_use]
 pub fn idempotency_state(store: Arc<dyn IdempotencyStore>) -> IdempotencyLayerState {
     IdempotencyLayerState {
@@ -32,7 +35,10 @@ pub fn idempotency_state(store: Arc<dyn IdempotencyStore>) -> IdempotencyLayerSt
             request
                 .extensions()
                 .get::<AuthContext>()
-                .map(|ctx| ctx.user_id.clone())
+                .map(|ctx| match ctx.key_id {
+                    Some(key_id) => format!("key:{key_id}"),
+                    None => format!("user:{}", ctx.user_id),
+                })
         }),
     }
 }
@@ -99,20 +105,36 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_principal_is_the_authenticated_user_id() {
+    fn principal_for(ctx: AuthContext) -> Option<String> {
         let state = idempotency_state(Arc::new(NoStore));
         let mut request = Request::post("/").body(Body::empty()).unwrap();
-        request.extensions_mut().insert(AuthContext {
+        request.extensions_mut().insert(ctx);
+        (state.principal)(&request)
+    }
+
+    /// Two Bearer keys share one `user_id`, so the principal has to come from the
+    /// key. Otherwise a read-scoped key replays an administrator's cached response.
+    #[test]
+    fn two_api_keys_with_one_user_id_have_different_principals() {
+        let context = |key_id| AuthContext {
+            user_id: "api-key".into(),
+            scope: ApiKeyScope::default(),
+            key_id: Some(key_id),
+        };
+        let admin = principal_for(context(uuid::Uuid::now_v7()));
+        let reader = principal_for(context(uuid::Uuid::now_v7()));
+        assert!(admin.is_some());
+        assert_ne!(admin, reader);
+    }
+
+    #[test]
+    fn local_admin_is_keyed_by_its_user_id() {
+        let principal = principal_for(AuthContext {
             user_id: "operator@example.com".into(),
             scope: ApiKeyScope::default(),
-            key_id: Some(uuid::Uuid::now_v7()),
+            key_id: None,
         });
-
-        assert_eq!(
-            (state.principal)(&request).as_deref(),
-            Some("operator@example.com")
-        );
+        assert_eq!(principal.as_deref(), Some("user:operator@example.com"));
     }
 
     /// The ordering guard. An unauthenticated request yields no principal, and
