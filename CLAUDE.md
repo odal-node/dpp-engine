@@ -632,7 +632,7 @@ Two things that bite:
 Not debt — rules that hold, stated once so they are not re-derived.
 
 - **"Archive" means EN 18221 clause 4.2 and nothing else.** Three things once wore the word and the collision hid a real compliance gap for months, because the name looked already taken. They are told apart by **shape**:
-  - **archive / archiving** — a *history*: every past version of a passport that is still live. `ArchivingPassportRepo`, `passport_version`, `GET /dpp/{id}/versions?asOf=`.
+  - **archive / archiving** — a *history*: every past version of a passport that is still live. `passport_version`, written by `PgPassportRepo`'s writes, `GET /dpp/{id}/versions?asOf=`.
   - **retire** — a *state*: the terminal lifecycle status, the record has stopped changing. `PassportStatus::Retired`, `POST /dpp/{id}/retire`. No legal anchor; it is our own word.
   - **back-up copy** — a *copy*, held by an independent third party so the passport survives its operator. ESPR **Art. 10(4)** + **Art. 2(32)** (*not* Art. 13, which is the registry). `BackupCopyPort`, `BACKUP_S3_*`.
 

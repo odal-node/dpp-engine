@@ -38,10 +38,9 @@ fn row_to_version(row: &sqlx::postgres::PgRow) -> Result<PassportVersion, DppErr
 
 /// Archive `doc` as a version of `passport_id`, superseded at `superseded_at`.
 ///
-/// One statement for both callers: the store's own [`archive`] on the pool, and
-/// the state-change log inside the transaction that makes the change.
-///
-/// [`archive`]: PassportVersionStore::archive
+/// The one statement that writes the archive. Its caller is the passport store,
+/// which hands it the stored record a change replaces, under that change's lock
+/// and in its transaction: see `repo_passport.rs`.
 pub(crate) async fn insert_version<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     passport_id: uuid::Uuid,
@@ -69,21 +68,6 @@ fn passport_uuid(passport_id: &str) -> Result<uuid::Uuid, DppError> {
 
 #[async_trait]
 impl PassportVersionStore for PgPassportVersionRepo {
-    async fn archive(
-        &self,
-        passport_id: &str,
-        doc: &serde_json::Value,
-        superseded_at: DateTime<Utc>,
-    ) -> Result<(), DppError> {
-        insert_version(
-            self.dal.pool(),
-            passport_uuid(passport_id)?,
-            doc,
-            superseded_at,
-        )
-        .await
-    }
-
     async fn versions(&self, passport_id: &str) -> Result<Vec<PassportVersion>, DppError> {
         let rows = sqlx::query(
             "SELECT id, passport_id, doc, superseded_at

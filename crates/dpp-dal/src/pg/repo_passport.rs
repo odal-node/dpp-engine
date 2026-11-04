@@ -6,8 +6,33 @@
 //! Design notes:
 //! - `patch_fields` is a row-locked read-merge-write inside one transaction —
 //!   real concurrent-write safety (no string-built SQL, no lowercasing quirks).
+//!
+//! # Every change archives the record it replaces
+//!
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
+//! archived, from the first change on.
+//!
+//! Both statements that change a stored passport, `update_in_tx` and
+//! `patch_in_tx`, first copy the row's `doc` into `passport_version` under the
+//! row lock their change holds, in the change's own transaction
+//! (`archive_stored`). So the version is the record as it was stored, never
+//! this build's reading of it: every read upcasts through the lens chain, and a
+//! version archived from a reading holds a shape the passport was never signed
+//! in. And the version commits with its change or not at all: a refused change
+//! leaves none, and two concurrent changes each archive the record the other
+//! left.
+//!
+//! Every writer of passport content reaches one of the two: `update`,
+//! `patch_fields`, `update_status` and `update_batch` here, the state-change
+//! log, and the registry outbox's `commit_publish`. Create is not a change and
+//! archives nothing: archiving starts at the first change to the passport as
+//! first issued, and the live record already answers for the time before it.
+//! The one write elsewhere, `mark_sealed`'s seal, is not a change to content.
+//! `passport_writers_are_known` holds both: which files write the table, and
+//! that each statement here that changes a passport archives first.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
@@ -23,6 +48,7 @@ use dpp_domain::{
     status::PassportStatus,
 };
 
+use super::repo_passport_version::insert_version;
 use super::{PgDal, db_err};
 
 /// A passport's product identifier as one string — the SQL twin of
@@ -139,6 +165,12 @@ pub struct PgPassportRepo {
     catalog: ProductGroupCatalog,
 }
 
+/// A passport row as stored, read under the lock of the change about to be made.
+struct Stored {
+    doc: serde_json::Value,
+    retention_locked: bool,
+}
+
 impl PgPassportRepo {
     /// Construct a repo sharing the given pool handle.
     pub fn new(dal: PgDal) -> Self {
@@ -189,11 +221,40 @@ impl PgPassportRepo {
             .transpose()
     }
 
+    /// The stored row of `id`, locked until `tx` ends and archived as the
+    /// version the change about to be made in `tx` replaces, or `None` when
+    /// there is none.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2. The column as stored, in the
+    /// change's own transaction: see this file's header.
+    async fn archive_stored(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+    ) -> Result<Option<Stored>, DppError> {
+        let Some(row) =
+            sqlx::query("SELECT doc, retention_locked FROM odal.passport WHERE id = $1 FOR UPDATE")
+                .bind(Self::uuid_of(id))
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db_err)?
+        else {
+            return Ok(None);
+        };
+        let doc: serde_json::Value = row.get("doc");
+        insert_version(&mut **tx, Self::uuid_of(id), &doc, Utc::now()).await?;
+        Ok(Some(Stored {
+            doc,
+            retention_locked: row.get("retention_locked"),
+        }))
+    }
+
     /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
     /// transaction. Shared by [`PassportRepository::update`], the state-change
     /// log, and the transactional outbox's `commit_publish`, so the publish-write
     /// and the outbox insert commit atomically without duplicating this SQL.
-    /// Errors `NotFound` if no row matched.
+    /// Archives the stored record first (`archive_stored`). Errors `NotFound` if
+    /// no row matched.
     ///
     /// # Why `doc || $2` rather than `doc = $2`
     ///
@@ -251,20 +312,28 @@ impl PgPassportRepo {
         tx: &mut Transaction<'_, Postgres>,
         passport: &Passport,
     ) -> Result<(), DppError> {
-        let stored = self.locked_reading(tx, passport.id).await?;
-        let mut doc = if stored.is_some() {
+        let stored = self
+            .archive_stored(tx, passport.id)
+            .await?
+            .ok_or_else(|| DppError::NotFound(passport.id.to_string()))?;
+        let reading = if stored.retention_locked {
+            Some(Self::to_doc(&self.read_doc(stored.doc)?)?)
+        } else {
+            None
+        };
+        let mut doc = if reading.is_some() {
             let mut locked = passport.clone();
             locked.retention_locked = true;
             Self::to_doc(&locked)?
         } else {
             Self::to_doc(passport)?
         };
-        if let Some(stored) = &stored
-            && let (Some(written), Some(stored)) = (doc.as_object_mut(), stored.as_object())
+        if let Some(reading) = &reading
+            && let (Some(written), Some(reading)) = (doc.as_object_mut(), reading.as_object())
         {
-            written.retain(|key, value| stored.get(key) != Some(value));
+            written.retain(|key, value| reading.get(key) != Some(value));
         }
-        let res = sqlx::query(
+        sqlx::query(
             // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
             // stored value for the reason the doc comment above gives: an omitted
             // key is absent, not null, so a column must keep what it has rather
@@ -294,28 +363,7 @@ impl PgPassportRepo {
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
-        if res.rows_affected() == 0 {
-            return Err(DppError::NotFound("record not found after update".into()));
-        }
         Ok(())
-    }
-
-    /// A fresh reading of the stored row, serialised, when it is retention-locked;
-    /// `None` for a draft or a missing row. Locks the row for the rest of `tx`.
-    async fn locked_reading(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        id: PassportId,
-    ) -> Result<Option<serde_json::Value>, DppError> {
-        let row = sqlx::query(
-            "SELECT doc FROM odal.passport WHERE id = $1 AND retention_locked FOR UPDATE",
-        )
-        .bind(Self::uuid_of(id))
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db_err)?;
-        row.map(|r| Self::to_doc(&self.read_doc(r.get::<serde_json::Value, _>("doc"))?))
-            .transpose()
     }
 
     /// Merge `delta` into the stored passport inside `tx`.
@@ -337,15 +385,10 @@ impl PgPassportRepo {
         crate::protected_fields::refuse_protected(&delta)?;
 
         // Row lock makes concurrent patches serialise instead of clobbering.
-        let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
-            .bind(Self::uuid_of(id))
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db_err)?;
-        let Some(row) = row else {
+        let Some(stored) = self.archive_stored(tx, id).await? else {
             return Err(DppError::NotFound(id.to_string()));
         };
-        let mut doc: serde_json::Value = row.get("doc");
+        let mut doc = stored.doc;
         if let (serde_json::Value::Object(dm), serde_json::Value::Object(pm)) = (&delta, &mut doc) {
             for (k, v) in dm {
                 if v.is_null() {

@@ -32,6 +32,12 @@ properties:
       The complete record as it stood at the time, not a diff.
 
 
+      As it was stored, and never upcast: a version taken from a passport
+      written under an earlier schema keeps that schema's shape, which can
+      differ from the shape the live passport is read in. It is the record the
+      operator published.
+
+
       Whole rather than differential so that retrieval is a read rather than a
       replay: a chain of diffs makes every historical version depend on every
       one before it, and one corrupt link loses everything after it. The clause
