@@ -61,13 +61,21 @@ PARSED="$(awk '
     print "FIELD\t" id "\t" key "\t" val
     next
   }
-  /^ignore = \[/ { inlist = 1; next }
-  inlist && /^\]/ { inlist = 0; next }
+  # The array may be written on one line or many. Every quoted entry on it is
+  # read, so an ID cannot hide in a layout this parser skips. An entry that is not
+  # a RUSTSEC ID is reported rather than dropped.
+  /^[ \t]*ignore[ \t]*=[ \t]*\[/ { inlist = 1 }
   inlist {
-    line = $0
-    gsub(/[",]/, "", line)
-    gsub(/^[ \t]+|[ \t]+$/, "", line)
-    if (line != "") print "IGNORED\t" line
+    rest = $0
+    sub(/#.*/, "", rest)
+    while (match(rest, /"[^"]*"/)) {
+      entry = substr(rest, RSTART + 1, RLENGTH - 2)
+      if (entry ~ /^RUSTSEC-[0-9]{4}-[0-9]{4}$/) print "IGNORED\t" entry
+      else print "MALFORMED\t" entry
+      rest = substr(rest, RSTART + RLENGTH)
+    }
+    if ($0 ~ /\]/) inlist = 0
+    next
   }
 ' "$AUDIT_TOML")"
 
@@ -80,6 +88,7 @@ while IFS=$'\t' read -r kind a b c; do
     BLOCK) BLOCK_IDS+=("$a") ;;
     FIELD) FIELD["$a|$b"]="$c" ;;
     IGNORED) IGNORED_IDS+=("$a") ;;
+    MALFORMED) fail "[advisories].ignore entry '$a' is not a RUSTSEC advisory ID" ;;
   esac
 done <<< "$PARSED"
 
