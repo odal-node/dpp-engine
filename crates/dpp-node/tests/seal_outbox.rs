@@ -234,6 +234,7 @@ fn draft_passport() -> Passport {
             name: "Odal Simulation Plant".into(),
             country: "MK".into(),
             address: Some("Skopje, MK".into()),
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,

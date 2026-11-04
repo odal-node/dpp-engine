@@ -91,7 +91,7 @@ odal bootstrap --legal-name "Demo GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email demo@example.com
 odal facility add --name "Demo plant" --scheme gln --value 4012345000009 \
   --country DE --default
-odal operator-id add --scheme vat --value DE123456789 --primary
+odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
 ```
 
 `bootstrap` prints the first API key once; keep it. The demo passports are batteries,

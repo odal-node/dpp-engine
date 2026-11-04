@@ -180,6 +180,7 @@ fn battery_passport_with(gtin: &str, batch: Option<&str>, status: PassportStatus
         usage_history: None,
         voltage_temperature_range: None,
         waste_battery_information: None,
+        due_diligence_operator_scope: None,
     })));
     p
 }
@@ -193,6 +194,7 @@ fn facility_with_value(value: &str) -> FacilitySnapshot {
         name: "Test Facility".into(),
         country: "DE".into(),
         address: None,
+        identifier: None,
     }
 }
 

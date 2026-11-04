@@ -861,7 +861,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.22.0";
+const CORE_VERSION_VERIFIED: &str = "0.23.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -2224,13 +2224,38 @@ fn publish_readiness_quotes_the_real_mandatory_field_counts() {
         .as_str()
         .expect("PublishReadiness carries a description");
 
+    use dpp_rules::batteries::battery_facts::BatteryFacts;
+    use dpp_rules::batteries::due_diligence::{
+        DUE_DILIGENCE_REQUIRED_FROM, DueDiligenceSecondLife, OperatorScope,
+    };
+    use dpp_rules::common::date::CalendarDate;
+
+    // The quoted counts are for a battery placed before the due diligence report
+    // falls due; the sentence says one more is owed from that date, and the
+    // second count pins that claim.
+    let before = BatteryFacts {
+        placed_on_market: Some(CalendarDate::new(2027, 2, 18)),
+        ..BatteryFacts::default()
+    };
+    let owing = BatteryFacts {
+        placed_on_market: Some(DUE_DILIGENCE_REQUIRED_FROM),
+        second_life: DueDiligenceSecondLife::None,
+        operator_scope: Some(OperatorScope::Subject),
+    };
     for category in ["ev", "lmt", "industrial"] {
-        let count = dpp_rules::batteries::passport_content::mandatory_fields(category).count();
+        let count =
+            dpp_rules::batteries::passport_content::mandatory_fields(category, before).count();
         assert!(
             description.contains(&count.to_string()),
             "PublishReadiness quotes mandatory-field counts and does not name {count}, \
              which is what the gate requires of a '{category}' battery. The description \
              reads:\n{description}"
+        );
+        assert_eq!(
+            dpp_rules::batteries::passport_content::mandatory_fields(category, owing).count(),
+            count + 1,
+            "PublishReadiness says a '{category}' battery owes one more data point from \
+             18 August 2027, and the gate no longer agrees"
         );
     }
 }
@@ -2957,6 +2982,7 @@ mod fixtures {
             name: "Werk Nord".into(),
             country: "DE".into(),
             address: Some("Werkstrasse 4, 21079 Hamburg, DE".into()),
+            identifier: None,
         }
     }
 
@@ -2989,6 +3015,7 @@ mod fixtures {
             postal_address: Some("Hauptstrasse 1, 10115 Berlin, DE".into()),
             electronic_address: Some("compliance@nordwerk.example".into()),
             country: "DE".into(),
+            identifier: None,
         }
     }
 

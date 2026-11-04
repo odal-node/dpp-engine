@@ -8430,9 +8430,11 @@ components:
 
         The mandatory-content half is the reason this exists. It is the gate that most
         often refuses a battery (41 data points for an electric-vehicle one, 40 for
-        an LMT battery, 33 for an industrial one) and it could not previously be
-        previewed anywhere: it is reachable only from a stored passport, and the only
-        dry-run the API offered takes an unsaved request body.
+        an LMT battery, 33 for an industrial one, and one more for each placed from
+        18 August 2027, when the due diligence report falls due unless Art. 47 exempts
+        the battery) and it could not previously be previewed anywhere: it is
+        reachable only from a stored passport, and the only dry-run the API offered
+        takes an unsaved request body.
       required:
         - ready
         - blockers

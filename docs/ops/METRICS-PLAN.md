@@ -64,7 +64,7 @@ path template (for example `/vault/api/v1/dpp/{dppId}`), never the requested URL
 | Metric | Type | Labels |
 |---|---|---|
 | `passport_publish_total` | counter | `outcome` = `success`, `error` |
-| `passport_publish_rejected_total` | counter | `reason` = `invalid_transition`, `missing_registry_identity`, `product_group_data_invalid`, `schema_invalid`, `mandatory_content`, `compliance_violations`, `compliance_unavailable`, `carrier_invalid`, `carrier_taken`, `signing_failed` |
+| `passport_publish_rejected_total` | counter | `reason` = `invalid_transition`, `missing_registry_identity`, `unregistrable_identity`, `product_group_data_invalid`, `schema_invalid`, `mandatory_content`, `compliance_violations`, `compliance_unavailable`, `carrier_invalid`, `carrier_taken`, `signing_failed` |
 | `publish_schema_unresolved_total` | counter | `productGroup` |
 | `signing_failures_total` | counter | |
 | `auth_failures_total` | counter | `reason` = `missing`, `invalid`, `suspended` |

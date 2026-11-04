@@ -213,6 +213,8 @@ fn battery_product_group_data() -> ProductGroupData {
         usage_history: None,
         voltage_temperature_range: None,
         waste_battery_information: None,
+        // The Art. 47 declaration, added in dpp-core 0.23.0.
+        due_diligence_operator_scope: None,
     }))
 }
 

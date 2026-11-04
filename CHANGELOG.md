@@ -10,6 +10,104 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **`dpp-core` 0.23.0: a registration refuses an operator identifier with no
+  EN 18219 clause 6 route.** *(Breaking for an operator whose primary identifier
+  is a VAT or EORI number.)* Core now accepts an operator or facility identifier
+  on a registration only under `lei`, `duns` or `gln`: an EU-wide VAT number has
+  no ICD, none was found for an EORI number, and a DID is scheme 8 only with a
+  credential a register has issued. Publish now asks the same question, through
+  core's `ActorIdentifier::from_legacy`, before it queues a registration: where
+  the product group's obligation is live it refuses with `422` and the reason
+  `unregistrable_identity`, naming the scheme and the fix, and elsewhere it
+  publishes without a registration, as it does when the identity is missing.
+  Queued, such a registration would have been refused on every attempt, because
+  its payload is fixed at publish. Only a passport that has never queued a
+  registration is refused: one published before this release keeps its row, and
+  its identifier cannot change, so a suspended one can still be re-activated. A
+  VAT or EORI number is still accepted and stamped as the operator identifier.
+  Facilities are added under a GLN and are not affected.
+
+  **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
+  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). Drafts, and the
+  successor an amendment publishes, then take it; a published passport keeps the
+  identifier it was signed with. A registration already queued under a VAT or
+  EORI number is rejected by the drain the first time it is tried (see
+  **Fixed**). (#561)
+
+- **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
+  placing date, and from 18 August 2027 with its due diligence declaration.**
+  Core's content table answers the due diligence report (Annex XIII point 1(d))
+  as of the battery's facts: from 18 August 2027 it is owed unless Art. 47
+  exempts the battery. So the publish gate refuses such a battery that states no
+  `placedOnMarketDate`, on the envelope or in `productGroupData`, unless it is
+  second-life, and from that date one that does not carry
+  `dueDiligenceOperatorScope` (battery schema 2.10.0). `PublishReadiness` says the
+  count of mandatory data points grows by one from that date, and a test holds
+  the sentence to the gate.
+
+  **Migration:** send `placedOnMarketDate` on create, or in the import column of
+  that name. The battery CSV templates have no column for `dueDiligenceUrl` or
+  `dueDiligenceOperatorScope` yet, so a battery placed from 18 August 2027 cannot
+  be imported into a passport that publishes. (#561)
+
+- **`dpp-core` 0.23.0: an anonymous reader no longer receives a critical raw
+  material's weight or country of origin** from a battery passport written at
+  schema 2.9.0 or later, or an electronics passport written at 1.5.0 or later.
+  Core labels both fields `restricted` from those versions. A passport written
+  against an earlier version keeps its classes and the bytes its signatures
+  cover; a new one is written against the new version. (#561)
+
+### Fixed
+
+- **A draft is published under the operator's primary identifier as it stands
+  at publish.** It kept the one stamped when it was created, and an amendment's
+  successor the one its predecessor was signed with. So an operator that changed
+  its primary, as moving off a VAT number requires, went on publishing under the
+  old one, and a registration built from a value the primary no longer had named
+  no scheme, which the registry was bound to refuse. A draft is not signed yet
+  and create takes no identifier, so nothing an operator chose is overwritten. A
+  re-publish keeps the identifier the passport was signed with. (#561)
+
+- **The core candidate run checks the plugin SDK ABI against the candidate's
+  SDK.** `.cargo/config.toml.example`, which `just core-local` and the run
+  apply, did not patch `dpp-plugin-sdk`, which only the ABI guest uses. So the
+  guest resolved the published SDK, and the run checked that one while 0.15.0's
+  notes said it checked the candidate's, until a guest pinned to an unpublished
+  release could not resolve at all. The override now patches it. (#561)
+
+- **A registration or transfer notification the adapter refuses before sending
+  is rejected, not retried for ever.** Both registry drains read every error as
+  transient, so a payload the adapter's own checks refused backed off and was
+  tried again with no end. It can never pass: a registration's payload is fixed
+  when the passport is published, and a notification's when the transfer is
+  accepted. Such a row is now marked rejected, with the reason, as a corrupt
+  payload already was; if that write fails, the row backs off rather than being
+  checked again on every pass. Only the adapter's checks report a `Validation`
+  error; a registry that cannot be reached, or that answers with a failure, is
+  still retried. (#562, #561)
+
+- **A transfer notification is sent under a stable key, and only an answer that
+  says the registry took it closes it.** `dpp-core` 0.23.0's registry port
+  answers a transfer notification with a `TransferReport`, whether the registry
+  took it, rather than a record's status. The notification now carries the
+  transfer's own identifier as its `Idempotency-Key`, which is what makes sending
+  it again the same notification: a reply that is still processing, or a state
+  this node has no name for, keeps it open and sends it again, and a conflict
+  naming the replayed key is read as already held and closes it. That answer says
+  the registry holds the notification, not that it applied the handover, and no
+  route to ask has been seen. A refusal is recorded with the registry's reasons.
+  Before, a reply reporting the record suspended or deactivated closed the row as
+  notified. The transfer route's reply is unobserved, so only `registered` is read
+  as an acceptance. (#561)
+
+- **The resolver's JSON-LD defines a term for every product group field.** It
+  carries `dpp-core` 0.23.0's context, so a JSON-LD processor no longer drops a
+  product group's data when it expands the document. The context names withheld
+  fields too, as terms; their values are not served, and the tests that scan the
+  body for a withheld field now read it without its `@context`. (#561)
+
 ## [0.15.0] - 2026-11-03
 
 ### Breaking

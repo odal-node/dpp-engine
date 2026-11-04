@@ -119,7 +119,10 @@ odal bootstrap --legal-name "Upgrade Fixture GmbH" --country DE \
     --admin-user "$admin_user" > /dev/null
 odal facility add --name "Demo Plant" --scheme gln --value 4012345000009 \
     --country DE --address "Werkstrasse 2, 10115 Berlin" --default > /dev/null
-odal operator-id add --scheme vat --value DE123456789 --primary > /dev/null
+# A registrable primary: from 0.16.0 a battery does not publish under a VAT
+# number. The v0.14.0 and v0.15.0 fixtures were seeded with one, as those
+# releases allowed, and the upgrade test makes the documented move to an LEI.
+odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary > /dev/null
 key="$(sed -n 's/^default = "\(.*\)"$/\1/p' "$work/home/.config/odal/credentials.toml")"
 auth="authorization: Bearer $key"
 json='content-type: application/json'

@@ -6,7 +6,7 @@ use chrono::Utc;
 use dpp_common::{event, event_codes};
 use dpp_digital_link::build_qr_url;
 use dpp_domain::{
-    ComplianceError, ComplianceErrorKind, ComplianceResult,
+    ActorIdentifier, ActorPosition, ComplianceError, ComplianceErrorKind, ComplianceResult,
     error::DppError,
     passport::{Passport, PassportId},
     ports::registry_sync::{
@@ -33,6 +33,10 @@ use super::{catalog, schema_registry};
 mod reason {
     pub const INVALID_TRANSITION: &str = "invalid_transition";
     pub const MISSING_REGISTRY_IDENTITY: &str = "missing_registry_identity";
+    /// The operator or facility identifier is there, under a scheme with no
+    /// EN 18219 clause 6 route, so the registration this publish owes would be
+    /// refused. Distinct from `missing_registry_identity`, where it is absent.
+    pub const UNREGISTRABLE_IDENTITY: &str = "unregistrable_identity";
     pub const SECTOR_DATA_INVALID: &str = "product_group_data_invalid";
     pub const SCHEMA_INVALID: &str = "schema_invalid";
     pub const COMPLIANCE_VIOLATIONS: &str = "compliance_violations";
@@ -69,6 +73,7 @@ use reason::{
     MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
     SCHEMA_INVALID as REASON_SCHEMA_INVALID, SECTOR_DATA_INVALID as REASON_SECTOR_DATA_INVALID,
     SIGNING_FAILED as REASON_SIGNING_FAILED,
+    UNREGISTRABLE_IDENTITY as REASON_UNREGISTRABLE_IDENTITY,
 };
 
 /// Count a publish rejection, then return its error unchanged.
@@ -200,7 +205,18 @@ impl PassportService {
                     .await
                     .unwrap_or(None);
             }
-            if passport.operator_identifier.is_none() {
+            // A draft takes the primary identifier as it stands now, not as it
+            // stood when the draft was created or, for an amendment, when its
+            // predecessor was: an operator that changed its primary, as moving
+            // off a VAT number requires, publishes under the new one. A draft is
+            // not signed yet, and create takes no identifier, so nothing an
+            // operator chose is overwritten. A re-publish keeps the identifier
+            // the passport was signed with.
+            if passport.status == PassportStatus::Draft {
+                if let Some((_, value)) = &primary_identifier {
+                    passport.operator_identifier = Some(value.clone());
+                }
+            } else if passport.operator_identifier.is_none() {
                 passport.operator_identifier =
                     primary_identifier.as_ref().map(|(_, value)| value.clone());
             }
@@ -463,9 +479,12 @@ impl PassportService {
         //   product group data mandatory at publish for every group — a
         //   decision deferred above, not one to take as a side effect of how
         //   registrations are built.
+        //
+        // An identifier the registration cannot carry is treated the same way,
+        // under its own reason: see `unregistrable_identity`.
         let registration = match &self.registry_outbox {
             None => None,
-            Some(_) => {
+            Some(outbox) => {
                 // The scheme is only assertable for the value the passport
                 // actually carries. If that value did not come from the current
                 // primary identifier — the primary was changed after the draft
@@ -477,18 +496,38 @@ impl PassportService {
                     .filter(|(_, value)| Some(value) == passport.operator_identifier.as_ref())
                     .map(|(scheme, _)| scheme.as_str())
                     .unwrap_or_default();
-                match RegistrationRequest::from_published_passport(
-                    &passport,
-                    RegisteringOperator {
-                        legal_name: &self.operator.legal_name,
-                        country: &self.operator.country,
-                        identifier_scheme,
-                    },
-                    // Item level: the granularity the battery product group is
-                    // defined at, and the only one the registry accepts today.
-                    // Set per product group once further delegated acts land.
-                    RegistrationGranularity::Item,
-                ) {
+                let unregistrable = unregistrable_identity(identifier_scheme, &passport);
+                // An identity the registry cannot take is refused only for a
+                // passport that has never queued a registration. One that has
+                // keeps its row, whatever became of it: the identifier it was
+                // signed with cannot change, so refusing a re-publish would fix
+                // nothing and only keep a suspended passport from being
+                // re-activated. Its registration is queued as before, which the
+                // outbox leaves alone unless the row was rejected, and a rejected
+                // one the drain rejects again with its reason. This is how an
+                // operator who published under a VAT number before it was
+                // refused re-activates a passport after upgrading.
+                let refused = match &unregistrable {
+                    Some(_) => outbox.pending_for(id).await?.is_none(),
+                    None => false,
+                };
+                let built = match unregistrable {
+                    Some(why) if refused => Err((REASON_UNREGISTRABLE_IDENTITY, why.into())),
+                    _ => RegistrationRequest::from_published_passport(
+                        &passport,
+                        RegisteringOperator {
+                            legal_name: &self.operator.legal_name,
+                            country: &self.operator.country,
+                            identifier_scheme,
+                        },
+                        // Item level: the granularity the battery product group is
+                        // defined at, and the only one the registry accepts today.
+                        // Set per product group once further delegated acts land.
+                        RegistrationGranularity::Item,
+                    )
+                    .map_err(|missing| (REASON_MISSING_REGISTRY_IDENTITY, missing)),
+                };
+                match built {
                     Ok(mut reg_req) => {
                         declare_backup(
                             &mut reg_req,
@@ -499,17 +538,14 @@ impl PassportService {
                             .map_err(|e| DppError::Serialisation(e.to_string()))?;
                         Some(payload)
                     }
-                    Err(missing)
+                    Err((reason, missing))
                         if super::passport_obligation_live(
                             passport.product_group.catalog_key(),
                         ) =>
                     {
-                        return Err(reject(
-                            REASON_MISSING_REGISTRY_IDENTITY,
-                            DppError::Validation(missing),
-                        ));
+                        return Err(reject(reason, DppError::Validation(missing)));
                     }
-                    Err(missing) => {
+                    Err((_, missing)) => {
                         tracing::warn!(
                             passport_id = %id,
                             missing = %missing,
@@ -652,6 +688,42 @@ fn validate_schema_for_publish(product_group_data: &ProductGroupData) -> Result<
     schema_registry()
         .validate_strict(&schema_key, &schema_version, &sd_json)
         .map_err(DppError::from)
+}
+
+/// Why the registration this passport owes would be refused for its operator or
+/// facility identifier, if it would.
+///
+/// dpp-core accepts an identifier on a registration only under a scheme with an
+/// EN 18219 clause 6 route, and the registry adapter refuses one without before
+/// anything is sent. A queued registration is fixed, so that refusal would come
+/// on every attempt and reach nobody who could act on it. This asks the same
+/// question here, through [`ActorIdentifier::from_legacy`], core's one reading of
+/// a scheme and value, so the two cannot answer differently.
+///
+/// `None` when an identifier is absent, which building the registration reports
+/// under its own reason, and when the operator's scheme is empty because the
+/// stamped value is no longer the primary one, which this cannot read.
+fn unregistrable_identity(operator_scheme: &str, passport: &Passport) -> Option<String> {
+    if let Some(value) = passport.operator_identifier.as_deref()
+        && !operator_scheme.is_empty()
+        && let Err(e) =
+            ActorIdentifier::from_legacy(operator_scheme, value, ActorPosition::Operator)
+    {
+        return Some(format!(
+            "cannot publish: the operator identifier cannot be registered with the EU \
+             registry: {e}. A registration carries an LEI or a D-U-N-S number; make one the \
+             primary operator identifier (`odal operator-id`)."
+        ));
+    }
+    if let Some(facility) = &passport.facility
+        && let Err(e) = facility.actor_identifier()
+    {
+        return Some(format!(
+            "cannot publish: the facility identifier cannot be registered with the EU \
+             registry: {e}. A registration carries a GLN, an LEI or a D-U-N-S number."
+        ));
+    }
+    None
 }
 
 /// The independently-hosted back-up URL declared to the EU registry.

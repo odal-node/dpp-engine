@@ -98,6 +98,7 @@ fn operator(did: &str, name: &str) -> ResponsibleOperator {
         postal_address: None,
         electronic_address: None,
         country: "DE".to_owned(),
+        identifier: None,
     }
 }
 
