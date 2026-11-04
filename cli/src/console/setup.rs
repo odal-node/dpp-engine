@@ -36,6 +36,14 @@ fn step_connect() -> Result<()> {
     // configured separately via `odal profile create --node-url …`.
     let mut cfg = Config::load().unwrap_or_default();
     let (vault, identity, resolver) = local_urls();
+    // The profile's key was issued by the node it pointed at before. Pointing the
+    // profile somewhere else must not carry that key along, or the next request
+    // sends it to a node that never issued it. Clearing it first leaves nothing to
+    // send if setup stops before a key is issued.
+    if cfg.vault_url != vault {
+        crate::credentials::remove_key(&cfg.name)?;
+        cfg.api_key.clear();
+    }
     cfg.vault_url = vault;
     cfg.identity_url = identity;
     cfg.resolver_url = resolver;
