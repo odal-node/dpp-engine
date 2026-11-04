@@ -24,7 +24,24 @@ use sha2::{Digest, Sha256};
 /// 2. Publisher signs `digest` with their Ed25519 signing key.
 /// 3. Publisher writes the 64-byte signature (or base64 thereof) to `{wasm}.sig`.
 /// 4. The host verifies `sig` against `digest` using the publisher's public key.
+///
+/// Reads the artifact itself. Test-only: the loader verifies the bytes it loads, with
+/// [`verify_plugin_signature_over`].
+#[cfg(test)]
 pub(crate) fn verify_plugin_signature(wasm_path: &Path, trusted_key: &VerifyingKey) -> Result<()> {
+    let wasm_bytes = std::fs::read(wasm_path)
+        .with_context(|| format!("failed to read wasm file: {}", wasm_path.display()))?;
+    verify_plugin_signature_over(wasm_path, &wasm_bytes, trusted_key)
+}
+
+/// [`verify_plugin_signature`] over bytes the caller has already read from
+/// `wasm_path`. The signature is checked against exactly these bytes, so a loader
+/// that compiles the same buffer cannot be handed a different file.
+pub(crate) fn verify_plugin_signature_over(
+    wasm_path: &Path,
+    wasm_bytes: &[u8],
+    trusted_key: &VerifyingKey,
+) -> Result<()> {
     // Derive the detached-signature path by appending `.sig` to the full
     // artifact filename, so both `foo.wasm` → `foo.wasm.sig` and (AOT)
     // `foo.cwasm` → `foo.cwasm.sig` are handled by the one convention.
@@ -37,10 +54,7 @@ pub(crate) fn verify_plugin_signature(wasm_path: &Path, trusted_key: &VerifyingK
         sig_path.display()
     );
 
-    let wasm_bytes = std::fs::read(wasm_path)
-        .with_context(|| format!("failed to read wasm file: {}", wasm_path.display()))?;
-
-    let digest = Sha256::digest(&wasm_bytes);
+    let digest = Sha256::digest(wasm_bytes);
 
     let sig_bytes_raw = std::fs::read(&sig_path)
         .with_context(|| format!("failed to read signature file: {}", sig_path.display()))?;

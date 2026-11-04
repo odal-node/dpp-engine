@@ -64,8 +64,11 @@ pub fn build_linker(engine: &Engine) -> wasmtime::Result<Linker<HostState>> {
             }
             let mut buf = vec![0u8; len];
             if memory.read(&caller, ptr as usize, &mut buf).is_ok() {
+                // Debug formatting escapes newlines and control characters, so a
+                // guest cannot forge a record boundary or a terminal sequence in
+                // the host's log output.
                 let msg = String::from_utf8_lossy(&buf);
-                tracing::debug!(plugin_log = %msg);
+                tracing::debug!(plugin_log = ?msg);
             }
         },
     )?;
