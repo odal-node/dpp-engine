@@ -623,6 +623,64 @@ async fn a_carried_serial_names_every_record_in_the_chain() {
     assert_eq!(found, expected);
 }
 
+/// A link or a DID finds every passport carrying it, whatever its lot, serial
+/// or status, and no passport carrying another, through the indexed SQL.
+///
+/// Publish asks this whether a link or a DID is already held, so a holder the
+/// SQL missed is a second live passport under one identifier.
+#[tokio::test]
+async fn a_link_or_did_finds_every_passport_carrying_it() {
+    use dpp_domain::ProductIdentifier;
+
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let identified = |identifier: &ProductIdentifier, batch: Option<&str>, status| {
+        let mut p = battery_passport_with("09506000134352", batch, status);
+        if let Some(ProductGroupData::Battery(battery)) = &mut p.product_group_data {
+            battery.product_identifier = identifier.clone();
+        }
+        p
+    };
+
+    let did = ProductIdentifier::did("did:web:acme.example:b:1").expect("did");
+    let link = ProductIdentifier::identification_link("https://id.acme.example/p/1").expect("link");
+    let other = ProductIdentifier::did("did:web:acme.example:b:2").expect("did");
+
+    let mut unit = identified(&did, Some("LOT-B"), PassportStatus::Draft);
+    unit.serial_number = Some("SN-1".into());
+    let did_holders = [
+        identified(&did, None, PassportStatus::Published),
+        identified(&did, Some("LOT-A"), PassportStatus::Superseded),
+        unit,
+    ];
+    let link_holder = identified(&link, Some("LOT-A"), PassportStatus::Published);
+    for p in did_holders.iter().chain([&link_holder]) {
+        repo.create(p.clone()).await.expect("create");
+    }
+    repo.create(identified(&other, None, PassportStatus::Published))
+        .await
+        .expect("create");
+
+    let found = |identifier| {
+        let repo = &repo;
+        async move {
+            let mut ids: Vec<PassportId> = repo
+                .find_by_product_identifier(identifier)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
+            ids.sort_by_key(|id| id.0);
+            ids
+        }
+    };
+    let mut expected: Vec<PassportId> = did_holders.iter().map(|p| p.id).collect();
+    expected.sort_by_key(|id| id.0);
+    assert_eq!(found(&did).await, expected);
+    assert_eq!(found(&link).await, [link_holder.id]);
+}
+
 // T8 — grant coverage: the app role can read every table a migration creates.
 // Catches the "0010's grants were a snapshot" lesson (0017 had to re-grant): a
 // migration that adds a table after 0010 must ship its own odal_app grant, or

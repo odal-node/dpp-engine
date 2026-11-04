@@ -170,7 +170,7 @@ impl<R: PassportRepository> PassportRepository for ArchivingPassportRepo<R> {
         self.inner.find_by_id_any_status(id).await
     }
 
-    // 🚨 The next four have default bodies on the port, so leaving one out here
+    // 🚨 The next five have default bodies on the port, so leaving one out here
     // still compiles — and routes it to the default, an unindexed scan of every
     // passport through `list`, in front of the inner store's indexed query.
     // `every_defaulted_read_is_forwarded` holds the list complete.
@@ -192,6 +192,13 @@ impl<R: PassportRepository> PassportRepository for ArchivingPassportRepo<R> {
         qualifier: &CarrierQualifier<'_>,
     ) -> Result<Vec<Passport>, DppError> {
         self.inner.find_by_carrier(identifier, qualifier).await
+    }
+
+    async fn find_by_product_identifier(
+        &self,
+        identifier: &ProductIdentifier,
+    ) -> Result<Vec<Passport>, DppError> {
+        self.inner.find_by_product_identifier(identifier).await
     }
 
     async fn find_by_identity(
@@ -557,6 +564,13 @@ mod tests {
             self.saw("find_by_carrier");
             Ok(Vec::new())
         }
+        async fn find_by_product_identifier(
+            &self,
+            _: &ProductIdentifier,
+        ) -> Result<Vec<Passport>, DppError> {
+            self.saw("find_by_product_identifier");
+            Ok(Vec::new())
+        }
         async fn find_by_identity(
             &self,
             _: &ProductIdentity,
@@ -613,6 +627,9 @@ mod tests {
         repo.find_by_carrier(&gtin, &CarrierQualifier::Model)
             .await
             .expect("carrier");
+        repo.find_by_product_identifier(&gtin)
+            .await
+            .expect("product identifier");
         repo.find_by_identity(&ProductIdentity {
             product_group: dpp_domain::product_group::ProductGroup::Battery,
             identifier: gtin.as_str().to_owned(),
@@ -630,6 +647,7 @@ mod tests {
             [
                 "find_by_identifier",
                 "find_by_carrier",
+                "find_by_product_identifier",
                 "find_by_identity",
                 "find_superseding"
             ]

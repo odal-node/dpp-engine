@@ -208,6 +208,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. (#498)
+
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
   successor the one its predecessor was signed with. So an operator that changed
