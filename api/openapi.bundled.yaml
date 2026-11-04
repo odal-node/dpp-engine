@@ -2914,9 +2914,8 @@ paths:
         not an error.** A credential may narrow itself to product groups and to
         product categories, and both are checked against the passport being read:
         the group against its `productGroup`, the category against the one its
-        data states (a battery's `batteryType`, an electronics `productCategory`,
-        and so on per group). A credential naming categories does not cover a
-        passport whose group states none, such as textile or toy. Out of scope,
+        data states, such as a battery's `batteryType`. A credential naming
+        categories does not cover a passport whose group states none. Out of scope,
         a valid credential gets a `200` with the public view, byte-identical to
         `/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an
         elevated view names one. Denying instead would make this route a probe for
@@ -7431,13 +7430,12 @@ components:
 
             The list is flat: it narrows every named group, and a read is admitted
             only where the passport states one of the listed values. A value is
-            compared exactly with the category the passport's data states: a
-            battery's `batteryType`, an electronics `productCategory`, a steel
-            `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
-            furniture or detergent `productType`. The legal values are that
-            property's `enum` in the group's current schema
-            (`GET /integrator/api/v1/schemas/{productGroup}`). Aluminium, mattress,
-            textile, toy and unsold goods state no category.
+            compared exactly with the category the passport's data states, such as a
+            battery's `batteryType`. The values a group allows are that property's
+            `enum` in the group's current schema
+            (`GET /integrator/api/v1/schemas/{productGroup}`), and some groups state
+            no category at all. A refusal's `detail` lists what each named group's
+            passports can state.
 
             A list that cannot work as written is refused with `422` rather than
             signed: one given without `productGroups`, one holding a value no named
