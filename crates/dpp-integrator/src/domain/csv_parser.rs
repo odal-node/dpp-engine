@@ -10,6 +10,10 @@ use thiserror::Error;
 /// and XLSX paths).
 pub(crate) const MAX_ROWS: usize = 200_000;
 
+/// Most bytes the parsed rows may hold, counting every column name and value as
+/// it is kept. Shared by the CSV and XLSX readers, which build the same rows.
+pub(crate) const MAX_RETAINED_BYTES: usize = 64 * 1024 * 1024;
+
 /// Errors produced while parsing a CSV or XLSX file structure (not row-level
 /// validation — those are handled by the validator).
 #[derive(Debug, Error)]
@@ -45,6 +49,7 @@ pub fn parse_csv(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErro
     }
 
     let mut rows: Vec<HashMap<String, String>> = Vec::new();
+    let mut retained = 0usize;
 
     for result in reader.records() {
         let record = result.map_err(|e| ParseError::Csv(e.to_string()))?;
@@ -55,6 +60,14 @@ pub fn parse_csv(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErro
             .map(|(k, v)| (k.clone(), v.trim().to_owned()))
             .collect();
         if !row.is_empty() {
+            // Every row keeps its own copy of each column name, so a long header
+            // multiplies with the row count. Refused once the total is over budget.
+            retained = retained.saturating_add(row.iter().map(|(k, v)| k.len() + v.len()).sum());
+            if retained > MAX_RETAINED_BYTES {
+                return Err(ParseError::Csv(format!(
+                    "the file's parsed content exceeds {MAX_RETAINED_BYTES} bytes"
+                )));
+            }
             rows.push(row);
             if rows.len() > MAX_ROWS {
                 return Err(ParseError::Csv(format!(

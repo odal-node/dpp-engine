@@ -123,11 +123,22 @@ pub async fn admit_import(State(state): State<AppState>, request: Request, next:
         }
     };
 
-    if !state.vault_client.verify_token(&token).await {
-        metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
-        return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-            .with_detail("Invalid or unauthorized Authorization: Bearer token.")
-            .into_response();
+    match state.vault_client.caller_scope(&token).await {
+        None => {
+            metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
+            return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
+                .with_detail("Invalid or unauthorized Authorization: Bearer token.")
+                .into_response();
+        }
+        // An import creates passports and records its job and report, which are
+        // writes. A read-only key is a valid credential and still not allowed.
+        Some(scope) if !scope.can_write() => {
+            metrics::counter!("import_rejections_total", "reason" => "scope").increment(1);
+            return Problem::new(StatusCode::FORBIDDEN, "Forbidden")
+                .with_detail("This key is read-only; importing needs a write or admin key.")
+                .into_response();
+        }
+        Some(_) => {}
     }
 
     let Ok(slot) = state.import_slots.clone().try_acquire_owned() else {

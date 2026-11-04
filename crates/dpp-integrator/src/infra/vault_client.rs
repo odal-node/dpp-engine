@@ -3,6 +3,7 @@
 use std::fmt;
 
 use dpp_domain::product::ProductIdentity;
+use dpp_types::api_key::ApiKeyScope;
 
 use crate::domain::request::CreatePassportRequest;
 
@@ -43,6 +44,22 @@ impl VaultHttpClient {
             Ok(resp) => resp.status().is_success(),
             Err(_) => false,
         }
+    }
+
+    /// The scope the vault grants the presented token, or `None` when the vault
+    /// refuses it. An import persists jobs and reports, which is a write, so the
+    /// admission check needs the scope and not only that the token is valid.
+    pub async fn caller_scope(&self, token: &str) -> Option<ApiKeyScope> {
+        if token.is_empty() {
+            return None;
+        }
+        let url = format!("{}/api/v1/whoami", self.base_url);
+        let resp = self.client.get(&url).bearer_auth(token).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body: serde_json::Value = resp.json().await.ok()?;
+        serde_json::from_value(body.get("scope")?.clone()).ok()
     }
 
     /// POST a single passport creation request to vault.
@@ -282,6 +299,7 @@ mod tests {
         let app = Router::new()
             .route("/api/v1/dpps", get(respond))
             .route("/api/v1/dpp", post(respond))
+            .route("/api/v1/whoami", get(respond))
             .with_state(mock);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -332,6 +350,21 @@ mod tests {
         let base_url = spawn_mock(StatusCode::OK, serde_json::json!({"items": []})).await;
         let client = VaultHttpClient::new(&base_url);
         assert!(client.verify_token("some-token").await);
+    }
+
+    #[tokio::test]
+    async fn caller_scope_is_the_scope_the_vault_grants() {
+        let body = serde_json::json!({"userId": "api-key", "scope": "read"});
+        let base_url = spawn_mock(StatusCode::OK, body).await;
+        let client = VaultHttpClient::new(&base_url);
+        assert_eq!(client.caller_scope("t").await, Some(ApiKeyScope::Read));
+    }
+
+    #[tokio::test]
+    async fn caller_scope_is_none_when_the_vault_refuses_the_token() {
+        let base_url = spawn_mock(StatusCode::UNAUTHORIZED, serde_json::json!({})).await;
+        let client = VaultHttpClient::new(&base_url);
+        assert_eq!(client.caller_scope("bad-token").await, None);
     }
 
     #[tokio::test]
