@@ -234,10 +234,17 @@ impl PassportService {
         parent: PassportId,
         component_refs: &[ComponentRef],
     ) -> Result<(), DppError> {
-        let local_children: Vec<PassportId> = component_refs
+        // A child named twice is walked once. Each walk covers the child's whole
+        // subtree, so repeating a reference multiplies the work for nothing.
+        let mut local_children: Vec<PassportId> = Vec::new();
+        for id in component_refs
             .iter()
             .filter_map(|r| local_component_id(&r.reference.uri))
-            .collect();
+        {
+            if !local_children.contains(&id) {
+                local_children.push(id);
+            }
+        }
         if local_children.is_empty() {
             return Ok(());
         }

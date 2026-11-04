@@ -17,6 +17,10 @@
 use dpp_vc::{DppAccessCredential, StatusList};
 use reqwest::Client;
 
+/// Largest status-list document the node downloads. A W3C list is a small JSON
+/// wrapper around a compressed bitstring; a body past this is refused unread.
+const MAX_STATUS_LIST_BYTES: usize = 1024 * 1024;
+
 /// Fetch and decode the W3C Bitstring Status List declared by `credential`.
 ///
 /// Returns `None` when:
@@ -38,24 +42,30 @@ pub async fn fetch_status_list_for(
         .status_list_credential
         .as_ref()?;
 
-    let resp = http
-        .get(url.as_str())
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-        .ok()?;
+    // Through the guarded outbound helper: the destination is checked, the connection
+    // is pinned to the addresses that check approved, redirects are refused, and the
+    // body is capped. A plain GET would resolve the name a second time, after the
+    // check, and could connect to an address the check never saw.
+    let body: serde_json::Value =
+        match dpp_common::outbound::fetch_json(http, url.as_str(), MAX_STATUS_LIST_BYTES).await {
+            Ok(body) => body,
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    url = url.as_str(),
+                    "status list fetch failed; treating credential as revoked (fail-closed)"
+                );
+                return None;
+            }
+        };
 
-    if !resp.status().is_success() {
-        tracing::debug!(
-            status = %resp.status(),
-            url = url.as_str(),
-            "status list fetch returned non-2xx; treating credential as revoked (fail-closed)"
-        );
-        return None;
-    }
+    decode_status_document(&body, url.as_str())
+}
 
-    let body: serde_json::Value = resp.json().await.ok()?;
-
+/// Read the bitstring out of a fetched status-list credential. Pure, so the decoding
+/// is tested without a network: the fetch above is guarded and will not reach a test
+/// server on loopback.
+fn decode_status_document(body: &serde_json::Value, url: &str) -> Option<StatusList> {
     // W3C Bitstring Status List v1.0 — the credential's credentialSubject
     // carries the encodedList field.
     let encoded = body
@@ -66,7 +76,7 @@ pub async fn fetch_status_list_for(
     match StatusList::from_encoded_list(encoded) {
         Ok(list) => Some(list),
         Err(e) => {
-            tracing::debug!(error = %e, url = url.as_str(), "status list decode failed; treating credential as revoked (fail-closed)");
+            tracing::debug!(error = %e, url, "status list decode failed; treating credential as revoked (fail-closed)");
             None
         }
     }
@@ -141,6 +151,17 @@ mod tests {
     async fn returns_some_for_valid_status_list() {
         // Bit 0 is set (index 0 revoked), bit 1 clear (index 1 not revoked).
         let body = status_list_vc(&[0b1000_0000]);
+        let list = decode_status_document(&body, "https://issuer.example/status/1")
+            .expect("should decode a valid status list");
+        assert_eq!(list.get(0), Some(true), "bit 0 should be set (revoked)");
+        assert_eq!(list.get(1), Some(false), "bit 1 should be clear");
+    }
+
+    /// The fetch is guarded, so a status list on a loopback host is refused and the
+    /// credential is treated as revoked. A plain GET used to reach it.
+    #[tokio::test]
+    async fn a_status_list_on_a_loopback_host_is_refused_fail_closed() {
+        let body = status_list_vc(&[0b1000_0000]);
         let base = serve(Router::new().route(
             "/status/1",
             get(move || {
@@ -152,12 +173,7 @@ mod tests {
 
         let cred = sample_credential(Some(format!("{base}/status/1")));
         let http = Client::new();
-        let list = fetch_status_list_for(&http, &cred).await;
-
-        assert!(list.is_some(), "should decode a valid status list");
-        let list = list.unwrap();
-        assert_eq!(list.get(0), Some(true), "bit 0 should be set (revoked)");
-        assert_eq!(list.get(1), Some(false), "bit 1 should be clear");
+        assert!(fetch_status_list_for(&http, &cred).await.is_none());
     }
 
     #[tokio::test]
