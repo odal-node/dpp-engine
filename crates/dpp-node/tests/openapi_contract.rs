@@ -584,6 +584,8 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("TreeReport", fixtures::tree_report());
     case!("TreeNodeReport", fixtures::tree_node_report());
     case!("RegistrationView", fixtures::registration_view());
+    case!("AbandonRegistrationRequest", fixtures::abandon_request());
+    case!("AbandonRegistrationResponse", fixtures::abandon_response());
     case!(
         "RecordRegistryHandleRequest",
         fixtures::record_handle_request()
@@ -2505,6 +2507,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/public_read_by_gtin.rs"),
         include_str!("../../dpp-vault/src/handlers/publish.rs"),
         include_str!("../../dpp-vault/src/handlers/read.rs"),
+        include_str!("../../dpp-vault/src/handlers/registry_abandon.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_handle.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_identity.rs"),
         include_str!("../../dpp-vault/src/handlers/registry_status.rs"),
@@ -3006,6 +3009,7 @@ mod fixtures {
             list::PassportListResponse,
             node_state::NodeState,
             personal_data::PersonalDataErasureReceipt,
+            registry_abandon::{AbandonRegistrationRequest, AbandonRegistrationResponse},
             registry_handle::{RecordHandleRequest, RecordHandleResponse},
             registry_status::{
                 CurrentOperatorView, PassportRegistryView, RegistrationCounts, RegistrationView,
@@ -4540,6 +4544,20 @@ mod fixtures {
         }
     }
 
+    pub fn abandon_request() -> AbandonRegistrationRequest {
+        AbandonRegistrationRequest {
+            reason: "the product was withdrawn before the registry accepted it".into(),
+        }
+    }
+
+    pub fn abandon_response() -> AbandonRegistrationResponse {
+        AbandonRegistrationResponse {
+            passport_id: uuid().to_string(),
+            already_abandoned: true,
+            note: "the registration is abandoned and the node will no longer try it",
+        }
+    }
+
     pub fn record_handle_request() -> RecordHandleRequest {
         RecordHandleRequest {
             correlation_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7".into(),
@@ -4605,6 +4623,7 @@ mod fixtures {
             submitted: 2,
             registered: 3,
             rejected: 0,
+            abandoned: 0,
             deactivated: 0,
             status_intents: 1,
             stalled: 0,
