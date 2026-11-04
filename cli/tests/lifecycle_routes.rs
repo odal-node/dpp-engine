@@ -92,3 +92,42 @@ fn the_registry_handle_command_posts_to_the_route_the_api_description_names() {
     assert!(output.contains("CORR-1"), "{output}");
     assert!(output.contains("not finished checking"), "{output}");
 }
+
+/// `odal registry abandon` posts to the route the description names, with the
+/// reason in the body the route reads, and says what the node answered.
+#[test]
+fn the_registry_abandon_command_posts_to_the_route_the_api_description_names() {
+    let path = described_path("abandonDppRegistration");
+    assert!(
+        path.ends_with("/registry/abandon"),
+        "the described route moved: {path}"
+    );
+    let origin = static_server(vec![(
+        path.clone(),
+        format!(
+            r#"{{"passportId":"{ID}","alreadyAbandoned":false,"note":"the registration is abandoned and the node will no longer try it"}}"#
+        ),
+    )]);
+    let home = configured_home(&origin);
+
+    let run = odal(
+        home.path(),
+        &[
+            "registry",
+            "abandon",
+            ID,
+            "--reason",
+            "withdrawn before it was registered",
+        ],
+    );
+
+    assert_eq!(
+        run.code,
+        0,
+        "`odal registry abandon` did not reach {path}:\n{}",
+        run.output()
+    );
+    let output = run.output();
+    assert!(output.contains("Abandoned the registration"), "{output}");
+    assert!(output.contains("holds nothing"), "{output}");
+}

@@ -111,6 +111,10 @@ fn refusal(passport_id: &str, why: RecordHandleError) -> Response {
                 "The registry has already ruled on this passport's submission, so it no longer \
                  needs a handle."
             }
+            RegistrySyncStatus::Abandoned => {
+                "This registration was abandoned, so there is no submission to record a handle \
+                 for. Publishing the passport again queues it afresh."
+            }
         }),
         RecordHandleError::HoldsAnotherHandle => conflict_error(
             "This registration already holds a correlation identifier. One the registry gave is \
@@ -257,6 +261,7 @@ mod tests {
             RegistrySyncStatus::Registered,
             RegistrySyncStatus::Rejected,
             RegistrySyncStatus::Deactivated,
+            RegistrySyncStatus::Abandoned,
         ] {
             assert_eq!(status(E::NotAwaitingAHandle(held)), StatusCode::CONFLICT);
         }

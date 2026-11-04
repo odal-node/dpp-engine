@@ -278,7 +278,23 @@ trying it with backoff, so the alert says a person should look, not that anythin
 lost. `GET /vault/api/v1/dpp/{dppId}/registry` says where the passport stands.
 
 - A **`pending`** row is one the registry has not taken: it is unreachable or refuses
-  the payload, and the row's `message` says which.
+  the payload, and the row's `message` says which. If the payload is refused every
+  time, or the product was withdrawn before it was ever registered, the node would
+  retry it for as long as the passport stays published;
+  `odal registry abandon <passport-id> --reason "…"`
+  (`POST /vault/api/v1/dpp/{dppId}/registry/abandon`, admin scope) ends it. It does
+  not take your word that the registry has nothing: the registry's task list is read,
+  and it is refused unless **all** of it was read and none of it reports this
+  passport's unique product identifier, because a first attempt that got through and
+  lost its reply looks exactly like one that never did. A submission the registry
+  does hold is a `409` naming its correlation identifier; a list too long to read, or
+  a task still being checked, is a `422`. It also refuses a row the node has not yet
+  tried, or is about to, so wait for an attempt to fail. The row becomes `abandoned`,
+  counted separately on `GET /vault/api/v1/registry` and in the
+  `registry_outbox_abandoned` gauge, and no longer counts as stalled; the **passport
+  stays published**, so say so wherever you declared it registered. The write is in
+  the audit trail as `registry_abandoned` with your reason. Publishing the passport
+  again queues it afresh.
 - A **`submitted`** row is one the registry holds and has not ruled on, and the node
   polls it by the correlation identifier it was given. If a crash or a failed write
   lost that identifier, the node looks the submission up by the unique product
