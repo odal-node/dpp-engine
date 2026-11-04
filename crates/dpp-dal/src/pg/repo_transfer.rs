@@ -55,8 +55,9 @@ fn chain_doc(chain: &TransferChain) -> Result<serde_json::Value, DppError> {
 /// Write `chain` whole, as the passport's transfer chain, whatever is stored.
 ///
 /// For [`TransferStore::save_chain`] and the registry transfer outbox, which
-/// write the chain beside what the handover owes. It bumps the revision, so a
-/// lifecycle step that read the chain before this write is refused by
+/// write the chain beside what the handover owes. The statement does not name
+/// the revision: the table's trigger moves it on every update, so a lifecycle
+/// step that read the chain before this write is refused by
 /// [`write_chain_over`].
 pub(crate) async fn upsert_chain<'e>(
     executor: impl sqlx::PgExecutor<'e>,
@@ -67,9 +68,7 @@ pub(crate) async fn upsert_chain<'e>(
         r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
            VALUES ($1, $2, now())
            ON CONFLICT (passport_id)
-           DO UPDATE SET chain = EXCLUDED.chain,
-                         revision = passport_transfer.revision + 1,
-                         updated_at = now()"#,
+           DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
     )
     .bind(chain.passport_id.0)
     .bind(&doc)
@@ -86,7 +85,9 @@ pub(crate) async fn upsert_chain<'e>(
 /// check is the statement's own `WHERE`: a row another transaction holds is
 /// waited for and then tested at the revision it left, so two writers that read
 /// the same revision cannot both match it. A chain read as absent writes only
-/// where there is still no row, for the same reason.
+/// where there is still no row, for the same reason. The revision a winning
+/// write leaves is the table's trigger's doing (`ops/pg/0047`), not this
+/// statement's.
 pub(crate) async fn write_chain_over<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     over: &VersionedChain,
@@ -108,7 +109,7 @@ pub(crate) async fn write_chain_over<'e>(
         Some(revision) => {
             sqlx::query(
                 r#"UPDATE odal.passport_transfer
-                   SET chain = $2, revision = revision + 1, updated_at = now()
+                   SET chain = $2, updated_at = now()
                    WHERE passport_id = $1 AND revision = $3"#,
             )
             .bind(id)

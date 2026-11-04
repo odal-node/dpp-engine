@@ -694,6 +694,47 @@ async fn an_unconditional_save_still_moves_the_revision() {
     assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
 }
 
+/// The upsert the previous release ran never names the revision, and a node
+/// still running it beside this one must not be able to write a chain under a
+/// step that read the old one: the table moves the revision, not the writer.
+#[tokio::test]
+async fn a_write_that_never_names_the_revision_still_moves_it() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+    let read = store.get_chain(p.id).await.expect("read").expect("chain");
+
+    sqlx::query(
+        r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (passport_id)
+           DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
+    )
+    .bind(p.id.0)
+    .bind(serde_json::to_value(&read.chain).expect("serialise"))
+    .execute(pg.dal.pool())
+    .await
+    .expect("the previous release's upsert");
+
+    let moved = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_ne!(moved.revision, read.revision);
+    let refused = log
+        .commit(chain_change(p.id, read))
+        .await
+        .expect_err("the upsert came after the read");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+}
+
 /// Several first initiations committed at once: exactly one stands.
 ///
 /// The sequential tests above fix what a stale write is; this one is the

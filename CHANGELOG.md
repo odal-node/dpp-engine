@@ -219,7 +219,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   the chain row it read (`odal.passport_transfer.revision`, migration `0047`) and
   is refused when the row has moved on: the request that loses answers `422`,
   writes nothing, and can be sent again, and the chain keeps the step that won. A
-  chain stored before this release starts at revision 0. (#535)
+  trigger moves the revision on every update, so a node still running the
+  previous release beside this one, whose upsert never names the column, cannot
+  write a chain under a step that read the old one. A chain stored before this
+  release starts at revision 0. (#535)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
