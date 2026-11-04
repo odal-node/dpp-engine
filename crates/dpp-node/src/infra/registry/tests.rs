@@ -286,6 +286,8 @@ mod mock_server {
         /// task-list request asked for.
         pub(super) task_results_read: Mutex<VecDeque<String>>,
         pub(super) task_pages_asked: Mutex<VecDeque<String>>,
+        /// The `sort` each task-list request asked for, `""` when it asked for none.
+        pub(super) task_sorts_asked: Mutex<VecDeque<String>>,
         /// Task-list pages by page number. A page named here is answered from
         /// it, whatever order it is asked in; a page not named falls back to
         /// `tasks_queue`. What a long list needs: which page is asked for, and in
@@ -356,6 +358,11 @@ mod mock_server {
     ) -> Response {
         let page = query.get("page").cloned().unwrap_or_default();
         state.task_pages_asked.lock().await.push_back(page.clone());
+        state
+            .task_sorts_asked
+            .lock()
+            .await
+            .push_back(query.get("sort").cloned().unwrap_or_default());
         if let Some((status, body)) = state.tasks_by_page.lock().await.get(&page).cloned() {
             return (status, Json(body)).into_response();
         }
@@ -1057,6 +1064,145 @@ async fn a_long_list_that_does_not_hold_the_task_at_either_end_says_the_search_r
     );
 }
 
+// ── Asking for the list newest first, and checking what came back ────────────
+
+/// Fifty tasks that are not the one being looked for, submitted at one-minute
+/// intervals, newest first when `newest_first` and oldest first when not. The
+/// first page of a list is the one whose times decide how the rest is read.
+fn dated_filler_page(
+    total: u64,
+    prefix: &str,
+    newest_first: bool,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    let base = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:00:00Z").unwrap();
+    task_page_of(
+        total,
+        serde_json::Value::Array(
+            (0..50)
+                .map(|n| {
+                    let minutes = if newest_first { -(n as i64) } else { n as i64 };
+                    let mut task =
+                        registration_task(&format!("{prefix}-{n}"), 1_000 + n, "SUCCESS");
+                    task["submittedAt"] =
+                        serde_json::json!((base + chrono::Duration::minutes(minutes)).to_rfc3339());
+                    task
+                })
+                .collect(),
+        ),
+    )
+}
+
+/// 🚨 The list is asked for newest first on every page, in the registry's own
+/// syntax. Asking for no order is what left the order unknown in the first place.
+#[tokio::test]
+async fn every_page_of_the_list_is_asked_for_newest_first() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(120, "A", true));
+        pages.insert("1".into(), dated_filler_page(120, "B", true));
+        pages.insert("2".into(), dated_filler_page(120, "C", true));
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    sync.check_submission("CORR-NOT-THERE")
+        .await
+        .expect("a report");
+
+    let sorts: Vec<String> = state
+        .task_sorts_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(sorts.len(), 3, "three pages were read");
+    assert!(
+        sorts
+            .iter()
+            .all(|s| s == dpp_registry::TASKS_SORT_NEWEST_FIRST),
+        "{sorts:?}"
+    );
+    assert_eq!(dpp_registry::TASKS_SORT_NEWEST_FIRST, "submittedAt,desc");
+}
+
+/// 🚨 When the first page shows the list came back newest first, a long one is read
+/// from the front: the budget goes where a new submission is. A task on page 15,
+/// which a both-ends read never reaches, is found, and the back is never asked for.
+#[tokio::test]
+async fn a_long_list_that_came_back_newest_first_is_read_from_the_front() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(5_000, "NEW", true));
+        for page in 1..15 {
+            pages.insert(
+                page.to_string(),
+                dated_filler_page(5_000, &format!("P{page}"), true),
+            );
+        }
+        pages.insert(
+            "15".into(),
+            task_page_of(
+                5_000,
+                serde_json::json!([registration_task("CORR-FOUND", 15_000, "PROCESSING")]),
+            ),
+        );
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-FOUND").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing, "found on page 15");
+    let asked: Vec<String> = state
+        .task_pages_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        asked,
+        (0..=15).map(|n| n.to_string()).collect::<Vec<_>>(),
+        "the front, in order, and the back never"
+    );
+}
+
+/// 🚨 A registry that ignored the sort is not believed. If the first page runs oldest
+/// first, a new task is at the back, and the plan falls back to both ends and finds
+/// it there, as it did before the list was asked for in any order.
+#[tokio::test]
+async fn a_list_that_ignored_the_sort_is_still_read_from_both_ends() {
+    let state = Arc::new(MockState::default());
+    {
+        let mut pages = state.tasks_by_page.lock().await;
+        pages.insert("0".into(), dated_filler_page(5_000, "OLD", false));
+        pages.insert(
+            "99".into(),
+            task_page_of(
+                5_000,
+                serde_json::json!([registration_task("CORR-NEW", 4_999, "PROCESSING")]),
+            ),
+        );
+    }
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let report = sync.check_submission("CORR-NEW").await.expect("a report");
+
+    assert_eq!(report, SubmissionReport::Processing);
+    let asked: Vec<String> = state
+        .task_pages_asked
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(asked, ["0", "99"], "the far end is read next, as before");
+}
+
 // ── Finding a submission whose handle was lost ───────────────────────────────
 
 /// A finished task's result, listing the passports it was about.
@@ -1158,6 +1304,40 @@ async fn two_submissions_reporting_one_identifier_are_not_chosen_between() {
         lookup,
         SubmissionLookup::Ambiguous {
             candidates: vec!["CORR-PREDECESSOR".into(), "CORR-SUCCESSOR".into()]
+        }
+    );
+}
+
+/// The list is read a page at a time while the registry may add to it, so one
+/// task can be listed twice. One submission listed twice is still one
+/// submission: found, not left for a person as two.
+#[tokio::test]
+async fn a_submission_listed_twice_is_one_candidate() {
+    let request = valid_request();
+    let upi = request.data_carrier_uri.clone();
+
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([
+            registration_task("CORR-B", 2, "SUCCESS"),
+            registration_task("CORR-B", 2, "SUCCESS"),
+        ])),
+    );
+    state.results_by_task.lock().await.insert(
+        "2".into(),
+        result_naming(&[upi.as_str()], Some("REG-FOUND")),
+    );
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    assert_eq!(
+        sync.find_submission(&request).await.expect("a lookup"),
+        SubmissionLookup::Found {
+            correlation_id: "CORR-B".into(),
+            report: SubmissionReport::Registered {
+                registration_id: "REG-FOUND".into()
+            },
         }
     );
 }
@@ -1475,6 +1655,45 @@ async fn an_unreachable_dashboard_cannot_confirm_a_handle() {
     sync.confirm_submission(&valid_request(), "CORR-1")
         .await
         .expect_err("a registry that cannot be read confirms nothing");
+}
+
+/// A finished task whose result names no registration yet is the case the poll
+/// keeps going on, so it is not kept: the next poll reads it again and takes the
+/// registration once the registry has written it. Kept, it would answer the
+/// first read until the node restarted.
+#[tokio::test]
+async fn a_result_that_names_no_registration_yet_is_read_again() {
+    let state = Arc::new(MockState::default());
+    state.tasks_by_page.lock().await.insert(
+        "0".into(),
+        task_page(serde_json::json!([registration_task(
+            "CORR-1", 7, "SUCCESS"
+        )])),
+    );
+    state
+        .results_by_task
+        .lock()
+        .await
+        .insert("7".into(), result_naming(&[SOMEONE_ELSES], None));
+    let base_url = mock_server::spawn(state.clone()).await;
+    let sync = EuRegistrySync::new(mock_config(&base_url)).unwrap();
+
+    let first = sync.check_submission("CORR-1").await.expect("a poll");
+    assert!(
+        matches!(first, SubmissionReport::Unrecognised { .. }),
+        "no registration yet: {first:?}"
+    );
+
+    state.results_by_task.lock().await.insert(
+        "7".into(),
+        result_naming(&[SOMEONE_ELSES], Some("REG-LATE")),
+    );
+    assert_eq!(
+        sync.check_submission("CORR-1").await.expect("a poll"),
+        SubmissionReport::Registered {
+            registration_id: "REG-LATE".into()
+        }
+    );
 }
 
 #[tokio::test]

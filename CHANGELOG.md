@@ -78,8 +78,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   read every task. A row that is not found is backed off and counted as an
   attempt, so it reaches the stalled count instead of sorting to the head of the
   queue, and so is one whose recovered handle could not be written down.
-  Finished tasks' results are kept in a bounded cache, because they do not
-  change and the lookup repeats every pass. (#484)
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
 
 - **A registration waiting for a person says why, and a person can settle it.**
   The drain recovers a lost submission handle itself where it can, and leaves
@@ -152,6 +153,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   who, why, how many attempts, and what the row had been saying. Abandoning an
   already-abandoned row is a `200` that changes nothing. Migration `0046` admits
   the status and the action. (#489)
+
+### Changed
+
+- **The registry's task list is asked for newest first, and read from the front
+  once the first page shows it came back that way.** The adapter read a long list
+  from both ends because the registry's order was not known: a task just
+  submitted is at the front of a newest-first list and at the back of an
+  oldest-first one. The registry's own client was read again on 2026-10-20 and
+  sends `sort` as `submittedAt,desc` on every read, so the adapter now sends the
+  same, `dpp-core` 0.23.0's `TASKS_SORT_NEWEST_FIRST`.
+
+  *What was asked for is not trusted.* The first page's `submittedAt` times are
+  read, and the list is treated as newest first only when at least two are
+  readable, none is newer than the one before it, and at least one is strictly
+  older. Then a long list is read from the front, all twenty pages, which reaches
+  twice as far into the recent past as splitting the budget with the back did,
+  and the back is never asked for. Anything else (a registry that ignored the
+  sort, a page too short to compare, equal times, a time that is not an RFC 3339
+  time, a run that is not monotonic) leaves the order unknown and the list is
+  read from both ends, as before. A list that fits the cap is read in full
+  whichever way it came.
+
+  Nothing about what a search *covers* changes: a long list is still never
+  reported as read in full. (#490)
 
 ### Fixed
 

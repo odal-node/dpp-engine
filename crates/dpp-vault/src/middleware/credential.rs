@@ -191,12 +191,25 @@ pub enum CredentialOutcome {
 /// Does not verify anything — the payload of an unverified JWS is attacker
 /// controlled. Separate from verification so the ordering is impossible to get
 /// wrong at a call site.
-fn decode_payload(jws: &str) -> Option<DppAccessCredential> {
-    let payload_b64 = jws.split('.').nth(1)?;
+///
+/// A token that cannot be decoded is refused here, before its issuer is looked
+/// up and so before core authenticates it. It is classified as core would
+/// classify it, so it gets the sentence [`authentication_detail`] gives the
+/// same failure: no payload segment is not a compact JWS, and a payload that is
+/// not base64url, or not a credential, is a malformed payload.
+fn decode_payload(jws: &str) -> Result<DppAccessCredential, AuthenticationFailure> {
+    let payload_b64 = jws
+        .split('.')
+        .nth(1)
+        .ok_or(AuthenticationFailure::NotACompactJws)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
+        .map_err(|e| AuthenticationFailure::MalformedPayload {
+            reason: format!("payload is not base64url: {e}"),
+        })?;
+    serde_json::from_slice(&bytes).map_err(|e| AuthenticationFailure::MalformedPayload {
+        reason: format!("payload is not a credential: {e}"),
+    })
 }
 
 /// Read, authenticate and authorise the credential on `request`.
@@ -218,10 +231,11 @@ pub async fn read_and_verify(
         return CredentialOutcome::Rejected(reject("Credential header is not valid UTF-8."));
     };
 
-    let Some(unverified) = decode_payload(jws) else {
-        return CredentialOutcome::Rejected(reject(
-            "Credential is not a compact JWS carrying a DPP access credential.",
-        ));
+    let unverified = match decode_payload(jws) {
+        Ok(credential) => credential,
+        Err(failure) => {
+            return CredentialOutcome::Rejected(reject(authentication_detail(&failure)));
+        }
     };
 
     // Authenticate before doing anything with the claims: until the signature
@@ -670,6 +684,42 @@ mod tests {
         assert!(
             !said.contains("someone-else"),
             "the issuer the presenter named is not echoed: {said}"
+        );
+    }
+
+    /// A token that cannot be decoded is refused before its issuer is looked up,
+    /// so core never sees it. It still gets the sentence core's reason would: one
+    /// that is not a compact JWS and one whose payload is not a credential need
+    /// different fixes, and used to share one sentence.
+    #[tokio::test]
+    async fn a_token_that_cannot_be_decoded_is_told_which_way() {
+        let directory = Directory::with(None);
+        let detail = |jws: String| {
+            let directory = &directory;
+            async move {
+                detail_of(read_and_verify(&headers_with(Some(&jws)), directory, &trusting()).await)
+                    .await
+            }
+        };
+        let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+
+        assert_eq!(
+            detail("not-a-token".into()).await,
+            "Credential is not a compact JWS."
+        );
+        assert_eq!(
+            detail(format!(
+                "{}.{}.c2ln",
+                b64(r#"{"alg":"EdDSA"}"#),
+                b64(r#"{"hello":"world"}"#)
+            ))
+            .await,
+            "Credential payload is not a DPP access credential."
+        );
+        assert_eq!(
+            detail("eyJ.%%%.c2ln".into()).await,
+            "Credential payload is not a DPP access credential.",
+            "a payload that is not base64url is not a credential either"
         );
     }
 
