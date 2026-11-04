@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderMap, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Json, Response},
 };
@@ -11,6 +11,32 @@ use dpp_common::{event_codes, http_problem};
 pub use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
 
 use crate::state::AppState;
+
+/// Whether a request came from a page on another origin. A browser sends `Origin`
+/// on every cross-origin request that changes state, and a page that is not this
+/// node's own cannot be trusted with the operator's cached credential. A request
+/// with no `Origin` is not a browser's, and the CLI sends none.
+fn is_cross_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    // `null` and any origin without a scheme separator are opaque, so they are
+    // not this node.
+    match origin.split_once("://") {
+        Some((_, authority)) => !authority.eq_ignore_ascii_case(host),
+        None => true,
+    }
+}
+
+fn is_state_changing(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    )
+}
 
 /// The two schemes this middleware recognises, and the opaque credential
 /// payload each carries (already stripped of the scheme prefix). Kept
@@ -40,6 +66,20 @@ pub async fn auth_middleware(
             return unauthorized("Missing or invalid Authorization header.");
         }
     };
+
+    // A browser attaches cached Basic credentials to requests a page makes, so the
+    // local admin credential must not act on a state change requested from another
+    // origin. Refused before it is read. Bearer keys are not sent by browsers on
+    // their own, so they are not affected.
+    if matches!(credential, Credential::Basic(_))
+        && is_state_changing(request.method())
+        && is_cross_origin(request.headers())
+    {
+        metrics::counter!("auth_failures_total", "reason" => "cross_origin").increment(1);
+        return http_problem::Problem::new(StatusCode::FORBIDDEN, "Forbidden")
+            .with_detail("The local admin credential cannot be used from another origin.")
+            .into_response();
+    }
 
     match route(
         credential,
@@ -130,6 +170,41 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    }
+
+    /// A page on another site cannot use a browser's cached admin credential: its
+    /// `Origin` names another authority than the node's `Host`.
+    #[test]
+    fn a_request_from_another_origin_is_cross_origin() {
+        let host = ("host", "node.example:8001");
+        assert!(is_cross_origin(&headers(&[
+            host,
+            ("origin", "https://evil.example")
+        ])));
+        assert!(is_cross_origin(&headers(&[host, ("origin", "null")])));
+        assert!(is_cross_origin(&headers(&[(
+            "origin",
+            "http://node.example:8001"
+        )])));
+    }
+
+    /// The node's own pages and the CLI, which sends no `Origin`, are not refused.
+    #[test]
+    fn the_nodes_own_origin_and_a_non_browser_are_not_cross_origin() {
+        let host = ("host", "node.example:8001");
+        assert!(!is_cross_origin(&headers(&[host])));
+        assert!(!is_cross_origin(&headers(&[
+            host,
+            ("origin", "http://node.example:8001")
+        ])));
+    }
 
     // F7 regression: 401 responses must carry a WWW-Authenticate header
     // naming every scheme this middleware accepts (RFC 6750 §3 / RFC 7617).
