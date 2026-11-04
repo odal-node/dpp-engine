@@ -265,6 +265,7 @@ fn draft_passport() -> Passport {
             name: "Test Facility".into(),
             country: "DE".into(),
             address: None,
+            identifier: None,
         }),
         seal: None,
         carrier_serial: None,
@@ -319,6 +320,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         postal_address: None,
         electronic_address: None,
         country: "DE".into(),
+        identifier: None,
     };
     service
         .initiate_transfer(

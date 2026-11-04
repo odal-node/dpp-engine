@@ -4,7 +4,7 @@ enum:
   - noQualifiedDevice
   - notAQualifiedCertificate
 description: >-
-  What the certificate declares about the device holding its private key — a
+  What the certificate declares about the device holding its private key: a
   declaration, never a verification.
 
 
@@ -14,8 +14,8 @@ description: >-
 
 
   `noQualifiedDevice`: it carries qualified-certificate statements but not
-  that one. Lawful, and enough for Art. 40a — validation of an *advanced*
-  seal based on a qualified certificate, which omits the device leg — but
+  that one. Lawful, and enough for Art. 40a (validation of an *advanced*
+  seal based on a qualified certificate, which omits the device leg) but
   not for the Art. 32/40 pair.
 
 

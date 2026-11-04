@@ -3,7 +3,7 @@ description: |
   One field's failure inside a `Problem`.
 
   Present only on problems that are about specific members of the request
-  document — a validation rejection, most often. `field` is a JSON Pointer into
+  document: a validation rejection, most often. `field` is a JSON Pointer into
   that document, so a client can address the offending member directly instead
   of parsing it back out of `detail`.
 required:

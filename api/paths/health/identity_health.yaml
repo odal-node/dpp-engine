@@ -7,7 +7,7 @@ get:
     runs as its own deployable (port 8002).
 
     Checks nothing beyond itself. The signing key store is opened at startup, so
-    a process that is serving has already loaded it — which is why the readiness
+    a process that is serving has already loaded it, which is why the readiness
     probe beside this one has nothing further to verify.
 
     The body carries the service name and version.

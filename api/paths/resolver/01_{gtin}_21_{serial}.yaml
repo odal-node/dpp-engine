@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinSerial
-  summary: GS1 Digital Link resolver — GTIN + serial
+  summary: GS1 Digital Link resolver (GTIN + serial)
   description: |
     The carrier this node prints for an item-level passport, and for one
     whose level is not stated. **The serial is the resolution key**: it is the

@@ -7,7 +7,7 @@ post:
   description: |
     Archives the current key (so prior signatures still verify), generates
     a new primary key, and rebuilds the DID document. Service-to-service
-    only — gated by mTLS (`CN=odal-vault`).
+    only: gated by mTLS (`CN=odal-vault`).
   tags:
     - Identity (internal)
   security:

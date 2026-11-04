@@ -1,6 +1,6 @@
 get:
   operationId: resolveByGtinExtension
-  summary: GS1 Digital Link resolver — GTIN + third-party serialised extension
+  summary: GS1 Digital Link resolver (GTIN + third-party serialised extension)
   description: |
     A label that carries a third-party serialised extension (AI 235) after its
     GTIN. This node issues none, but a label printed elsewhere may carry one.

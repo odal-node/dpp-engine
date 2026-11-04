@@ -163,7 +163,7 @@ fn canonical_link(state: &AppState, dpp_id: &str) -> String {
     format!(r#"<{base}/dpp/{dpp_id}>; rel="alternate"; type="application/ld+json""#)
 }
 
-/// An RFC 7807 problem carrying this door's own content type, so a client that
+/// An RFC 9457 problem carrying this door's own content type, so a client that
 /// negotiated AAS never receives a body typed as something it did not ask for.
 ///
 /// Deliberately carries no `Link`: an error is not a representation of the

@@ -6,7 +6,7 @@ post:
     refuses unless it demonstrably is.
 
     **This buys a second seal for a digest already paid for.** The node's own
-    repair sweep deliberately cannot do that — it only queues passports
+    repair sweep deliberately cannot do that: it only queues passports
     carrying *no seal at all*, which is what lets it run unattended without
     spending money twice. A broken seal is the case where spending it again is
     right: the row was paid for and carries nothing, so the passport is

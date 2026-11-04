@@ -17,12 +17,12 @@ members = [
 ]
 
 [workspace.package]
-version     = "0.14.0"
+version     = "0.15.0"
 edition     = "2024"
 authors     = ["Odal Node <dev@odal-node.io>"]
 license     = "BSL-1.1"
 repository  = "https://github.com/odal-node/dpp-engine"
-rust-version = "1.96"
+rust-version = "1.99"
 
 # ---------------------------------------------------------------------------
 # Debug-build profile
@@ -52,20 +52,20 @@ debug = "line-tables-only"
 # Core crates — consumed from crates.io (dpp-core is published independently;
 # see the pins below for the version actually in use, and README.md's sync
 # note for the other places that must agree on a bump).
-dpp-domain = "0.22.0"
+dpp-domain = "0.23.0"
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
-dpp-crypto        = "0.22.0"
-dpp-vc            = "0.22.0"
+dpp-crypto        = "0.23.0"
+dpp-vc            = "0.23.0"
 # KeyStore lives in dpp-core/dpp-crypto; the identity service crate is dpp-identity
 # (dir: crates/dpp-identity, pkg: dpp-identity).
-dpp-digital-link  = "0.22.0"
-dpp-aas           = "0.22.0"
-dpp-plugin-traits = "0.22.0"
-dpp-registry      = "0.22.0"
-dpp-calc          = "0.22.0"
-dpp-rules         = { version = "0.22.0", features = ["bundle"] }
+dpp-digital-link  = "0.23.0"
+dpp-aas           = "0.23.0"
+dpp-plugin-traits = "0.23.0"
+dpp-registry      = "0.23.0"
+dpp-calc          = "0.23.0"
+dpp-rules         = { version = "0.23.0", features = ["bundle"] }
 
 # Web framework
 axum         = { version = "0.8", features = ["macros", "multipart"] }
@@ -142,13 +142,14 @@ dotenvy      = "0.15"
 # Event bus
 #
 # Default features minus `websockets`. That feature pulls tokio-websockets 0.10
-# and, through it, webpki-roots 0.26, whose bundled roots trust the distrusted
-# emSign intermediates (RUSTSEC-2026-0381). No release of async-nats takes a
-# newer tokio-websockets, so the line cannot be moved; and the node reaches NATS
+# and, through it, a second copy of webpki-roots (0.26), first reported under
+# RUSTSEC-2026-0381 and since classified as unaffected, because it re-exports the
+# roots of the 1.x copy. No release of async-nats takes a newer
+# tokio-websockets, so the line cannot be moved; and the node reaches NATS
 # over `nats://`, never `ws://`, so the transport is dead weight. TLS to NATS
 # stays (`ring`). Re-add `websockets` only with a release that no longer pins
 # webpki-roots 0.26.
-async-nats   = { version = "0.50", default-features = false, features = [
+async-nats   = { version = "0.51", default-features = false, features = [
     "server_2_10", "server_2_11", "server_2_12", "server_2_14",
     "service", "ring", "jetstream", "nkeys", "crypto", "object-store", "kv", "nuid",
 ] }
@@ -168,7 +169,7 @@ aws-sdk-s3   = { version = "1", default-features = false, features = [
 ] }
 
 # CSV / XLSX parsing (integrator)
-calamine     = "0.37"
+calamine     = "0.38"
 csv          = "1.3"
 
 # CLI
@@ -180,14 +181,7 @@ console      = "0.16"
 
 # Native OS file picker for `Passports › Import`. `xdg-portal` (not gtk3) keeps
 # Linux/Docker builds free of GTK dev libs; native backends used on Win/macOS.
-rfd          = { version = "0.16", default-features = false, features = ["tokio", "xdg-portal", "common-controls-v6"] }
-# ashpd (rfd's xdg-portal backend) pulls in wayland-client on Linux/BSD. Force
-# "dlopen" so wayland-sys loads libwayland-client.so at runtime instead of
-# requiring wayland-client.pc + headers at build time (CI/Docker images don't
-# have them). This is a feature-unification-only dep — cli/Cargo.toml pulls it
-# in on the same targets ashpd does; see wayland-sys's build.rs, which skips
-# its pkg-config probe entirely once CARGO_FEATURE_DLOPEN is set.
-wayland-client = { version = "0.31", features = ["dlopen"] }
+rfd          = { version = "0.17", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
 dirs         = "7"
 
 # Integration tests
@@ -198,8 +192,8 @@ testcontainers-modules = { version = "0.15", default-features = false }
 proptest              = "1"
 
 # Wasm plugin runtime
-wasmtime       = { version = "49", default-features = false, features = ["cranelift", "async", "component-model"] }
-wasmtime-wasi  = "49"
+wasmtime       = { version = "50", default-features = false, features = ["cranelift", "async", "component-model"] }
+wasmtime-wasi  = "50"
 
 # GS1 / JSON-LD
 json-ld        = "0.21"

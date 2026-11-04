@@ -79,6 +79,23 @@ pub struct SealOutboxCounts {
     pub exhausted: i64,
 }
 
+/// Published passports that carry no seal, split by whether the passport can
+/// still change.
+///
+/// One answer in two parts rather than two calls, so the parts describe the
+/// same instant and cannot disagree about a passport that moved between them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnsealedCounts {
+    /// Passports in a state that can still change (published or suspended).
+    /// The number an operator acts on.
+    pub live: i64,
+    /// Passports that will never change again (retired, superseded or
+    /// deactivated). They still serve publicly and still owe a seal, so the
+    /// repair sweep keeps sealing them: this is what is left to do, and it
+    /// falls as the sweep works through them.
+    pub terminal: i64,
+}
+
 /// What a completed pass over every stored seal found.
 ///
 /// Reported as a whole rather than as a running total, because the useful
@@ -527,10 +544,26 @@ pub trait SealOutbox: Send + Sync {
     /// Counts passports, not rows, and takes no `limit`: it answers "is anything
     /// unsealed", which a capped query cannot.
     ///
+    /// # Live and terminal are reported apart, not filtered
+    ///
+    /// A passport that was published unsealed and has since been retired,
+    /// superseded or deactivated is still unsealed: the obligation attached at
+    /// publish and the record reaching its end does not discharge it. Dropping
+    /// those from the count would hide that, and counting them with the rest
+    /// would leave an operator unable to tell a live product from a record that
+    /// ended last year. So both are returned, and [`UnsealedCounts`] says which
+    /// is which.
+    ///
+    /// **The sweep does not make the same split, deliberately.** A terminal
+    /// passport keeps serving at its public URL (ESPR Art. 9(2)(i): it is to
+    /// "remain available"), so a seal on it is still a seal on something a
+    /// verifier can fetch. [`Self::enqueue_unsealed`] therefore seals terminal
+    /// passports like any other.
+    ///
     /// Read-only. [`Self::enqueue_unsealed`] is the repair for the same
     /// condition and shares this predicate, but adds its own guards for rows the
     /// drain already owns — those belong to the repair, not to the question.
-    async fn unsealed_published_count(&self) -> Result<i64, DppError>;
+    async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError>;
 
     /// Re-arm a **sealed** row so its passport is sealed again.
     ///
@@ -566,7 +599,7 @@ pub trait SealOutbox: Send + Sync {
     ///
     /// # Why "unsealed" is not the only failure worth finding
     ///
-    /// [`Self::enqueue_unsealed`] and [`Self::unsealed_published_count`] both ask
+    /// [`Self::enqueue_unsealed`] and [`Self::unsealed_published_counts`] both ask
     /// the same question of the database: is the `seal` member absent? **A seal
     /// that is present but worthless satisfies neither clause.** Its passport is
     /// not swept, not counted, and looks healthy in every number this node

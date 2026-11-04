@@ -3,9 +3,9 @@
   "productGroup": "battery",
   "batchId": "BATCH-2026-Q2-007",
   "manufacturer": {
-    "name": "GreenCell GmbH",
+    "name": "Example Batteries GmbH",
     "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
-    "didWebUrl": "https://greencell.example/.well-known/did.json"
+    "didWebUrl": "https://batteries.example/.well-known/did.json"
   },
   "placedOnMarketDate": "2026-06-01",
   "commodityCode": "85076000",
@@ -78,8 +78,8 @@
       { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
     ],
     "componentPartNumbers": ["GC-CELL-32700-LFP", "GC-BMS-16S-V3", "GC-PACK-ENCL-100"],
-    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
-    "disassemblyInstructionsUrl": "https://greencell.example/service/ref-lfp48/disassembly",
+    "sparePartsContacts": "spares@batteries.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://batteries.example/service/ref-lfp48/disassembly",
     "safetyMeasures": "De-energise and wait 15 min before opening. Class 0 gloves. No conductive tools.",
     "testReportResults": "IEC 62619:2022 pass; UN 38.3 pass; report GC-TR-2026-0407",
     "markingInformation": "Separate-collection symbol (crossed-out wheeled bin) per Art. 13(4); capacity 100 Ah / 4.8 kWh",

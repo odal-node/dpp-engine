@@ -88,6 +88,10 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
             name: r.get("name"),
             country: r.get::<String, _>("country"),
             address: r.get("address"),
+            // Not typed here: `actor_identifier()` reads the scheme and value
+            // above when this is unset, and leaving it unset keeps the snapshot's
+            // bytes as they were.
+            identifier: None,
         }))
     }
 

@@ -27,24 +27,25 @@ use std::sync::LazyLock;
 use dpp_domain::passport::Passport;
 use tokio::sync::{Mutex, MutexGuard};
 
+use super::claim::Claim;
+
 const STRIPES: u64 = 64;
 
 static LOCKS: LazyLock<Vec<Mutex<()>>> =
     LazyLock::new(|| (0..STRIPES).map(|_| Mutex::new(())).collect());
 
-/// Hold `passport`'s label against every other publish in this process, or
-/// `None` when it prints no GS1 label.
+/// Hold what `passport` claims against every other publish in this process, or
+/// `None` when it claims nothing.
 ///
-/// Keyed on what the publish-time check asks about: the GTIN and the serial the
-/// carrier prints, attributed or derived.
+/// Keyed on the claim itself, which is what the publish-time check asks about:
+/// the label the carrier prints (the GTIN and a model, a lot or a serial) or, for
+/// a link or a DID, the identifier. It used to be keyed on the carrier serial, a
+/// value a model or batch passport derives from its own id, so two publishes of
+/// one such label never shared a stripe.
 pub(super) async fn hold(passport: &Passport) -> Option<MutexGuard<'static, ()>> {
-    let gtin = passport
-        .product_group_data
-        .as_ref()?
-        .product_identifier()?
-        .gtin()?;
+    let key = Claim::of(passport)?.key();
     let mut hasher = std::hash::DefaultHasher::new();
-    (gtin.as_str(), passport.effective_carrier_serial().as_ref()).hash(&mut hasher);
+    key.hash(&mut hasher);
     let stripe = usize::try_from(hasher.finish() % STRIPES).unwrap_or_default();
     Some(LOCKS[stripe].lock().await)
 }

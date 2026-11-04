@@ -5,7 +5,7 @@ get:
     The passport obligation for a single product group. Unauthenticated.
 
     A key neither catalog knows is a `404` rather than an entry with an empty
-    obligation — "this node knows nothing about it" and "no passport is
+    obligation: "this node knows nothing about it" and "no passport is
     required" are different answers, and the second would be a compliance claim
     the node is not entitled to make.
 

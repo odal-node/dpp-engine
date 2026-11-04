@@ -1,6 +1,6 @@
 [package]
 name        = "dpp-resolver"
-description = "Public QR code resolver — Axum server and WASM/Cloudflare Workers edge target"
+description = "Public Digital Product Passport resolver: answers GS1 Digital Link scans and serves the verified public view as HTML, JSON-LD or an Asset Administration Shell"
 version.workspace     = true
 edition.workspace     = true
 authors.workspace     = true

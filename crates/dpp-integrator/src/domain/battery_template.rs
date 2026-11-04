@@ -607,6 +607,26 @@ fn csv_cell(value: &str) -> String {
     }
 }
 
+/// The facts of an original battery placed on the market the day Art. 77(1)
+/// begins, 18 February 2027.
+///
+/// The template gates ask the content table with these rather than with
+/// `BatteryFacts::default()`, under which the due diligence row answers
+/// `Undetermined` instead of the `NotApplicable` it is for such a battery.
+///
+/// 🚨 They are the obligations of a battery placed before 18 August 2027. From
+/// that date the due diligence report (`dueDiligenceUrl`) is owed unless Art. 47
+/// exempts the battery, and no template has a column for it or for the
+/// operator's declaration (`dueDiligenceOperatorScope`), so a battery placed
+/// from then cannot be imported into a passport that publishes.
+#[cfg(test)]
+pub(crate) fn facts_before_due_diligence() -> dpp_rules::batteries::battery_facts::BatteryFacts {
+    dpp_rules::batteries::battery_facts::BatteryFacts {
+        placed_on_market: Some(dpp_rules::common::date::CalendarDate::new(2027, 2, 18)),
+        ..dpp_rules::batteries::battery_facts::BatteryFacts::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,10 +650,12 @@ mod tests {
     fn every_mandatory_field_has_a_column() {
         for category in BatteryCategory::ALL {
             let covered = fields_covered(*category);
-            let missing: Vec<&str> =
-                dpp_rules::batteries::passport_content::mandatory_fields(category.as_str())
-                    .filter(|f| !covered.contains(f))
-                    .collect();
+            let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
+                category.as_str(),
+                facts_before_due_diligence(),
+            )
+            .filter(|f| !covered.contains(f))
+            .collect();
             assert!(
                 missing.is_empty(),
                 "the {} template has no column for {} mandatory data point(s): {missing:?}",
@@ -660,7 +682,10 @@ mod tests {
         for category in BatteryCategory::ALL {
             let refused: Vec<&str> = fields_covered(*category)
                 .into_iter()
-                .filter(|f| !annex_xiii_requirement(f, category.as_str()).permits_presence())
+                .filter(|f| {
+                    !annex_xiii_requirement(f, category.as_str(), facts_before_due_diligence())
+                        .permits_presence()
+                })
                 .collect();
             assert!(
                 refused.is_empty(),

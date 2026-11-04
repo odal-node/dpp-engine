@@ -25,4 +25,4 @@ post:
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '422':
-      description: Not a valid dossier — malformed JSON or an unrecognised field.
+      description: Not a valid dossier (malformed JSON or an unrecognised field).

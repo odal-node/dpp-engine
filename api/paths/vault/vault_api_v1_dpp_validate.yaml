@@ -7,8 +7,8 @@ post:
     cannot disagree.
 
     **Two verdicts, because create and publish deliberately differ.** Create is
-    lenient about a product group with no resolvable JSON Schema — a draft is allowed
-    to be incomplete — while publish fails closed on it, since a signed
+    lenient about a product group with no resolvable JSON Schema (a draft is allowed
+    to be incomplete) while publish fails closed on it, since a signed
     passport must have passed a real schema check. A body can therefore be
     creatable but not yet clear the publish-time schema gate, and that gap is
     reported rather than hidden until publish is attempted.
@@ -18,8 +18,16 @@ post:
     `carrierSerial` another passport already holds. A body create would accept
     returns `200` with the two verdicts.
 
+    The `422` includes the personal-data check. A field the product group's
+    schema marks as able to hold personal data that has a value and no
+    `personalData` statement, a statement about a field that is not marked, an
+    `outside` statement naming no record, and a basis a governing act does not
+    admit are all refused here as they are on create, each naming its field. The
+    check reads no store, so it is part of the preview. It never reads what a
+    field says.
+
     **`productGroupDataValid` is not a publish verdict.** It reports one of publish's
-    preconditions — the product group-data gates — and publish applies others this
+    preconditions (the product group-data gates) and publish applies others this
     route does not run:
 
     - the **registry identity** requirement (a default facility and a primary

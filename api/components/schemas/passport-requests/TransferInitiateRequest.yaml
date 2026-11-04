@@ -7,7 +7,7 @@ properties:
   fromOperator:
     allOf:
       - $ref: ../transfer/ResponsibleOperator.yaml
-    description: The current (outgoing) responsible operator — must match the chain head.
+    description: The current (outgoing) responsible operator. Must match the chain head.
   toOperator:
     allOf:
       - $ref: ../transfer/ResponsibleOperator.yaml

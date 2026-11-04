@@ -2,14 +2,14 @@ post:
   operationId: generateDppEvidence
   summary: Generate and store a signed evidence dossier
   description: |
-    Assembles a self-contained, signed dossier proving a passport's full
-    proof chain — both JWS signatures, DID document snapshots, the
-    hash-chained audit trail, and (when present) the transfer chain and
-    end-of-life record — and persists it. See
+    Assembles and persists a self-contained, signed dossier proving a
+    passport's full proof chain: both JWS signatures, DID document snapshots,
+    the hash-chained audit trail, and, when present, the transfer chain and the
+    end-of-life record. See
     `docs/architecture/EVIDENCE-DOSSIER.md` for the complete format
     specification.
 
-    Authenticated tier only — the dossier's `fullView` member carries
+    Authenticated tier only: the dossier's `fullView` member carries
     full-view (non-redacted) passport data. Requires the passport to have
     been published at least once; a draft has no signature to export.
   tags:
@@ -47,7 +47,7 @@ get:
   description: |
     Every evidence dossier generated for this passport, newest first.
 
-    Summaries only — each row carries the dossier's id, when it was generated
+    Summaries only: each row carries the dossier's id, when it was generated
     and what it covers, but not the document itself. Dossiers embed full-view
     passport data and both signature chains, so they are large and are fetched
     one at a time through `GET /api/v1/evidence/{id}`.
@@ -58,7 +58,7 @@ get:
     superseded by anything else here, which is why the list is not filtered
     down to a latest.
 
-    Empty for a passport that has never been published — there is no signature
+    Empty for a passport that has never been published: there is no signature
     to attest to before then.
   tags:
     - Evidence Dossiers

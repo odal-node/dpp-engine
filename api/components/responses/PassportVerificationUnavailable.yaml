@@ -3,7 +3,7 @@ description: |
 
   Verification needs the operator's DID document, and this is the answer when
   that document cannot be fetched, cannot be parsed, or carries no key matching
-  the signature's `kid`. The passport itself may be perfectly valid — nothing
+  the signature's `kid`. The passport itself may be perfectly valid: nothing
   has been established about it either way, which is why this is a temporary
   failure and not a judgement.
 

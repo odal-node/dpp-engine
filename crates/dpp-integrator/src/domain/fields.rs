@@ -127,6 +127,27 @@ pub(super) fn require_u32(
     }
 }
 
+/// [`require_u32`] for a column that may be absent or empty.
+pub(super) fn optional_u32(
+    row: &HashMap<String, String>,
+    field: &str,
+    row_num: usize,
+    errors: &mut Vec<RowError>,
+) -> Option<u32> {
+    let raw = optional_str(row, field)?;
+    match raw.parse::<u32>() {
+        Ok(v) => Some(v),
+        Err(_) => {
+            errors.push(RowError {
+                row: row_num,
+                field: field.to_owned(),
+                message: format!("Expected a positive integer, got '{raw}'"),
+            });
+            None
+        }
+    }
+}
+
 /// Parse a required boolean cell.
 ///
 /// Accepts the spellings a spreadsheet actually produces — `true`/`false`,

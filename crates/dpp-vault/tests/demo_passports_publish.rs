@@ -19,8 +19,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::Datelike;
 use dpp_domain::ProductGroupData;
+use dpp_rules::batteries::battery_facts::BatteryFacts;
 use dpp_rules::batteries::passport_content;
+use dpp_rules::common::date::CalendarDate;
 
 fn demo_passport_files() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ops/demo/passports");
@@ -59,6 +62,28 @@ fn product_group_data(path: &Path) -> ProductGroupData {
             path.display()
         )
     })
+}
+
+/// The facts the content table reads for one demo file: its placing date, from
+/// the envelope, as the publish gate takes it. The second-life limb and the
+/// operator's declaration stay at their defaults, which only a battery placed
+/// from 18 August 2027 is asked about.
+fn battery_facts(path: &Path) -> BatteryFacts {
+    let raw = fs::read_to_string(path).expect("read demo passport");
+    let body: serde_json::Value = serde_json::from_str(&raw).expect("demo passport is JSON");
+    let placed_on_market = body
+        .get("placedOnMarketDate")
+        .and_then(serde_json::Value::as_str)
+        .map(|date| {
+            let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap_or_else(|e| {
+                panic!("{}'s placedOnMarketDate is not a date: {e}", path.display())
+            });
+            CalendarDate::new(date.year(), date.month() as u8, date.day() as u8)
+        });
+    BatteryFacts {
+        placed_on_market,
+        ..BatteryFacts::default()
+    }
 }
 
 /// Every demo file must land on its typed variant, not the open `Other` one.
@@ -109,9 +134,10 @@ fn every_demo_passport_satisfies_the_mandatory_content_gate() {
 
         // Present-but-null is absent: `skip_serializing_if` means a `None` never
         // reaches the wire, so an explicit null carries no value either way.
-        let missing: Vec<&str> = passport_content::mandatory_fields(battery_type)
-            .filter(|f| value.get(*f).is_none_or(serde_json::Value::is_null))
-            .collect();
+        let missing: Vec<&str> =
+            passport_content::mandatory_fields(battery_type, battery_facts(&path))
+                .filter(|f| value.get(*f).is_none_or(serde_json::Value::is_null))
+                .collect();
 
         if !missing.is_empty() {
             broken.push(format!(
@@ -159,7 +185,8 @@ fn no_demo_passport_carries_content_its_category_may_not() {
             .map(|(k, _)| k.as_str())
             .collect();
         let barred: Vec<&str> =
-            passport_content::fields_not_applicable(&present, battery_type).collect();
+            passport_content::fields_not_applicable(&present, battery_type, battery_facts(&path))
+                .collect();
 
         if !barred.is_empty() {
             broken.push(format!(

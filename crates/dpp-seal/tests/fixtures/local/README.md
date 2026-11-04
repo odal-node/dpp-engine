@@ -5,7 +5,7 @@ Member State trusted lists, around 5 MB together, and they exist to demonstrate
 one claim that cannot be demonstrated any other way: that the `xml-sec` in this
 build verifies a real document over the node-set ceiling older releases had.
 
-The tests that read them skip — loudly — when they are absent, so a checkout
+The tests that read them skip, with a message, when they are absent, so a checkout
 without them is green and says so. Re-run them with the documents present on
 every `xml-sec` bump.
 
@@ -14,12 +14,12 @@ every `xml-sec` bump.
 The URLs come from the LOTL itself (`eu-lotl.xml`, committed beside this
 directory), under `OtherTSLPointer` for each territory. As of 2026-09-15:
 
-```sh
+```bash
 curl -sSL -o it-trusted-list.xml https://eidas.agid.gov.it/TL/TSL-IT.xml
 curl -sSL -o fr-trusted-list.xml https://messervices.cyber.gouv.fr/visas/tl-fr_v6.xml
 ```
 
-Take the URL from the LOTL rather than from here if the fetch fails — a Member
+Take the URL from the LOTL rather than from here if the fetch fails: a Member
 State moving its endpoint is normal, and the LOTL is the record of where it is.
 
 ## What they prove, and what they do not

@@ -12,7 +12,7 @@ properties:
     example: gln
   identifierValue:
     type: string
-    description: Validated by scheme — a "gln" must pass the GS1 mod-10 check digit.
+    description: Validated by scheme, so a "gln" must pass the GS1 mod-10 check digit.
     example: '4012345000009'
   country:
     type: string
@@ -22,7 +22,7 @@ properties:
 
       **Upper case, and an assigned code.** Unlike the other country fields on
       this API, this one is checked against the ISO 3166-1 list rather than
-      merely shaped — `de` and `XX` are both refused. The pattern is what makes
+      merely shaped: `de` and `XX` are both refused. The pattern is what makes
       the published contract as strict as the handler: a length bound alone
       admits `1?`, which satisfies the contract and is then refused with `422`,
       and a contract looser than the implementation is the kind a generated
