@@ -50,6 +50,13 @@
 //! as on one whose category it does not name: a restriction that cannot be
 //! evaluated has not been met. See
 //! [`crate::middleware::credential::VerifiedCredential::audience_for`].
+//!
+//! A downgraded read says why in the
+//! [`X-DPP-Credential-Out-Of-Scope`](crate::middleware::credential::OUT_OF_SCOPE_HEADER)
+//! header (`product-group`, `product-category` or `no-product-category`),
+//! because the body cannot: it is the public view byte for byte. Without the
+//! header, a holder whose reads came back public could not tell a credential
+//! for the wrong group from one for the wrong category.
 
 use axum::{
     extract::{Path, State},
@@ -63,7 +70,9 @@ use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::PassportAuditEntry;
 
-use crate::middleware::credential::{CredentialOutcome, VerifiedCredential, read_and_verify};
+use crate::middleware::credential::{
+    CredentialOutcome, VerifiedCredential, out_of_scope_header_name, read_and_verify,
+};
 use crate::public_view::{signed_audience_view, signed_public_view};
 use crate::state::AppState;
 
@@ -105,7 +114,7 @@ pub async fn audience_read_handler(
             // Scope the credential to *this* passport's product group and
             // category. A credential issued for batteries grants nothing extra on
             // a textile passport, nor one issued for EV batteries on an LMT one.
-            let audience = match (&credential, &state.trusted_issuers) {
+            let scope = match (&credential, &state.trusted_issuers) {
                 (Some(c), Some(trust)) => c.audience_for(
                     p.product_group.catalog_key(),
                     p.product_group_data
@@ -113,8 +122,9 @@ pub async fn audience_read_handler(
                         .and_then(ProductGroupData::product_category),
                     trust.as_ref(),
                 ),
-                _ => Audience::Public,
+                _ => Ok(Audience::Public),
             };
+            let audience = scope.unwrap_or(Audience::Public);
 
             // Record the access before serving it. A credentialed read is the
             // operator's evidence that it honoured — and bounded — a lawful
@@ -135,10 +145,21 @@ pub async fn audience_read_handler(
 
             if audience == Audience::Public {
                 // Byte-identical to the public route: the payload the public
-                // proof was computed over, not the live row.
-                return match signed_public_view(&p) {
-                    Ok(v) => (StatusCode::OK, axum::Json(v)).into_response(),
-                    Err(e) => internal_error(e).into_response(),
+                // proof was computed over, not the live row. Why a credential
+                // got no more than this goes in a header, which leaves the body
+                // and its proof untouched.
+                let view = match signed_public_view(&p) {
+                    Ok(v) => v,
+                    Err(e) => return internal_error(e).into_response(),
+                };
+                return match scope {
+                    Err(miss) => (
+                        StatusCode::OK,
+                        [(out_of_scope_header_name(), miss.header_value())],
+                        axum::Json(view),
+                    )
+                        .into_response(),
+                    Ok(_) => (StatusCode::OK, axum::Json(view)).into_response(),
                 };
             }
 

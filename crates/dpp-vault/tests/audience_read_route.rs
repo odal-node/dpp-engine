@@ -217,6 +217,11 @@ async fn an_anonymous_read_serves_exactly_the_public_view() {
 
     let resp = get_with_credential(&base, &id, None).await;
     assert_eq!(resp.status(), 200, "anonymous read must succeed");
+    assert_eq!(
+        out_of_scope(&resp),
+        None,
+        "no credential, so nothing was out of scope"
+    );
     let credential_body: Value = resp.json().await.unwrap();
 
     let public_body: Value = reqwest::get(format!("{base}/public/dpp/{id}"))
@@ -460,6 +465,11 @@ async fn a_credential_for_another_product_group_grants_only_public() {
         200,
         "an out-of-scope credential is not an error"
     );
+    assert_eq!(
+        out_of_scope(&resp),
+        Some("product-group"),
+        "the holder is told which axis missed"
+    );
     let body: Value = resp.json().await.unwrap();
 
     assert!(
@@ -467,6 +477,26 @@ async fn a_credential_for_another_product_group_grants_only_public() {
         "a textile credential must not unlock battery individual-item data"
     );
     assert!(body.get("lintResult").is_none(), "nor restricted data");
+
+    // The reason travels in the header because the body cannot carry it: a
+    // downgraded body is the public view exactly, the payload its proof signs.
+    let public_body: Value = reqwest::get(format!("{base}/public/dpp/{id}"))
+        .await
+        .expect("public read")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body, public_body,
+        "a downgraded read must be the same representation as /public"
+    );
+}
+
+/// The reason a credential was served only the public view, if one was sent.
+fn out_of_scope(resp: &reqwest::Response) -> Option<&str> {
+    resp.headers()
+        .get(dpp_vault::middleware::credential::OUT_OF_SCOPE_HEADER)
+        .and_then(|v| v.to_str().ok())
 }
 
 /// Category scope, over HTTP: the battery fixture states `batteryType:
@@ -496,6 +526,11 @@ async fn a_credential_is_scoped_to_the_category_the_passport_states() {
             resp.status(),
             200,
             "{category}: a category mismatch is not an error"
+        );
+        assert_eq!(
+            out_of_scope(&resp),
+            (!unlocks).then_some("product-category"),
+            "{category}: a reason only when the credential was downgraded"
         );
         let body: Value = resp.json().await.unwrap();
         assert_eq!(

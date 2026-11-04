@@ -78,6 +78,9 @@ pub struct IssueRequest {
     pub country: String,
     /// Product groups covered. Empty means every group this operator publishes.
     pub product_groups: Vec<String>,
+    /// Product categories covered within `product_groups`. Empty means every
+    /// category.
+    pub product_categories: Vec<String>,
     /// Lifetime in days. `None` takes the node's default.
     pub valid_for_days: Option<i64>,
 }
@@ -90,8 +93,8 @@ pub struct IssueRequest {
 /// into the world with no way to find the first.
 ///
 /// Every refusal is the node's — an authority role, a bad `holderDid`, a
-/// lifetime outside the cap — and its `detail` is carried through verbatim
-/// rather than pre-empted here.
+/// lifetime outside the cap, a category list no named group can satisfy — and
+/// its `detail` is carried through verbatim rather than pre-empted here.
 pub async fn action_credential_issue(
     req: IssueRequest,
     client: &OdalClient,
@@ -103,6 +106,7 @@ pub async fn action_credential_issue(
         "role": role_value(&req.role),
         "country": req.country,
         "productGroups": req.product_groups,
+        "productCategories": req.product_categories,
     });
     if let Some(days) = req.valid_for_days {
         body["validForDays"] = json!(days);

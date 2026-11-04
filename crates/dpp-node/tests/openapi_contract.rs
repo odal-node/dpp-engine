@@ -3487,6 +3487,7 @@ mod fixtures {
             role: dpp_vc::CredentialRole::AuthorisedRepairer,
             country: "DE".into(),
             product_groups: vec!["battery".into()],
+            product_categories: vec!["ev".into()],
             valid_for_days: Some(30),
         }
     }
@@ -3500,7 +3501,7 @@ mod fixtures {
                 role: dpp_vc::CredentialRole::AuthorisedRepairer,
                 country: "DE".into(),
                 product_groups: vec!["battery".into()],
-                product_categories: Vec::new(),
+                product_categories: vec!["ev".into()],
             },
         )
         .expires_in_days(30)
