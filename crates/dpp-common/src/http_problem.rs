@@ -1,4 +1,4 @@
-//! RFC 7807 Problem Details — error response type and shorthand constructors.
+//! RFC 9457 Problem Details — error response type and shorthand constructors.
 
 use axum::{
     Json,
@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::Serialize;
 
-/// RFC 7807 Problem Details object.
+/// RFC 9457 Problem Details object.
 ///
 /// Serialises to a JSON body with a `type` URI derived from the `title`.
 /// Use [`Problem::new`] to construct, then chain [`Problem::with_detail`] /
@@ -38,7 +38,7 @@ pub struct Problem {
     pub instance: Option<String>,
     /// The individual field failures behind this problem, when there are any.
     ///
-    /// RFC 7807 §3.2 permits extension members, and this is one. It exists
+    /// RFC 9457 §3.2 permits extension members, and this is one. It exists
     /// because `detail` is a single string and a validation failure is not: a
     /// battery rejected for missing Annex XIII content produces upwards of
     /// thirty distinct field errors, and flattening them into one
@@ -112,7 +112,7 @@ impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let mut response = (status, Json(self)).into_response();
-        // RFC 7807 §3: the media type is `application/problem+json`, not the
+        // RFC 9457 §3: the media type is `application/problem+json`, not the
         // `application/json` that Axum's `Json` sets by default.
         response.headers_mut().insert(
             axum::http::header::CONTENT_TYPE,
@@ -158,7 +158,7 @@ mod tests {
                 .get(CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok()),
             Some("application/problem+json"),
-            "RFC 7807 requires the application/problem+json media type"
+            "RFC 9457 requires the application/problem+json media type"
         );
     }
 

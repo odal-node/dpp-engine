@@ -42,7 +42,7 @@ async fn retiring_a_facility_preserves_passport_provenance_and_audits() {
             "/api/v1/dpp",
             json!({
                 "productName": "EcoBattery LFP 3000",
-                "manufacturer": { "name": "GreenCell GmbH", "address": "Berlin, DE" },
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
                 "productGroupData": {
                     "productGroup": "battery",
                     "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },

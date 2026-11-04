@@ -1,5 +1,5 @@
 description: |
-  State conflict — e.g. attempting to publish an already-published DPP
+  State conflict, e.g. attempting to publish an already-published DPP
   or updating a retired DPP.
 content:
   application/problem+json:

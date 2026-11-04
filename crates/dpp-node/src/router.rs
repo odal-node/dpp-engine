@@ -16,6 +16,7 @@ use dpp_common::{
     metrics::http_metrics_middleware,
     request_id::{UuidRequestId, inject_request_id},
 };
+use dpp_identity_service::handlers::did_document::did_document_handler;
 use dpp_identity_service::state::AppState as IdentityState;
 use dpp_integrator::state::AppState as IntegratorState;
 use dpp_vault::state::AppState as VaultState;
@@ -27,6 +28,9 @@ use dpp_vault::state::AppState as VaultState;
 /// - `/identity`   — did:web identity management and signing
 /// - `/integrator` — CSV/Excel inbound adapter
 ///
+/// One identity route is also served at the root: `/.well-known/did.json`,
+/// where the did:web method looks for the node's own DID document.
+///
 /// The bridge crate is library-only (no HTTP surface); it provides
 /// cross-service helpers consumed by the vault and integrator handlers.
 pub fn build(
@@ -35,6 +39,12 @@ pub fn build(
     integrator_state: IntegratorState,
 ) -> Router {
     let vault_router = dpp_vault::router::build(vault_state);
+    // did:web resolves a pathless DID, `did:web:<host>`, to
+    // `https://<host>/.well-known/did.json`, and the DID this node signs as is
+    // pathless (`dpp_vc::did_builder::did_for`). Served only under `/identity`,
+    // the node's own DID did not resolve without a proxy rewrite. The
+    // `/identity` path stays, for callers that already use it.
+    let did_document = get(did_document_handler).with_state(identity_state.clone());
     // Public-only identity routes (did:web document + health). The internal
     // signing/rotation endpoints are deliberately NOT mounted on the node — the
     // vault signs in-process, so there is no network-reachable signing surface.
@@ -43,6 +53,7 @@ pub fn build(
 
     Router::new()
         .route("/health", get(|| async { node_health() }))
+        .route("/.well-known/did.json", did_document)
         .nest("/vault", vault_router)
         .nest("/identity", identity_router)
         .nest("/integrator", integrator_router)

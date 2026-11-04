@@ -2,8 +2,8 @@ description: |
   No representation matches the request's `Accept` header. The response
   body names the media types this resource can produce.
 
-  A passport carrying no GTIN — an unsold-goods report, or an untyped
-  product group — also gets this for `application/aas+json`: it identifies no
+  A passport carrying no GTIN (an unsold-goods report, or an untyped
+  product group) also gets this for `application/aas+json`: it identifies no
   trade item, so it has no AAS asset identity and therefore no AAS
   representation.
 content:

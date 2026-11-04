@@ -5,6 +5,7 @@ description: >-
   outstanding.
 required:
   - unsealedPublished
+  - unsealedTerminal
   - pending
   - sealed
   - exhausted
@@ -12,7 +13,28 @@ required:
 properties:
   unsealedPublished:
     type: integer
-    description: Published passports carrying no seal at all. `0` is the healthy state.
+    description: >-
+      Live published passports (`active` or `suspended`) carrying no seal at
+      all. `0` is the healthy state.
+
+
+      Live only. A passport that was published unsealed and has since been
+      retired, superseded or deactivated is counted in `unsealedTerminal`, so
+      this is the number to act on without first working out which of the
+      passports behind it still matter.
+  unsealedTerminal:
+    type: integer
+    description: >-
+      Retired, superseded or deactivated passports that were published and carry
+      no seal. They still serve publicly and the obligation attached at publish,
+      so the repair sweep seals them too: this is what is left of that, and it
+      falls as the sweep works through them.
+
+
+      Unlike `unsealedPublished`, a non-zero value here is not by itself a call
+      to act: the sweep is already working through it. A count that does not
+      fall is a call to act: the seals the sweep asks for are failing, which
+      `exhausted` counts and the node's log explains.
   pending:
     type: integer
   sealed:
@@ -39,8 +61,8 @@ properties:
 
       A node that keeps its audit state restores the last completed report at
       boot, so a restart no longer empties this. Where it is still `null` after a
-      deployment, the honest reading is that no pass has ever finished against
-      this database — on a large estate, check the audit's cadence before
+      deployment, no pass has ever finished against this database. On a large
+      estate, check the audit's cadence before
       concluding anything about the seals.
   trustMode:
     type:
@@ -54,7 +76,7 @@ properties:
     description: >-
       The tier the **currently configured** sealing backend resolved to. The
       counts say how much sealing is outstanding; this says whether the sealing
-      that does happen is worth anything — a node can sit at
+      that does happen is worth anything: a node can sit at
       `unsealedPublished: 0` while every one of those seals was signed by a key
       it generated itself, and no count would show it.
 

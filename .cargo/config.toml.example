@@ -27,3 +27,7 @@ dpp-plugin-traits = { path = "../dpp-core/crates/dpp-plugin-traits" }
 dpp-registry      = { path = "../dpp-core/crates/dpp-registry" }
 dpp-calc          = { path = "../dpp-core/crates/dpp-calc" }
 dpp-rules         = { path = "../dpp-core/crates/dpp-rules" }
+# Not in this workspace's graph, so cargo reports it unused here. The plugin SDK
+# ABI guest (crates/dpp-plugin-host/tests/fixtures/abi-echo) depends on it, and
+# without it a guest pinned to an unpublished release cannot resolve.
+dpp-plugin-sdk    = { path = "../dpp-core/crates/dpp-plugin-sdk" }

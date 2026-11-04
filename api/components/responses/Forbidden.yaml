@@ -1,5 +1,5 @@
 description: |
-  The credential is authenticated but lacks the required scope — e.g. a
+  The credential is authenticated but lacks the required scope, e.g. a
   `write`/`read` key attempting an admin-only action.
 
   Every scope refusal in the service answers this one sentence, naming the scope

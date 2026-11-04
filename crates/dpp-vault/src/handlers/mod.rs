@@ -16,6 +16,7 @@ pub mod lint;
 pub mod list;
 pub mod node_state;
 pub mod operator;
+pub mod personal_data;
 pub mod plugins;
 pub mod public_read;
 pub mod public_read_by_gtin;

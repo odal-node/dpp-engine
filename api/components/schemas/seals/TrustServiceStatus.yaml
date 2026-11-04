@@ -12,13 +12,13 @@ oneOf:
         type: string
         description: The trusted-list status URI, verbatim.
 description: >-
-  The status a trusted list records for a service — ETSI TS 119 612 Annex D.5.
+  The status a trusted list records for a service: ETSI TS 119 612 Annex D.5.
 
 
-  🚨 **Three shapes, not two.** `granted` and `withdrawn` are the pair that
+  **Three shapes, not two.** `granted` and `withdrawn` are the pair that
   answers whether a service holds qualified status. Every other status a list can
-  carry — `undersupervision`, `recognisedatnationallevel`, and whatever a Member
-  State publishes next — arrives as an **object**, `{"other": "<the status
+  carry (`undersupervision`, `recognisedatnationallevel`, and whatever a Member
+  State publishes next) arrives as an **object**, `{"other": "<the status
   URI>"}`.
 
 
@@ -34,5 +34,5 @@ description: >-
 
 
   `null` where it appears on a verdict means the list's history does not reach
-  back to the moment asked about — the list is *silent* about it rather than
+  back to the moment asked about: the list is *silent* about it rather than
   negative, which is a different finding from a recorded non-granted status.

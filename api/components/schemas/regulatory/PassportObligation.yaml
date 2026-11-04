@@ -3,14 +3,14 @@ description: |
   Whether a passport is required for a product group, and from when.
 
   The obligation is split from its date so `required` can be answered where
-  nothing fixes a date — which is most of the catalog.
+  nothing fixes a date, which is most of the catalog.
 properties:
   required:
     type: boolean
     description: |
       Whether an instrument recorded against this product group imposes a
-      passport obligation. Says nothing about whether one can be produced today
-      — see `determinable` on the enclosing object.
+      passport obligation. Says nothing about whether one can be produced today:
+      see `determinable` on the enclosing object.
 
       **Read with `instruments[].bindingStatus`.** This is a fold across every
       reaching act, so `true` means an act imposes a passport, not that any act

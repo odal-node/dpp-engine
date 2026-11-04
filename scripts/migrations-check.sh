@@ -23,12 +23,28 @@
 # that list must be.
 set -euo pipefail
 base="${MIGRATION_BASE:-origin/main}"
-git fetch -q origin main 2>/dev/null || true
+# An explicit refspec, not `git fetch origin main`: in a clone that tracks one ref
+# — which is what CI's checkout makes — the short form leaves the answer in
+# FETCH_HEAD and never creates `origin/main`, so the check below finds no base.
+git fetch -q origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null || true
 if ! git rev-parse --verify -q "$base" > /dev/null; then
+    # Locally a missing base is a repository that has not fetched yet. In CI it is
+    # a check that did not run, and a check that cannot run must not pass: it was
+    # a green tick on every pull request that checked nothing.
+    if [ -n "${CI:-}" ]; then
+        echo "ERROR: migrations-check: $base is not available, so nothing was checked." >&2
+        echo "       The CI checkout needs fetch-depth: 0 (or set MIGRATION_BASE)." >&2
+        exit 1
+    fi
     echo "migrations-check: $base not available — skipping (set MIGRATION_BASE to override)"
     exit 0
 fi
-changed=$(git diff --name-only "$base"...HEAD -- 'ops/pg/*.sql' || true)
+# `...` needs a merge base, which a shallow clone does not have. That is an error
+# to report, not a reason to find no changes.
+if ! changed=$(git diff --name-only "$base"...HEAD -- 'ops/pg/*.sql'); then
+    echo "ERROR: migrations-check: cannot diff against $base — no merge base? (a shallow clone has none)" >&2
+    exit 1
+fi
 violations=""
 for f in $changed; do
     # Present on the base branch => it has (or may have) already been applied.

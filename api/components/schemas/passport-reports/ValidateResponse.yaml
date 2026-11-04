@@ -11,7 +11,7 @@ properties:
   createValid:
     type: boolean
     description: >-
-      Always `true` on a 200 — a body create would reject gets back the
+      Always `true` on a 200: a body create would reject gets back the
       identical 422 create would have returned, not a paraphrase of it.
     example: true
   productGroupDataValid:
@@ -28,7 +28,7 @@ properties:
       content gate, reachable only by attempting the lifecycle transition; and
       the compliance gate, which needs a `placedOnMarketDate` and a stored
       passport. `true` means "this body clears the schema gate", never "publish
-      will succeed" — the field was called `publishValid` and was renamed
+      will succeed": the field was called `publishValid` and was renamed
       because that name promised the latter.
     example: false
   detail:
@@ -38,5 +38,5 @@ properties:
     description: >-
       Why the product group data would be refused. Null when `productGroupDataValid` is true.
     example: >-
-      cannot publish: no registered JSON Schema for product group 'furniture' —
-      publish requires a resolvable schema when product group data is present
+      cannot publish: no registered JSON Schema for product_group 'furniture' —
+      publish requires a resolvable schema when product_group data is present

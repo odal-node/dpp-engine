@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0043 — admit the `registry_handle_recorded` audit action.
+-- 0045 — admit the `registry_handle_recorded` audit action.
 --
 -- A registry submission whose correlation identifier this node lost is normally
 -- found again by the drain, by the unique product identifier the passport was

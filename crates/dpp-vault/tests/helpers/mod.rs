@@ -522,7 +522,11 @@ async fn start_vault_with_identity(
     // `false` passed because nothing *could* be recorded rather than
     // because nothing was.
     .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
-    .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())));
+    .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
+    // The node commits every state change through the state-change log, so a
+    // harness without it would write the parts one after another, a path no
+    // real deployment takes.
+    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())));
 
     // Wired after the chain rather than inside it, because unlike every port
     // above these two are what a test is *about* when it is about sealing: any
@@ -560,6 +564,7 @@ async fn start_vault_with_identity(
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
 
     let state = AppState {
         service,
@@ -576,6 +581,7 @@ async fn start_vault_with_identity(
         cors_allowed_origins: Vec::new(),
         scan_repo,
         unsold_goods_repo,
+        personal_data,
         plugin_admin: None,
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
@@ -660,8 +666,11 @@ pub async fn seed_complete_operator(dal: &PgDal) {
         STANDALONE_OPERATOR_ID,
         OperatorIdentifier {
             id: uuid::Uuid::now_v7(),
-            scheme: "vat".into(),
-            value: "DE123456789".into(),
+            // An LEI: a registration carries only a scheme with an EN 18219
+            // clause 6 route, so a VAT number here would refuse every publish
+            // that owes one.
+            scheme: "lei".into(),
+            value: "529900T8BM49AURSDO55".into(),
             label: None,
             is_primary: true,
             created_at: chrono::Utc::now(),

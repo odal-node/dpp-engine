@@ -1,32 +1,52 @@
-# dpp-engine Documentation — start here
+# dpp-engine documentation
 
-This folder documents **running the product**: services, database, operations, security. The *standard itself* (data model, regulation mapping, crypto) is documented in [dpp-core/docs](https://github.com/odal-node/dpp-core/tree/main/docs) — the golden rule is that regulation-driven things live there, deployment-driven things live here.
+These documents cover **running the node**: services, database, operations and security.
+The regulatory model (data model, regulation mapping, cryptography) is documented with the
+library, in [dpp-core/docs](https://github.com/odal-node/dpp-core/tree/main/docs). Guides
+for operators and integrators are on [docs.odal-node.io](https://docs.odal-node.io).
 
-## If you're new, read these three, in this order
+## Start here
 
-1. **[architecture/OVERVIEW.md](architecture/OVERVIEW.md)** — service topology and the write/read request paths, end to end.
-2. **[guides/DEVELOPER-GUIDE.md](guides/DEVELOPER-GUIDE.md)** — run it, test it, change it.
-3. **[ops/PRODUCTION-RUNBOOK.md](ops/PRODUCTION-RUNBOOK.md)** — what "running this for a real operator" actually involves: topology, hardening, backups, upgrades, key custody.
+1. **[architecture/OVERVIEW.md](architecture/OVERVIEW.md):** the services and how write and
+   read requests flow through them.
+2. **[guides/DEVELOPER-GUIDE.md](guides/DEVELOPER-GUIDE.md):** run it, test it, change it.
+3. **[ops/PRODUCTION-RUNBOOK.md](ops/PRODUCTION-RUNBOOK.md):** what running a node for a
+   real operator involves: topology, hardening, backups, upgrades, key custody.
 
 ## By question
 
-| You're asking… | Read |
+| Question | Read |
 |---|---|
-| "What services exist and how do requests flow?" | [architecture/OVERVIEW.md](architecture/OVERVIEW.md) · [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) |
-| "What are the recurring engineering patterns here?" | [architecture/DESIGN-PATTERNS.md](architecture/DESIGN-PATTERNS.md) — repos, composite auth, fallbacks *and the honesty rule that governs them* |
-| "How is data stored, migrated, bootstrapped?" | [architecture/DATA-MODEL.md](architecture/DATA-MODEL.md) · [architecture/DATABASE.md](architecture/DATABASE.md) |
-| "How do auth and API keys work?" | [architecture/AUTH.md](architecture/AUTH.md) |
-| "What events does the node emit, and how reliably?" | [architecture/EVENT-BUS.md](architecture/EVENT-BUS.md) |
-| "How do I operate this in production?" | [ops/PRODUCTION-RUNBOOK.md](ops/PRODUCTION-RUNBOOK.md) · [ops/METRICS-PLAN.md](ops/METRICS-PLAN.md) |
-| "What exactly is the HTTP surface?" | [../api/openapi.yaml](../api/openapi.yaml) |
-| "What are the licence terms, really?" | [legal/LICENSING.md](legal/LICENSING.md) — BSL-1.1 with a genuine self-host grant · [legal/DPP-RETENTION.md](legal/DPP-RETENTION.md) |
-| "What's built, what's next?" | [project/BLUEPRINT.md](project/BLUEPRINT.md) |
-| "How is an evidence dossier built and checked?" | [architecture/EVIDENCE-DOSSIER.md](architecture/EVIDENCE-DOSSIER.md) — the thing the paragraph below is about |
-| "How do I onboard an operator?" | [guides/OPERATOR-SETUP.md](guides/OPERATOR-SETUP.md) |
-| "How do outbound webhooks work?" | [guides/WEBHOOKS.md](guides/WEBHOOKS.md) |
-| "How are releases cut and versioned?" | [governance/RELEASE.md](governance/RELEASE.md) · [governance/VERSIONING.md](governance/VERSIONING.md) · [governance/GIT-STRATEGY.md](governance/GIT-STRATEGY.md) |
-| "How are routes mounted across the fused node?" | [project/ENDPOINTS.md](project/ENDPOINTS.md) — mounting architecture only; [../api/openapi.yaml](../api/openapi.yaml) is the authoritative surface |
+| Which services exist, and how do requests flow? | [architecture/OVERVIEW.md](architecture/OVERVIEW.md), [architecture/ARCHITECTURE.md](architecture/ARCHITECTURE.md) |
+| What engineering patterns recur here? | [architecture/DESIGN-PATTERNS.md](architecture/DESIGN-PATTERNS.md): repositories, composite auth, and how fallbacks report themselves |
+| How is data stored, migrated and bootstrapped? | [architecture/DATA-MODEL.md](architecture/DATA-MODEL.md), [architecture/DATABASE.md](architecture/DATABASE.md), [../ops/pg/README.md](../ops/pg/README.md) |
+| How do auth and API keys work? | [architecture/AUTH.md](architecture/AUTH.md) |
+| Which events does the node emit, and how reliably? | [architecture/EVENT-BUS.md](architecture/EVENT-BUS.md) |
+| How are evidence dossiers built and checked? | [architecture/EVIDENCE-DOSSIER.md](architecture/EVIDENCE-DOSSIER.md) |
+| Which standards does the code cite, at which revision? | [architecture/STANDARDS.md](architecture/STANDARDS.md) |
+| What exactly is the HTTP surface? | [../api/openapi.bundled.yaml](../api/openapi.bundled.yaml) (OpenAPI 3.1), browsable at [docs.odal-node.io/api](https://docs.odal-node.io/api/); [../api/README.md](../api/README.md) explains how it is built |
+| How are routes mounted in the node? | [project/ENDPOINTS.md](project/ENDPOINTS.md) |
+| How do I set up and onboard an operator? | [guides/OPERATOR-SETUP.md](guides/OPERATOR-SETUP.md) |
+| How do I run the demonstration? | [guides/DEMO-RUNBOOK.md](guides/DEMO-RUNBOOK.md) |
+| How do outbound webhooks work? | [guides/WEBHOOKS.md](guides/WEBHOOKS.md) |
+| How do I operate this in production? | [ops/PRODUCTION-RUNBOOK.md](ops/PRODUCTION-RUNBOOK.md), [ops/METRICS-PLAN.md](ops/METRICS-PLAN.md) |
+| What are the licence terms? | [legal/LICENSING.md](legal/LICENSING.md), [legal/DPP-RETENTION.md](legal/DPP-RETENTION.md) |
+| What is built, and what is out of scope? | [project/BLUEPRINT.md](project/BLUEPRINT.md) |
+| How are releases cut and versioned? | [governance/RELEASE.md](governance/RELEASE.md), [governance/VERSIONING.md](governance/VERSIONING.md), [governance/GIT-STRATEGY.md](governance/GIT-STRATEGY.md) |
 
-## What makes this node different (the 60-second version)
+## What the node guarantees, in one paragraph
 
-A **production node cannot lie about its trust level** — every trust-critical adapter reports `ghost`/`sandbox`/`live` on the authenticated `/vault/api/v1/node/state` (and as a `trust_mode` gauge on the private `/metrics` listener; the public `/health` answers liveness only), and `NODE_PROFILE=production` refuses to boot on placeholders. **History is tamper-evident** — audit entries are hash-chained; edits are detected at the exact index. **Registration survives crashes** — EU-registry intent commits in the publish transaction to a durable outbox and drains with backoff. **Regulation arrives as signed data** — compliance rulesets are Ed25519-signed bundles, verified fail-closed, hot-swapped atomically. **Evidence is generated and verified, not just claimed** — a signed dossier is generated and stored in one call, then checked against its own signatures and hash chains via `odal verify` or the evidence API. Each of these is enforced by tests, not adjectives.
+**Fail-fast startup:** every trust-critical adapter reports its mode (`ghost` for a stub,
+`sandbox` or `live`) on the authenticated `GET /vault/api/v1/node/state` and as a
+`trust_mode` gauge on the private metrics listener (the public `/health` reports liveness
+only), and under `NODE_PROFILE=production` the node refuses to start while a required
+adapter is a stub. **Tamper-evident history:** audit entries are hash-chained, so an edit
+is detected at the exact entry. **Durable registration:** the EU registry submission is
+written to an outbox in the same transaction as the publish, and drained with retry and
+backoff. **Verifiable evidence:** a signed evidence dossier is generated and stored in one
+call, then checked against its own signatures and hash chains with `odal verify` or the
+evidence API. Tests enforce each of these.
+
+The signed ruleset channel verifies Ed25519-signed bundles and refuses forged or stale
+ones, but today a swap changes only the version the node reports: the rules that run are
+compiled in. See `crates/dpp-node/src/infra/ruleset.rs`.

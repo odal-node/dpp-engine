@@ -3,7 +3,7 @@ post:
   summary: Verify a stored dossier
   description: |
     An integrity check against the stored dossier's own signatures and
-    hash chains. A tamper is still a `200` response — the report's
+    hash chains. A tamper is still a `200` response: the report's
     `checks` name which check failed.
   tags:
     - Evidence Dossiers

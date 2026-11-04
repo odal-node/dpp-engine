@@ -1,13 +1,13 @@
-# Demo samples — fully-populated DPPs
+# Demo samples: fully populated passports
 
 Two reference Digital Product Passports with a wide field set populated, for
 visualising the full data shape and for seeding a fresh node. Current passport
-format (envelope `productGroup` + `productGroupData`; no `schemaVersion` — the
+format (envelope `productGroup` + `productGroupData`; no `schemaVersion`; the
 node stamps the product group's current schema on create).
 
 | File | Product group | Notes |
 |------|---------------|-------|
-| `battery-full.json` | battery | `industrial` battery carrying the **complete** EU Battery Regulation Annex XIII data set — publishes past the mandatory-content gate. Valid GTIN `09506000134352`. |
+| `battery-full.json` | battery | `industrial` battery carrying the **complete** EU Battery Regulation Annex XIII data set; publishes past the mandatory-content gate. Valid GTIN `09506000134352`. |
 | `textile-full.json` | textile | `TextileData` with fibre composition (sums to 100%), SVHC, care, microplastic and durability data. |
 
 For a battery example **per category** (`ev`, `lmt`, `portable`, lead-acid …),
@@ -18,7 +18,7 @@ see [`../passports/`](../passports/).
 `odal passport import` accepts **JSON** (a single DPP object or an array) as well
 as CSV, so these post verbatim with every field intact.
 
-```sh
+```bash
 # 1. Point the CLI at your node (config at ~/.config/odal/config.toml):
 #      vault_url    = "http://localhost:8001/vault"
 #      resolver_url = "http://localhost:8003"
@@ -37,7 +37,7 @@ odal passport export --format json
 #   or open the public page: http://localhost:8003/dpp/<id>
 ```
 
-Without a built CLI, `curl` the create endpoint directly — see
+Without a built CLI, `curl` the create endpoint directly; see
 `../passports/load.sh` for the pattern.
 
 Prereq: node running, schema migrated, operator identity set (`odal operator set`).

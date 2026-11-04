@@ -10,7 +10,7 @@ description: |
   execution without comparing anything.
 
   Only the routes that document this parameter accept it. Sending it to any
-  other route is a `400` rather than being ignored — a route that is idempotent
+  other route is a `400` rather than being ignored: a route that is idempotent
   by shape records nothing, and silently accepting the header would suggest a
   protection that is not there.
 

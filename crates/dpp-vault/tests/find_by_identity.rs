@@ -20,7 +20,7 @@ fn battery_passport(gtin: &str) -> serde_json::Value {
     serde_json::json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": {
-            "name": "GreenCell GmbH",
+            "name": "Example Batteries GmbH",
             "address": "Prenzlauer Berg, Berlin, DE"
         },
         "materials": [

@@ -26,5 +26,5 @@ properties:
       - object
       - 'null'
     description: >-
-      The row-addressed findings report — populated for every job, dry-run or
+      The row-addressed findings report: populated for every job, dry-run or
       apply, independent of `result`.

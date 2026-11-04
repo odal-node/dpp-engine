@@ -204,8 +204,8 @@ impl SealOutbox for Seals {
     async fn status_counts(&self) -> Result<SealOutboxCounts, DppError> {
         Ok(SealOutboxCounts::default())
     }
-    async fn unsealed_published_count(&self) -> Result<i64, DppError> {
-        Ok(0)
+    async fn unsealed_published_counts(&self) -> Result<dpp_types::UnsealedCounts, DppError> {
+        Ok(dpp_types::UnsealedCounts::default())
     }
     async fn rearm_sealed(&self, _: PassportId, _: &str, _: &str) -> Result<bool, DppError> {
         unreachable!("the audit never repairs")

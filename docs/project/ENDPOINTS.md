@@ -1,62 +1,49 @@
+# How routes are mounted
 
-## Service Endpoints
+The authoritative route list, with authentication, scopes and error codes, is the
+OpenAPI description, [`api/openapi.bundled.yaml`](../../api/openapi.bundled.yaml),
+browsable at [docs.odal-node.io/api](https://docs.odal-node.io/api/). A contract test
+(`crates/dpp-node/tests/openapi_contract.rs`) fails when a router serves a path the
+description does not list, or the reverse. This page explains how the routers are
+composed, which the description does not show.
 
-> ⚠️ **`api/openapi.yaml` is the authoritative HTTP surface, not this file.**
-> This document covers **how routes are mounted** across the fused node — which
-> router owns what, and which endpoints are deliberately unreachable in the fused
-> deployment. The route tables below are a partial illustration: they name 33 of
-> the 78 paths the spec carries, and they are not kept in step with it.
->
-> Two registers of the same fact drift; one does not. If a route table here ever
-> disagrees with the spec, the spec is right — and the table should be deleted
-> rather than corrected.
+## The node (`dpp-node`, port 8001)
 
-### MVP Node (port 8001)
+`crates/dpp-node/src/router.rs` nests three routers under one listener:
 
-Routes are mounted by prefix: `/vault/*`, `/identity/*`, `/integrator/*` (see
-`crates/dpp-node/src/router.rs`). The fused node mounts identity's
-**public-only** router — the internal signing/key-rotation endpoints exist in
-`dpp-identity` for **standalone** deployment only and are never network-reachable
-here; the vault signs in-process instead (see `ATK-1` regression test).
+| Prefix | Router | Mounted with |
+|---|---|---|
+| `/health` | `dpp-node` | |
+| `/vault/*` | `dpp_vault::router::build` | Auth middleware on `/vault/api/v1/*`; scope checks in the handlers |
+| `/identity/*` | `dpp_identity_service::router::build_public` | Public routes only: the DID document and probes |
+| `/integrator/*` | `dpp_integrator::router::build` | Each handler forwards the caller's `Bearer` token to the vault |
 
-| Method | Path | Auth | Service |
-|---|---|---|---|
-| GET | `/health` | None | Node |
-| GET | `/vault/health` | None | Vault |
-| GET | `/vault/ready` | None | Vault |
-| GET | `/vault/api/v1/info` | None | Vault |
-| GET | `/vault/public/dpp/{id}` | None | Vault |
-| GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Vault |
-| POST | `/vault/api/v1/dpp` | Bearer | Vault |
-| GET | `/vault/api/v1/dpps` | Bearer | Vault |
-| GET | `/vault/api/v1/dpp/{id}` | Bearer | Vault |
-| PUT | `/vault/api/v1/dpp/{id}` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/publish` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/suspend` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/retire` | Bearer | Vault |
-| GET | `/vault/api/v1/dpp/{id}/history` | Bearer | Vault |
-| POST | `/vault/api/v1/dpp/{id}/eol` | Bearer | Vault — end-of-life declaration (typed reason) |
-| POST | `/vault/api/v1/dpp/{id}/transfer/initiate` | Bearer | Vault — transfer-of-responsibility (signs) |
-| POST | `/vault/api/v1/dpp/{id}/transfer/accept` | Bearer | Vault — countersigns, fail-closed verify |
-| GET | `/vault/api/v1/dpp/{id}/evidence` | Bearer | Vault — signed evidence dossier
-| GET | `/vault/api/v1/node/state` | Bearer | Vault |
-| GET | `/vault/api/v1/operator` | Bearer | Vault |
-| PATCH | `/vault/api/v1/operator` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/api-keys` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/api-keys` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/facilities` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/facilities` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/facilities/{id}` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/facilities/{id}/default` | Bearer (Admin) | Vault |
-| GET | `/vault/api/v1/operator-identifiers` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/operator-identifiers` | Bearer (Admin) | Vault |
-| DELETE | `/vault/api/v1/operator-identifiers/{id}` | Bearer (Admin) | Vault |
-| POST | `/vault/api/v1/operator-identifiers/{id}/primary` | Bearer (Admin) | Vault |
-| GET | `/identity/health` | None | Identity |
-| GET | `/identity/ready` | None | Identity |
-| GET | `/identity/.well-known/did.json` | None | Identity |
-| GET | `/integrator/health` | None | Integrator |
-| GET | `/integrator/api/v1/templates/{productGroup}` | None | Integrator |
-| POST | `/integrator/api/v1/import/{productGroup}` | Bearer | Integrator |
-| GET | `/integrator/api/v1/imports/{job_id}` | Bearer | Integrator |
+Within `/vault`, routes fall into four groups by who may call them:
+
+| Group | Authentication |
+|---|---|
+| `/vault/api/v1/*` | API key (`Bearer odal_sk_…`) or the local admin (`Basic`) |
+| `/vault/public/*` | None. The signed public view |
+| `/vault/credential/*` | None, but reads more when the caller sends `X-DPP-Credential`. Kept out of `/public` because a public URL whose body varies by caller breaks caching, and out of `/api/v1` because a repairer or authority holds a credential, not an API key |
+| `/vault/internal/*` | mTLS (`CN=odal-resolver`): the resolver's scan-count flush |
+
+## Signing endpoints are not mounted
+
+`dpp-identity`'s `/internal/sign`, `/internal/verify` and `/internal/keys/rotate` exist
+only on the standalone identity binary (port 8002), behind mTLS with `CN=odal-vault`.
+The node mounts `build_public()` instead and signs in-process through
+`LocalIdentityService`, so it has no network-reachable signing endpoint. The test
+`public_router_has_no_internal_endpoints` in `dpp-identity` keeps it that way.
+
+## The resolver (`dpp-resolver`, port 8003)
+
+A separate process with its own router (`crates/dpp-resolver/src/router.rs`): the GS1
+Digital Link routes under `/01/…`, the content-negotiated `/dpp/{dppId}`, the QR code
+route and the probes. See [its README](../../crates/dpp-resolver/README.md).
+
+## Idempotency keys
+
+Which routes accept `Idempotency-Key` is defined once, in
+`dpp_common::idempotency::policy`, and the test
+`every_keyed_route_is_a_route_the_node_serves` checks that table against the live
+routers.

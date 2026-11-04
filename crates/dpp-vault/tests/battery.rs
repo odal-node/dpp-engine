@@ -22,12 +22,15 @@ async fn test_battery_create_publish_resolve() {
     let create_body = serde_json::json!({
         "productName": "EcoBattery LFP 3000",
         "manufacturer": {
-            "name": "GreenCell GmbH",
+            "name": "Example Batteries GmbH",
             "address": "Prenzlauer Berg, Berlin, DE"
         },
         "materials": [
             {"name": "Lithium Iron Phosphate", "weightKg": 1.2}
         ],
+        // An industrial battery publishes only with its placing date: the due
+        // diligence row is answered as of it, and the gate refuses without it.
+        "placedOnMarketDate": "2026-07-15",
         // The complete content the Battery Regulation makes mandatory for an
         // industrial battery — 38 fields, not the six that merely satisfy the
         // schema. This is the one test whose subject *is* a battery passport, so
@@ -78,12 +81,12 @@ async fn test_battery_create_publish_resolve() {
             "anodeMaterial": [{"name": "Graphite", "weightPct": 18.0}],
             "electrolyteMaterial": [{"name": "LiPF6 in EC/DMC", "weightPct": 11.0}],
             "componentPartNumbers": ["CELL-21700-A", "BMS-4820"],
-            "sparePartsContacts": "parts@greencell.example.com",
-            "disassemblyInstructionsUrl": "https://greencell.example.com/disassembly/ind-48",
+            "sparePartsContacts": "parts@batteries.example.com",
+            "disassemblyInstructionsUrl": "https://batteries.example.com/disassembly/ind-48",
             "safetyMeasures": "Isolate before servicing; do not puncture",
             "testReportResults": "IEC 62619:2022 — pass",
             "markingInformation": "CE, separate-collection symbol, capacity label",
-            "euDeclarationOfConformity": "https://greencell.example.com/doc/ind-48.pdf",
+            "euDeclarationOfConformity": "https://batteries.example.com/doc/ind-48.pdf",
             "wasteBatteryInformation": "Return to an authorised collection point"
         }
     });
@@ -152,7 +155,7 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Incomplete Industrial Cell",
-                "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
+                "manufacturer": {"name": "Example Batteries GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.8}],
                 "productGroupData": {
                     "productGroup": "battery",
@@ -186,8 +189,14 @@ async fn an_incomplete_industrial_battery_cannot_be_published() {
         "the refusal must say what is wrong and for which category: {body}"
     );
     // Reported together, not one per attempt: an operator fixing these one at a
-    // time would need a publish round-trip per field.
-    for field in ["batteryModelId", "manufacturingPlace", "cathodeMaterial"] {
+    // time would need a publish round-trip per field. The missing placing date is
+    // among them, since the due diligence row cannot be answered without it.
+    for field in [
+        "batteryModelId",
+        "manufacturingPlace",
+        "cathodeMaterial",
+        "placedOnMarketDate",
+    ] {
         assert!(
             body.contains(field),
             "every missing field is named at once; `{field}` is absent from: {body}"
@@ -230,7 +239,7 @@ async fn a_portable_battery_is_outside_the_mandatory_content_scope() {
             "/api/v1/dpp",
             serde_json::json!({
                 "productName": "Portable Cell",
-                "manufacturer": {"name": "GreenCell GmbH", "address": "Berlin, DE"},
+                "manufacturer": {"name": "Example Batteries GmbH", "address": "Berlin, DE"},
                 "materials": [{"name": "Lithium", "weightKg": 0.02}],
                 "productGroupData": {
                     "productGroup": "battery",

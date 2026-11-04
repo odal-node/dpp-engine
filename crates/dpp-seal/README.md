@@ -1,139 +1,87 @@
 # dpp-seal
 
-eIDAS qualified electronic seal adapter for [Odal Node](https://odal-node.io).
+eIDAS electronic seals for published passports: one `SealPort` implementation, plus the
+code that reads a stored seal back, checks its issuer against the EU Trusted Lists and
+renews its archive timestamp. Part of [dpp-engine](../../README.md), under the Business
+Source License 1.1.
 
-Implements `SealPort` (from `dpp-domain::ports::seal`) over one of three
-backends, selected by `SEAL_PROVIDER`: **eID Easy Cloud Direct e-Sealing**, which
-aggregates qualified QTSPs and returns **CAdES**; a **local** development sealer;
-or `GhostSeal` when nothing is configured. Only the first carries legal weight,
-and a production node refuses to boot on either of the others.
+> [!NOTE]
+> **Status: experimental.** Sealing works end to end with the node's own development
+> sealer, and every seal it makes says it is not qualified. No qualified sealing is
+> available yet. A qualified seal certificate is issued to a legal person, so each
+> operator needs its own before its seals carry legal weight.
 
-> **Not yet exercised against the live provider.** Every code path is built and
-> tested against a local mock; the sandbox test is blocked on eID Easy enabling
-> test e-seal credentials for our client.
+## Backends
 
-## What ships
+`SEAL_PROVIDER` selects the backend. An unrecognised value fails the boot.
 
-| Component | Status |
-|---|---|
-| `backend::SealBackend` | The seam each backend implements |
-| `QtspSealAdapter` | `SealPort` over one `dyn SealBackend`; names none of them |
-| `config::SealProvider` | Which backend this node runs, resolved from the environment |
-| `eideasy::` | The hosted QTSP backend: config (host allowlist, redacting `Debug`), HMAC-signed POST to `/api/signatures/e-seal`, wire types, and its own typed errors |
-| `local::` | A real detached CMS `SignedData` under a self-signed P-256 key |
-| `ghost::` | `GhostSeal` as a backend — synthetic envelopes, no legal validity |
-| `error::SealError` | Config / transport / backend / unsupported — nothing provider-shaped |
+| `SEAL_PROVIDER` | Backend | Legal weight | Allowed under `NODE_PROFILE=production` |
+|---|---|---|---|
+| `local` | The development sealer: real detached CAdES up to the LTA structure, under a certificate and timestamp authority the node generates for itself. Both say "NOT A QUALIFIED SEAL / TIMESTAMP" in their organisation field | None | No |
+| unset or `none` | `GhostSeal`: no seal is produced, and every attempt is logged | None | No |
 
-Each backend owns its module entirely: its variables, its validation, its failure
-messages, its wire types, and its own construction. Nothing outside a backend's
-module names it, so one can be added or dropped without touching the others.
-
-`verify()` is **not** implemented for the hosted backend and says so, returning a
-typed error. It is the `SealBackend` default, so a new backend refuses by
-construction and has to override it to claim otherwise.
-
-The reason is independence, not tooling. A qualified seal is worth exactly as
-much as the independence of whoever checked it, so a verdict this node issues on
-a seal this node bought attests nothing a relying party should accept — validate
-those elsewhere. Rust AdES libraries exist and are improving; none of that
-changes the answer.
-
-**The local backend does verify**, and overrides the default to say so, because
-neither objection applies to it: its seals make no trust claim beyond "this key
-signed this digest", so a cryptographic check is the whole truth about them and
-there is no authority whose independence could be borrowed. It carries the sealed
-digest in CMS `signedAttrs` — as CAdES requires — which is what makes the
-envelope self-checking; a verifier holding only the bytes can confirm the
-signature over those attributes against the certificate travelling inside. That
-establishes internal consistency and nothing about trust: the certificate is
-self-signed and on no EU Trusted List, which the node states structurally by
-resolving this backend to the `Ghost` trust tier.
-
-## The one rule
-
-The HMAC covers `METHOD + PATH + X-Timestamp + RAW_REQUEST_BODY`, and eID Easy
-requires the body term to be the **exact bytes sent**. `client::SignedBody` makes
-that structural: the body is serialized once, the signature is derived from that
-same value, and nothing can take the bytes without the signature that goes with
-them. `reqwest`'s `.json()` would re-serialize between signing and sending and
-produce a 401 indistinguishable from a bad key.
-
-The crate's mock server recomputes the HMAC from the bytes it received, so this
-is verified over a socket rather than asserted in a comment.
+The local sealer exists so every path that reads a seal (inspection, the seal routes,
+timestamp renewal, evidence dossiers) can be exercised against a realistic envelope.
+The backend is a trait (`SealBackend`) behind `QtspSealAdapter`, so a qualified provider
+can be added without changing anything that reads seals.
 
 ## What is sealed
 
-`SHA-256(passport.jwsSignature)` — the compact JWS string, hashed as stored. The
-JWS is frozen at publish, reconstructible by anyone holding the passport, and
-commits to the whole payload, which makes the qualified seal a countersignature:
-a QTSP attesting that this operator signature existed at this time. Sealing the
-canonicalized document instead would sweep in `lintResult`/`status`/`qrCodeUrl`,
-all mutable after publish, so a re-lint would silently break the seal.
+`SHA-256(passport.jwsSignature)`: the digest of the compact JWS as stored. The JWS is
+fixed at publish and commits to the whole signed payload, so the seal is a
+countersignature saying this operator signature existed at this time. Sealing the
+document itself would cover fields that change after publish (`status`, `lintResult`)
+and break on the next lint. `dpp-vault`'s seal service builds the digest; this crate only
+ever sees a hex digest.
 
-The composition lives in `dpp-vault`'s seal service; this crate only ever sees a
-hex digest.
+Under eIDAS (Regulation (EU) No 910/2014) Art. 35(2), the presumption of integrity and
+origin attaches to a seal being qualified, not to its envelope format, so CAdES carries
+it the same way JAdES or XAdES would.
 
-## Provider notes
+## Reading seals back
 
-**CAdES is not a downgrade.** eIDAS Art. 35(2) attaches the integrity and origin
-presumption to a seal being *qualified* — a qualified certificate from a QTSP —
-not to the AdES envelope. Detached CAdES over a hash also fits proof-bound better
-than enveloped JAdES: only a digest and a detached signature ever leave the node.
-
-**Not claimable:** no public source states the EU DPP registry accepts CAdES
-*specifically*. It almost certainly validates the certificate chain rather than
-the envelope flavour, but "registry-conformant CAdES" must not be stated as fact
-anywhere customer-facing until that is confirmed.
-
-**`mimeType` is `application/pdf`.** eID Easy built Direct e-Sealing for PDF and
-both their docs and their support answer use that value. It is a label, not a
-fact about the seal — they receive only the digest, never the payload, so they
-cannot inspect the content, and for a detached CMS over an external hash the
-declared type is not part of what the signature covers. `MIME_JSON` exists,
-unused, for if they confirm the accurate value is accepted.
-
-## Relationship to other crates
-
-| Crate | Role |
+| Module | Answers |
 |---|---|
-| `dpp-domain::ports::seal` | `SealPort`, `GhostSeal`, and the value objects (`SealRequest`, `SealedEnvelope`, `SealFormat::Cades`) |
-| `dpp-types::seal` | `SealOutbox` — the durable queue, engine-side |
-| `dpp-vault` | Composes the digest and enqueues at publish; serves `GET /api/v1/dpp/{id}/seal` |
-| `dpp-node` | Resolves the adapter at boot, maps it to a trust tier, runs the drain |
+| `inspect` | What certificate is behind a stored seal, and does the seal still cover the passport's current signature? |
+| `qualification` | Was that certificate issued by a qualified trust service provider when the seal was made, or signed by the node itself? |
+| `trustlist` | Fetches and parses the EU list of trusted lists and each Member State's list (eIDAS Art. 22), anchored to the Official Journal. Refreshed daily with `TRUSTED_LIST_REFRESH=on` |
+| `timestamp` | RFC 3161 timestamps from any authority (`SEAL_TIMESTAMP_SOURCE=rfc3161`), and archive-timestamp renewal for stored seals |
+
+The local sealer's seals verify cryptographically, because they claim nothing beyond
+"this key signed this digest". A qualified seal should be validated by a party other than
+the node that obtained it.
 
 ## Configuration
 
+The SEAL section of [`.env.example`](../../.env.example) documents every variable. For
+the experimental setup:
+
+```bash
+SEAL_PROVIDER=local
+SEAL_LOCAL_KEY_PATH=/data/seal-local      # default ./.seal-local; back it up with the key store
+SEAL_CONFORMANCE_LEVEL=LTA                # B, T, LT or LTA; LTA is the default
 ```
-SEAL_PROVIDER=eideasy                              # `local`, or `none` (default) for GhostSeal
-SEAL_EIDEASY_BASE_URL=https://test.eideasy.com     # sandbox; prod = https://id.eideasy.com
-SEAL_EIDEASY_CLIENT_ID=...                         # from test.eideasy.com "My Webpages"
-SEAL_EIDEASY_HMAC_KEY=...                          # generated once in Eseal Settings
-SEAL_EIDEASY_SIGNATURE_PROFILE=CAdES_BASELINE_T    # optional; must be enabled for client
 
-SEAL_LOCAL_KEY_PATH=./.seal-local                  # optional; only for SEAL_PROVIDER=local
+An unrecognised `SEAL_PROVIDER` or `SEAL_CONFORMANCE_LEVEL` fails the boot rather than
+falling back, so a typo can never leave passports unsealed, or sealed at a lower level,
+without warning.
+
+## Modules
+
+```text
+src/
+├── backend/        SealBackend trait, QtspSealAdapter, provider selection, GhostSeal
+├── local/          development sealer and timestamp authority
+├── cades/          CMS/CAdES construction and parsing, certificate paths, archive timestamps
+├── inspect.rs      SealInspector
+├── qualification/  qualified-issuer determination
+├── trustlist/      EU Trusted List fetch, parse, verify and cache
+└── timestamp/      RFC 3161 source and archive-timestamp renewal
 ```
 
-`SEAL_PROVIDER` takes `eideasy`, `local` or `none`, and an unrecognised value
-fails the boot. The selection is deliberately explicit rather than inferred from
-whichever credentials happen to be present: a node that cannot name its trust
-provider must not quietly become one that has none.
+`tests/fixtures/local/README.md` explains the large trusted-list fixtures that are
+fetched rather than committed.
 
-Three failure modes are all refused rather than ghosted, for the same reason —
-each would downgrade a node that was configured for qualified sealing into one
-that has none: **credentials without a selected provider**, a **partial**
-`SEAL_EIDEASY_*` set, and an **unrecognised host** in `SEAL_EIDEASY_BASE_URL`
-(which cannot be classified into a trust tier).
+## Licence
 
-`SEAL_EIDEASY_HMAC_KEY` is an operator-supplied node-wide credential and lives
-in the node `.env` (mode 600) beside
-`EU_REGISTRY_CLIENT_SECRET` and `MTLS_PROXY_SHARED_SECRET` — not in the key
-store, which holds Ed25519 pairs for DID publication, and not in Postgres, which
-would put a live signing credential in every backup.
-
-With no provider selected the node wires the ghost backend, which logs a warning
-on every seal; `NODE_PROFILE=production` refuses to boot on it — and on the local
-backend too, whose certificate is on no EU Trusted List.
-
-## License
-
-BSL-1.1 — see [LICENSE](../../LICENSE)
+[Business Source License 1.1](../../LICENSE).

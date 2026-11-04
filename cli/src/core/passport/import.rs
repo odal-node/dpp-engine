@@ -39,7 +39,7 @@ pub async fn action_import(
     let product_group = detect_product_group(&bytes).with_context(|| {
         format!(
             "Could not determine the product group for {}. Add a `productGroup` column \
-             (battery, textile, steel, aluminium, tyre).",
+             holding the product group's key, as `odal product-group list` prints it.",
             params.file
         )
     })?;

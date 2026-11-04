@@ -123,7 +123,13 @@ roxmltree    = "0.21"
 #   * **Reconsider on first production sealing.** If a trusted-list verdict
 #     starts carrying legal weight on this dependency, the acceptance above
 #     needs re-arguing rather than inheriting.
-xml-sec      = "0.1.20"
+#   * **Built to verify and nothing else.** Default features are off, and only
+#     `xmldsig` is compiled, on the `xmloxide` backend the defaults use. XSLT is
+#     a separate feature that executes stylesheets inside a `Reference`
+#     transform, and it is not compiled, so no trusted list can make this node
+#     run one. Signing and XML encryption are left out for the same reason:
+#     nothing here uses them.
+xml-sec      = { version = "0.4.1", default-features = false, features = ["std", "xmldsig", "xml-backend-xmloxide"] }
 
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"

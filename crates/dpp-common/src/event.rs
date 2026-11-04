@@ -85,10 +85,16 @@ pub mod subjects {
     pub const PASSPORT_RETIRED: &str = "dpp.passport.retired";
     pub const PASSPORT_DEACTIVATED: &str = "dpp.passport.deactivated";
     pub const PASSPORT_TRANSFERRED: &str = "dpp.passport.transferred";
-    pub const PASSPORT_FAILED: &str = "dpp.passport.failed";
 
     // Batch import
+    /// An apply import job finished. The payload carries `jobId`,
+    /// `productGroup`, `totalRows` and the `created`, `updated` and
+    /// `failedRows` counts. A dry run writes nothing and sends no event.
     pub const IMPORT_COMPLETED: &str = "dpp.import.completed";
+    /// An apply import job could not finish: its batch panicked, or its result
+    /// could not be recorded. The payload carries `jobId`, `productGroup`,
+    /// `totalRows` and `reason`. Rows a finished job rejected are counted in
+    /// `dpp.import.completed`, not reported here.
     pub const IMPORT_FAILED: &str = "dpp.import.failed";
 }
 

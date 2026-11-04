@@ -26,7 +26,7 @@ post:
   operationId: addFacility
   summary: Add a facility
   description: |
-    Add a facility. The identifier is validated by scheme — a `gln` must
+    Add a facility. The identifier is validated by scheme: a `gln` must
     pass the GS1 mod-10 check digit. Requires an admin-scoped key.
 
     Facilities are retired, never deleted, so a duplicate created by a retried

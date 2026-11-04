@@ -1,73 +1,58 @@
-# DPP Retention Model
+# Passport retention
 
-## The Regulatory Obligation
+How the node keeps published passports available for the period the law requires, and
+what it does and does not do about it.
 
-EU ESPR Article 9 establishes that when placing a product on the EU market, the economic operator must:
+## Where the period comes from
 
-1. Ensure the Digital Product Passport remains publicly accessible for the duration defined in the applicable delegated act.
-2. Make a backup copy of the DPP available through an independent certified third-party service provider, to guarantee access in the event of insolvency or cessation of activity.
+The required retention period depends on the product group and is set by the act that
+governs it. The node reads it from `dpp-core`'s instrument catalog
+(`InstrumentCatalog::retention_for`), where each period sits beside the act that imposes
+it. Nothing in the engine restates a period.
 
-The retention period is set per product group by delegated act, and its **single source
-in code is the product group catalog** — `ProductGroupCatalog::retention_years`, read from
-each product group manifest so the period sits beside the act that imposes it.
+A product group with no catalog entry gets a **ten-year floor**
+(`RETENTION_FLOOR_YEARS` in `dpp-vault`). This happens in normal use: a passport can name
+a product group this build does not know. Ten years is the shortest period any catalogued
+product group declares, so the floor keeps the data at least as long as any known
+obligation.
 
-Until 0.13.0 the value was also hardcoded as a match on the `ProductGroup` enum, and
-that duplicate was what the engine actually applied when sealing
-`retention_until` at publish. The enum method is gone; there is one source.
+## What the node enforces
 
-A product group with no catalog entry falls back to a **ten-year floor**, applied
-identically when sealing `retention_until` at publish and when guarding
-deletion, so the guard and the sealed deadline cannot disagree.
-
-That case is reachable in normal use, not exotic: a passport carrying no product group
-data resolves to `Product group::Other`, and the open product group axis means a passport can
-name a product group this build has never seen. Ten years is the floor every
-product group in the table above declares, so applying it keeps the data at least as
-long as any known obligation requires — it is not a period invented for the
-occasion.
-
-
-| Product group | Expected retention period |
+| Mechanism | Effect |
 |---|---|
-| Batteries (EU 2023/1542) | >= 10 years after end of life |
-| Textiles | >= 10 years (delegated act pending) |
-| Iron & Steel | >= 10 years (delegated act pending) |
-| Electronics | >= 10 years (delegated act pending) |
+| **Retention lock** | Publish sets `retentionLocked`, and nothing clears it. A database trigger then refuses any change to the passport document except an allow-list of fields (status, signatures, carrier URL, lint result, seal) |
+| **Sealed deadline** | First publish stores `retentionUntil` = publish time + the product group's period |
+| **Retire guard** | `POST /dpp/{id}/retire` (`odal passport retire`) is refused until the period has passed: *"retention policy forbids retiring before 2036-08-18"* |
+| **No delete path** | `dpp-domain`'s `PassportRepository` port has no delete method, and the application database role has no `DELETE` grant on passport, audit, evidence or seal tables |
+| **Version history** | Every past version of a live passport stays in `passport_version`, append-only |
 
-## Domain Invariants
+Changing a published passport means issuing a successor (`amend`), which supersedes the
+original without altering it. Suspending a passport (`410 Gone` on its public URL) is
+allowed at any time and is reversible.
 
-### Retention Lock
+## The carrier URL must outlive the product
 
-Every passport that reaches `Active` (published) status receives `retention_locked = true`. This flag is set on publish and **never cleared**.
+Each passport's QR code encodes a URL on `RESOLVER_BASE_URL`, signed into the passport at
+publish. That host must keep resolving for the whole retention period. Changing the
+domain means the printed codes stop working; plan the resolver host as a permanent
+address.
 
-```rust
-// Set on publish, never unset
-passport.retention_locked = true;
-```
+## Back-up copy
 
-| Operation | Behaviour on locked passport |
-|---|---|
-| Status -> Suspended | Allowed — passport remains accessible |
-| Status -> Retired | Allowed — passport remains accessible |
-| Field update | Blocked — only Draft passports can be patched |
-| Delete | **No delete path exists** in `PassportRepository` by design |
+ESPR Art. 10(4) requires a back-up copy of the passport held by an independent digital
+product passport service provider, so the passport survives its operator. The node
+supports this through its back-up port (`BACKUP_S3_*`) and the continuity snapshot tier
+(`SNAPSHOT_*`), which mirrors each published public view to object storage and declares
+it to the registry. Whether a given provider satisfies the requirement is a contractual
+and legal question, not something the node can determine.
 
-### No-Delete Trait Design
+Back-up copies hold one copy per passport. Version history (archiving) is a separate
+obligation, kept by the node in `passport_version`.
 
-The `PassportRepository` trait intentionally has no `delete` method. This is a structural guarantee that published passports cannot be removed — the API surface does not allow it, regardless of the persistence implementation.
+## EU registry
 
-### QR URL Permanence
-
-QR codes encode a resolver URL. The URL must remain operational for the duration of the applicable delegated act retention period. The GS1 Digital Link standard provides an additional layer of indirection:
-
-```
-https://id.gs1.org/01/{gtin}/21/{serial}
-  -> EU Central Registry lookup
-  -> redirects to resolver URL
-```
-
-This means the resolver URL can change without reprinting physical QR codes — the GS1/EU Registry pointer is updated instead.
-
-## EU Central Registry (dpp-registry)
-
-The Commission's Art. 13 deadline to set up the registry was 19 July 2026; as of this writing the API specification remains unpublished. The engine is already registry-shaped: every publish commits a registration intent to a durable outbox (drained with backoff), so when the `EuRegistrySync` HTTP adapter activates against the published API, the backlog registers without loss. The registry is a pointer index, not data storage — the actual signed passport lives in the operator's infrastructure.
+The digital product passport registry under ESPR Art. 13 stores identifiers and links,
+not passport content; the signed passport stays on the operator's node. The node already
+writes a registration intent for every publish to a durable outbox, inside the publish
+transaction. With no registry credentials configured, the stub adapter holds the backlog,
+and configuring a live adapter later submits it.

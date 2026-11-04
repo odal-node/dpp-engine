@@ -50,7 +50,8 @@ const ALLOWED_WRITERS: &[(&str, &str)] = &[
     (
         "repo_passport.rs",
         "the `PassportRepository` implementation itself — the door the archiving \
-         decorator wraps",
+         decorator wraps — and the in-transaction statements `PgStateChangeLog` \
+         uses, which archive the replaced version in the same transaction",
     ),
     (
         "repo_seal.rs",

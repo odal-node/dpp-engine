@@ -644,7 +644,10 @@ impl RegistrySyncPort for EuRegistrySync {
     /// passport another's registration. And a task still being checked reports no
     /// passport, so it may be the one and cannot be told from one that is not:
     /// while any such task is on the list, not finding the identifier does not
-    /// say the registry holds none.
+    /// say the registry holds none, and finding it once does not say it is this
+    /// request's. A successor's own task may still be checked while its
+    /// predecessor's finished task matches, so one match is
+    /// [`Found`](SubmissionLookup::Found) only when every task was read.
     #[tracing::instrument(skip(self, request), fields(passport_id = %request.passport_id))]
     async fn find_submission(
         &self,
@@ -690,6 +693,17 @@ impl RegistrySyncPort for EuRegistrySync {
 
         match matches.as_slice() {
             [] => Ok(SubmissionLookup::NotFound { exhaustive }),
+            // A second match may be among the tasks not read. Named, so the
+            // operator who reconciles the row by hand has the candidate.
+            [(task, _)] if !exhaustive => {
+                tracing::warn!(
+                    candidate = task.correlation_id.as_deref().unwrap_or_default(),
+                    "one registry submission reports this passport's unique product identifier, \
+                     and not every task was read, so it is not known to be this request's — not \
+                     recording it"
+                );
+                Ok(SubmissionLookup::NotFound { exhaustive })
+            }
             [(task, result)] => Ok(SubmissionLookup::Found {
                 correlation_id: task.correlation_id.clone().unwrap_or_default(),
                 report: report_for(task, Some(result.as_ref())),

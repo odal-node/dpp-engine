@@ -744,6 +744,7 @@ mod tests {
             postal_address: None,
             electronic_address: None,
             country: "DE".into(),
+            identifier: None,
         };
         let mut record = TransferRecord {
             transfer_id: Uuid::now_v7(),
@@ -872,6 +873,7 @@ mod tests {
             postal_address: None,
             electronic_address: None,
             country: "DE".into(),
+            identifier: None,
         };
         let record = TransferRecord {
             transfer_id: Uuid::now_v7(),

@@ -2,9 +2,9 @@
   "productName": "Odal Stationary Storage Battery LFP-51.2",
   "batchId": "ODL-IND-LFP-2026-Q2-014",
   "manufacturer": {
-    "name": "GreenCell GmbH",
+    "name": "Example Batteries GmbH",
     "address": "Prenzlauer Berg 12, 10405 Berlin, DE",
-    "didWebUrl": "https://greencell.example/.well-known/did.json"
+    "didWebUrl": "https://batteries.example/.well-known/did.json"
   },
   "placedOnMarketDate": "2026-05-20",
   "commodityCode": "85076000",
@@ -70,8 +70,8 @@
       { "name": "Lithium hexafluorophosphate", "weightPct": 13.0, "casNumber": "21324-40-3" }
     ],
     "componentPartNumbers": ["GC-CELL-32700-LFP", "GC-BMS-16S-V2", "GC-ESS-ENCL-512"],
-    "sparePartsContacts": "spares@greencell.example; +49 30 5550 1200",
-    "disassemblyInstructionsUrl": "https://greencell.example/service/ess-lfp512/disassembly",
+    "sparePartsContacts": "spares@batteries.example; +49 30 5550 1200",
+    "disassemblyInstructionsUrl": "https://batteries.example/service/ess-lfp512/disassembly",
     "safetyMeasures": "Isolate DC breaker before servicing. Insulated tools only. Ventilate enclosure before opening.",
     "testReportResults": "IEC 62619:2022 pass; IEC 63056:2020 pass; UN 38.3 pass; report GC-TR-2026-0301",
     "markingInformation": "Separate-collection symbol per Art. 13(4); capacity 100 Ah / 5.12 kWh; chemistry LFP",

@@ -46,7 +46,8 @@ pub struct DrainStats {
     pub rejected: u32,
     /// Rows that failed transiently and were backed off for retry.
     pub retried: u32,
-    /// Rows dropped from draining because their payload was missing/corrupt.
+    /// Rows dropped from draining because their payload was missing, corrupt, or
+    /// refused by the adapter's own checks before it was sent.
     pub skipped: u32,
     /// Rows whose correlation identifier was lost and has been found again, by
     /// the unique product identifier the passport was submitted under.
@@ -201,6 +202,27 @@ async fn apply_acknowledgement(
                 .await;
             stats.retried += 1;
         }
+        // The adapter's own checks refused the payload before sending it. The
+        // payload was fixed when the passport was published, so sending it again
+        // cannot change that answer: it is rejected with the reason, as a corrupt
+        // payload is. Every failure to reach or hear from the registry arrives as
+        // another variant and is retried below.
+        Err(dpp_domain::DppError::Validation(e)) => {
+            let reason = format!("refused before sending: {e}");
+            if let Err(write) = outbox.mark_rejected(pid, reason.clone()).await {
+                // Not closed, so it backs off like any failure rather than being
+                // checked again on every pass.
+                tracing::warn!(
+                    passport_id = %pid,
+                    error = %write,
+                    "a refused registration could not be recorded as rejected"
+                );
+                let _ = outbox.mark_attempt_failed(pid, reason).await;
+                stats.retried += 1;
+            } else {
+                stats.skipped += 1;
+            }
+        }
         Err(e) => {
             // Transient/unreachable — back off and retry. The row stays.
             let _ = outbox.mark_attempt_failed(pid, e.to_string()).await;
@@ -327,6 +349,26 @@ async fn recover_with_request(
             correlation_id,
             report,
         }) => {
+            // Not recovered until it is written down. A failed write is backed off
+            // like any transient failure, and the next pass finds it again; the
+            // row's message names the handle for a person who needs it now.
+            if let Err(e) = outbox.mark_submitted(pid, correlation_id.clone()).await {
+                tracing::error!(
+                    passport_id = %pid,
+                    correlation_id = %correlation_id,
+                    error = %e,
+                    "found the correlation identifier of a submission the registry held and \
+                     could not record it — looking again on the next pass"
+                );
+                let _ = outbox
+                    .mark_attempt_failed(
+                        pid,
+                        format!("could not record correlation identifier {correlation_id}: {e}"),
+                    )
+                    .await;
+                stats.retried += 1;
+                return;
+            }
             tracing::info!(
                 passport_id = %pid,
                 correlation_id = %correlation_id,
@@ -334,7 +376,6 @@ async fn recover_with_request(
             );
             metrics::counter!("registry_outbox_recovered_total").increment(1);
             stats.recovered += 1;
-            let _ = outbox.mark_submitted(pid, correlation_id).await;
             if report.is_terminal() {
                 apply_report(outbox, pid, Ok(report), stats).await;
             } else {

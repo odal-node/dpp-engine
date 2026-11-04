@@ -46,11 +46,11 @@ properties:
     type:
       - object
       - 'null'
-    description: Always `null` in format v1 — the signed-checkpoint layer is not yet built.
+    description: Always `null` in format v1, because the signed-checkpoint layer is not built yet.
   calcReceipts:
     type: array
     description: >-
-      Always empty in format v1 — `dpp-calc` invocation is not yet wired end to
+      Always empty in format v1: `dpp-calc` invocation is not yet wired end to
       end.
     items:
       type: object
@@ -64,7 +64,7 @@ properties:
       with no modelled sub-assemblies.
 
       Generated at dossier-assembly time by walking the tree and pin-checking
-      each node, then bound into `contentHashes` like every other member — so
+      each node, then bound into `contentHashes` like every other member, so
       a tampered report fails the dossier's `content_integrity` check rather
       than passing as an unverifiable attachment.
 

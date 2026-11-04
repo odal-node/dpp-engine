@@ -56,3 +56,9 @@ testcontainers-modules = { workspace = true, features = ["postgres"] }
 # Recomputing the seal digest in tests, the same way the vault composes it.
 sha2           = { workspace = true }
 hex            = { workspace = true }
+criterion      = { workspace = true }
+
+[[bench]]
+name    = "pg_repo"
+harness = false
+required-features = ["integration-tests"]

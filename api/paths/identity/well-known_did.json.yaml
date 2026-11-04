@@ -1,0 +1,22 @@
+get:
+  operationId: getRootDidDocument
+  summary: did:web DID document, at the did:web resolution path
+  description: |
+    Serves the operator's `did:web` DID document at the path the did:web method
+    resolves a pathless DID to: `did:web:<host>` is looked up at
+    `https://<host>/.well-known/did.json`. The node's DID is pathless, so this
+    is where a verifier fetches it.
+
+    The same document as `/identity/.well-known/did.json`, which stays for
+    callers that already use it. The standalone identity service serves this
+    path too. Public, unauthenticated.
+  tags:
+    - Identity
+  security: []
+  responses:
+    '200':
+      description: The DID document.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/identity/DidDocument.yaml

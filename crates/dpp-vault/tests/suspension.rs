@@ -60,7 +60,7 @@ async fn test_suspension_flow() {
         "Suspended passport should return 410 Gone"
     );
 
-    // The resolver returns an RFC 7807 Problem (the legacy `error` code field was
+    // The resolver returns an RFC 9457 Problem (the legacy `error` code field was
     // dropped); the suspension signal is the 410 status plus the `detail` message.
     let error: serde_json::Value = resp.json().await.unwrap();
     assert!(

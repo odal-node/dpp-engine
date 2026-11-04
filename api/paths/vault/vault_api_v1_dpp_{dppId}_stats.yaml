@@ -4,7 +4,7 @@ get:
   description: |
     Aggregate, privacy-safe resolution counts for one passport over a
     trailing window. Scans and QR-image renders are reported as separate
-    fields and are never summed — a render is label production, not a
+    fields and are never summed: a render is label production, not a
     resolution. Nothing about the scanner (IP, agent, session) is collected
     or returned; the counters carry no such fields. Returns zeros for a
     passport that has never been scanned.

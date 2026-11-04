@@ -73,3 +73,9 @@ tokio                 = { workspace = true }
 flate2                = { workspace = true }
 ed25519-dalek         = { workspace = true }
 proptest              = { workspace = true }
+criterion             = { workspace = true }
+
+[[bench]]
+name    = "publish_serve"
+harness = false
+required-features = ["integration-tests"]

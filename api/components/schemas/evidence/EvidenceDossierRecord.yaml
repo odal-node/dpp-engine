@@ -1,5 +1,5 @@
 type: object
-description: A stored dossier snapshot — the dossier plus its persistence envelope.
+description: A stored dossier snapshot, which is the dossier plus its persistence envelope.
 required:
   - id
   - passportId
