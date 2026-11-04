@@ -1,5 +1,5 @@
 type: object
-description: Listing projection of a stored dossier — everything but the document.
+description: Listing projection of a stored dossier, with everything but the document.
 required:
   - id
   - passportId

@@ -12,6 +12,169 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **`dpp-core` 0.23.0: a registration refuses an operator identifier with no
+  EN 18219 clause 6 route.** *(Breaking for an operator whose primary identifier
+  is a VAT or EORI number.)* Core now accepts an operator or facility identifier
+  on a registration only under `lei`, `duns` or `gln`: an EU-wide VAT number has
+  no ICD, none was found for an EORI number, and a DID is scheme 8 only with a
+  credential a register has issued. Publish now asks the same question, through
+  core's `ActorIdentifier::from_legacy`, before it queues a registration: where
+  the product group's obligation is live it refuses with `422` and the reason
+  `unregistrable_identity`, naming the scheme and the fix, and elsewhere it
+  publishes without a registration, as it does when the identity is missing.
+  Queued, such a registration would have been refused on every attempt, because
+  its payload is fixed at publish. Only a passport that has never queued a
+  registration is refused: one published before this release keeps its row, and
+  its identifier cannot change, so a suspended one can still be re-activated. A
+  VAT or EORI number is still accepted and stamped as the operator identifier.
+  Facilities are added under a GLN and are not affected.
+
+  **Migration:** make an LEI or a D-U-N-S number the primary operator identifier
+  (`POST /vault/api/v1/operator-identifiers/{id}/primary`). Drafts, and the
+  successor an amendment publishes, then take it; a published passport keeps the
+  identifier it was signed with. A registration already queued under a VAT or
+  EORI number is rejected by the drain the first time it is tried (see
+  **Fixed**). (#561)
+
+- **`dpp-core` 0.23.0: an EV, LMT or industrial battery publishes only with its
+  placing date, and from 18 August 2027 with its due diligence declaration.**
+  Core's content table answers the due diligence report (Annex XIII point 1(d))
+  as of the battery's facts: from 18 August 2027 it is owed unless Art. 47
+  exempts the battery. So the publish gate refuses such a battery that states no
+  `placedOnMarketDate`, on the envelope or in `productGroupData`, unless it is
+  second-life, and from that date one that does not carry
+  `dueDiligenceOperatorScope` (battery schema 2.10.0). `PublishReadiness` says the
+  count of mandatory data points grows by one from that date, and a test holds
+  the sentence to the gate.
+
+  **Migration:** send `placedOnMarketDate` on create, or in the import column of
+  that name. The battery CSV templates have no column for `dueDiligenceUrl` or
+  `dueDiligenceOperatorScope` yet, so a battery placed from 18 August 2027 cannot
+  be imported into a passport that publishes. (#561)
+
+- **`dpp-core` 0.23.0: an anonymous reader no longer receives a critical raw
+  material's weight or country of origin** from a battery passport written at
+  schema 2.9.0 or later, or an electronics passport written at 1.5.0 or later.
+  Core labels both fields `restricted` from those versions. A passport written
+  against an earlier version keeps its classes and the bytes its signatures
+  cover; a new one is written against the new version. (#561)
+
+### Added
+
+- **A lost submission handle is found again.** A replayed idempotency key is
+  answered with the conflict and not the submission, so a node whose first
+  attempt got through and whose record of the answer was lost, by a crash
+  between the `POST` and the row write or a failed write, held a `submitted` row
+  it could never poll. The drain now calls `dpp-core` 0.23.0's
+  `find_submission`, which reads the dashboard and matches the passport by the
+  unique product identifier it was submitted under, the one thing the registry
+  reports each passport against, and answers with the handle and the ruling
+  together, so a recovered passport is registered in the same pass. It does not
+  guess: an identifier is not unique to a passport, since a successor can be
+  submitted under its predecessor's, so more than one submission reporting it is
+  `Ambiguous`, listed for a person, and a task still being checked reports no
+  passport, so not finding one while any is on the list is never read as the
+  registry holding none, and a single match is taken only from a search that
+  read every task. A row that is not found is backed off and counted as an
+  attempt, so it reaches the stalled count instead of sorting to the head of the
+  queue, and so is one whose recovered handle could not be written down.
+  Finished tasks' results are kept in a bounded cache, because they do not
+  change and the lookup repeats every pass. (#484)
+
+### Changed
+
+- **The registry's task list is asked for newest first, and read from the front
+  once the first page shows it came back that way.** The adapter read a long list
+  from both ends because the registry's order was not known: a task just
+  submitted is at the front of a newest-first list and at the back of an
+  oldest-first one. The registry's own client was read again on 2026-10-20 and
+  sends `sort` as `submittedAt,desc` on every read, so the adapter now sends the
+  same, `dpp-core` 0.23.0's `TASKS_SORT_NEWEST_FIRST`.
+
+  *What was asked for is not trusted.* The first page's `submittedAt` times are
+  read, and the list is treated as newest first only when at least two are
+  readable, none is newer than the one before it, and at least one is strictly
+  older. Then a long list is read from the front, all twenty pages, which reaches
+  twice as far into the recent past as splitting the budget with the back did,
+  and the back is never asked for. Anything else (a registry that ignored the
+  sort, a page too short to compare, equal times, a time that is not an RFC 3339
+  time, a run that is not monotonic) leaves the order unknown and the list is
+  read from both ends, as before. A list that fits the cap is read in full
+  whichever way it came.
+
+  Nothing about what a search *covers* changes: a long list is still never
+  reported as read in full. (#490)
+
+### Fixed
+
+- **A draft is published under the operator's primary identifier as it stands
+  at publish.** It kept the one stamped when it was created, and an amendment's
+  successor the one its predecessor was signed with. So an operator that changed
+  its primary, as moving off a VAT number requires, went on publishing under the
+  old one, and a registration built from a value the primary no longer had named
+  no scheme, which the registry was bound to refuse. A draft is not signed yet
+  and create takes no identifier, so nothing an operator chose is overwritten. A
+  re-publish keeps the identifier the passport was signed with. (#561)
+
+- **The core candidate run checks the plugin SDK ABI against the candidate's
+  SDK.** `.cargo/config.toml.example`, which `just core-local` and the run
+  apply, did not patch `dpp-plugin-sdk`, which only the ABI guest uses. So the
+  guest resolved the published SDK, and the run checked that one while 0.15.0's
+  notes said it checked the candidate's, until a guest pinned to an unpublished
+  release could not resolve at all. The override now patches it. (#561)
+
+- **A registration or transfer notification the adapter refuses before sending
+  is rejected, not retried for ever.** Both registry drains read every error as
+  transient, so a payload the adapter's own checks refused backed off and was
+  tried again with no end. It can never pass: a registration's payload is fixed
+  when the passport is published, and a notification's when the transfer is
+  accepted. Such a row is now marked rejected, with the reason, as a corrupt
+  payload already was; if that write fails, the row backs off rather than being
+  checked again on every pass. Only the adapter's checks report a `Validation`
+  error; a registry that cannot be reached, or that answers with a failure, is
+  still retried. (#562, #561)
+
+- **A transfer notification is sent under a stable key, and only an answer that
+  says the registry took it closes it.** `dpp-core` 0.23.0's registry port
+  answers a transfer notification with a `TransferReport`, whether the registry
+  took it, rather than a record's status. The notification now carries the
+  transfer's own identifier as its `Idempotency-Key`, which is what makes sending
+  it again the same notification: a reply that is still processing, or a state
+  this node has no name for, keeps it open and sends it again, and a conflict
+  naming the replayed key is read as already held and closes it. That answer says
+  the registry holds the notification, not that it applied the handover, and no
+  route to ask has been seen. A refusal is recorded with the registry's reasons.
+  Before, a reply reporting the record suspended or deactivated closed the row as
+  notified. The transfer route's reply is unobserved, so only `registered` is read
+  as an acceptance. (#561)
+
+- **The resolver's JSON-LD defines a term for every product group field.** It
+  carries `dpp-core` 0.23.0's context, so a JSON-LD processor no longer drops a
+  product group's data when it expands the document. The context names withheld
+  fields too, as terms; their values are not served, and the tests that scan the
+  body for a withheld field now read it without its `@context`. (#561)
+
+- **A submission past the first thousand tasks on the dashboard is found.** The
+  dashboard's task list was read from the front for twenty pages, so once an
+  operator had more than a thousand tasks a new submission on an oldest-first
+  list was never found and was polled forever. The first page says how long the
+  list is (`totalElements`), and a longer one is now read from both ends,
+  interleaved, since the order is not recorded. A search that ran out says so
+  instead of reporting the registry as still working. (#484)
+
+- **An access credential that fails authentication is told which of seven
+  things to fix:** a token that is not a compact JWS, no key for its `kid`, a
+  signature that does not verify, a header or signature that cannot be read, a
+  token not typed as a VC-JWT, a payload that is not a credential, or an issuer
+  other than its document's. They read the same before, so an issuer whose
+  tooling had not yet set `typ` was sent to debug a sound signature. The
+  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
+  sentence. (#484)
+
+## [0.15.0] - 2026-11-03
+
+### Breaking
+
 - **`dpp-core` 0.22.0: a key is named by its own thumbprint, and a token
   signed before this release no longer verifies.** Verification methods were
   named by position, so after a rotation `#key-1` named a different key. They are
@@ -56,9 +219,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   is `submitted` and the registration identifier once it is `registered`, so a
   transfer notification waits for `registered` and never sends a correlation
   identifier as a record id. A submission the registry already holds, answered
-  to a replayed idempotency key, carries no handle, so the drain looks for it
-  (see **Added**: a lost submission handle is found again). A state the node has
-  no name for keeps the poll going and is never read as a refusal. The drain no
+  to a replayed idempotency key, carries no handle: the row stays `submitted`
+  and is not polled until the identifier is recovered. A state the node has no
+  name for keeps the poll going and is never read as a refusal. The drain no
   longer reports a `deactivated` outcome, because a submission's ruling is not
   a record's state.
 
@@ -162,8 +325,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   **`GET /vault/api/v1/dpp/by-identity` takes `identifier`, not `gtin`**, the
   identifier's value under whichever scheme issued it. `batteryPassportNumber`
-  is no longer mandatory battery content (core 0.21.0): the mandatory set is
-  45 fields for an EV battery, 44 for an LMT one and 37 for an industrial one.
+  is no longer mandatory battery content (core 0.21.0). With core 0.22.0's
+  guidance v2.0 (above), the mandatory set in this release is 41 fields for an
+  EV battery, 40 for an LMT one and 33 for an industrial one.
 
 - **The GS1 carrier follows the passport's stated level.** *(Breaking for
   anything that parses `qrCodeUrl`.)* A model-level passport prints
@@ -218,79 +382,61 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   neither) and `SNAPSHOT_PROVIDER_COUNTRY` are optional, and are checked at boot
   with the registry's own rules rather than on the first registration.
 
-### Added
+- **`GET /vault/api/v1/seal`: `unsealedPublished` counts live passports only;
+  retired, superseded and deactivated ones are `unsealedTerminal`.** The count
+  and the repair sweep shared one condition that looked at no status, so a
+  passport published unsealed and since retired stayed in the number for good,
+  and an operator could not tell a live product from a record that ended last
+  year. The two are now reported apart. The sweep still seals terminal
+  passports, deliberately: they keep serving at their public URL, so a seal on
+  one is a seal on something a verifier can fetch, and `unsealedTerminal` falls
+  as the sweep works through them.
 
-- **The registry's task list is asked for newest first, and read from the front
-  once the first page shows it came back that way (needs the `dpp-core` release
-  that carries `TASKS_SORT_NEWEST_FIRST`).** The adapter read a long list from both
-  ends because the registry's order was not known: a task just submitted is at the
-  front of a newest-first list and at the back of an oldest-first one. The
-  registry's own client was read again on 2026-10-20 and sends `sort` as
-  `submittedAt,desc` on every read, so the adapter now sends the same.
+  **Migration:** a reader that took `unsealedPublished` to mean every unsealed
+  published passport adds `unsealedTerminal` to get that figure back, which is
+  always present. `SealOutbox::unsealed_published_count` is now
+  `unsealed_published_counts` and returns both. `odal seal status` prints both.
 
-  *What was asked for is not trusted.* The first page's `submittedAt` times are
-  read, and the list is treated as newest first only when at least two are
-  readable, none is newer than the one before it, and at least one is strictly
-  older. Then a long list is read from the front, all twenty pages, which reaches
-  twice as far into the recent past as splitting the budget with the back did,
-  and the back is never asked for. Anything else (a registry that ignored the
-  sort, a page too short to compare, equal times, a time that is not an RFC 3339
-  time, a run that is not monotonic) leaves the order unknown and the list is read
-  from both ends, exactly as before. A list that fits the cap is read in full
-  whichever way it came.
+- **A `NODE_PROFILE` that is not a profile refuses to start.** `Production`,
+  `prod` and `production ` with a trailing space used to boot as
+  `development`, the profile that allows stub trust ports and honours
+  `ALLOW_UNSIGNED_PLUGINS=true`, so a mistyped production deployment ran the
+  permissive profile without a word. The accepted values are exactly
+  `development`, `sandbox` and `production`; the error quotes what it found.
+  Unset and empty are unchanged and still mean `development`.
+  `NodeProfile::from_env` now returns a `Result`, and `NodeProfile::parse` is
+  the same check on a raw value.
 
-  Nothing about what a search *covers* changes: a long list is still never
-  reported as read in full.
+  **Migration:** a deployment that sets `NODE_PROFILE` to anything else fixes the
+  spelling, or unsets the variable to keep `development`.
 
-- **A lost submission handle is found again, and a transfer notification is sent
-  under a stable key (needs the `dpp-core` release that carries
-  `SubmissionLookup`, `TransferReport` and `authenticate_access_credential_with_reason`).**
-  Three gaps in the registry flow had been described as limitations. Each was a
-  type in the port that could not say what happened, and each is now fixed where
-  that lives.
+- **A node runs at most two imports at once, and says `429` to a third.**
+  Nothing bounded the number of concurrent imports, so each one fanned out
+  `BATCH_CONCURRENCY` rows at the vault and held up to 5 MiB in memory.
+  `IMPORT_MAX_CONCURRENT` (default 2, at least 1) is checked once the caller is
+  authenticated and before the upload is read; an import that finds no free slot
+  gets `429` with `Retry-After`, counted in
+  `import_rejections_total{reason="busy"}`. A `429` is not recorded under an
+  `Idempotency-Key`, so a retry with the same key runs. An import over 100 rows
+  keeps its slot while its background job runs, so the `202` does not free it,
+  and an upload that has not arrived after 120 seconds is refused with `400` and
+  gives its slot back. An upload over 5 MiB is refused with `400` as it is read.
+  A request that carries an `Idempotency-Key` is admitted the same way: its token
+  is checked, its slot taken and its upload read, under the same deadline and
+  size limit, before the idempotency layer sees the body. A keyed upload is
+  therefore bounded as an unkeyed one is, and an import turned away never
+  claims its key. Because admission runs first, a retry under a key is checked
+  against the vault like any other import, so a revoked key can no longer fetch a
+  stored import outcome, and the product group is looked up after the caller is
+  authenticated: an unknown group answers `401` to a caller the vault does not
+  recognise and `404` to one it does. This bounds imports, not request rates:
+  set those at the proxy (the runbook says how the node and the proxy divide the
+  work).
 
-  *The lost handle.* A replayed idempotency key is answered with the conflict and
-  not the submission, so a node whose first attempt got through and whose record
-  of the answer was lost, by a crash between the `POST` and the row write or a
-  failed write, held a `submitted` row it could never poll. The drain now calls
-  `find_submission`, which reads the dashboard and matches the passport by the
-  unique product identifier it was submitted under, the one thing the registry
-  reports each passport against, and answers with the handle and the ruling
-  together, so a recovered passport is registered in the same pass. It does not
-  guess: an identifier is not unique to a passport, since a successor can be
-  submitted under its predecessor's, so more than one submission reporting it is
-  `Ambiguous`, listed for a person, and a task still being checked reports no
-  passport, so not finding one while any is on the list is never read as the
-  registry holding none. A row that is not found is backed off and counted as an
-  attempt, so it reaches the stalled count instead of sorting to the head of the
-  queue. Finished tasks' results are kept in a bounded cache, because they do not
-  change and the lookup repeats every pass.
-
-  *Where the task is.* The dashboard's list was read from the front for twenty
-  pages, so once an operator had more than a thousand tasks a new submission on an
-  oldest-first list was never found and was polled forever. The first page says how
-  long the list is (`totalElements`), and a longer one is now read from both ends,
-  interleaved, since the order is not recorded. A search that ran out says so
-  instead of reporting the registry as still working.
-
-  *Transfer notifications.* `notify_transfer` answers with a `TransferReport`, not
-  a `RegistryRecord`: whether the registry took the notification, not where a
-  registration stands. The notification is sent with the transfer's own identifier
-  as the `Idempotency-Key`, which is what makes sending it again the same
-  notification: a reply that is still processing, or a state the node has no name
-  for, now keeps the notification open and retries it, and a replay is answered as
-  already held and closes it. Before, any reply the node could not name closed the
-  row as notified, which is a handover the registry's record may never learn of.
-  The transfer route's reply is **unobserved** (core records the route as invented),
-  so the statuses are read conservatively: only `registered` is an acceptance.
-
-  *Credential refusals.* An access credential that fails authentication is told
-  which of five things to fix: no key for its `kid`, a signature that does not
-  verify, a token not typed as a VC-JWT, a payload that is not a credential, or an
-  issuer other than its document's. They read the same before, so an issuer whose
-  tooling had not yet set `typ` was sent to debug a sound signature. The
-  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
-  sentence.
+  **Migration:** a client that runs more imports at once than
+  `IMPORT_MAX_CONCURRENT` allows (2 unless set) retries a `429` after its
+  `Retry-After`, or the operator raises the limit. An upload has to arrive within
+  120 seconds.
 
 - **A field that can hold personal data is refused on the write that would store
   it unless the operator says what is held.** ESPR Art. 10(1)(e), Reg. (EU)
@@ -304,9 +450,121 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `usageHistory.negativeEvents` and `usageHistory.operatingConditions[].note`,
   and textile `repairHistoryUrl`. This node never reads what a field says.
 
-  Not yet done: the erasable store for the records a `held: outside` statement
-  names, and the route that erases one. Until they exist an operator keeps
-  those records elsewhere and names them.
+  **Migration:** a client that writes one of these fields adds an entry for it to
+  `personalData`, keyed by the field's dotted path: `{"held": "nothing"}`, or
+  `{"held": "outside", "lawfulBasis": …, "record": …}` when related personal data
+  is kept in an erasable record outside the passport. `POST /dpp/validate`
+  answers with the same `422`, so a body can be checked before it is sent.
+
+### Added
+
+- **A dpp-core release is tested against the engine before it is published.**
+  A published crate cannot be taken back, and dpp-core cannot find out alone that
+  a release breaks a node: it has no database and no passports an earlier release
+  stored. The 0.15.0 upgrade defect came in through exactly such a repin.
+  `.github/workflows/core-candidate.yml`, dispatched on the repin branch with a
+  core commit, patches onto that commit and runs `just lint`, `just test` and
+  `just test-integration`, including the upgrade from every captured release,
+  and the plugin SDK ABI test against a guest built with the candidate's SDK.
+  `docs/governance/RELEASE.md` gains *Repinning dpp-core*, which makes a green
+  run a precondition of the core release. (#569)
+- **Every pull request records itself in this file, or says why it does not.**
+  Of the 81 pull requests merged between 0.14.0 and 0.15.0 that Dependabot did
+  not open, two were cited here by number, so nothing could show that every
+  merged change was described, or that every entry described a change that
+  merged. A pull request now adds an entry under `[Unreleased]` citing its own
+  number or an issue its body closes. A change that needs none carries the
+  `no-changelog` label and a `No changelog: <reason>` line in its body.
+  `.github/workflows/changelog.yml` enforces this and re-runs when a label
+  changes, and `scripts/changelog-check.test.sh` proves each refusal in
+  `just check`. (#568)
+- **Onboarding a fresh node and upgrading from a release are tested on every
+  pull request, with the real binaries.** Both were release checklist items done
+  by hand, and the upgrade found a defect the day it was done (under **Fixed**:
+  a passport published before an upgrade could not change status).
+  `crates/dpp-node/tests/operator_paths.rs` starts the `dpp-node` binary the
+  way a deployment does. One test onboards it with the `odal` binary:
+  `bootstrap`, `whoami`, a facility and an operator identifier, a passport
+  published with the minted key, and a second `bootstrap` refused. The other
+  loads a database a real release wrote, boots this build over it so its
+  migrations run, and requires every public view to come back byte for byte,
+  every published passport to suspend, re-activate and amend, and none of the
+  product group data they were signed over to change. The databases are
+  captured from each tagged release's own binaries by
+  `just capture-upgrade-fixture`, starting with 0.14.0, and a release pull
+  request fails when the release before it has none. (#567)
+- **The node serves its own DID document at the root, where `did:web`
+  resolves.** The node signs as a pathless `did:web:<host>`, which the did:web
+  method resolves to `https://<host>/.well-known/did.json`, and the document was
+  served only at `/identity/.well-known/did.json`, so the node's own DID did not
+  resolve without a proxy rewrite. `GET /.well-known/did.json` now serves it at
+  the node root (`getRootDidDocument`), beside the existing path. (#518)
+- **An import job says how it ended.** `dpp.import.completed` and
+  `dpp.import.failed` were defined and never published, and every job ended
+  `completed`, so an import that could not finish said nothing. An apply import
+  now publishes `dpp.import.completed` when its batch finished, with `jobId`,
+  `productGroup`, `totalRows` and the `created`, `updated` and `failedRows`
+  counts, or `dpp.import.failed` with a `reason` when it could not. Such a job is
+  marked `failed` with that reason, which `GET /imports/{jobId}` reports. (#531)
+
+- **Bulk import and CSV templates reach `electronics` and `detergent`.** Both
+  reasons recorded for leaving them out were wrong. Electronics'
+  `productCategory` and `energyEfficiencyClass` already deserialise from a
+  string in `dpp-domain`, so the row parses them with core's own types and a
+  refused device type names core's accepted set. `EnergyEfficiencyClass`
+  catches any unknown string as `Other`, which the schema then refuses, so the
+  row refuses it first and says which row. Detergent `surfactants` is a JSON
+  array in one cell, the convention textile's `fibreComposition` already
+  taught, and is checked by core's `validate_surfactants`.
+
+  `unsold-goods` is the one product group still out, because it is not a
+  passport: an Art. 24 disclosure is recorded through the vault's own
+  `unsold-goods` route, and importing it needs a different target and a
+  document with a header section.
+
+- **The records a `held: outside` statement names have a store of their own, and
+  an admin credential can erase one.** A published passport is signed, frozen,
+  archived and copied to the back-up provider, so personal data it is not
+  required to carry is held in a record that can be erased instead, and a
+  withdrawn consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)). Core's
+  `PersonalDataPort` is now implemented on PostgreSQL in its own table,
+  `odal.personal_data_record` (migration 0043). It is not a column of the
+  passport, and the archive of past versions, the audit chain, the snapshots, the
+  outboxes and the back-up copy never see it. No route reads a record.
+
+  `DELETE /vault/api/v1/personal-data/{record}` erases one and answers the
+  receipt: the record, the passport and field it belonged to, and when it was
+  erased. Erasing a record already erased answers the first receipt again, so a
+  caller that lost the answer asks again. A record this node never held is `404`.
+  It needs an admin credential, like every other route that removes something.
+  It does not touch the passport or the statement in it, which keeps naming the
+  record, so a reader learns that the record is gone rather than that it never
+  existed. The store lists every record a passport has, erased ones included, so a
+  record whose identifier was lost on the way back from `store` can still be
+  found through the port.
+
+  **What a tombstone keeps, and why it needs a basis.** Erasure drops the
+  content and keeps the row: the identifier, the passport and field, and the
+  instant. None of the content, but a passport identifier can relate to whoever
+  owns the item, and information that can be linked to a person is personal data
+  (GDPR Recital 26). So the tombstone is protected like the passport's
+  individual-item data, and the operator needs a basis for keeping it. Showing
+  that it erased (Art. 5(2)) is one. Nothing here deletes it, and the database
+  role cannot. Erasure overwrites the content in place; the database's own
+  write-ahead log, replicas and backups hold earlier row versions, and how long
+  those live is the operator's retention.
+
+  Not yet done: no route stores a record, so nothing in this node calls `store`
+  or lists a passport's records. An operator who keeps records in this store
+  writes them through the port.
+
+  `POST /dpp/validate` now runs the checks create runs on the draft create would
+  store: core's own invariants (`Passport::validate`), then the personal-data
+  check. So it refuses a field with a value and no statement, and a battery whose
+  two placing-on-market dates disagree, where it used to pass both. Because it
+  now builds that draft, it also refuses a malformed `commodityCode`, which
+  create refused and the preview passed. The erase route logs which credential
+  erased a record, since the tombstone does not say.
 
 - **The GS1 resolver accepts a consumer product variant (AI 22) and a
   third-party extension (AI 235).** A label printed elsewhere may carry either
@@ -438,7 +696,278 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   generated battery templates carry the column last; an older file without it
   still imports.
 
+### Changed
+
+- **Rust 1.99.1, and every dependency at its newest release that the rest of
+  the graph allows.** The toolchain moves from 1.96.0 to 1.99.1, the latest
+  stable release, and both images build on `rust:1.99.1-slim-bookworm`, so what
+  ships and what CI tests are still one compiler; `rust-version` is 1.99. Six
+  dependencies move a major version: `wasmtime` and `wasmtime-wasi` 49 → 50
+  (which needs Rust 1.97 or later), `xml-sec` 0.1 → 0.4, `async-nats` 0.50 →
+  0.51, `calamine` 0.37 → 0.38 and `rfd` 0.16 → 0.17. Two groups stay where they
+  are because the crates they share types with have not released: `der` 0.7,
+  `x509-cert` 0.2 and `const-oid` 0.9, which the newest `cms` (0.2.3) and
+  `x509-verify` (0.4.8) still require, and `testcontainers` 0.27, which the
+  newest `testcontainers-modules` (0.15.0) requires.
+  - **`xml-sec` is built to verify and nothing else.** It was compiled with its
+    default features, which include XML encryption. Now only `xmldsig` is
+    compiled, on the same `xmloxide` backend. Its `xslt` feature executes a
+    stylesheet named in a `Reference` transform, and it is not compiled, so no
+    trusted list can make the node run one; 0.2.0 is the release that began
+    executing them.
+  - **`rfd` 0.17 drops `ashpd` and `zbus`**, the D-Bus stack behind the CLI's
+    optional file picker. The three "unmaintained" advisories registered against
+    that stack in `.cargo/audit.toml` (RUSTSEC-2026-0370, -0371 and -0372) are
+    removed with it, and so is the `wayland-client` dependency that existed only
+    to load its Wayland library at runtime.
+
 ### Fixed
+
+- **A passport published before an upgrade can change status again.** A status
+  change loads the passport, sets the status and writes the whole document
+  back. What it loads is this build's reading of the record rather than the
+  record: `productGroupData` upcast through the lens chain to the current
+  schema, and `null` for any envelope field added since the passport was stored.
+  On a published passport, writing that back is a change to content its
+  signatures commit to, and the retention guard refuses it. So on a node
+  upgraded from 0.14.0, whose dpp-core 0.20.0 stored a bare `gtin` that 0.22.0
+  reads as a `productIdentifier`, no passport published before the upgrade
+  could change status: `suspend` returned `500`, and `amend` published the
+  successor and then failed to supersede the predecessor, leaving both live. A
+  write to a retention-locked passport now carries only the fields the caller
+  changed, compared with a fresh reading of the row under its lock, so the stored
+  record stays as it was signed. A change to its content is still refused, and a
+  write built from a reading taken before a concurrent publish can no longer
+  clear the passport's retention lock. (#566)
+- **Retention is counted in calendar years, and `retire` keeps the deadline
+  sealed at publish.** The deadline was `published_at` plus 365 days a year, at
+  publish and again in the `retire` guard. That ends a day early for every
+  29 February in the period, so a ten-year period ended two or three days before
+  its anniversary and `retire` let a passport go inside it. It is now counted in
+  calendar months (`retention_deadline`). `retire` also recomputed the deadline
+  from the current catalog period and ignored the `retentionUntil` sealed at
+  publish, so a later dpp-core that shortened a period would have let a passport
+  go early. It now enforces the later of the two (`retirement_deadline`).
+  (#519, #520)
+- **A state change commits its webhook deliveries and its registry status with
+  it.** Webhook deliveries were enqueued after the passport write committed, best
+  effort, and nothing swept for them, so a node stopped between the two had
+  changed a passport and told no subscriber. Suspend, retire and end of life
+  recorded the status the EU registry is owed the same way. Every state change
+  now commits in one transaction: the passport write and the version it
+  replaces, the transfer chain, the registry rows and status intent, the audit
+  entry and the webhook deliveries. Only the event-bus publish still follows the
+  commit. (#529, #530)
+- **A status change rechecks its transition under the lock, and two writers can
+  no longer fork an audit chain.** Suspend, retire, deactivate and supersede
+  checked `can_transition_to` on a read taken before the transaction, so a change
+  committed in between could be undone. The write now rechecks on the locked row
+  and refuses with `InvalidTransition`. The audit chain's head was read with no
+  lock, so two changes that write no passport row, such as a transfer and a bare
+  audit append, could both link to the same head. Appends to one passport's chain
+  are now serialised. (#538)
+- **The standalone vault names the operator's DID as a credential's issuer.**
+  `IdentityHttpClient::sign_passport` wrapped every JWS in a credential whose
+  issuer was the hard-coded `did:web:identity.odal-node.io:operators:{operator_id}`,
+  a DID no document this deployment serves. The issuer is now the DID of the
+  signing key's `kid`. Only the standalone `dpp-vault`, with a separately run
+  `dpp-identity`, reaches this client; `dpp-node` signs in process and was not
+  affected. (#533)
+- **A registry dashboard task without a `taskId` no longer hides every verdict,
+  and `odal snapshot verify` reports a stripped proof as absent.** The dashboard
+  lists all of the operator's tasks in a shape that is not published, and one
+  entry without a `taskId` made the whole list unreadable; the field now
+  defaults. With `--did-url`, a snapshot whose `snapshotJwsSignature` had been
+  removed fetched the DID document and failed with "no verification method is
+  named"; it now says the proof is absent. (#492)
+- **`just build-plugins` and `just check-plugins` use the `product-group-<name>`
+  crates.** They still built and checked `sector-<name>`, so a plugin built this
+  way was named `sector-<name>.wasm`, which the loader skips, and the node took
+  the passthrough path without a word. (#537)
+- **The steel, aluminium and tyre import templates use sample names.** The
+  templates `GET /integrator/api/v1/templates/{productGroup}` serves named real
+  companies and products, with CO2e and recycled-content figures beside them
+  that nothing sourced. They now name samples, such as `Sample Stahlwerk GmbH`.
+  (#428)
+- **`odal --help` says what each command does, and carries nothing meant for
+  maintainers.** `passport transfer initiate --help` and `snapshot verify --help`
+  printed notes written for the next reader of the code. `template --help`
+  listed product groups that no longer matched the templates. `update --help`
+  said it pulls the latest images, where inside a clone it rebuilds from source
+  and outside one pulls `ODAL_VERSION`. Each is corrected, and
+  `no_help_text_carries_a_note_for_maintainers` checks every command's help.
+  (#522, #523, #524, #525)
+- **The resolver's metrics can be scraped from the shipped stack, and
+  `CACHE_TTL_SECS` and `RATE_LIMIT_RPM` do what `.env.example` says.** The
+  metrics listener binds `127.0.0.1:9101` by default, which in a container is
+  the container's own loopback, and the resolver service published no port for it:
+  neither the host nor another service could connect, so
+  `rate_limit_rejections_total` and every other resolver series were out of
+  reach, and the scrape example in `docs/ops/METRICS-PLAN.md` (`resolver:9101`)
+  pointed at nothing. The Compose file now binds it to `0.0.0.0:9101` inside the
+  container and publishes it on the host's `127.0.0.1:9101` only. `CACHE_TTL_SECS`
+  was listed in `.env.example` but never passed to the container; Compose now
+  passes it with its default of 30. `RATE_LIMIT_RPM` fell back to 120 when it was
+  not a number, so an operator who wrote `6,000` believed a limit was in force
+  that was not the one they set; the resolver now refuses to start on a value that
+  is not a whole number, or is `0`, which would refuse every request.
+  `.env.example` also claimed the resolver reads `LOG_FORMAT`; only the node
+  does, and the standalone services always log plain text. The node's own
+  listener is untouched and still unpublished.
+
+- **A request that outlives its lease can no longer overwrite or delete the
+  claim of the request that reclaimed its key.** A claim on an idempotency key
+  becomes reclaimable once its 60-second lease runs out, and recording an
+  outcome or releasing a claim matched the row by key and `in_flight` state
+  alone. A request that ran past its lease then recorded its response over the
+  newer claim's row, so later retries replayed the superseded response, or it
+  released that row, which let a third request run while the second was still
+  going. Each claim now carries a token, minted by the store and replaced when
+  the key is reclaimed, and an outcome or a release names the token it was
+  granted: once the claim is no longer its own, nothing is written. The
+  response goes out as before and a warning is logged. The handler may still
+  have run twice by then, which is what a lease that expires on a live request
+  means; this keeps the second run's record intact. The store port changes:
+  `claim` returns the token, and `complete` and `release` take it and report
+  whether they applied. The table gains a `claim_token` column, which needs no
+  grant change.
+
+- **A database that stops answering no longer holds keyed requests for as long
+  as it stays silent.** The idempotency layer makes four calls to its store (a
+  claim, recording an outcome and two kinds of release) and nothing bounded any
+  of them, so a request carrying an `Idempotency-Key` waited on a hung store
+  without limit, and an import held its slot while it did. Each call now gets 10
+  seconds. A claim that does not answer in time is refused with the `503` an
+  unreachable store already gets, and the request is not run. An outcome or a
+  release that does not answer is logged, and the response goes out as it would
+  have without the timeout: unchanged, or with an empty body when it was too
+  large to buffer, which is what a failed release already does. A call given up
+  on may still have committed, so a retry can meet `409` until the key's
+  60-second lease runs out, which is the window a store error already leaves.
+
+- **With `TRUST_FORWARDED_FOR=true`, the resolver counts the last
+  `X-Forwarded-For` entry, not the first.** The first entry is the one a client
+  writes. Behind a proxy that appends to the header, as Caddy does once
+  `trusted_proxies` covers the client and nginx does with
+  `$proxy_add_x_forwarded_for`, a client could send a different first entry on
+  every request and take a fresh rate-limit bucket each time: 200 requests from
+  one client all passed, against 120 allowed. The last entry is the one the proxy
+  in front of the resolver added, whether it replaced the client's value or
+  appended to it, so a proxy that replaces the header (Caddy's default) behaves as
+  before. A proxy that adds its entry as a separate header line is read from the
+  last line, and an entry that is not an address falls back to the peer's bucket.
+  Behind a chain of proxies the last entry is the nearest proxy's address, so the
+  visitors who reach it share one budget.
+
+- **The resolver's rate limit can be configured from `.env`, and the reference
+  topology no longer shares one limit across every visitor.** The resolver reads
+  `RATE_LIMIT_RPM` and `TRUST_FORWARDED_FOR`, but its Compose service passed
+  neither and reads no `env_file`, so a value in `.env` never reached it. The
+  limit then counted the TCP peer, which behind the reverse proxy is the proxy:
+  three clients sending 100 requests each against a Caddy-fronted resolver shared
+  one 120-request budget, and the third was refused every request. Compose now
+  passes both, with the binary's defaults (`120`, `false`), and the runbook sets
+  `TRUST_FORWARDED_FOR=true` for the reference topology. That is safe only with
+  the resolver bound to loopback and a proxy that replaces `X-Forwarded-For`; the
+  runbook says how to check both. A test now fails when the resolver reads a
+  variable that Compose neither passes nor lists as not passed.
+
+- **With `WEBHOOK_ALLOW_PRIVATE_TARGETS` set, a webhook URL must still be
+  `http` or `https`.** The opt-out was meant to admit private hosts and plain
+  `http`. It skipped the scheme check entirely, so `POST /api/v1/webhooks` stored
+  `file:`, `ftp:` or any other scheme with a host: a subscription the drain's
+  HTTP client can never deliver to. For `file:` the stored form did not even
+  read back the same: `file://h//z:/` was stored as `file://h/z:/`, which has
+  no host. Such a URL is now refused with `422`. The new `url_guard` fuzz
+  target found it on its first run.
+
+- **A `Cargo.lock` that had drifted from the manifests passed CI.** No step
+  built with `--locked`, so a build that found the lock out of step re-resolved
+  in the runner and discarded the result: every check passed and the committed
+  file stayed wrong, while `cargo audit` read that file. Every CI step that
+  resolves the workspace now passes `--locked`, as do `just lint` and the deny
+  step of `just audit`. The flag is left off while `.cargo/config.toml` exists,
+  because the `[patch]` onto a sibling `dpp-core` that `just core-local`
+  installs rewrites the lock by design; `just core-published` brings it back.
+  The duplicate-versions comment in `deny.toml` gave a Windows figure from
+  `cargo tree -d`; it now gives one taken on Linux with the command CI runs.
+
+- **The resolver no longer says it conforms to the GS1 Conformant Resolver
+  Standard.** The handler's documentation and the description of `GET
+  /01/{gtin}` called the route a "GS1-conformant resolver", and nothing backed
+  the claim: no revision was named, no test named the standard's criteria, and
+  two required criteria are unmet (a description of the resolver served from
+  `/.well-known/gs1resolver`, and decompression of a compressed Digital Link).
+  The text now describes the behaviour and says it has not been assessed against
+  the standard. A conformance claim, if one is made, comes from assessing every
+  criterion; that work is tracked in #477. (#469)
+
+- **Webhook delivery no longer follows redirects.** The drain's shared client
+  kept reqwest's default policy, which follows up to ten. The address guard
+  pins a named host to the addresses it approved, but hands the shared client
+  back unchanged for an IP-literal target and for the
+  `WEBHOOK_ALLOW_PRIVATE_TARGETS` opt-out. So a receiver on an approved public
+  IP could answer `302` to `169.254.169.254` and be followed there, an address
+  the guard never checked. A redirect is now the receiver's answer: a non-2xx
+  delivery, retried with backoff like any other, so a subscription must name
+  the URL its receiver answers on (`WEBHOOKS.md` says so). The client is built by
+  `webhook_drain::delivery_client`, where a test drives it against a
+  redirecting receiver. The build also no longer falls back to
+  `Client::default()`, which follows redirects, if it fails.
+
+- **A credential's product-category scope is enforced.** `GET
+  /credential/dpp/{dppId}` downgraded every credential that named a product
+  category to the public view, because a passport was thought to have no
+  category to compare against. Core's `ProductGroupData::product_category`
+  supplies one: a battery's `batteryType`, an electronics `DeviceType`, a
+  steel `productCategory`, a tyre `tyreClass`, a construction `productFamily`, a
+  furniture or detergent `productType`. A credential whose categories include
+  the passport's now grants its audience. One that names other categories, or
+  is read against a group that states none (aluminium, textile, mattress, toy,
+  unsold goods, an unmodelled payload), still gets the public view: never a
+  `401`, and still recorded in the audit trail. A credential naming no category
+  is unaffected. `VerifiedCredential::audience_for_product_group` is replaced
+  by `audience_for`, which takes the passport's category as well.
+
+- **The contract gate sees a scope extractor's `403`.**
+  `documented_error_codes_are_the_ones_handlers_return` finds the codes a
+  handler can emit by matching tokens in its source, and its `403` tokens were
+  the calls `require_write(` and `require_admin(`. The routes that take a body
+  moved those checks into the `RequireWrite` and `RequireAdmin` extractors, so
+  the scope gate runs before the body is read, and the tokens could not see a
+  type. Those routes stopped reporting `403` to the gate, and a spec that lost
+  its `403` would have passed. Every such route documents one today. The gate
+  now matches both extractors. With `403` removed from
+  `POST /dpp/{dppId}/eol`, it fails naming `eol_handler`, where it used to
+  pass.
+
+- **`just check` linted less than CI did.** `just lint` ran clippy without the
+  `integration-tests` features, so a lint that existed only in a Docker-gated
+  suite passed the local gate and failed after the push; the compile-only
+  `check-integration` was the one step that touched those suites, and it does not
+  lint. `just lint` now runs the command CI ran, features on, and CI's Clippy
+  job runs `just lint`, so the command has one home and the two cannot drift.
+  `just lint-integration`, `just check-integration` and
+  `scripts/check-integration.sh` are removed: clippy type-checks the same
+  targets. `just check` still cannot *run* the gated suites, which need Docker;
+  the developer guide says which command does.
+
+- **Publish refuses a second holder of an identification link or a DID, and of a
+  model or batch label.** Publish asked one question, whether another published
+  passport already prints this carrier serial, and returned early for any
+  identifier that is not a GTIN. So two passports carrying one link or one DID
+  both went live (`200` for the second), and so could two that state model level,
+  or batch level for one lot, under one GTIN: the serial those derive from their
+  own id is shared by no other passport, while their label, the GTIN or the GTIN
+  and the lot, is printed by every other one at that level. The second publish is
+  now a `422` naming the field (`/batchId`, or
+  `/productGroupData/productIdentifier`, with `/carrierSerial` unchanged) and
+  stays a draft, an amendment chain still publishes, and the lock that serialises
+  two publishes of one claim is keyed on the claim rather than on the serial.
+  The model and batch cases cannot occur through this API yet, which never states
+  a level; the check is in place for when it does. A link or DID holder that
+  differs only in its lot is not found until dpp-core's lookup by the whole value
+  (`find_by_product_identifier`) is released and pinned.
 
 - **`odal` runs the published images outside a clone of this repository.** The
   guided setup, the console's Start and `odal update` decided whether to build
@@ -486,8 +1015,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   chain authorised.** The workspace no longer carries an `xml-sec` fork. It
   existed to raise one constant, the 65 536-entry node-set ceiling that the
   French, Czech, Italian and Spanish lists exceed. Upstream raised it in 0.1.17
-  (`structured-world/xml-sec#158`), and `dpp-seal` now requires 0.1.20 from
-  crates.io. Italy's and France's published lists verify on it end to end.
+  (`structured-world/xml-sec#158`), and `dpp-seal` took 0.1.20 from crates.io.
+  This release then moves it to 0.4.1, built to verify and nothing else (see
+  **Changed**). Italy's and France's published lists verify on 0.4.1 end to end.
 
   Since 0.1.18 `xml-sec` refuses to verify with a key just because the document
   carries it. The verifier now hands it the one certificate this node already
@@ -775,6 +1305,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   both halves: `sandbox` emitted and undocumented, `staging` documented and
   never emitted.
 
+- **`wasmtime` and `wasmtime-wasi` 48.0.2 → 48.0.3**, clearing RUSTSEC-2026-0314
+  to -0316, published on 24 September. -0315 lets `call_ref` and an exception
+  `catch` drop fuel accounting, which is what bounds every product-group plugin.
+  -0314 lets a guest panic the host through a filesystem datetime overflow.
+  -0316 lets dynamic record lifting allocate beyond the hostcall fuel limit. The
+  existing requirement already permitted the patch. (#426)
 - **`wasmtime` and `wasmtime-wasi` 48.0.3 → 48.0.4**, clearing RUSTSEC-2026-0321
   to RUSTSEC-2026-0327. All seven concern the sandbox sector plugins run inside:
   the WASI preview 0 `poll_oneoff` circumvents fuel consumption (-0321), a guest
@@ -830,6 +1366,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   such an entry is still classified and scanned. `zip` 9 brings in `nix`, which
   the lockfile did not have.
 
+- **`wasmtime` and `wasmtime-wasi` 49.0.4 → 49.0.5**, clearing RUSTSEC-2026-0420,
+  -0422, -0423 and -0424, published on 29 October against a tree that had not
+  changed: a wasip3 UDP `send` that can reach an address allowed only for
+  receiving, typed functions with `i31` or `nullref` arguments that can panic, a
+  cross-engine type confusion with host-created struct types, and unchecked
+  memory use when borrowed resources move between components. The lock has since
+  moved to 50.0.1 (see **Changed**). (#550)
+- **`rustls` 0.23.45 → 0.23.46**, clearing RUSTSEC-2026-0346 to -0349, published
+  on 14 October, which turned the security audit red on `main`. `rustls` carries
+  every TLS connection the node makes. (#476)
+- **`quinn-proto` 0.11.16 → 0.11.19**, clearing RUSTSEC-2026-0338 to -0342,
+  published on 12 October against 0.11.16, which turned the security audit red on
+  `main`. Lock only. (#454)
+- **`ctutils` 0.4.2 → 0.4.6 and `crypto-bigint` 0.7.5 → 0.7.10**, clearing
+  RUSTSEC-2026-0385 (non-constant-time mask generation and `u128` comparisons)
+  and RUSTSEC-2026-0387 (operations meant to be constant-time could branch on
+  secret values), published on 23 October. (#516)
 - **`rustls-webpki` 0.103.15 → 0.103.16, and `webpki-roots` and
   `webpki-root-certs` 1.0.9 → 1.0.10**, clearing RUSTSEC-2026-0382, -0381 and
   -0383, published on 19 and 20 October, which turned the security audit red on
@@ -841,16 +1394,76 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   patches, so no manifest changed for them.
 
   **`async-nats` is declared without its `websockets` feature.** A fourth copy,
-  `webpki-roots` 0.26.11, carries the same -0381 and cannot be moved: it is
-  pulled only by `tokio-websockets` 0.10, which `async-nats` 0.50 pins, and
-  0.50.0 is the newest release. The node reaches NATS over `nats://` and nothing
-  here configures `ws://` or `wss://`, so the transport is switched off and the
-  crate is in no build. A WebSocket NATS URL is no longer supported by the
-  client. The crate stays in `Cargo.lock`, because `async-nats` names it in a
-  weak feature (`tokio-websockets?/ring`) and cargo records that edge whether or
-  not the feature is on, so the advisory is registered in `.cargo/audit.toml` as
-  not in the graph, which `scripts/check-audit-register.sh` checks against the
-  default and the shipped build.
+  `webpki-roots` 0.26.11, was first reported under the same -0381. It came only
+  through `tokio-websockets` 0.10, which `async-nats` pins. The node reaches NATS
+  over `nats://` and nothing here configures `ws://` or `wss://`, so the
+  transport is switched off and the crate is in no build. A WebSocket NATS URL is
+  no longer supported by the client. The RustSec database has since classified
+  that copy as unaffected (21 October): it holds no roots of its own and
+  re-exports those of the 1.x copy, which must stay at 1.0.10 or later. With
+  `async-nats` 0.51 (see **Changed**), neither `tokio-websockets` nor the 0.26
+  copy is in `Cargo.lock` any more; the feature stays off for the reason
+  `Cargo.toml` gives.
+
+- **Six guard scripts ran in `just check` and in no workflow, and one CI check
+  was a different check from its script.** `grants-check`, `harness-check`,
+  `migrations-check`, `no-rsa-private-key`, `outbound-check` and
+  `vocabulary-check` had no CI job, so a pull request that broke one passed CI
+  and was stopped only if its author had run `just check`; each now has its own.
+  `migrations-check` could not simply be added: a CI checkout tracks one ref, so
+  it never had `origin/main` and printed "skipping" with exit 0 on every pull
+  request. It now fetches the tracking ref by name, treats a missing base as an
+  error in CI, no longer swallows a failed diff, and has a self-test that builds
+  the checkout shapes CI hands over. The `debug-prints` job carried its own copy
+  of `debug-check` and listed eight of the twelve crates, so a `println!` in
+  `dpp-types`, `dpp-render`, `dpp-seal` or `dpp-factor-data` passed it; that job
+  and the `subjects-check` and `mod-rs-check` jobs now run the scripts.
+  `just ci-guard-check`, in `just check` and a CI job of its own, fails for a
+  script in `scripts/` that no workflow runs, unless it is listed as local-only
+  with the reason. `check-plugins` is local-only by nature: it compares file
+  modification times, which a fresh checkout does not have.
+
+- **The code cited RFC 7807 and RFC 7235 after both had been obsoleted, and
+  nothing recorded which RFCs it cited.** RFC 9457 replaced 7807 and RFC 9110
+  replaced 7235. They were cited in thirty-seven places and two, while the
+  resolver already cited RFC 9457 for the same error shape, so one concept went
+  by two numbers. Neither change alters behaviour: the `application/problem+json`
+  media type and the case-insensitive auth scheme are the same in the successors.
+  The citations are corrected, and each section reference was re-read in the
+  successor rather than renumbered. The API description changes in two
+  sentences, so both OpenAPI bundles were regenerated.
+  `docs/architecture/STANDARDS.md` is a register of the twenty-eight RFCs the
+  repository cites, with each one's status, the date it was read, where it was
+  read, and where the code uses it, and `crates/dpp-node/tests/standard_citations.rs`
+  fails a citation with no row, an obsoleted specification still cited without a
+  `kept:` reason (RFC 2822 is the one, because it names chrono's parser), a draft
+  cited without its revision, a row nothing cites, and a row without a dated
+  status. It proves a citation has a status somebody read, not that the status
+  is current, so re-reading the register is now a step of the release checklist.
+
+- **No tool had read the workflows, and two kinds of finding sat in all of
+  them.** `workflow-lint.yml` now runs zizmor (security) and actionlint
+  (correctness) on every pull request, on `main`, weekly and on demand, each
+  downloaded at a pinned version and checked against a recorded SHA-256. What
+  they found is fixed: every `actions/checkout` step kept the job's token in the
+  checkout, and none needs it, so each now sets `persist-credentials: false`;
+  `release.yml` granted `packages: write` to the whole workflow and now grants it
+  to its one publishing job; `dtolnay/rust-toolchain` was pinned to a commit on a
+  branch that has diverged from upstream's `master`, and `Swatinem/rust-cache` to
+  a commit one past its last release, so the first now pins `master` and the
+  second the release, and each version comment beside a pin names the exact
+  release. Dependabot waits seven days before proposing an update. No job's
+  effective permissions widened. (#552)
+
+### Known limitations
+
+- **Two transfers started at the same moment on one passport keep only one in
+  its chain.** `initiate_transfer` reads the transfer chain without a lock and
+  writes the whole chain back, so two initiations that overlap both pass the
+  check for a pending transfer, both return a `TransferRecord`, and both write
+  an audit entry and a `dpp.passport.transferred` event, while the chain holds
+  only the second. Transfers initiated one at a time are not affected. The fix
+  is scheduled for 0.16.0 (#535).
 
 ## [0.14.0] - 2026-09-24
 

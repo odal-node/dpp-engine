@@ -9,12 +9,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use dpp_dal::pg::{PgDal, sqlx};
+use dpp_dal::pg::{PgDal, repo_webhook::fan_out, sqlx};
 use dpp_integrator::{
     domain::batch_runner::BatchResult,
     domain::import_report::ImportReport,
     infra::job_store::{ImportJob, JobStatus, JobStore},
 };
+use dpp_types::state_change::WebhookEvent;
 use sqlx::Row;
 
 pub struct PgJobStore {
@@ -107,10 +108,16 @@ impl JobStore for PgJobStore {
         Ok(())
     }
 
-    async fn complete(&self, id: Uuid, result: BatchResult) -> anyhow::Result<()> {
+    async fn complete(
+        &self,
+        id: Uuid,
+        result: BatchResult,
+        notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()> {
         // On completion every row has been processed, so `processed` reflects the
         // job total — matching the InMemoryJobStore reference and the JobStore contract.
         let result_json = serde_json::to_value(&result)?;
+        let mut tx = self.dal.pool().begin().await?;
         sqlx::query(
             r#"UPDATE odal.import_job
                SET status = 'completed', processed = total_rows, result = $2
@@ -118,8 +125,35 @@ impl JobStore for PgJobStore {
         )
         .bind(id)
         .bind(result_json)
-        .execute(self.dal.pool())
+        .execute(&mut *tx)
         .await?;
+        if let Some(event) = &notify {
+            fan_out(&mut *tx, &event.event_type, &event.body).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn fail(
+        &self,
+        id: Uuid,
+        reason: String,
+        notify: Option<WebhookEvent>,
+    ) -> anyhow::Result<()> {
+        let mut tx = self.dal.pool().begin().await?;
+        sqlx::query(
+            r#"UPDATE odal.import_job
+               SET status = 'failed', fail_reason = $2
+               WHERE id = $1"#,
+        )
+        .bind(id)
+        .bind(reason)
+        .execute(&mut *tx)
+        .await?;
+        if let Some(event) = &notify {
+            fan_out(&mut *tx, &event.event_type, &event.body).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 

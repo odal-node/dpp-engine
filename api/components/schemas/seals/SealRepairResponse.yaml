@@ -12,7 +12,7 @@ properties:
       - rearmed
       - queued
     description: >-
-      `rearmed`: a `sealed` row was re-armed — the one path that buys a second
+      `rearmed`: a `sealed` row was re-armed: the one path that buys a second
       seal for a digest already paid for, justified because the first does not
       verify.
 
@@ -23,7 +23,7 @@ properties:
   payloadHash:
     type: string
     description: >-
-      Hex SHA-256 the replacement seal will cover — the passport's **current**
+      Hex SHA-256 the replacement seal will cover: the passport's **current**
       signature, not whatever the broken seal covered.
   note:
     type: string

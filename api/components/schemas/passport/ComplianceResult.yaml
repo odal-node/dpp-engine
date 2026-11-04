@@ -1,8 +1,8 @@
 type: object
 description: >-
   The computed compliance determination. Part of the signed passport payload and
-  immutable after retention lock. Absent until a determination has been computed
-  — for example on a product group with no plugin loaded.
+  immutable after retention lock. Absent until a determination has been computed,
+  for example on a product group with no plugin loaded.
 required:
   - co2eScore
   - repairabilityIndex
@@ -28,14 +28,14 @@ properties:
   violations:
     type: array
     description: >-
-      Binding findings — these block publish when the product group is in force. Empty
+      Binding findings: these block publish when the product group is in force. Empty
       for passthrough or not-assessed determinations.
     items:
       $ref: ./ComplianceFinding.yaml
   warnings:
     type: array
     description: >-
-      Advisory findings — surfaced but never blocking (e.g. thresholds not yet
+      Advisory findings: surfaced but never blocking (e.g. thresholds not yet
       in force).
     items:
       $ref: ./ComplianceFinding.yaml

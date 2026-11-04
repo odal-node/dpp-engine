@@ -101,6 +101,39 @@ async fn back_off_or_exhaust(
     }
 }
 
+/// The shared client a drain delivers with, wherever no pinned client replaces
+/// it.
+///
+/// No redirects. `pinned_client_for` hands this client back **unchanged** for
+/// an IP-literal target — correctly, since there is no name to rebind — and
+/// [`client_for_target`] does the same for the `WEBHOOK_ALLOW_PRIVATE_TARGETS`
+/// opt-out. Without a policy here, `reqwest`'s default follows up to ten, so a
+/// receiver on an approved public literal could answer `302 Location:
+/// https://169.254.169.254/…` and be followed to an address the guard never
+/// checked. That is the window pinning exists to close, reachable through the
+/// one branch that skips it.
+///
+/// `build_guarded_client` is deliberately not reused despite carrying this same
+/// policy: its `DEFAULT_TIMEOUT` is 5s, chosen because its callers verify
+/// something and fail closed, where waiting longer buys nothing. A webhook
+/// delivery is not a verification — a slow receiver is ordinary, and the outbox
+/// already has retry and backoff — so it keeps 10s. The policy is shared; the
+/// timeout is not, and that difference is the reason.
+///
+/// # Panics
+///
+/// If the client cannot be built, which only a TLS backend that fails to
+/// initialise causes. Falling back to `Client::default()` instead would hand
+/// the drain a client that follows redirects.
+#[must_use]
+pub fn delivery_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("a client with only a redirect policy and a timeout builds")
+}
+
 /// Drain up to `batch` due deliveries once.
 pub async fn drain_once(
     outbox: &Arc<dyn WebhookOutbox>,
@@ -241,6 +274,74 @@ mod tests {
         assert!(
             refused.is_err(),
             "the metadata endpoint must not produce a usable client"
+        );
+    }
+
+    /// Serve `router` on a loopback port and return its base URL.
+    async fn serve(router: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let addr = listener.local_addr().expect("local address");
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        format!("http://{addr}")
+    }
+
+    /// A receiver that redirects is not followed: the delivery stops at its
+    /// `302`, and the address it points to is never contacted.
+    ///
+    /// The target stands in for the metadata endpoint, an address the guard
+    /// never checked. The client is obtained through `client_for_target` with
+    /// the private opt-out, one of the two branches that hand back the shared
+    /// client unchanged (an IP literal is the other), so it is the client a
+    /// delivery to such a receiver really uses.
+    ///
+    /// A plain `reqwest::Client` goes first, against the same pair, and must
+    /// follow: without that, a counter left at zero would prove nothing.
+    #[tokio::test]
+    async fn a_delivery_does_not_follow_a_redirect() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        let unchecked = serve(axum::Router::new().fallback(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { "reached" }
+        }))
+        .await;
+        let receiver = serve(axum::Router::new().fallback(move || {
+            let location = format!("{unchecked}/latest/meta-data");
+            async move {
+                (
+                    axum::http::StatusCode::FOUND,
+                    [(axum::http::header::LOCATION, location)],
+                )
+            }
+        }))
+        .await;
+        let hook = format!("{receiver}/hook");
+
+        let followed = reqwest::Client::new()
+            .post(&hook)
+            .send()
+            .await
+            .expect("control request");
+        assert_eq!(followed.status(), 200, "the control client follows");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "and reaches the target");
+
+        let client = client_for_target(&delivery_client(), &hook, true)
+            .await
+            .expect("the opt-out permits a loopback receiver");
+        let delivered = client.post(&hook).send().await.expect("delivery request");
+        assert_eq!(
+            delivered.status(),
+            302,
+            "the redirect is the receiver's answer, not a hop to take"
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "the address the redirect named was contacted"
         );
     }
 }

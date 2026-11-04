@@ -152,9 +152,9 @@ async fn capture_battery() {
             // mandatory set at all. Lead stays 0.0, which is not a declaration.
             "productName": "GridCell IND-48/100",
             "manufacturer": {
-                "name": "GreenCell GmbH",
+                "name": "Example Batteries GmbH",
                 "address": "Industriestrasse 4, 10115 Berlin, DE",
-                "didWebUrl": "https://greencell.example.com/.well-known/did.json"
+                "didWebUrl": "https://batteries.example.com/.well-known/did.json"
             },
             "materials": [
                 {"name": "Lithium", "weightKg": 0.8, "recycledPct": 12.5, "countryOfOrigin": "CL"},
@@ -204,12 +204,12 @@ async fn capture_battery() {
                 "anodeMaterial": [{"name": "Graphite", "weightPct": 18.0}],
                 "electrolyteMaterial": [{"name": "LiPF6 in EC/DMC", "weightPct": 11.0}],
                 "componentPartNumbers": ["CELL-21700-A", "BMS-4820"],
-                "sparePartsContacts": "parts@greencell.example.com",
-                "disassemblyInstructionsUrl": "https://greencell.example.com/disassembly/ind-48",
+                "sparePartsContacts": "parts@batteries.example.com",
+                "disassemblyInstructionsUrl": "https://batteries.example.com/disassembly/ind-48",
                 "safetyMeasures": "Isolate before servicing; do not puncture",
                 "testReportResults": "IEC 62619:2022 — pass",
                 "markingInformation": "CE, separate-collection symbol, capacity label",
-                "euDeclarationOfConformity": "https://greencell.example.com/doc/ind-48.pdf",
+                "euDeclarationOfConformity": "https://batteries.example.com/doc/ind-48.pdf",
                 "wasteBatteryInformation": "Return to an authorised collection point",
                 "placedOnMarketDate": "2026-07-15"
             }

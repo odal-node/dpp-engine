@@ -1,6 +1,6 @@
 //! The axum middleware that claims, replays and refuses.
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 
 use axum::{
     body::{Body, to_bytes},
@@ -13,8 +13,8 @@ use axum::{
 use super::{
     policy::{RoutePolicy, policy_for},
     store::{
-        Claim, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyStore, RequestKey, StoredResponse,
-        fingerprint,
+        Claim, ClaimToken, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore,
+        RequestKey, Settled, StoredResponse, fingerprint,
     },
 };
 use crate::http_problem::Problem;
@@ -34,6 +34,40 @@ const MAX_BUFFER: usize = 9 * 1024 * 1024;
 /// token — a UUID is 36 characters — and the column is the primary key, so an
 /// unbounded one is an index-bloat vector.
 const MAX_KEY_LEN: usize = 255;
+
+/// Longest the middleware waits on one call to the store.
+///
+/// The store is a port, and nothing in the port bounds how long a call takes. A
+/// database with no free connection, or a network gone quiet, would otherwise
+/// hold every keyed request, and anything the request holds, for as long as it
+/// stayed silent. The import route's slot is held through the claim, so one
+/// stuck store would keep other imports out.
+///
+/// Well past a single-row upsert, so it fires only when something is wrong, and
+/// well inside [`DEFAULT_LEASE`]. A call given up on may still have committed: a
+/// claim leaves its key `in_flight` until the lease runs out, so a retry meets
+/// `Claim::InFlight` for that long. That is the window a store error already
+/// leaves, not a new one.
+#[cfg(not(test))]
+const STORE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Short enough for a test to wait out.
+#[cfg(test)]
+const STORE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// Await one call to the store, treating one that does not answer within
+/// [`STORE_TIMEOUT`] as the store being unavailable, which every caller below
+/// already handles.
+async fn bounded<T>(
+    call: impl Future<Output = Result<T, IdempotencyError>>,
+) -> Result<T, IdempotencyError> {
+    tokio::time::timeout(STORE_TIMEOUT, call)
+        .await
+        .unwrap_or_else(|_| {
+            Err(IdempotencyError::Unavailable(format!(
+                "no answer within {STORE_TIMEOUT:?}"
+            )))
+        })
+}
 
 /// Resolves the calling principal from a request.
 ///
@@ -146,10 +180,12 @@ pub async fn idempotency_middleware(
     };
     let fp = fingerprint(&bytes);
 
-    match state
-        .store
-        .claim(&key, &fp, DEFAULT_LEASE, DEFAULT_RETENTION)
-        .await
+    let claim = match bounded(
+        state
+            .store
+            .claim(&key, &fp, DEFAULT_LEASE, DEFAULT_RETENTION),
+    )
+    .await
     {
         Ok(Claim::Replay(stored)) => return replay(&stored),
         Ok(Claim::InFlight) => {
@@ -173,7 +209,7 @@ pub async fn idempotency_middleware(
                  because the fingerprint is over the raw body. Use a new key for a new request.",
             );
         }
-        Ok(Claim::Claimed) => {}
+        Ok(Claim::Claimed(token)) => token,
         Err(e) => {
             // Fail closed. Running the handler anyway would execute the write
             // with no record, which is exactly the outcome the caller asked to
@@ -186,32 +222,37 @@ pub async fn idempotency_middleware(
                  the request was not run. Retry with the same key.",
             );
         }
-    }
+    };
 
     let response = next
         .run(Request::from_parts(parts, Body::from(bytes)))
         .await;
 
-    record_outcome(&state, &key, policy, response).await
+    record_outcome(&state, &key, &claim, policy, response).await
 }
 
 /// Store the outcome and hand the response on unchanged.
 async fn record_outcome(
     state: &IdempotencyLayerState,
     key: &RequestKey,
+    claim: &ClaimToken,
     policy: RoutePolicy,
     response: Response,
 ) -> Response {
     let status = response.status();
 
-    // A `5xx` releases the claim rather than recording it: the request failed
-    // in a way the client should be able to retry, and a recorded server error
-    // would replay the failure for a day. A `4xx` is a deterministic rejection
-    // of this exact body — replaying it is correct and costs nothing.
-    if status.is_server_error() {
-        if let Err(e) = state.store.release(key).await {
-            tracing::warn!(error = %e, "could not release an idempotency claim after a 5xx");
-        }
+    // A `5xx` or a `429` releases the claim rather than recording it: the request
+    // failed, or was turned away for lack of capacity, in a way the client should
+    // be able to retry, and a recorded one would replay the refusal for a day to a
+    // caller that waited as `Retry-After` told it to. Any other `4xx` is a
+    // deterministic rejection of this exact body — replaying it is correct and
+    // costs nothing.
+    if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+        log_settlement(
+            bounded(state.store.release(key, claim)).await,
+            "could not release an idempotency claim after a 5xx or 429",
+            RELEASE_SUPERSEDED,
+        );
         return response;
     }
 
@@ -228,9 +269,11 @@ async fn record_outcome(
             // The body is consumed and cannot be recovered. Release rather than
             // record — better a re-executed retry than a replayed empty body.
             tracing::warn!(error = %e, "response too large to record for replay; releasing the claim");
-            if let Err(e) = state.store.release(key).await {
-                tracing::warn!(error = %e, "could not release an idempotency claim");
-            }
+            log_settlement(
+                bounded(state.store.release(key, claim)).await,
+                "could not release an idempotency claim",
+                RELEASE_SUPERSEDED,
+            );
             return Response::from_parts(parts, Body::empty());
         }
     };
@@ -247,14 +290,34 @@ async fn record_outcome(
     // transaction, which the per-operation repository ports do not permit. It
     // is today's behaviour, so it is never a regression — but it is a warning,
     // not a debug line, because it is the one case a duplicate can still occur.
-    if let Err(e) = state.store.complete(key, &stored).await {
-        tracing::warn!(
-            error = %e,
-            "the write committed but its idempotency record did not; a retry may duplicate"
-        );
-    }
+    log_settlement(
+        bounded(state.store.complete(key, claim, &stored)).await,
+        "the write committed but its idempotency record did not; a retry may duplicate",
+        "the claim on this key was no longer held when its outcome was recorded: it was \
+         reclaimed after its lease ran out, or its row was purged; the response was not stored",
+    );
 
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// What a release says when the claim it names is no longer the key's.
+const RELEASE_SUPERSEDED: &str = "the claim on this key was no longer held when it could be \
+     released: it was reclaimed after its lease ran out, or its row was purged; it was left alone";
+
+/// Log what became of an outcome or a release.
+///
+/// Neither changes the response: the handler has run and answered by now. A
+/// `Superseded` answer means the claim is no longer this request's: it ran past
+/// its lease and another request reclaimed the key, which the store has kept from
+/// being disturbed, or its row was purged. It is a warning because it also means
+/// the handler may have run twice, which is the one thing the lease cannot
+/// prevent for a request that outlives it.
+fn log_settlement(result: Result<Settled, IdempotencyError>, failed: &str, superseded: &str) {
+    match result {
+        Ok(Settled::Applied) => {}
+        Ok(Settled::Superseded) => tracing::warn!("{superseded}"),
+        Err(e) => tracing::warn!(error = %e, "{failed}"),
+    }
 }
 
 /// Remove the members `policy` names from a JSON body, marking that a secret
@@ -306,7 +369,7 @@ fn replay(stored: &StoredResponse) -> Response {
     response
 }
 
-/// An RFC 7807 refusal with its own `type` URI.
+/// An RFC 9457 refusal with its own `type` URI.
 ///
 /// Built from `Problem` directly rather than through a status-derived helper:
 /// the `type` is derived from the *title*, so a shared "Unprocessable Entity"
@@ -473,5 +536,251 @@ mod tests {
         let before = types.len();
         types.dedup();
         assert_eq!(before, types.len(), "two refusals share a problem type URI");
+    }
+
+    /// A store whose chosen calls never return, as a database that has stopped
+    /// answering does. The others succeed.
+    #[derive(Default)]
+    struct StuckStore {
+        claim: bool,
+        complete: bool,
+        release: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl IdempotencyStore for StuckStore {
+        async fn claim(
+            &self,
+            _: &RequestKey,
+            _: &str,
+            _: std::time::Duration,
+            _: std::time::Duration,
+        ) -> Result<Claim, IdempotencyError> {
+            if self.claim {
+                std::future::pending::<()>().await;
+            }
+            Ok(Claim::Claimed(ClaimToken::mint()))
+        }
+        async fn complete(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+            _: &StoredResponse,
+        ) -> Result<Settled, IdempotencyError> {
+            if self.complete {
+                std::future::pending::<()>().await;
+            }
+            Ok(Settled::Applied)
+        }
+        async fn release(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+        ) -> Result<Settled, IdempotencyError> {
+            if self.release {
+                std::future::pending::<()>().await;
+            }
+            Ok(Settled::Applied)
+        }
+        async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
+            Ok(0)
+        }
+    }
+
+    /// A store whose claim is no longer the request's by the time it finishes, as
+    /// after a request has outlived its lease and another has reclaimed the key.
+    struct SupersededStore;
+
+    #[async_trait::async_trait]
+    impl IdempotencyStore for SupersededStore {
+        async fn claim(
+            &self,
+            _: &RequestKey,
+            _: &str,
+            _: std::time::Duration,
+            _: std::time::Duration,
+        ) -> Result<Claim, IdempotencyError> {
+            Ok(Claim::Claimed(ClaimToken::mint()))
+        }
+        async fn complete(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+            _: &StoredResponse,
+        ) -> Result<Settled, IdempotencyError> {
+            Ok(Settled::Superseded)
+        }
+        async fn release(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+        ) -> Result<Settled, IdempotencyError> {
+            Ok(Settled::Superseded)
+        }
+        async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
+            Ok(0)
+        }
+    }
+
+    /// The keyed create, answering `status`, behind the middleware over `store`,
+    /// and how many times its handler ran.
+    fn keyed_app(
+        store: impl IdempotencyStore + 'static,
+        status: StatusCode,
+    ) -> (axum::Router, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::routing::post;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let ran = Arc::new(AtomicUsize::new(0));
+        let counted = ran.clone();
+        let inner = axum::Router::new()
+            .route(
+                "/dpp",
+                post(move || {
+                    let counted = counted.clone();
+                    async move {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        status
+                    }
+                }),
+            )
+            .route_layer(axum::middleware::from_fn_with_state(
+                IdempotencyLayerState {
+                    store: Arc::new(store),
+                    principal: Arc::new(|_| Some("operator@example.com".to_owned())),
+                },
+                idempotency_middleware,
+            ));
+        (
+            axum::Router::new().nest("/vault", axum::Router::new().nest("/api/v1", inner)),
+            ran,
+        )
+    }
+
+    /// Send one keyed request, failing the test rather than hanging it if the
+    /// middleware never answers.
+    async fn send_keyed(app: axum::Router) -> Response {
+        use tower::ServiceExt;
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            app.oneshot(
+                axum::extract::Request::post("/vault/api/v1/dpp")
+                    .header(IDEMPOTENCY_KEY_HEADER, "k-1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("the middleware must give up on a store that never answers")
+        .unwrap()
+    }
+
+    /// 🚨 A claim the store never answers refuses the request, as an unreachable
+    /// store does, instead of holding it for as long as the database stays
+    /// silent. The request is not run: nothing recorded it.
+    #[tokio::test]
+    async fn a_claim_the_store_never_answers_is_refused_with_503() {
+        let (app, ran) = keyed_app(
+            StuckStore {
+                claim: true,
+                ..Default::default()
+            },
+            StatusCode::CREATED,
+        );
+
+        let response = send_keyed(app).await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// 🚨 The handler has already committed by the time its outcome is recorded,
+    /// so a store that never takes the record must not hold the caller's
+    /// response: the caller would time out and retry a request that succeeded.
+    /// The response goes out unchanged, as it does when recording fails.
+    #[tokio::test]
+    async fn an_outcome_the_store_never_records_does_not_hold_the_response() {
+        let (app, ran) = keyed_app(
+            StuckStore {
+                complete: true,
+                ..Default::default()
+            },
+            StatusCode::CREATED,
+        );
+
+        let response = send_keyed(app).await;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// The same for the release a `5xx` or a `429` makes.
+    #[tokio::test]
+    async fn a_release_the_store_never_answers_does_not_hold_the_response() {
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            let (app, ran) = keyed_app(
+                StuckStore {
+                    release: true,
+                    ..Default::default()
+                },
+                status,
+            );
+
+            let response = send_keyed(app).await;
+
+            assert_eq!(response.status(), status);
+            assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    /// Counts the `WARN` events emitted while it is a subscriber's only layer.
+    struct WarnCounter(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarnCounter {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// A request that outlived its lease finds its claim gone when it comes to
+    /// record its outcome or release it. The handler has already answered, so the
+    /// response goes out as it was: the store's refusal to touch the newer claim
+    /// is no reason to change what this caller is told. It is warned about, though,
+    /// because it also means the handler may have run twice, and that warning is the
+    /// only trace of it.
+    #[tokio::test]
+    async fn a_superseded_claim_does_not_change_the_response_and_is_warned_about() {
+        use tracing::instrument::WithSubscriber;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        for status in [
+            StatusCode::CREATED,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            let warned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let subscriber = tracing_subscriber::registry().with(WarnCounter(warned.clone()));
+            let (app, ran) = keyed_app(SupersededStore, status);
+
+            let response = send_keyed(app).with_subscriber(subscriber).await;
+
+            assert_eq!(response.status(), status);
+            assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(
+                warned.load(std::sync::atomic::Ordering::SeqCst) > 0,
+                "{status}: a superseded claim must be warned about"
+            );
+        }
     }
 }

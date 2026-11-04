@@ -3,7 +3,7 @@ get:
   summary: List active API keys
   description: |
     Lists all active API keys for this deployment. Only the key prefix
-    is returned — the full secret is shown once at creation time.
+    is returned: the full secret is shown once at creation time.
 
     Requires an admin-scoped key.
   tags:
@@ -29,16 +29,16 @@ post:
   summary: Create a new API key
   description: |
     Generate a new API key. The response includes the full plain-text
-    `secret` — this is the only time it will be shown. Store it securely.
+    `secret`: this is the only time it will be shown. Store it securely.
 
     **A replayed request does not return the secret.** This route accepts an
     `Idempotency-Key`, but the secret is never stored, so a retry that finds a
     completed key answers with the key record and
-    `"secretAlreadyDelivered": true` in place of `secret`. That is the honest
-    answer: the credential exists and was handed to the first attempt. If that
+    `"secretAlreadyDelivered": true` in place of `secret`. The
+    credential exists and was handed to the first attempt. If that
     response was lost, revoke the key and create another.
 
-    Requires an admin-scoped key — including the first one, which is minted
+    Requires an admin-scoped key, including the first one, which is minted
     with the operator's Basic credential.
   tags:
     - API Keys

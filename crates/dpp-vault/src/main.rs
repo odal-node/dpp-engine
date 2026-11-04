@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
 
     let identity = Arc::new(IdentityHttpClient::new(cfg.identity_service_url.clone()));
     let compliance = Arc::new(PassthroughRegistry::new());
@@ -88,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     // adapter when configured) — so a production profile must refuse to boot
     // here too, or this binary would silently run with placeholder trust.
     let trust = NodeTrustReport::new(
-        NodeProfile::from_env(),
+        NodeProfile::from_env().context("Invalid NODE_PROFILE")?,
         vec![
             TrustPort {
                 port: "registry_sync",
@@ -133,7 +134,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_registry_reader(operator_repo.clone())
         .with_evidence_store(evidence_repo)
-        .with_webhooks(webhook_repo.clone()),
+        .with_webhooks(webhook_repo.clone())
+        .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone()))),
     );
     let operator_service = Arc::new(OperatorService::new(operator_repo));
     let api_key_service = Arc::new(ApiKeyService::new(api_key_repo.clone()));
@@ -179,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
         unsold_goods_repo,
+        personal_data,
         // The standalone vault binary hosts no Wasm plugin engine; runtime
         // plugin install is available only on the fused node.
         plugin_admin: None,

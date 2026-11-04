@@ -3,8 +3,8 @@ description: >-
   A territory the EU list of trusted lists names and this node could not consult.
 
 
-  Carried rather than dropped because the two states a caller must tell apart —
-  *this issuer is on no list* and *the list it would be on could not be read* —
+  Carried rather than dropped because the two states a caller must tell apart
+  (*this issuer is on no list* and *the list it would be on could not be read*)
   are otherwise identical at the point of the verdict.
 required:
   - territory
@@ -13,7 +13,7 @@ properties:
   territory:
     type: string
     description: >-
-      The `SchemeTerritory` the list of trusted lists names — the two-letter
+      The `SchemeTerritory` the list of trusted lists names: the two-letter
       country code.
   reason:
     type: string

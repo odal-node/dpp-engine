@@ -32,6 +32,35 @@ impl PgRegistryTransferRepo {
     }
 }
 
+/// Queue the registry notification an accepted transfer owes.
+///
+/// Shared by [`RegistryTransferOutbox::commit_accept`] and the state-change log,
+/// each inside the transaction that writes the accepted chain.
+///
+/// A transfer is accepted once, so a conflict here is a retry of the same
+/// handover rather than a new one: leave the existing row alone. In particular
+/// this must not reset a row already `notified` back to `pending`, which would
+/// notify the registry of the same transfer twice.
+pub(crate) async fn queue_transfer_notice<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    transfer_id: Uuid,
+    passport_id: PassportId,
+    payload: &serde_json::Value,
+) -> Result<(), DppError> {
+    sqlx::query(
+        r#"INSERT INTO odal.registry_transfer (transfer_id, passport_id, payload, status)
+           VALUES ($1, $2, $3, 'pending')
+           ON CONFLICT (transfer_id) DO NOTHING"#,
+    )
+    .bind(transfer_id)
+    .bind(passport_id.0)
+    .bind(payload)
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 /// Build a row from a `SELECT *` over `odal.registry_transfer`.
 fn to_row(r: &sqlx::postgres::PgRow) -> RegistryTransferRow {
     RegistryTransferRow {
@@ -54,39 +83,10 @@ impl RegistryTransferOutbox for PgRegistryTransferRepo {
         transfer_id: Uuid,
         payload: serde_json::Value,
     ) -> Result<(), DppError> {
-        let doc = serde_json::to_value(chain)
-            .map_err(|e| DppError::Internal(format!("serialize transfer chain: {e}")))?;
         let mut tx = self.dal.begin().await?;
-
         // Same transaction as the chain write — the atomicity guarantee.
-        sqlx::query(
-            r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
-               VALUES ($1, $2, now())
-               ON CONFLICT (passport_id)
-               DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
-        )
-        .bind(chain.passport_id.0)
-        .bind(&doc)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
-
-        // A transfer is accepted once, so a conflict here is a retry of the same
-        // handover rather than a new one: leave the existing row alone. In
-        // particular this must not reset a row already `notified` back to
-        // `pending`, which would notify the registry of the same transfer twice.
-        sqlx::query(
-            r#"INSERT INTO odal.registry_transfer (transfer_id, passport_id, payload, status)
-               VALUES ($1, $2, $3, 'pending')
-               ON CONFLICT (transfer_id) DO NOTHING"#,
-        )
-        .bind(transfer_id)
-        .bind(chain.passport_id.0)
-        .bind(&payload)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
-
+        super::repo_transfer::upsert_chain(&mut *tx, chain).await?;
+        queue_transfer_notice(&mut *tx, transfer_id, chain.passport_id, &payload).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }

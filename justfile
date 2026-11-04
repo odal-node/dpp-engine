@@ -37,6 +37,19 @@ REDOCLY_VERSION := "2.46.2"
 # which is the one CLAUDE.md tells you to use.
 COMPOSE := "docker compose --env-file .env"
 
+# `--locked` for the cargo commands CI also runs by name (`lint`, `audit`'s deny).
+#
+# CI passes it on every step that resolves the workspace, so a `Cargo.lock` that
+# has drifted from the manifests fails the build and names the file, instead of
+# being re-resolved and thrown away. Drift is a property of the lock, not of the
+# command, so one locked command in `just check` is enough to surface it here.
+#
+# Empty while `.cargo/config.toml` exists: that file is the `[patch]` onto the
+# sibling `../dpp-core` that `just core-local` installs, and it rewrites the lock
+# by design — the same reason `docker/node.Dockerfile` leaves `--locked` off its
+# local stage. `just core-published` removes it and the flag comes back.
+LOCKED := if path_exists(justfile_directory() + "/.cargo/config.toml") == "true" { "" } else { "--locked" }
+
 # ---------------------------------------------------------------------------
 # Why the gate's checks live in scripts/ rather than as shebang recipes
 #
@@ -72,15 +85,24 @@ COMPOSE := "docker compose --env-file .env"
 test:
     cargo nextest run --workspace
 
-# Compile the Docker-backed integration tests without running them.
+# Run the Criterion benches that need no infrastructure
 #
-# `test` above omits `--features integration-tests`, so those suites are never
-# built locally — a stale import in one of them compiles fine here and fails in
-# CI, which is exactly what happened when the credential types moved to
-# `dpp-vc`. Running them needs Docker; *compiling* them does not, so the local
-# gate can at least prove they still build.
-check-integration:
-    bash scripts/check-integration.sh
+# Not `--workspace`: that would also build every crate's unit tests in bench mode.
+# The ones that need Docker are `just bench-infra`.
+bench:
+    cargo bench --benches -p dpp-render -p dpp-integrator -p dpp-common -p dpp-plugin-host
+
+# Run the Criterion benches that need Docker (dal, vault, node)
+#
+# One shared Postgres for the whole run, as `just test-integration` has: the DAL
+# and vault benches go through the shared harness, which clones a database on
+# the server `ODAL_TEST_PG_ADMIN_URL` names. The NATS bench starts a container of
+# its own.
+#
+# The targets are named rather than `--benches`, which would also run each crate's
+# unit tests again in bench mode.
+bench-infra:
+    bash scripts/shared-test-pg.sh cargo bench -p dpp-dal -p dpp-vault -p dpp-node --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-node/integration-tests --bench pg_repo --bench publish_serve --bench nats_throughput
 
 # Run the Docker-backed integration tiers (dal, vault, plugin-host, node)
 #
@@ -102,7 +124,15 @@ _test-integration-tiers:
     cargo nextest run -p dpp-dal         --features integration-tests
     cargo nextest run -p dpp-vault       --features integration-tests
     cargo nextest run -p dpp-plugin-host --features integration-tests   # fuel test: Linux only
+    # `operator_paths.rs` drives the real `odal`, another package's binary.
+    cargo build -p dpp-cli --bin odal
     cargo nextest run -p dpp-node        --features integration-tests
+
+# Builds the tag unless BIN_DIR holds its `dpp-node` and `odal`. Needs Docker.
+# The next release is tested upgrading from it (docs/governance/RELEASE.md).
+# After tagging a release: capture a database its own binaries wrote
+capture-upgrade-fixture VERSION BIN_DIR='':
+    bash scripts/capture-upgrade-fixture.sh '{{VERSION}}' '{{BIN_DIR}}'
 
 # Run the PostgreSQL integration lane (pg_integration T1–T7; needs Docker)
 test-pg:
@@ -122,13 +152,35 @@ seal-sim:
 test-seal-db:
     cargo nextest run -p dpp-dal --features integration-tests --test pg_seal_outbox
 
-# Run clippy (all warnings are errors)
+# Run clippy (all warnings are errors) — the one definition of this step.
+#
+# CI's Clippy job runs `just lint`, so the lint a contributor passes here and the
+# one the pull request is held to are the same command, not two copies that can
+# drift. They did: the local copy left the feature-gated suites out, and a lint
+# that existed only in one of them passed `just check` and failed after the push.
+#
+# The `integration-tests` features are ON. Those suites need Docker to *run*, not
+# to be checked, and are otherwise built nowhere short of the Docker tiers, so a
+# stale import in one surfaced late. Clippy with the features on type-checks them
+# and lints them, which makes a separate compile-only step redundant.
+#
+# Safe to fold rather than run twice: features are additive and the workspace has
+# **zero** `cfg(not(feature = "integration-tests"))` code, so nothing compiled by
+# the default build is skipped by this one. If that ever stops being true, the
+# default-feature pass has to come back.
+#
+# Features are named per package rather than via `--all-features`, which would
+# also enable `cli/desktop` (pulls in rfd, kept out of server-side builds on
+# purpose — see cli/Cargo.toml). That is not a gap this
+# closes. `dpp-plugin-host/wasm-fixture-tests` is on: linting `tests/sdk_abi.rs`
+# needs no wasm target, only running it does, and the integration tiers run it.
+#
+# This type-checks and lints the gated suites; it cannot run them. A change to a
+# string, a status code or an error message that one of them pins fails only when
+# it runs — `just test-integration`, or the one suite:
+# `cargo nextest run -p <crate> --features integration-tests --test <name>`.
 lint:
-    cargo clippy --workspace --all-targets -- -D warnings
-
-# Clippy the feature-gated integration test code (the normal gate skips it)
-lint-integration:
-    cargo clippy -p dpp-dal -p dpp-vault -p dpp-plugin-host -p dpp-node --all-targets --features integration-tests,dpp-plugin-host/wasm-fixture-tests -- -D warnings
+    cargo clippy {{ LOCKED }} --workspace --all-targets --features dpp-dal/integration-tests,dpp-vault/integration-tests,dpp-plugin-host/integration-tests,dpp-plugin-host/wasm-fixture-tests,dpp-node/integration-tests -- -D warnings
 
 # Validate api/openapi.yaml (needs Node; no install — npx fetches on demand).
 #
@@ -322,6 +374,53 @@ grants-check:
 migrations-check:
     bash scripts/migrations-check.sh
 
+# Prove migrations-check still refuses what it claims to, in the checkout shapes
+# CI hands it: it once skipped itself in every one of them and reported success.
+migrations-check-self-test:
+    bash scripts/migrations-check.test.sh
+
+# Every script in scripts/ must be run by a workflow, or be listed in the script
+# as local-only with the reason.
+#
+# `check` and CI are two hand-written lists, and for a long while six guards were
+# in the first and not the second. A new guard that no workflow runs fails here.
+ci-guard-check:
+    bash scripts/ci-guard-check.sh
+
+# Prove ci-guard-check still refuses what it claims to.
+ci-guard-check-self-test:
+    bash scripts/ci-guard-check.test.sh
+
+# The gate itself needs a pull request's number, labels and body, so only CI
+# (`.github/workflows/changelog.yml`) runs it.
+# Prove changelog-check still refuses a pull request with no entry of its own.
+changelog-check-self-test:
+    bash scripts/changelog-check.test.sh
+
+# Every fuzz target is built by fuzz/Cargo.toml, run by the nightly fuzz job, and
+# named in fuzz/README.md. The reasoning lives in the script.
+fuzz-targets-check:
+    bash scripts/fuzz-targets-check.sh
+
+# Prove fuzz-targets-check still refuses what it claims to.
+fuzz-targets-check-self-test:
+    bash scripts/fuzz-targets-check.test.sh
+
+# Format-check and lint the fuzz targets on the pinned stable toolchain.
+#
+# The fuzz crate is its own workspace, so `fmt-check` and `lint` never see it,
+# and until this ran on pull requests only the nightly fuzz job compiled it: a
+# change that broke a target was found the morning after it merged. It starts
+# from the workspace lock, as the nightly job does (fuzz/.gitignore says why),
+# so it cannot pass `--locked`: cargo prunes that lock to the fuzz crate's graph.
+#
+# Not in `check`, because it builds a second workspace from cold; CI runs it on
+# every pull request, as it does `openapi-check`.
+fuzz-check:
+    cp Cargo.lock fuzz/Cargo.lock
+    cargo fmt --manifest-path fuzz/Cargo.toml --check
+    cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings
+
 # Forbid un-guarded outbound HTTP client construction in service crate src.
 #
 # The rule, the allow-list and the reasoning live in scripts/outbound-check.sh —
@@ -349,17 +448,18 @@ audit:
     cargo audit --deny yanked --deny unmaintained
     bash scripts/check-audit-register.sh
     bash scripts/check-audit-register.test.sh
-    cargo deny check bans licenses sources
+    cargo deny {{ LOCKED }} check bans licenses sources
 
 # Build documentation (engine does not gate docs with -D warnings yet)
 doc:
     cargo doc --workspace --no-deps
 
-# Fast gate (no Docker) — mirrors CI jobs: fmt, clippy, debug-prints, test-unit, audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check check-plugins test check-integration audit
+# Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
+# included — see `lint`), the repository's guard scripts, unit tests and the audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
 
-# Full local CI mirror — adds integration-feature clippy + the Docker tiers (needs Docker running)
-ci: check lint-integration test-integration test-pg
+# Full local CI mirror — adds the Docker tiers (needs Docker running)
+ci: check test-integration test-pg
 
 # ---------------------------------------------------------------------------
 # Build
@@ -471,14 +571,16 @@ core-published:
     rm -f .cargo/config.toml
     @echo "dpp-core -> published registry versions (Cargo.toml)."
 
-# Build sector Wasm plugin(s) from the sibling ../dpp-core checkout and copy
-# them into ./plugins (gitignored). Dev convenience for the `core-local` flow.
-# Auto-discovers sector-* crates so it can't drift from dpp-core's plugin list.
+# Build product group Wasm plugin(s) from the sibling ../dpp-core checkout and
+# copy them into ./plugins (gitignored). Dev convenience for the `core-local` flow.
+# Auto-discovers product-group-* crates so it can't drift from dpp-core's plugin
+# list, and installs each as product-group-<name>.wasm, the only file name the
+# plugin loader accepts (dpp-plugin-host `loader::discover`).
 # NOTE: these artifacts are UNSIGNED — fine for local `just node` with
 # ALLOW_UNSIGNED_PLUGINS=true. Production plugins must come signed from the
 # dpp-core release pipeline (see dpp-core PLUGIN-HOST.md §7), not from here.
-# Usage:  just build-plugins            # all sectors
-#         just build-plugins battery    # one or more ("battery" or "sector-battery")
+# Usage:  just build-plugins            # every product group
+#         just build-plugins battery    # one or more ("battery" or "product-group-battery")
 build-plugins *PLUGINS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -490,23 +592,24 @@ build-plugins *PLUGINS:
     fi
     DEST="$(pwd)/plugins"
     mkdir -p "$DEST"
-    SECTORS="{{PLUGINS}}"
-    if [ -z "$SECTORS" ]; then
-        SECTORS="$(ls -d "$CORE_DIR"/plugins/sector-* | xargs -n1 basename)"
+    SELECTED="{{PLUGINS}}"
+    if [ -z "$SELECTED" ]; then
+        SELECTED="$(ls -d "$CORE_DIR"/plugins/product-group-* | xargs -n1 basename)"
     fi
-    for raw in $SECTORS; do
-        name="${raw#sector-}"
-        dir="$CORE_DIR/plugins/sector-${name}"
+    for raw in $SELECTED; do
+        name="${raw#product-group-}"
+        dir="$CORE_DIR/plugins/product-group-${name}"
         if [ ! -d "$dir" ]; then echo "skip: no such plugin '$dir'"; continue; fi
-        echo "Building sector-${name}..."
+        echo "Building product-group-${name}..."
         ( cd "$dir" && cargo build --target wasm32-wasip1 --release )
-        # The sector plugins share ONE cargo workspace, so cargo writes to
-        # plugins/target — not plugins/sector-<name>/target. This read the
+        # The plugins share ONE cargo workspace, so cargo writes to
+        # plugins/target — not plugins/product-group-<name>/target. This read the
         # per-crate path, which stale target dirs from an older layout still
         # populate, so `ls | head -n1` found a months-old binary, `cp` succeeded,
         # and the recipe reported success while shipping it. Name the artifact
         # instead of globbing, so a miss is an error rather than a wrong file.
-        art="$CORE_DIR/plugins/target/wasm32-wasip1/release/sector_${name}.wasm"
+        # cargo turns the crate name's hyphens into underscores.
+        art="$CORE_DIR/plugins/target/wasm32-wasip1/release/product_group_${name//-/_}.wasm"
         if [ ! -f "$art" ]; then
             echo "ERROR: cargo reported success but $art does not exist."
             exit 1
@@ -517,8 +620,8 @@ build-plugins *PLUGINS:
             echo "ERROR: $art is older than its own source — the build did not run."
             exit 1
         fi
-        cp "$art" "$DEST/sector-${name}.wasm"
-        echo "  -> plugins/sector-${name}.wasm"
+        cp "$art" "$DEST/product-group-${name}.wasm"
+        echo "  -> plugins/product-group-${name}.wasm"
     done
     echo "Done. Unsigned; set ALLOW_UNSIGNED_PLUGINS=true for local 'just node'."
 
@@ -526,6 +629,13 @@ build-plugins *PLUGINS:
 # from. `build-plugins` copies unsigned dev artifacts in, and nothing else
 # notices when one goes stale — the battery plugin ran two months behind its
 # source because the copy step read a directory cargo had stopped writing to.
+#
+# Every binary is accounted for; none is skipped. This recipe used to skip any
+# binary whose source it could not find, and it looked for `sector-<name>`
+# after dpp-core had renamed its plugins `product-group-<name>`, so it skipped
+# all of them and reported every one current. The binaries were the old
+# `sector-<name>.wasm`, which the loader refuses by name, so the node ran with
+# no plugins while this said all was well.
 #
 # Skips cleanly when the sibling checkout is absent, so CI (which has no
 # ../dpp-core and loads signed artifacts anyway) stays green.
@@ -538,18 +648,34 @@ check-plugins:
         exit 0
     fi
     shopt -s nullglob
-    stale=0
+    bad=0
+    checked=0
     for art in plugins/*.wasm; do
-        name="$(basename "$art" .wasm)"; name="${name#sector-}"
-        dir="$CORE_DIR/plugins/sector-${name}"
-        [ -d "$dir" ] || continue
+        stem="$(basename "$art" .wasm)"
+        name="${stem#product-group-}"
+        if [ "$name" = "$stem" ]; then
+            echo "UNLOADABLE: $art — the node loads only product-group-<name>.wasm; delete it and run 'just build-plugins'"
+            bad=1
+            continue
+        fi
+        dir="$CORE_DIR/plugins/product-group-${name}"
+        if [ ! -d "$dir" ]; then
+            echo "NO SOURCE: $art has no $dir to compare against — delete it, or build it with 'just build-plugins'"
+            bad=1
+            continue
+        fi
         if [ -n "$(find "$dir/src" "$dir/Cargo.toml" -newer "$art" | head -n1)" ]; then
             echo "STALE: $art is older than $dir/src — run 'just build-plugins ${name}'"
-            stale=1
+            bad=1
         fi
+        checked=$((checked + 1))
     done
-    if [ "$stale" -ne 0 ]; then exit 1; fi
-    echo "check-plugins: all installed plugin binaries are newer than their sources."
+    if [ "$bad" -ne 0 ]; then exit 1; fi
+    if [ "$checked" -eq 0 ]; then
+        echo "check-plugins: no plugin binaries installed."
+    else
+        echo "check-plugins: all $checked installed plugin binaries are newer than their sources."
+    fi
 
 # ---------------------------------------------------------------------------
 # Cleanup

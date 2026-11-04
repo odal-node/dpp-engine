@@ -1,0 +1,26 @@
+description: |
+  The node is already running as many imports as it allows.
+
+  Returned after the caller is authenticated and before the handler reads the
+  upload, so nothing was parsed or written. The limit is `IMPORT_MAX_CONCURRENT`
+  (default 2). An import over the synchronous threshold keeps its place until its
+  background job finishes, so the `202` does not free it. Retry after the delay in
+  `Retry-After`. The `429` is not recorded under an `Idempotency-Key`, so a retry
+  with the same key runs.
+headers:
+  Retry-After:
+    description: Seconds to wait before retrying.
+    schema:
+      type: integer
+      minimum: 1
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/too-many-requests
+      title: Too Many Requests
+      status: 429
+      detail: >-
+        This node is already running as many imports as it allows. Retry once
+        one has finished.

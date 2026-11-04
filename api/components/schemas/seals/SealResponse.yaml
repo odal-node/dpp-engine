@@ -1,6 +1,6 @@
 type: object
 description: >-
-  The eIDAS seal, plus what is needed to check it — and an explicit statement of
+  The eIDAS seal, plus what is needed to check it, and an explicit statement of
   what this node did **not** check.
 required:
   - declaredBy
@@ -29,7 +29,7 @@ properties:
     type: string
     format: date-time
     description: >-
-      **This node's clock when the backend answered — not a trusted timestamp.**
+      **This node's clock when the backend answered, not a trusted timestamp.**
       Not necessarily when the signature was formed. A seal carries an
       independently established signing time only from baseline level `T`
       upward, where a timestamp authority attests it; at `B` there is no such
@@ -42,7 +42,7 @@ properties:
       - 'null'
     description: >-
       Hex SHA-256 of the certificate the seal names as its signer, **as reported
-      by the seal** — read out of the CAdES, never verified. It answers *which*
+      by the seal**: read out of the CAdES, never verified. It answers *which*
       certificate to ask about, not whether that certificate was qualified or on
       the EU Trusted List. Null when the seal predates extraction or could not
       be parsed.
@@ -57,7 +57,7 @@ properties:
 
       `sealedAt` is the sealing node's own clock and an unattested claim by the
       party that bought the seal. This is a third party's statement, read out of
-      the time-stamp token inside `sealValue` — the only place in a seal an
+      the time-stamp token inside `sealValue`: the only place in a seal an
       attested time can be.
 
 
@@ -77,8 +77,8 @@ properties:
       (Art. 41(2)); whether the authority is one is a Trusted List question about
       the `TSA/QTST` service type, answered by `timestampAuthority`. A
       self-signed authority's token verifies perfectly and means nothing, so this
-      time is **shown** whatever that says, but counts as a proof of existence —
-      `certificate.judgedAt.attested` — only when `timestampAuthority` is
+      time is **shown** whatever that says, but counts as a proof of existence
+      (`certificate.judgedAt.attested`) only when `timestampAuthority` is
       `qualifiedAtStamping`.
   conformanceLevel:
     oneOf:
@@ -97,7 +97,7 @@ properties:
 
       The pair is the point. A provider enabled for a weaker profile than was
       paid for returns a seal that is correct in every record this node keeps and
-      stops verifying when its signing certificate expires — years later, on a
+      stops verifying when its signing certificate expires: years later, on a
       passport that is retention-locked and cannot be re-sealed. Serving both
       makes that answerable from the seal rather than from a log nobody kept.
 
@@ -144,7 +144,7 @@ properties:
       provider issue it, or did the node sign it itself?
 
 
-      Null means **not read** — a placeholder seal, a format this node does not
+      Null means **not read**: a placeholder seal, a format this node does not
       parse, unreadable bytes, or a deployment with no inspector wired. Never
       read null as "not self-issued": that is a finding, and it only comes from
       a certificate that was actually examined.
@@ -162,10 +162,10 @@ properties:
       seals *mutatis mutandis*.
 
 
-      🚨 **Read `qualification.issuer.consulted` and `.unchecked` before acting
+      **Read `qualification.issuer.consulted` and `.unchecked` before acting
       on a `notListed` standing.** That verdict is the only one claiming an
       absence, and an absence is only as wide as what was looked at. `consulted:
-      0` means no list was loaded — the answer is about nothing, and it is what a
+      0` means no list was loaded: the answer is about nothing, and it is what a
       node that loaded no trusted-list cache at boot reports for every provider
       seal, qualified or not.
 
@@ -175,7 +175,7 @@ properties:
       problem and not something this node can see.
 
 
-      Null means **not read** — a placeholder seal, a format this node does not
+      Null means **not read**: a placeholder seal, a format this node does not
       parse, unreadable bytes, or a deployment with no inspector wired. Never
       read null as "not qualified": that is a finding, and it only comes from a
       certificate that was actually examined.
@@ -184,7 +184,7 @@ properties:
       - $ref: ./TimestampStanding.yaml
       - type: 'null'
     description: >-
-      Who stamped `attestedSealedAt`, and what the EU Trusted Lists say of them —
+      Who stamped `attestedSealedAt`, and what the EU Trusted Lists say of them:
       Regulation (EU) No 910/2014 Art. 42 and Art. 41(2), via the `TSA/QTST`
       service type.
 
@@ -192,12 +192,12 @@ properties:
       **This decides whether the time is believed.** `certificate.judgedAt.attested`
       is `true` only when this is `qualifiedAtStamping`. Otherwise the time is
       still shown and the certificate is judged against this node's own clock and
-      reported as unproven — `outOfBoundsNoPoe`, not `expired` — so a token minted
+      reported as unproven (`outOfBoundsNoPoe`, not `expired`) so a token minted
       by an authority nobody lists cannot turn an out-of-window certificate into
       anything but an open question.
 
 
-      🚨 **Read `consulted` and `unchecked` before acting on a `notListed`
+      **Read `consulted` and `unchecked` before acting on a `notListed`
       standing**, for the reason given on `qualification`.
 
 

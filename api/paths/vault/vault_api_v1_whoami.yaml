@@ -3,7 +3,7 @@ get:
   summary: Identity and scope of the presented credential
   description: |
     Echoes back what the caller's own credential is. A client cannot otherwise
-    discover what it is allowed to do — a `read` key learns it is read-only by
+    discover what it is allowed to do: a `read` key learns it is read-only by
     having a write rejected, which cannot be checked ahead of time.
 
     Reports only what the caller already presented; it reveals nothing about

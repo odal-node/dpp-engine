@@ -222,6 +222,7 @@ mod tests {
             postal_address: None,
             electronic_address: None,
             country: "DE".into(),
+            identifier: None,
         }
     }
 

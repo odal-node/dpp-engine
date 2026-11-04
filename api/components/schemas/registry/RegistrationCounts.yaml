@@ -28,7 +28,7 @@ properties:
   unregisteredPublished:
     type: integer
     description: >-
-      Published passports with **no** outbox row at all — they owe a
+      Published passports with **no** outbox row at all: they owe a
       registration nobody is tracking (published before the outbox existed, or
       lost to an older write path). Reported, not repaired: the queued payload
       is what a drain replays and there is none to rebuild, so fabricating a row

@@ -2,17 +2,22 @@
 
 use axum::{
     Json,
-    extract::{Multipart, Path, State},
+    extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode, header},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
-use dpp_common::http_problem::{self, Problem};
+use dpp_common::{
+    event::{self, DppEvent, EventBus},
+    http_problem::{self, Problem},
+};
+use dpp_types::{STANDALONE_OPERATOR_ID, state_change::WebhookEvent};
 use serde::Serialize;
 use uuid::Uuid;
 
 use std::collections::{BTreeSet, HashMap};
 
 use crate::{
+    admission::Admitted,
     domain::{
         batch_runner::{BatchResult, run_batch},
         csv_parser,
@@ -22,13 +27,89 @@ use crate::{
         validate::{self, RowValidationError},
         xlsx_parser,
     },
-    infra::job_store::{ImportJob, JobStatus},
+    infra::job_store::{ImportJob, JobStatus, JobStore},
     state::AppState,
 };
 
 /// Rows at or below this threshold are handled synchronously; above it an async
 /// job is spawned and a `202 Accepted` is returned immediately.
 const SYNC_THRESHOLD: usize = 100;
+
+/// What the multipart body of an import held.
+struct Upload {
+    file_bytes: Option<Vec<u8>>,
+    is_xlsx: bool,
+    mode: ImportMode,
+}
+
+/// Read the multipart body. The `Err` is the response to send.
+#[allow(clippy::result_large_err)]
+async fn read_upload(multipart: &mut Multipart) -> Result<Upload, Response> {
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut is_xlsx = false;
+    let mut mode = ImportMode::Apply;
+
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => {
+                let name = field.name().unwrap_or("").to_owned();
+                let content_type = field.content_type().map(|s| s.to_owned());
+                let filename = field.file_name().map(|s| s.to_owned());
+
+                match name.as_str() {
+                    "file" => {
+                        // Detect XLSX from content-type or filename extension
+                        is_xlsx = content_type
+                            .as_deref()
+                            .map(|ct| {
+                                ct.contains("spreadsheet")
+                                    || ct.contains("excel")
+                                    || ct.contains("xlsx")
+                            })
+                            .unwrap_or(false)
+                            || filename
+                                .as_deref()
+                                .map(|f| f.ends_with(".xlsx") || f.ends_with(".ods"))
+                                .unwrap_or(false);
+
+                        match field.bytes().await {
+                            Ok(b) => file_bytes = Some(b.to_vec()),
+                            Err(e) => {
+                                return Err(http_problem::bad_request(format!(
+                                    "Failed to read uploaded file: {e}"
+                                ))
+                                .into_response());
+                            }
+                        }
+                    }
+                    "mode" => {
+                        let val = field.text().await.unwrap_or_default();
+                        mode = match val.trim() {
+                            "dry_run" | "dryRun" => ImportMode::DryRun,
+                            _ => ImportMode::Apply,
+                        };
+                    }
+                    _ => {
+                        // Unknown fields are silently ignored
+                        let _ = field.bytes().await;
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return Err(
+                    http_problem::bad_request(format!("Multipart read error: {e}")).into_response(),
+                );
+            }
+        }
+    }
+
+    Ok(Upload {
+        file_bytes,
+        is_xlsx,
+        mode,
+    })
+}
 
 // ─── Response shapes ─────────────────────────────────────────────────────────
 
@@ -110,8 +191,12 @@ pub struct AsyncImportResponse {
 /// Accepts a `multipart/form-data` upload with the following fields:
 /// - `file`  — CSV or XLSX file (required)
 /// - `mode`  — `"dry_run"` to validate without creating records; any other
-///   value (or the field's absence) means `"apply"`, today's only write
-///   behaviour (create-only — delta upsert lands in a later segment).
+///   value (or the field's absence) means `"apply"`. Apply matches each row
+///   to the passports already on the node by identity and content, and acts
+///   on the match (`domain::matcher::RowAction`): `create` for a new
+///   identity, `updateDraft` for a draft whose content differs,
+///   `conflictPublished` for a published passport whose content differs
+///   (reported, never changed), and `unchanged` for identical content.
 ///
 /// Every import — dry-run or apply, sync or async — mints a job id and
 /// persists a row-addressed report retrievable via `GET
@@ -119,10 +204,13 @@ pub struct AsyncImportResponse {
 /// the same shape.
 ///
 /// The caller's `Authorization: Bearer` JWT is forwarded to the vault service.
+/// It was checked, an import slot taken and the upload read before this runs,
+/// by [`crate::admission::admit_import`], whose [`Admitted`] carries the token
+/// and the slot.
 pub async fn import_file(
     Path(product_group): Path<String>,
     State(state): State<AppState>,
-    request_headers: HeaderMap,
+    Extension(admitted): Extension<Admitted>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Validate product group early
@@ -137,87 +225,20 @@ pub async fn import_file(
             .into_response();
     }
 
-    // Require a Bearer token BEFORE parsing the file, so anonymous callers never
-    // reach the (allocation-heavy) parser.
-    let auth_token = match extract_bearer_token(&request_headers) {
-        Some(t) if !t.is_empty() => t,
-        _ => {
-            metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
-            return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                .with_detail("Missing or empty Authorization: Bearer token.")
-                .into_response();
-        }
-    };
-
-    // A merely non-empty token is not enough — otherwise an attacker supplies any
-    // junk string (`Bearer x`) and still drives the parser (RT2-1). Validate it
-    // against the vault (same side-effect-free check the job-status endpoint
-    // uses) before reading the body, so only authenticated operators get there.
-    if !state.vault_client.verify_token(&auth_token).await {
-        metrics::counter!("import_rejections_total", "reason" => "auth").increment(1);
-        return Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-            .with_detail("Invalid or unauthorized Authorization: Bearer token.")
-            .into_response();
-    }
+    // The token has been verified and a slot taken, and the upload is in memory.
+    // The slot lives as long as the import does: the async path below moves
+    // `admitted` into the background task, so the `202` does not release it.
+    let auth_token = admitted.token.clone();
 
     // Parse multipart fields
-    let mut file_bytes: Option<Vec<u8>> = None;
-    let mut is_xlsx = false;
-    let mut mode = ImportMode::Apply;
-
-    loop {
-        match multipart.next_field().await {
-            Ok(Some(field)) => {
-                let name = field.name().unwrap_or("").to_owned();
-                let content_type = field.content_type().map(|s| s.to_owned());
-                let filename = field.file_name().map(|s| s.to_owned());
-
-                match name.as_str() {
-                    "file" => {
-                        // Detect XLSX from content-type or filename extension
-                        is_xlsx = content_type
-                            .as_deref()
-                            .map(|ct| {
-                                ct.contains("spreadsheet")
-                                    || ct.contains("excel")
-                                    || ct.contains("xlsx")
-                            })
-                            .unwrap_or(false)
-                            || filename
-                                .as_deref()
-                                .map(|f| f.ends_with(".xlsx") || f.ends_with(".ods"))
-                                .unwrap_or(false);
-
-                        match field.bytes().await {
-                            Ok(b) => file_bytes = Some(b.to_vec()),
-                            Err(e) => {
-                                return http_problem::bad_request(format!(
-                                    "Failed to read uploaded file: {e}"
-                                ))
-                                .into_response();
-                            }
-                        }
-                    }
-                    "mode" => {
-                        let val = field.text().await.unwrap_or_default();
-                        mode = match val.trim() {
-                            "dry_run" | "dryRun" => ImportMode::DryRun,
-                            _ => ImportMode::Apply,
-                        };
-                    }
-                    _ => {
-                        // Unknown fields are silently ignored
-                        let _ = field.bytes().await;
-                    }
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                return http_problem::bad_request(format!("Multipart read error: {e}"))
-                    .into_response();
-            }
-        }
-    }
+    let Upload {
+        file_bytes,
+        is_xlsx,
+        mode,
+    } = match read_upload(&mut multipart).await {
+        Ok(upload) => upload,
+        Err(resp) => return resp,
+    };
 
     let file_bytes = match file_bytes {
         Some(b) => b,
@@ -386,16 +407,38 @@ pub async fn import_file(
             .into_response();
     }
 
+    let summary = JobSummary {
+        job_id,
+        product_group: product_group.clone(),
+        total_rows,
+    };
+    let rejected_before_the_batch: BTreeSet<usize> = row_errors.iter().map(|e| e.row).collect();
+
     // ── Sync path (≤ SYNC_THRESHOLD valid rows) ───────────────────────────────
     if valid_rows.len() <= SYNC_THRESHOLD {
-        let batch = run_batch(
-            valid_rows,
-            &classifications,
-            &state.vault_client,
-            &auth_token,
-            state.batch_concurrency,
-        )
-        .await;
+        let outcome = {
+            let vault_client = state.vault_client.clone();
+            let auth_token = auth_token.clone();
+            let concurrency = state.batch_concurrency;
+            run_to_outcome(async move {
+                run_batch(
+                    valid_rows,
+                    &classifications,
+                    &vault_client,
+                    &auth_token,
+                    concurrency,
+                )
+                .await
+            })
+            .await
+        };
+        let batch = match outcome {
+            Ok(batch) => batch,
+            Err(reason) => {
+                fail_job(&*state.job_store, &*state.events, &summary, reason.clone()).await;
+                return http_problem::internal_error(reason).into_response();
+            }
+        };
         let (created, updated, batch_errors) = batch_result_into_entries(batch.clone());
         let mut all_errors = row_errors;
         all_errors.extend(batch_errors);
@@ -413,9 +456,14 @@ pub async fn import_file(
         // a failure. `failed_rows` is a subset of the rows, so this cannot
         // underflow the way counting error entries did.
         let failed_rows: BTreeSet<usize> = all_errors.iter().map(|e| e.row).collect();
-        if let Err(e) = state.job_store.complete(job_id, batch).await {
-            tracing::error!(%job_id, error = %e, "failed to record import job completion");
-        }
+        complete_job(
+            &*state.job_store,
+            &*state.events,
+            &summary,
+            batch,
+            &rejected_before_the_batch,
+        )
+        .await;
 
         return (
             StatusCode::OK,
@@ -435,22 +483,37 @@ pub async fn import_file(
     // ── Async path (> SYNC_THRESHOLD rows) ───────────────────────────────────
     let vault_client = state.vault_client.clone();
     let job_store = state.job_store.clone();
+    let events = state.events.clone();
     let concurrency = state.batch_concurrency;
 
     tokio::spawn(async move {
+        let _admitted = admitted;
         if let Err(e) = job_store.set_status(job_id, JobStatus::Processing).await {
             tracing::error!(%job_id, error = %e, "failed to mark import job processing");
         }
-        let batch = run_batch(
-            valid_rows,
-            &classifications,
-            &vault_client,
-            &auth_token,
-            concurrency,
-        )
+        let outcome = run_to_outcome(async move {
+            run_batch(
+                valid_rows,
+                &classifications,
+                &vault_client,
+                &auth_token,
+                concurrency,
+            )
+            .await
+        })
         .await;
-        if let Err(e) = job_store.complete(job_id, batch).await {
-            tracing::error!(%job_id, error = %e, "failed to record import job completion");
+        match outcome {
+            Ok(batch) => {
+                complete_job(
+                    &*job_store,
+                    &*events,
+                    &summary,
+                    batch,
+                    &rejected_before_the_batch,
+                )
+                .await;
+            }
+            Err(reason) => fail_job(&*job_store, &*events, &summary, reason).await,
         }
     });
 
@@ -463,6 +526,131 @@ pub async fn import_file(
         }),
     )
         .into_response()
+}
+
+// ─── Job outcome ─────────────────────────────────────────────────────────────
+
+/// What an import job's event names it by.
+struct JobSummary {
+    job_id: Uuid,
+    product_group: String,
+    total_rows: usize,
+}
+
+/// Run the batch in a task of its own and wait for it.
+///
+/// A panic inside the batch then ends as an error here, which marks the job
+/// failed, rather than unwinding through the caller and leaving the job
+/// `queued` or `processing` for ever, with no event to say it stopped.
+async fn run_to_outcome<F>(batch: F) -> Result<BatchResult, String>
+where
+    F: std::future::Future<Output = BatchResult> + Send + 'static,
+{
+    match tokio::spawn(batch).await {
+        Ok(result) => Ok(result),
+        Err(e) if e.is_panic() => {
+            Err("the import stopped before it finished: its batch panicked".to_owned())
+        }
+        Err(_) => Err("the import stopped before it finished: its batch was cancelled".to_owned()),
+    }
+}
+
+/// `event` as webhook subscribers receive it, or `None` if it cannot be
+/// serialised, which is logged: the job's own outcome is still recorded.
+fn webhook_of(event: &DppEvent) -> Option<WebhookEvent> {
+    match serde_json::to_string(event) {
+        Ok(body) => Some(WebhookEvent {
+            event_type: event.event_type.clone(),
+            body,
+        }),
+        Err(e) => {
+            tracing::warn!(event_type = %event.event_type, error = %e, "cannot serialise an import event");
+            None
+        }
+    }
+}
+
+async fn publish(events: &dyn EventBus, event: &DppEvent) {
+    if let Err(e) = events.publish(event).await {
+        tracing::warn!(event_type = %event.event_type, error = %e, "failed to publish event (non-fatal)");
+    }
+}
+
+/// Record a finished batch on the job and send `dpp.import.completed`.
+///
+/// The webhook deliveries are queued by the job store in the write that
+/// completes the job; the bus publish follows it. A job whose result cannot be
+/// recorded did not finish as far as anyone polling it can tell, so it is
+/// marked failed instead, and `dpp.import.failed` is sent.
+///
+/// `rejected_before_the_batch` are the rows validation refused, which never
+/// reached the batch; the event counts them with the batch's own failures.
+async fn complete_job(
+    job_store: &dyn JobStore,
+    events: &dyn EventBus,
+    summary: &JobSummary,
+    batch: BatchResult,
+    rejected_before_the_batch: &BTreeSet<usize>,
+) {
+    let failed_rows: BTreeSet<usize> = rejected_before_the_batch
+        .iter()
+        .copied()
+        .chain(batch.errors.iter().map(|e| e.row))
+        .collect();
+    let event = DppEvent::v1(
+        event::subjects::IMPORT_COMPLETED,
+        STANDALONE_OPERATOR_ID,
+        serde_json::json!({
+            "jobId": summary.job_id.to_string(),
+            "productGroup": summary.product_group,
+            "totalRows": summary.total_rows,
+            "created": batch.created.len(),
+            "updated": batch.updated.len(),
+            "failedRows": failed_rows.len(),
+        }),
+    );
+    match job_store
+        .complete(summary.job_id, batch, webhook_of(&event))
+        .await
+    {
+        Ok(()) => publish(events, &event).await,
+        Err(e) => {
+            tracing::error!(job_id = %summary.job_id, error = %e, "failed to record import job completion");
+            fail_job(
+                job_store,
+                events,
+                summary,
+                format!("the import ran, but its result could not be recorded: {e}"),
+            )
+            .await;
+        }
+    }
+}
+
+/// Mark the job failed with `reason` and send `dpp.import.failed`.
+async fn fail_job(
+    job_store: &dyn JobStore,
+    events: &dyn EventBus,
+    summary: &JobSummary,
+    reason: String,
+) {
+    let event = DppEvent::v1(
+        event::subjects::IMPORT_FAILED,
+        STANDALONE_OPERATOR_ID,
+        serde_json::json!({
+            "jobId": summary.job_id.to_string(),
+            "productGroup": summary.product_group,
+            "totalRows": summary.total_rows,
+            "reason": reason,
+        }),
+    );
+    if let Err(e) = job_store
+        .fail(summary.job_id, reason, webhook_of(&event))
+        .await
+    {
+        tracing::error!(job_id = %summary.job_id, error = %e, "failed to record import job failure");
+    }
+    publish(events, &event).await;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -564,10 +752,13 @@ fn batch_result_into_entries(
 mod tests {
     use std::io::Write;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use axum::{Router, body::Body, http::Request};
+    use dpp_common::idempotency::{
+        Claim, ClaimToken, IdempotencyError, IdempotencyStore, RequestKey, Settled, StoredResponse,
+    };
     use tower::ServiceExt;
 
     use crate::{
@@ -761,18 +952,38 @@ mod tests {
         };
         use std::sync::Arc;
         use std::sync::Mutex;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-        #[derive(Default)]
         pub(super) struct State_ {
+            /// Whether the vault accepts the token it is asked to verify. Open by
+            /// default; `false` makes it answer `401`.
+            pub(super) accepts_tokens: AtomicBool,
             pub(super) create_hits: AtomicUsize,
             pub(super) update_hits: AtomicUsize,
             /// `pub(super)` so tests can flip a created passport to `active`
             /// directly — `create_handler` only ever produces `draft`.
             pub(super) passports: Mutex<Vec<serde_json::Value>>,
+            /// Open by default. Set to `false` and every create waits until it
+            /// is set to `true`, which holds an import mid-run.
+            pub(super) gate: tokio::sync::watch::Sender<bool>,
         }
 
-        async fn verify_handler() -> Response {
+        impl Default for State_ {
+            fn default() -> Self {
+                Self {
+                    accepts_tokens: AtomicBool::new(true),
+                    create_hits: AtomicUsize::default(),
+                    update_hits: AtomicUsize::default(),
+                    passports: Mutex::default(),
+                    gate: tokio::sync::watch::channel(true).0,
+                }
+            }
+        }
+
+        async fn verify_handler(State(state): State<Arc<State_>>) -> Response {
+            if !state.accepts_tokens.load(Ordering::SeqCst) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
             (StatusCode::OK, Json(serde_json::json!({"items": []}))).into_response()
         }
 
@@ -780,6 +991,8 @@ mod tests {
             State(state): State<Arc<State_>>,
             Json(mut body): Json<serde_json::Value>,
         ) -> Response {
+            let mut open = state.gate.subscribe();
+            let _ = open.wait_for(|open| *open).await;
             let n = state.create_hits.fetch_add(1, Ordering::SeqCst) + 1;
             let id = format!("pp-{n}");
             body["id"] = serde_json::json!(id);
@@ -883,6 +1096,8 @@ mod tests {
             vault_client: Arc::new(VaultHttpClient::new(&base_url)),
             job_store: Arc::new(InMemoryJobStore::new()),
             batch_concurrency: 4,
+            import_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            events: Arc::new(dpp_common::event::NoOpEventBus),
             idempotency: None,
         };
         (state, mock_state)
@@ -1427,16 +1642,12 @@ mod tests {
         );
     }
 
+    /// The `404` is the handler's, so it is answered to a caller admission has
+    /// let through. An unauthenticated caller gets `401` first, whatever the
+    /// product group (`an_unknown_product_group_does_not_reveal_itself_to_an_unauthenticated_caller`).
     #[tokio::test]
-    async fn unknown_product_group_is_rejected_before_any_vault_call() {
-        // Intentionally a dead vault URL: the product group check must reject this
-        // before auth or parsing ever contact it.
-        let state = AppState {
-            vault_client: Arc::new(VaultHttpClient::new("http://127.0.0.1:1")),
-            job_store: Arc::new(InMemoryJobStore::new()),
-            batch_concurrency: 1,
-            idempotency: None,
-        };
+    async fn an_unknown_product_group_is_refused_with_404_and_writes_nothing() {
+        let (state, mock) = live_vault_state().await;
         let app = build_router(state);
 
         let body = multipart_body("X", "x.csv", "a,b\n1,2\n", None);
@@ -1445,6 +1656,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// Admission runs ahead of the handler's product group check, so a request
+    /// the vault does not recognise is told so, not which groups exist.
+    #[tokio::test]
+    async fn an_unknown_product_group_does_not_reveal_itself_to_an_unauthenticated_caller() {
+        let (state, mock) = live_vault_state().await;
+        mock.accepts_tokens.store(false, Ordering::SeqCst);
+        let app = build_router(state);
+
+        let body = multipart_body("X", "x.csv", "a,b\n1,2\n", None);
+        let resp = app
+            .oneshot(import_request("not-a-real-product_group", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1594,5 +1822,631 @@ mod tests {
         let result = job.result.expect("completed job must carry a result");
         assert_eq!(result.created.len(), 101);
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 101);
+    }
+
+    /// 🚨 With every slot taken the import is refused before its body is read,
+    /// and told when to come back. The vault is never called.
+    #[tokio::test]
+    async fn an_import_is_refused_when_no_slot_is_free() {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let _taken = state.import_slots.clone().try_acquire_owned().unwrap();
+        let app = build_router(state);
+
+        let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()["retry-after"],
+            crate::admission::IMPORT_BUSY_RETRY_AFTER_SECS
+        );
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// The slot goes back when a synchronous import returns, so one import
+    /// does not lock the node for the next.
+    #[tokio::test]
+    async fn a_finished_import_gives_its_slot_back() {
+        let (mut state, _mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state);
+
+        for _ in 0..2 {
+            let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+            let resp = app
+                .clone()
+                .oneshot(import_request("battery", body))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), axum::http::StatusCode::OK);
+            assert_eq!(slots.available_permits(), 1);
+        }
+    }
+
+    /// 🚨 The `202` is not the end of an import: the background job still
+    /// writes rows, so it keeps the slot until it is done. Releasing at the
+    /// `202` would let the cap protect nothing for any import over the
+    /// synchronous threshold.
+    #[tokio::test]
+    async fn an_async_job_keeps_its_slot_until_it_finishes() {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state.clone());
+
+        mock.gate.send_replace(false);
+        let body = multipart_body("X", "battery.csv", &battery_csv(101), None);
+        let resp = app
+            .clone()
+            .oneshot(import_request("battery", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::ACCEPTED);
+        let json = response_json(resp).await;
+        let job_id = uuid::Uuid::parse_str(json["jobId"].as_str().unwrap()).unwrap();
+
+        // The job is running, held at its first create.
+        assert_eq!(slots.available_permits(), 0);
+        let body = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let second = app.oneshot(import_request("battery", body)).await.unwrap();
+        assert_eq!(second.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+
+        mock.gate.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let done = state
+                    .job_store
+                    .get(job_id)
+                    .await
+                    .is_some_and(|job| matches!(job.status, JobStatus::Completed));
+                if done && slots.available_permits() == 1 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the job must finish and give its slot back within 10s");
+    }
+
+    /// 🚨 The slot is held while the upload is read, so a caller that sends its
+    /// headers and some of the body and then stops must not keep it: the read
+    /// has a deadline, and giving up hands the slot back.
+    #[tokio::test]
+    async fn a_stalled_upload_gives_its_slot_back() {
+        use futures::StreamExt;
+
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let slots = state.import_slots.clone();
+        let app = build_router(state);
+
+        // The first half of a valid upload, then nothing, ever.
+        let full = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let first_half = axum::body::Bytes::from(full[..full.len() / 2].to_vec());
+        let stalled = futures::stream::once(async move { Ok::<_, std::io::Error>(first_half) })
+            .chain(futures::stream::pending());
+        let (parts, _) = import_request("battery", Vec::new()).into_parts();
+        let request = Request::from_parts(parts, Body::from_stream(stalled));
+
+        let resp = tokio::time::timeout(Duration::from_secs(30), app.oneshot(request))
+            .await
+            .expect("the handler must give up on a stalled upload")
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    // ── Keyed imports ─────────────────────────────────────────────────────────
+    //
+    // A request with an `Idempotency-Key` goes through the idempotency layer,
+    // which reads its body whole before the handler runs. Each test below sends
+    // a request that layer would otherwise have read, and pins that it is
+    // turned away first. The router is nested under `/integrator` as the node
+    // does, since that is the template the policy table keys the route by.
+
+    /// What the idempotency layer asked of its store. Every claim succeeds, so a
+    /// request that reaches the layer reaches the handler.
+    #[derive(Default)]
+    struct CountingStore {
+        claims: AtomicUsize,
+        completes: AtomicUsize,
+        releases: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl IdempotencyStore for CountingStore {
+        async fn claim(
+            &self,
+            _: &RequestKey,
+            _: &str,
+            _: Duration,
+            _: Duration,
+        ) -> Result<Claim, IdempotencyError> {
+            self.claims.fetch_add(1, Ordering::SeqCst);
+            Ok(Claim::Claimed(ClaimToken::mint()))
+        }
+        async fn complete(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+            _: &StoredResponse,
+        ) -> Result<Settled, IdempotencyError> {
+            self.completes.fetch_add(1, Ordering::SeqCst);
+            Ok(Settled::Applied)
+        }
+        async fn release(
+            &self,
+            _: &RequestKey,
+            _: &ClaimToken,
+        ) -> Result<Settled, IdempotencyError> {
+            self.releases.fetch_add(1, Ordering::SeqCst);
+            Ok(Settled::Applied)
+        }
+        async fn purge_expired(&self) -> Result<u64, IdempotencyError> {
+            Ok(0)
+        }
+    }
+
+    /// A keyed-import state: one slot, a store that counts, and the router as
+    /// the node mounts it.
+    async fn keyed_node(
+        slots: usize,
+    ) -> (
+        Router,
+        Arc<tokio::sync::Semaphore>,
+        Arc<CountingStore>,
+        Arc<mock_vault::State_>,
+    ) {
+        let (mut state, mock) = live_vault_state().await;
+        state.import_slots = Arc::new(tokio::sync::Semaphore::new(slots));
+        let slots = state.import_slots.clone();
+        let store = Arc::new(CountingStore::default());
+        state.idempotency = Some(store.clone());
+        let app = Router::new().nest("/integrator", crate::router::build(state));
+        (app, slots, store, mock)
+    }
+
+    fn keyed_import_request(key: &str, body: Body) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/integrator/api/v1/import/battery")
+            .header("authorization", "Bearer test-token")
+            .header("content-type", "multipart/form-data; boundary=X")
+            .header("idempotency-key", key)
+            .body(body)
+            .unwrap()
+    }
+
+    fn keyed_csv_request(key: &str, rows: usize) -> Request<Body> {
+        let body = multipart_body("X", "battery.csv", &battery_csv(rows), None);
+        keyed_import_request(key, Body::from(body))
+    }
+
+    /// A body that says so if anything reads it, and then fails the read, so an
+    /// ordering mistake shows as a failed assertion and not as a hang.
+    fn unread_body(polled: Arc<AtomicBool>) -> Body {
+        Body::from_stream(futures::stream::once(async move {
+            polled.store(true, Ordering::SeqCst);
+            Err::<axum::body::Bytes, std::io::Error>(std::io::Error::other(
+                "this body must not be read",
+            ))
+        }))
+    }
+
+    /// 🚨 With every slot taken, a keyed import is refused before anything reads
+    /// its body, and before the idempotency layer claims its key.
+    #[tokio::test]
+    async fn a_keyed_import_is_refused_with_429_before_its_body_is_read() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let _taken = slots.clone().try_acquire_owned().unwrap();
+        let polled = Arc::new(AtomicBool::new(false));
+
+        let resp = app
+            .oneshot(keyed_import_request("k-1", unread_body(polled.clone())))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()["retry-after"],
+            crate::admission::IMPORT_BUSY_RETRY_AFTER_SECS
+        );
+        assert!(!polled.load(Ordering::SeqCst), "the body was read");
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// 🚨 A token the vault does not accept costs a keyed request nothing: its
+    /// body is not read and its key is not claimed. The node is full here too,
+    /// and the answer is still `401`, which pins the order: the token is
+    /// checked before a slot is looked at.
+    #[tokio::test]
+    async fn an_invalid_token_on_a_keyed_import_is_refused_without_reading_the_body() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let _taken = slots.clone().try_acquire_owned().unwrap();
+        mock.accepts_tokens.store(false, Ordering::SeqCst);
+        let polled = Arc::new(AtomicBool::new(false));
+
+        let resp = app
+            .oneshot(keyed_import_request("k-1", unread_body(polled.clone())))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert!(!polled.load(Ordering::SeqCst), "the body was read");
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A busy refusal never claims the key, so there is nothing to record or
+    /// replay: once a slot is free the same key runs.
+    #[tokio::test]
+    async fn a_keyed_import_turned_away_for_lack_of_a_slot_can_be_retried_under_its_key() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let taken = slots.clone().try_acquire_owned().unwrap();
+
+        let first = app
+            .clone()
+            .oneshot(keyed_csv_request("k-1", 1))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+
+        drop(taken);
+        let retry = app.oneshot(keyed_csv_request("k-1", 1)).await.unwrap();
+
+        assert_eq!(retry.status(), axum::http::StatusCode::OK);
+        assert!(retry.headers().get("idempotency-replayed").is_none());
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// 🚨 The slot is held while a keyed upload is read, so a caller that stops
+    /// sending must not keep it. Admission reads the body under the deadline;
+    /// left to the idempotency layer the read would have none, and one stalled
+    /// upload would lock every other import out.
+    #[tokio::test]
+    async fn a_stalled_keyed_upload_gives_its_slot_back() {
+        use futures::StreamExt;
+
+        let (app, slots, store, mock) = keyed_node(1).await;
+
+        let full = multipart_body("X", "battery.csv", &battery_csv(1), None);
+        let first_half = axum::body::Bytes::from(full[..full.len() / 2].to_vec());
+        let stalled = futures::stream::once(async move { Ok::<_, std::io::Error>(first_half) })
+            .chain(futures::stream::pending());
+
+        let resp = tokio::time::timeout(
+            Duration::from_secs(30),
+            app.oneshot(keyed_import_request("k-1", Body::from_stream(stalled))),
+        )
+        .await
+        .expect("a stalled upload must be given up on")
+        .unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A keyed upload over the size cap is refused where it is read, with the
+    /// same `400` an unkeyed one gets, and its key is never claimed. The
+    /// idempotency layer's own buffer is larger than the cap, so without this
+    /// a keyed upload between the two would be read in full first.
+    #[tokio::test]
+    async fn an_upload_over_the_cap_is_refused_with_400_keyed_or_not() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+        let big = "a".repeat(crate::admission::IMPORT_BODY_LIMIT);
+        let body = multipart_body("X", "battery.csv", &big, None);
+
+        let keyed = app
+            .clone()
+            .oneshot(keyed_import_request("k-1", Body::from(body.clone())))
+            .await
+            .unwrap();
+        let unkeyed = Request::builder()
+            .method("POST")
+            .uri("/integrator/api/v1/import/battery")
+            .header("authorization", "Bearer test-token")
+            .header("content-type", "multipart/form-data; boundary=X")
+            .body(Body::from(body))
+            .unwrap();
+        let unkeyed = app.oneshot(unkeyed).await.unwrap();
+
+        assert_eq!(keyed.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(unkeyed.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// An upload between axum's own default limit for a multipart body (2 MiB)
+    /// and the cap is a valid one, and is read through. Admission lets it by, so
+    /// the `Multipart` extractor must not stop it: that takes the route setting
+    /// its own limit, which is easy to read as redundant with the cap admission
+    /// enforces and is not.
+    #[tokio::test]
+    async fn a_valid_upload_over_axums_default_limit_is_accepted() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        // One row whose name is long enough to take the file past 2 MiB. The row
+        // is refused for it, which is beside the point: the answer is `200` only
+        // if the whole body was read.
+        let long_name = "x".repeat(3 * 1024 * 1024);
+        let csv = format!(
+            "{BATTERY_CSV_HEADER}\n{}\n",
+            battery_csv_row(VALID_GTIN).replacen("EV Battery 48V", &long_name, 1)
+        );
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        assert!(body.len() > 2 * 1024 * 1024 && body.len() < crate::admission::IMPORT_BODY_LIMIT);
+
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(response_json(resp).await["totalRows"], 1);
+    }
+
+    /// 🚨 A request whose `Content-Type` is no usable `multipart/form-data` is
+    /// refused before it takes a slot or has its body read, as it was when the
+    /// `Multipart` extractor was the only thing looking. The node is full here,
+    /// and the answer is `400`, not `429`, which pins the order.
+    #[tokio::test]
+    async fn an_unusable_content_type_is_refused_before_a_slot_is_taken() {
+        for content_type in [
+            None,
+            Some("text/plain"),
+            Some("multipart/form-data"),
+            Some("application/json; boundary=X"),
+        ] {
+            let (app, slots, store, mock) = keyed_node(1).await;
+            let _taken = slots.clone().try_acquire_owned().unwrap();
+            let polled = Arc::new(AtomicBool::new(false));
+
+            let mut request = keyed_import_request("k-1", unread_body(polled.clone()));
+            request.headers_mut().remove("content-type");
+            if let Some(content_type) = content_type {
+                request
+                    .headers_mut()
+                    .insert("content-type", content_type.parse().unwrap());
+            }
+            let resp = app.oneshot(request).await.unwrap();
+
+            assert_eq!(
+                resp.status(),
+                axum::http::StatusCode::BAD_REQUEST,
+                "content-type {content_type:?}"
+            );
+            assert!(!polled.load(Ordering::SeqCst), "the body was read");
+            assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+            assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    /// 🚨 The slot has to cross the idempotency layer: a keyed import over the
+    /// synchronous threshold keeps it for as long as its background job runs,
+    /// and gives it back when the job ends, so the `202` does not free it and
+    /// nothing leaks it.
+    #[tokio::test]
+    async fn a_keyed_async_import_keeps_its_slot_until_its_job_ends() {
+        let (app, slots, store, mock) = keyed_node(1).await;
+
+        mock.gate.send_replace(false);
+        let resp = app
+            .clone()
+            .oneshot(keyed_csv_request("k-1", 101))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::ACCEPTED);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+
+        // The job is running, held at its first create, and the node is full.
+        assert_eq!(slots.available_permits(), 0);
+        let second = app
+            .clone()
+            .oneshot(keyed_csv_request("k-2", 1))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+
+        mock.gate.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while slots.available_permits() != 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the job must finish and give its slot back within 10s");
+
+        // The `202` was recorded under the key; the refusal was not.
+        assert_eq!(store.completes.load(Ordering::SeqCst), 1);
+        assert_eq!(store.releases.load(Ordering::SeqCst), 0);
+    }
+
+    /// A keyed synchronous import gives its slot back when it returns, and is
+    /// claimed once.
+    #[tokio::test]
+    async fn a_finished_keyed_import_gives_its_slot_back() {
+        let (app, slots, store, _mock) = keyed_node(1).await;
+
+        let resp = app.oneshot(keyed_csv_request("k-1", 1)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(slots.available_permits(), 1);
+        assert_eq!(store.claims.load(Ordering::SeqCst), 1);
+        assert_eq!(store.completes.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod job_outcome_tests {
+    //! What an import job's outcome records, and what it tells subscribers.
+
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+    use dpp_common::event::{DppEvent, EventBus, EventBusError, subjects};
+
+    use super::*;
+    use crate::domain::batch_runner::{CreatedItem, RowError};
+    use crate::infra::job_store::{ImportJob, InMemoryJobStore, JobStatus, JobStore};
+
+    #[derive(Default)]
+    struct RecordingBus(Mutex<Vec<DppEvent>>);
+
+    #[async_trait]
+    impl EventBus for RecordingBus {
+        async fn publish(&self, event: &DppEvent) -> Result<(), EventBusError> {
+            self.0.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+    }
+
+    impl RecordingBus {
+        fn only(&self) -> DppEvent {
+            let events = self.0.lock().unwrap();
+            assert_eq!(events.len(), 1, "expected exactly one event: {events:?}");
+            events[0].clone()
+        }
+    }
+
+    /// Completes nothing: the store a recorded result cannot reach.
+    struct CannotComplete(InMemoryJobStore);
+
+    #[async_trait]
+    impl JobStore for CannotComplete {
+        async fn insert(&self, job: ImportJob) -> anyhow::Result<()> {
+            self.0.insert(job).await
+        }
+        async fn get(&self, id: Uuid) -> Option<ImportJob> {
+            self.0.get(id).await
+        }
+        async fn set_status(&self, id: Uuid, status: JobStatus) -> anyhow::Result<()> {
+            self.0.set_status(id, status).await
+        }
+        async fn complete(
+            &self,
+            _id: Uuid,
+            _result: BatchResult,
+            _notify: Option<WebhookEvent>,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("the database went away")
+        }
+        async fn fail(
+            &self,
+            id: Uuid,
+            reason: String,
+            notify: Option<WebhookEvent>,
+        ) -> anyhow::Result<()> {
+            self.0.fail(id, reason, notify).await
+        }
+        async fn record_report(&self, id: Uuid, report: ImportReport) -> anyhow::Result<()> {
+            self.0.record_report(id, report).await
+        }
+        async fn cleanup(&self, max_age: chrono::Duration) {
+            self.0.cleanup(max_age).await;
+        }
+    }
+
+    async fn job(store: &dyn JobStore) -> JobSummary {
+        let job_id = Uuid::now_v7();
+        store
+            .insert(ImportJob::new(job_id, 3))
+            .await
+            .expect("insert");
+        JobSummary {
+            job_id,
+            product_group: "battery".into(),
+            total_rows: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_batch_that_panics_ends_as_a_failed_job() {
+        let store = InMemoryJobStore::new();
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+
+        let outcome = run_to_outcome(async { panic!("a row the batch could not handle") }).await;
+        let reason = outcome.expect_err("a panic is an outcome, not an unwind");
+        fail_job(&store, &bus, &summary, reason).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Failed(_)
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_FAILED);
+        assert_eq!(event.data["jobId"], summary.job_id.to_string());
+        assert!(event.data["reason"].as_str().unwrap().contains("panicked"));
+    }
+
+    #[tokio::test]
+    async fn a_finished_batch_completes_the_job_and_counts_what_it_did() {
+        let store = InMemoryJobStore::new();
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+        let batch = BatchResult {
+            created: vec![CreatedItem {
+                row: 1,
+                passport_id: Uuid::now_v7().to_string(),
+            }],
+            updated: vec![],
+            errors: vec![RowError {
+                row: 3,
+                field: "gtin".into(),
+                message: "refused by the vault".into(),
+            }],
+        };
+
+        // Row 2 was refused by validation and never reached the batch.
+        complete_job(&store, &bus, &summary, batch, &BTreeSet::from([2])).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Completed
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_COMPLETED);
+        assert_eq!(event.data["productGroup"], "battery");
+        assert_eq!(event.data["totalRows"], 3);
+        assert_eq!(event.data["created"], 1);
+        assert_eq!(event.data["updated"], 0);
+        assert_eq!(event.data["failedRows"], 2);
+    }
+
+    #[tokio::test]
+    async fn a_result_that_cannot_be_recorded_fails_the_job() {
+        let store = CannotComplete(InMemoryJobStore::new());
+        let bus = RecordingBus::default();
+        let summary = job(&store).await;
+        let batch = BatchResult {
+            created: vec![],
+            updated: vec![],
+            errors: vec![],
+        };
+
+        complete_job(&store, &bus, &summary, batch, &BTreeSet::new()).await;
+
+        assert!(matches!(
+            store.get(summary.job_id).await.unwrap().status,
+            JobStatus::Failed(_)
+        ));
+        let event = bus.only();
+        assert_eq!(event.event_type, subjects::IMPORT_FAILED);
+        assert!(
+            event.data["reason"]
+                .as_str()
+                .unwrap()
+                .contains("could not be recorded")
+        );
     }
 }

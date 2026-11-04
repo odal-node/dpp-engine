@@ -6,13 +6,13 @@ post:
     replacement named in `supersededBy`.
 
     **The link is checked here, not written.** The successor must already carry
-    `supersedesId` pointing back at this passport, set when it was created —
+    `supersedesId` pointing back at this passport, set when it was created:
     `supersedesId` is a protected field and no field patch can add it later. A
     successor that does not declare the link is refused with `422`.
 
     That ordering is deliberate. Writing the link during this transition would
     leave, on a failure between the two writes, a retired passport with nothing
-    pointing at its replacement — the one state a reader cannot recover from.
+    pointing at its replacement: the one state a reader cannot recover from.
     Requiring the link to exist first makes that unreachable.
 
     **Both must already be published.** A draft successor retiring a live

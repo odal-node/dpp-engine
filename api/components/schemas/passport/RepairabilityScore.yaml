@@ -1,7 +1,7 @@
 type: object
 description: >-
   Repairability as a **non-regulatory heuristic**. Deliberately not an EN 45554
-  or Regulation (EU) 2023/1669 index — those have prescribed methodologies this
+  or Regulation (EU) 2023/1669 index: those have prescribed methodologies this
   does not implement, and presenting a heuristic as either would misstate it.
 required:
   - overall

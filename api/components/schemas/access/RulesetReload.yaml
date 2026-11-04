@@ -15,6 +15,6 @@ properties:
     type: boolean
     description: >-
       Whether this call actually replaced the ruleset. `false` means the channel
-      re-offered the bundle already in force — the ordinary answer on a quiet
+      re-offered the bundle already in force: the ordinary answer on a quiet
       channel, and a success rather than an error.
     example: true
