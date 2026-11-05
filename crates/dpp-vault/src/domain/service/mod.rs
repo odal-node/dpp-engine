@@ -64,6 +64,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::AuditRepository,
     evidence::EvidenceDossierRepository,
+    node_failure::NodeFailureCounter,
     operator::OperatorConfigRepository,
     registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
     registry_transfer::RegistryTransferOutbox,
@@ -110,6 +111,10 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
+    /// Durable count of publishes refused for a signature. Read by the node-health
+    /// route, so the count survives a restart. `None` (test doubles) leaves the
+    /// refusals on the Prometheus counter alone, and the route omits the count.
+    pub failure_counter: Option<Arc<dyn NodeFailureCounter>>,
     /// Archived versions of passports — EN 18221:2026 clause 4.2.
     ///
     /// This is now the only thing in this struct called an archive, and it is
@@ -244,6 +249,7 @@ impl PassportService {
             registry_sync,
             backup,
             registry_outbox: None,
+            failure_counter: None,
             versions: None,
             successors: None,
             transfer_store: None,
@@ -306,6 +312,14 @@ impl PassportService {
     #[must_use]
     pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
         self.registry_outbox = Some(outbox);
+        self
+    }
+
+    /// Count the refusals this service makes in the database as well as on the
+    /// Prometheus counter, so the node-health route reports them across restarts.
+    #[must_use]
+    pub fn with_failure_counter(mut self, counter: Arc<dyn NodeFailureCounter>) -> Self {
+        self.failure_counter = Some(counter);
         self
     }
 

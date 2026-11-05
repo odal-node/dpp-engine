@@ -971,6 +971,7 @@ pub async fn spawn_snapshot_refresh(outbox: Arc<dyn SnapshotOutbox>) {
 pub fn spawn_ruleset_poll(
     active: Arc<dpp_node::infra::ruleset::ActiveRuleset>,
     interval: Option<std::time::Duration>,
+    failure_counter: Arc<dyn dpp_types::node_failure::NodeFailureCounter>,
 ) {
     let Some(interval) = interval.filter(|_| active.has_channel()) else {
         return;
@@ -982,7 +983,12 @@ pub fn spawn_ruleset_poll(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(interval).await;
-            dpp_node::infra::ruleset::reload_and_report(&active, false).await;
+            dpp_node::infra::ruleset::reload_and_report(
+                &active,
+                false,
+                Some(failure_counter.as_ref()),
+            )
+            .await;
         }
     });
 }

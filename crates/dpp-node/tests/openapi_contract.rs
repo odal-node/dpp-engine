@@ -3866,8 +3866,8 @@ mod fixtures {
     /// serves. The values are fixed and non-zero so each field is exercised.
     pub fn node_health() -> NodeHealth {
         NodeHealth {
-            signing_failures_total: 1,
-            ruleset_load_failures_total: 0,
+            signing_failures_total: Some(1),
+            ruleset_load_failures_total: Some(0),
             registry_outbox: Some(registry_outbox_health()),
         }
     }

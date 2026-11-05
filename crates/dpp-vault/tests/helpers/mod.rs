@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgPassportVersionRepo, PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo,
-    PgScanTelemetryRepo, PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeFailureRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo,
+    PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
@@ -603,6 +604,7 @@ async fn start_vault_with_identity(
     // because nothing was.
     .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
     .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
+    .with_failure_counter(Arc::new(PgNodeFailureRepo::new(dal.clone())))
     // The node commits every state change through the state-change log, so a
     // harness without it would write the parts one after another, a path no
     // real deployment takes.

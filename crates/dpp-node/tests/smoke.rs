@@ -18,9 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgPassportVersionRepo, PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo,
-    PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeFailureRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -30,6 +30,7 @@ use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as In
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
+use dpp_types::node_failure::{FailureKind, NodeFailureCounter};
 use dpp_types::registry_sync::{RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
@@ -189,6 +190,7 @@ async fn start_node_with_ruleset(
         .with_registry_reader(operator_repo.clone())
         // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
         .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
+        .with_failure_counter(Arc::new(PgNodeFailureRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -358,7 +360,8 @@ async fn authenticated_node_state_reports_trust_modes() {
 
 /// The node-health counters follow what the node did. A passport's registration
 /// row is stalled from the stall threshold and not one attempt before it, and a
-/// refusal recorded in this process moves the counter the route reports by one.
+/// refusal recorded through the durable counter moves the count the route reports
+/// by one.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_health_counts_follow_the_outbox_and_the_refusals() {
     let (base, pg) = start_db_and_node().await;
@@ -470,7 +473,10 @@ async fn node_health_counts_follow_the_outbox_and_the_refusals() {
     let signing_before = at_threshold["signingFailuresTotal"]
         .as_u64()
         .expect("a count");
-    dpp_common::metrics::record_signing_failure();
+    PgNodeFailureRepo::new(pg.dal.clone())
+        .record(FailureKind::Signing)
+        .await
+        .expect("refusal recorded");
     let after = node_health(&base, &token).await;
     assert_eq!(
         after["signingFailuresTotal"].as_u64(),
@@ -538,7 +544,7 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         ActiveRuleset::baseline()
             .with_channel(Box::new(FileRulesetSource::new(&bundle_path)), &pubkey),
     );
-    dpp_node::infra::ruleset::reload_and_report(&ruleset, true).await;
+    dpp_node::infra::ruleset::reload_and_report(&ruleset, true, None).await;
 
     let pg = start_pg().await;
     let base = start_node_with_ruleset(pg.dal.clone(), ruleset).await;
