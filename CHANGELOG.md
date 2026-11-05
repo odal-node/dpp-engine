@@ -280,6 +280,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   node's, and a node that does not answer is still reported as unreachable.
   (#572)
 
+- **An archived version is the passport as it was stored.** Every change to a
+  passport archives the version it replaces (EN 18221 clause 4.2), and the
+  archive was taken from a reading of the passport rather than the stored
+  record. Every read upcasts through `dpp-core`'s lens chain, which since core
+  0.22.0 reads a stored `productGroupData.gtin` as a `productIdentifier`, so a
+  version archived from a passport stored before that upgrade held a shape it
+  was never published in. The passport store now copies the stored document
+  into the archive under the row lock, in the transaction of the change, for
+  every writer: the repository, the state-change log, and the registry outbox's
+  publish, which a service with no state-change log uses and which archived
+  nothing. A refused change now leaves no version behind, where it used to leave
+  one identical to the live record. `GET /vault/api/v1/dpp/{dppId}/versions`
+  serves such a version in its stored shape. Its `supersededAt` is the
+  database's clock once the change holds the lock, where it was the clock of the
+  process that made the change, so versions order as their changes did whichever
+  process made them. (#571)
+
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
   successor the one its predecessor was signed with. So an operator that changed

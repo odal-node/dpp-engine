@@ -18,9 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
-    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
-    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgPassportVersionRepo, PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo,
+    PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -120,16 +120,12 @@ async fn start_node_with_ruleset(
     let port = listener.local_addr().unwrap().port();
     let base_url = format!("http://127.0.0.1:{port}");
 
-    // Wrapped exactly as `boot::db` wraps it. A bare `PgPassportRepo` here would
-    // leave the EN 18221 clause 4.2 archive unwired, so the versions route would
-    // answer from an empty table and the smoke suite would agree with a node
-    // that archives nothing.
+    // As `boot::db` wires them. The repository archives every change it writes
+    // (EN 18221 clause 4.2), and the versions route reads that archive through
+    // the version store.
     let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
         Arc::new(PgPassportVersionRepo::new(dal.clone()));
-    let passport_repo = Arc::new(ArchivingPassportRepo::new(
-        PgPassportRepo::new(dal.clone()),
-        version_store.clone(),
-    ));
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     // Seed a complete operator so the publish-completeness gate passes. The node

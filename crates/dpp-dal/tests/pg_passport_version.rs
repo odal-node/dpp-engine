@@ -19,22 +19,44 @@
 //!    version took over, so asking as-of exactly that instant must answer with
 //!    the successor. That is a `>` versus `>=` in one query and it is invisible
 //!    in every test that does not land on the boundary exactly.
-//! 4. **The decorator, the repository and the migration compose.** Each is
-//!    tested alone; this is the only place the three run together against a real
-//!    database, which is where the `doc` column's shape and the archive's shape
-//!    have to agree.
+//! 4. **Every change archives what it replaced.** The repository archives in the
+//!    transaction that makes each change, so this is where its writes and the
+//!    migration run together: create archives nothing, and an update, a patch, a
+//!    status change and each item of a batch archive the record before them.
 
 #![cfg(feature = "integration-tests")]
 
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 
-use dpp_dal::pg::{ArchivingPassportRepo, PgPassportRepo, PgPassportVersionRepo};
-use dpp_dal::test_harness::start_pg;
+use dpp_dal::pg::{PgPassportRepo, PgPassportVersionRepo};
+use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::status::PassportStatus;
 use dpp_types::audit::PassportVersionStore;
+
+/// Write `doc` as a version of `id`, superseded at `superseded_at`, as the app
+/// role. The store archives only the record a change replaces, so a test that
+/// needs a version at a chosen instant, or of no passport at all, writes the row.
+async fn archive(
+    pg: &TestPg,
+    id: PassportId,
+    doc: serde_json::Value,
+    superseded_at: DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(id.0)
+    .bind(doc)
+    .bind(superseded_at)
+    .execute(pg.dal.pool())
+    .await
+    .expect("the app role archives a version");
+}
 
 fn a_passport() -> Passport {
     Passport {
@@ -89,15 +111,15 @@ fn a_passport() -> Passport {
 
 /// A change to a live passport leaves a readable version of what it replaced.
 ///
-/// The whole design in one pass: the decorator wraps the real repository, the
-/// real repository writes to the real table, and the version that comes back is
-/// the passport *before* the change — the one the clause calls the initial
-/// digital product passport.
+/// The whole design in one pass: the repository writes the change and the
+/// version in one transaction, and the version that comes back is the passport
+/// *before* the change — the one the clause calls the initial digital product
+/// passport.
 #[tokio::test]
 async fn a_change_to_a_passport_leaves_the_version_it_replaced() {
     let pg = start_pg().await;
-    let versions = std::sync::Arc::new(PgPassportVersionRepo::new(pg.dal.clone()));
-    let repo = ArchivingPassportRepo::new(PgPassportRepo::new(pg.dal.clone()), versions.clone());
+    let versions = PgPassportVersionRepo::new(pg.dal.clone());
+    let repo = PgPassportRepo::new(pg.dal.clone());
 
     let created = repo.create(a_passport()).await.expect("create");
     let id = created.id;
@@ -134,6 +156,156 @@ async fn a_change_to_a_passport_leaves_the_version_it_replaced() {
     );
 }
 
+/// Every kind of change archives the state it replaced.
+///
+/// The **pre**-change state, which is what makes the first change record the
+/// initial passport — the version the clause names. Archiving the result
+/// instead would leave the initial version unrecorded, and no later change
+/// could recover it.
+#[tokio::test]
+async fn every_change_archives_what_it_replaced() {
+    let pg = start_pg().await;
+    let versions = PgPassportVersionRepo::new(pg.dal.clone());
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let created = repo.create(a_passport()).await.expect("create");
+    let id = created.id;
+
+    let mut changed = created.clone();
+    changed.product_name = "Version Test Battery Mk II".into();
+    repo.update(changed).await.expect("update");
+    repo.patch_fields(
+        id,
+        serde_json::json!({ "productName": "Version Test Battery Mk III" }),
+    )
+    .await
+    .expect("patch");
+    repo.update_status(id, PassportStatus::Published)
+        .await
+        .expect("status");
+
+    let names: Vec<_> = versions
+        .versions(&id.to_string())
+        .await
+        .expect("versions")
+        .into_iter()
+        .map(|v| v.doc["productName"].clone())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Version Test Battery",
+            "Version Test Battery Mk II",
+            "Version Test Battery Mk III"
+        ],
+        "one version per change, each the state that change replaced — including the one a \
+         status transition replaced, which it did not itself write"
+    );
+}
+
+/// A bulk update archives every item.
+///
+/// `update_batch`'s trait default loops over `update`, which archives. A store
+/// that grew its own bulk statement would have to archive in it as well, and
+/// this is the test that would say so.
+#[tokio::test]
+async fn a_batch_update_archives_every_item() {
+    let pg = start_pg().await;
+    let versions = PgPassportVersionRepo::new(pg.dal.clone());
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let first = repo.create(a_passport()).await.expect("create");
+    let second = repo.create(a_passport()).await.expect("create");
+    repo.update_batch(vec![first.clone(), second.clone()]).await;
+
+    for p in [first, second] {
+        assert_eq!(
+            versions
+                .versions(&p.id.to_string())
+                .await
+                .expect("versions")
+                .len(),
+            1,
+            "a bulk update is a change per item, and each one is archived"
+        );
+    }
+}
+
+/// Two changes made at once each archive the record the other left.
+///
+/// The archive is read under the lock the change takes, so the second change
+/// waits for the first to commit and archives what the first wrote. Read without
+/// that lock, both would archive the record they started from: the history would
+/// hold the initial record twice and never the first change's result.
+///
+/// The row is held while both changes start, so both are at their archive before
+/// either can take it.
+#[tokio::test]
+async fn two_changes_at_once_each_archive_what_the_other_left() {
+    use std::time::{Duration, Instant};
+
+    let pg = start_pg().await;
+    let versions = PgPassportVersionRepo::new(pg.dal.clone());
+    let repo = std::sync::Arc::new(PgPassportRepo::new(pg.dal.clone()));
+    let created = repo.create(a_passport()).await.expect("create");
+    let id = created.id;
+    let patience = Duration::from_secs(10);
+
+    let mut hold = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM odal.passport WHERE id = $1 FOR UPDATE")
+        .bind(id.0)
+        .execute(&mut *hold)
+        .await
+        .expect("hold the passport row");
+
+    let mut changes = Vec::new();
+    for (waiting, name) in [(1, "Change A"), (2, "Change B")] {
+        let repo = repo.clone();
+        changes.push(tokio::spawn(async move {
+            repo.patch_fields(id, serde_json::json!({ "productName": name }))
+                .await
+        }));
+        let started = Instant::now();
+        while sessions_waiting_for_a_lock(&pg).await < waiting {
+            assert!(
+                started.elapsed() < patience,
+                "{name} never waited for the held row"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    hold.commit().await.expect("release the row");
+    for change in changes {
+        change.await.expect("join").expect("change");
+    }
+
+    let names: Vec<_> = versions
+        .versions(&id.to_string())
+        .await
+        .expect("versions")
+        .into_iter()
+        .map(|v| v.doc["productName"].clone())
+        .collect();
+    let live = repo
+        .find_by_id(id)
+        .await
+        .expect("read")
+        .expect("exists")
+        .product_name;
+    let first = if live == "Change A" {
+        "Change B"
+    } else {
+        "Change A"
+    };
+    assert_eq!(
+        names,
+        ["Version Test Battery", first],
+        "the initial record, then what the first change to commit wrote; never the \
+         initial record twice"
+    );
+}
+
 /// An archived version cannot be rewritten or removed.
 ///
 /// 🚨 The grant withholds `UPDATE` and `DELETE` as well, so this asserts through
@@ -146,14 +318,13 @@ async fn an_archived_version_can_be_neither_rewritten_nor_removed() {
     let versions = PgPassportVersionRepo::new(pg.dal.clone());
     let id = PassportId::new();
 
-    versions
-        .archive(
-            &id.to_string(),
-            &serde_json::json!({ "productName": "as it was" }),
-            Utc::now(),
-        )
-        .await
-        .expect("archive");
+    archive(
+        &pg,
+        id,
+        serde_json::json!({ "productName": "as it was" }),
+        Utc::now(),
+    )
+    .await;
 
     let admin = sqlx::PgPool::connect(&pg.admin_url)
         .await
@@ -201,14 +372,14 @@ async fn a_version_may_exist_without_the_passport_it_belongs_to() {
     let versions = PgPassportVersionRepo::new(pg.dal.clone());
     let orphan = PassportId::new();
 
-    versions
-        .archive(
-            &orphan.to_string(),
-            &serde_json::json!({ "productName": "gone" }),
-            Utc::now(),
-        )
-        .await
-        .expect("a version needs no passport row to exist");
+    // A version needs no passport row to exist.
+    archive(
+        &pg,
+        orphan,
+        serde_json::json!({ "productName": "gone" }),
+        Utc::now(),
+    )
+    .await;
 
     assert_eq!(
         versions
@@ -236,22 +407,8 @@ async fn as_of_the_moment_of_a_change_the_successor_is_current() {
     let one = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
 
     // "first" was current until noon; "second" was current from noon until one.
-    versions
-        .archive(
-            &id.to_string(),
-            &serde_json::json!({ "productName": "first" }),
-            noon,
-        )
-        .await
-        .expect("archive");
-    versions
-        .archive(
-            &id.to_string(),
-            &serde_json::json!({ "productName": "second" }),
-            one,
-        )
-        .await
-        .expect("archive");
+    archive(&pg, id, serde_json::json!({ "productName": "first" }), noon).await;
+    archive(&pg, id, serde_json::json!({ "productName": "second" }), one).await;
 
     let before = versions
         .version_at(&id.to_string(), noon - chrono::Duration::seconds(1))

@@ -19,15 +19,12 @@
 //! leaves the database, so it cannot be part of the transaction, and a bus
 //! subscriber is not owed delivery the way a webhook subscriber is.
 //!
-//! # Archiving moves inside the transaction
+//! # Archiving is inside the transaction
 //!
-//! `ArchivingPassportRepo` archives the version a write replaces, but the
-//! `PassportRepository` port has no transaction, so it archives first and
-//! writes second, and a failure in between leaves a redundant version behind.
-//! A [`PassportWrite`] that replaces a stored passport archives it in the same
-//! transaction instead, so the version and the change commit together. EN 18221
-//! clause 4.2 asks that every change be archived; this keeps that true on a path
-//! that does not go through the decorator.
+//! A [`PassportWrite`] that changes a stored passport archives the record it
+//! replaces in the same transaction, as stored, so the version and the change
+//! commit together or not at all. EN 18221 clause 4.2 asks that every change be
+//! archived; the store's passport writes do it, here as for every other change.
 
 use async_trait::async_trait;
 use uuid::Uuid;
