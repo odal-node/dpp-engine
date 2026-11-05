@@ -221,6 +221,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **The vault's registry rollup counts a registration as stalled at the node's
+  threshold of eight attempts, not five.** `GET /vault/api/v1/registry`, and the
+  `stalled` flag on a passport's registry view, reported a row stalled from its
+  fifth failed attempt, while the node's gauges and alarms waited for the eighth.
+  The two now agree on one constant. A row with five to seven attempts is no longer
+  reported as stalled, so the rollup's `stalled` count can fall. (#589)
+
 - **The registry's task list is asked for newest first, and read from the front
   once the first page shows it came back that way.** The adapter read a long list
   from both ends because the registry's order was not known: a task just

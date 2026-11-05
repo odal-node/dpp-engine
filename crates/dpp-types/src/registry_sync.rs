@@ -185,6 +185,11 @@ pub struct RegistrySyncRow {
     pub next_attempt_at: DateTime<Utc>,
 }
 
+/// Attempts after which a pending registry row counts as stalled. The registration
+/// and transfer outboxes report their stalled rows at this threshold, on the node's
+/// gauges, its alarms and the vault's registry rollup.
+pub const STALL_THRESHOLD: i32 = 8;
+
 /// Aggregate counts for boot reconciliation and metrics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegistrySyncCounts {
