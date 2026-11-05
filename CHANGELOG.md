@@ -208,6 +208,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
 - **Publish refuses a second holder of a link or a DID whatever lot it states.**
   0.15.0 refused a second published passport under one identification link or
   DID only when it stated the same lot as the first, because the holder was
@@ -244,6 +256,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   record that was never published, a draft or a retired draft, now answers no
   label. A retired passport that was published is unchanged and still serves its
   signed view. (#570)
+
+- **`odal bootstrap` names the admin credential when the node refuses it.** A
+  wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
+  unreachable, with the refusal printed only under `Caused by:`. A `401` or
+  `403` from the node's state read now says to check both variables against the
+  node's, and a node that does not answer is still reported as unreachable.
+  (#572)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
