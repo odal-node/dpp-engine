@@ -168,11 +168,14 @@ fn the_scan_recognises_a_write_and_ignores_a_read() {
 ///
 /// A function runs from one `fn` line to the next, which is coarse and enough:
 /// the statements here are built inline, so the `UPDATE` and the archive it needs
-/// sit in the same body.
+/// sit in the same body. "First" is read in source order: an `UPDATE` above the
+/// archive would archive the record it had just written.
 fn updates_without_an_archive(source: &str) -> Vec<&str> {
     const UPDATES: [&str; 2] = ["UPDATE odal.passport SET", "UPDATE odal.passport p SET"];
     let mut found = Vec::new();
-    let mut current: Option<(&str, bool, bool)> = None;
+    // The function, and whether it updated before it had archived.
+    let mut current: Option<(&str, bool)> = None;
+    let mut archived = false;
     for line in source.lines() {
         let line = line.trim_start();
         let opens = ["pub(crate) ", "pub "]
@@ -180,17 +183,18 @@ fn updates_without_an_archive(source: &str) -> Vec<&str> {
             .fold(line, |rest, vis| rest.strip_prefix(vis).unwrap_or(rest));
         let opens = opens.strip_prefix("async ").unwrap_or(opens);
         if let Some(rest) = opens.strip_prefix("fn ") {
-            if let Some((name, true, false)) = current {
+            if let Some((name, true)) = current {
                 found.push(name);
             }
-            current = Some((rest.split(['(', '<']).next().unwrap_or(rest), false, false));
+            current = Some((rest.split(['(', '<']).next().unwrap_or(rest), false));
+            archived = false;
         }
-        if let Some((_, updates, archives)) = current.as_mut() {
-            *updates |= UPDATES.iter().any(|u| line.contains(u));
-            *archives |= line.contains("archive_stored(");
+        if let Some((_, unarchived)) = current.as_mut() {
+            archived |= line.contains("archive_stored(");
+            *unarchived |= !archived && UPDATES.iter().any(|u| line.contains(u));
         }
     }
-    if let Some((name, true, false)) = current {
+    if let Some((name, true)) = current {
         found.push(name);
     }
     found
@@ -225,4 +229,12 @@ fn the_archive_check_finds_an_update_that_skips_it() {
     let archives = "pub(crate) async fn write(&self) {\n    self.archive_stored(tx, id).await?;\n    \
                     sqlx::query(\"UPDATE odal.passport SET doc = $2\")\n}\n";
     assert!(updates_without_an_archive(archives).is_empty());
+
+    let too_late = "async fn write(&self) {\n    sqlx::query(\"UPDATE odal.passport SET doc = $2\")\n    \
+                    self.archive_stored(tx, id).await?;\n}\n";
+    assert_eq!(
+        updates_without_an_archive(too_late),
+        ["write"],
+        "an archive after the update keeps the record the update wrote"
+    );
 }

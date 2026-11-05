@@ -231,6 +231,92 @@ async fn a_batch_update_archives_every_item() {
     }
 }
 
+/// Sessions on this test's database waiting for a lock.
+async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    )
+    .fetch_one(pg.dal.pool())
+    .await
+    .expect("read pg_stat_activity")
+}
+
+/// Two changes made at once each archive the record the other left.
+///
+/// The archive is read under the lock the change takes, so the second change
+/// waits for the first to commit and archives what the first wrote. Read without
+/// that lock, both would archive the record they started from: the history would
+/// hold the initial record twice and never the first change's result.
+///
+/// The row is held while both changes start, so both are at their archive before
+/// either can take it.
+#[tokio::test]
+async fn two_changes_at_once_each_archive_what_the_other_left() {
+    use std::time::{Duration, Instant};
+
+    let pg = start_pg().await;
+    let versions = PgPassportVersionRepo::new(pg.dal.clone());
+    let repo = std::sync::Arc::new(PgPassportRepo::new(pg.dal.clone()));
+    let created = repo.create(a_passport()).await.expect("create");
+    let id = created.id;
+    let patience = Duration::from_secs(10);
+
+    let mut hold = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM odal.passport WHERE id = $1 FOR UPDATE")
+        .bind(id.0)
+        .execute(&mut *hold)
+        .await
+        .expect("hold the passport row");
+
+    let mut changes = Vec::new();
+    for (waiting, name) in [(1, "Change A"), (2, "Change B")] {
+        let repo = repo.clone();
+        changes.push(tokio::spawn(async move {
+            repo.patch_fields(id, serde_json::json!({ "productName": name }))
+                .await
+        }));
+        let started = Instant::now();
+        while sessions_waiting_for_a_lock(&pg).await < waiting {
+            assert!(
+                started.elapsed() < patience,
+                "{name} never waited for the held row"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    hold.commit().await.expect("release the row");
+    for change in changes {
+        change.await.expect("join").expect("change");
+    }
+
+    let names: Vec<_> = versions
+        .versions(&id.to_string())
+        .await
+        .expect("versions")
+        .into_iter()
+        .map(|v| v.doc["productName"].clone())
+        .collect();
+    let live = repo
+        .find_by_id(id)
+        .await
+        .expect("read")
+        .expect("exists")
+        .product_name;
+    let first = if live == "Change A" {
+        "Change B"
+    } else {
+        "Change A"
+    };
+    assert_eq!(
+        names,
+        ["Version Test Battery", first],
+        "the initial record, then what the first change to commit wrote; never the \
+         initial record twice"
+    );
+}
+
 /// An archived version cannot be rewritten or removed.
 ///
 /// 🚨 The grant withholds `UPDATE` and `DELETE` as well, so this asserts through

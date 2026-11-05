@@ -220,7 +220,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   publish, which a service with no state-change log uses and which archived
   nothing. A refused change now leaves no version behind, where it used to leave
   one identical to the live record. `GET /vault/api/v1/dpp/{dppId}/versions`
-  serves such a version in its stored shape. (#571)
+  serves such a version in its stored shape. Its `supersededAt` is the
+  database's clock once the change holds the lock, where it was the clock of the
+  process that made the change, so versions order as their changes did whichever
+  process made them. (#571)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's

@@ -34,8 +34,9 @@ properties:
 
       As it was stored, and never upcast: a version taken from a passport
       written under an earlier schema keeps that schema's shape, which can
-      differ from the shape the live passport is read in. It is the record the
-      operator published.
+      differ from the shape the live passport is read in. It is the record as
+      the operator stored it then: a draft's own changes are archived too, so a
+      version can be a draft that was never published.
 
 
       Whole rather than differential so that retrieval is a read rather than a
@@ -48,7 +49,8 @@ properties:
     format: date-time
     description: >-
       When this version stopped being current: the instant the change that
-      replaced it was applied.
+      replaced it was applied, by the database's clock, so versions order as
+      their changes did whichever process made them.
 
 
       One timestamp rather than a validity range: the previous version's

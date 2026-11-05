@@ -36,28 +36,41 @@ fn row_to_version(row: &sqlx::postgres::PgRow) -> Result<PassportVersion, DppErr
     })
 }
 
-/// Archive `doc` as a version of `passport_id`, superseded at `superseded_at`.
+/// Archive the stored record of `passport_id` as a version, superseded now.
 ///
 /// The one statement that writes the archive. Its caller is the passport store,
-/// which hands it the stored record a change replaces, under that change's lock
-/// and in its transaction: see `repo_passport.rs`.
+/// under the lock of the change that replaces the record and in its transaction:
+/// see `repo_passport.rs`.
+///
+/// The record is copied inside the database rather than passed in, so the
+/// version is the column exactly as stored: a document decoded into a
+/// `serde_json::Value` and encoded again is only as exact as that type's numbers.
+/// And `superseded_at` is the database's clock when the statement runs, after the
+/// change took the row's lock, rather than the clock of whichever process made
+/// the change: one clock for every writer, so versions order as their changes
+/// did, and a reader holding the row knows no later change stamps a moment
+/// before it.
 pub(crate) async fn insert_version<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     passport_id: uuid::Uuid,
-    doc: &serde_json::Value,
-    superseded_at: DateTime<Utc>,
 ) -> Result<(), DppError> {
-    sqlx::query(
+    let archived = sqlx::query(
         "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
-         VALUES ($1, $2, $3, $4)",
+         SELECT $1, id, doc, clock_timestamp() FROM odal.passport WHERE id = $2",
     )
     .bind(uuid::Uuid::now_v7())
     .bind(passport_id)
-    .bind(doc)
-    .bind(superseded_at)
     .execute(executor)
     .await
-    .map_err(db_err)?;
+    .map_err(db_err)?
+    .rows_affected();
+    // The caller holds the row's lock, so it cannot have gone; a change that
+    // archived nothing would still be written, so it is refused instead.
+    if archived != 1 {
+        return Err(DppError::Internal(format!(
+            "archived {archived} versions of passport {passport_id}, not 1"
+        )));
+    }
     Ok(())
 }
 

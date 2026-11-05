@@ -15,12 +15,12 @@
 //! Both statements that change a stored passport, `update_in_tx` and
 //! `patch_in_tx`, first copy the row's `doc` into `passport_version` under the
 //! row lock their change holds, in the change's own transaction
-//! (`archive_stored`). So the version is the record as it was stored, never
-//! this build's reading of it: every read upcasts through the lens chain, and a
-//! version archived from a reading holds a shape the passport was never signed
-//! in. And the version commits with its change or not at all: a refused change
-//! leaves none, and two concurrent changes each archive the record the other
-//! left.
+//! (`archive_stored`), stamped by the database's clock once that lock is held.
+//! So the version is the record as it was stored, never this build's reading of
+//! it: every read upcasts through the lens chain, and a version archived from a
+//! reading holds a shape the passport was never signed in. And the version
+//! commits with its change or not at all: a refused change leaves none, and two
+//! concurrent changes each archive the record the other left.
 //!
 //! Every writer of passport content reaches one of the two: `update`,
 //! `patch_fields`, `update_status` and `update_batch` here, the state-change
@@ -32,7 +32,6 @@
 //! that each statement here that changes a passport archives first.
 
 use async_trait::async_trait;
-use chrono::Utc;
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
@@ -241,10 +240,9 @@ impl PgPassportRepo {
         else {
             return Ok(None);
         };
-        let doc: serde_json::Value = row.get("doc");
-        insert_version(&mut **tx, Self::uuid_of(id), &doc, Utc::now()).await?;
+        insert_version(&mut **tx, Self::uuid_of(id)).await?;
         Ok(Some(Stored {
-            doc,
+            doc: row.get("doc"),
             retention_locked: row.get("retention_locked"),
         }))
     }
