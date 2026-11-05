@@ -1,6 +1,7 @@
 //! Operator onboarding actions: bootstrap, node state, and API-key/operator management.
 
 use anyhow::{Context, Result, bail};
+use reqwest::StatusCode;
 use serde_json::json;
 
 use super::types::{
@@ -12,6 +13,23 @@ use crate::{
     http::{OdalClient, describe_error},
 };
 
+/// The node answered a state read with a failure status. Kept as a type so a
+/// caller can tell a credential the node turned down from a node that did not
+/// answer at all.
+#[derive(Debug)]
+pub struct NodeStateRejected {
+    pub status: StatusCode,
+    detail: String,
+}
+
+impl std::fmt::Display for NodeStateRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "failed to read node state: {}", self.detail)
+    }
+}
+
+impl std::error::Error for NodeStateRejected {}
+
 /// Read the node's setup state — whether it has been claimed (≥1 API key) and
 /// whether the operator identity is complete. Used to keep bootstrap idempotent.
 /// Works with either an API-key client or a local-admin client.
@@ -19,10 +37,11 @@ pub async fn action_node_state(client: &OdalClient, cfg: &Config) -> Result<Node
     let url = format!("{}/api/v1/node/state", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        bail!(
-            "failed to read node state: {}",
-            describe_error(status, &body)
-        );
+        return Err(NodeStateRejected {
+            status,
+            detail: describe_error(status, &body),
+        }
+        .into());
     }
     let v: serde_json::Value =
         serde_json::from_str(&body).context("could not parse node state response")?;

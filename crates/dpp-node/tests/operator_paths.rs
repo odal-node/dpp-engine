@@ -410,6 +410,70 @@ async fn a_fresh_node_is_onboarded_with_odal() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_admin_credential_is_named_as_the_thing_to_check() {
+    let bin = odal_binary();
+    let pg = start_pg_raw().await;
+    let node = Node::start(&pg).await;
+    let odal = Odal {
+        bin,
+        home: tempfile::tempdir().expect("odal home"),
+        // Not the password the node was started with.
+        admin_password: "not-the-node-password".to_owned(),
+    };
+    odal.ok(&[
+        "init",
+        "--node-url",
+        &node.base,
+        "--resolver-url",
+        "http://127.0.0.1:1",
+    ]);
+
+    let refused = odal.run(&bootstrap_args());
+    let text = printed(&refused);
+    assert!(
+        !refused.status.success(),
+        "bootstrap with the wrong password must fail:\n{text}"
+    );
+    assert!(
+        text.contains("ADMIN_USERNAME") && text.contains("ADMIN_PASSWORD"),
+        "a refused credential names the variables to check:\n{text}"
+    );
+    assert!(
+        !text.contains("could not reach the node"),
+        "a node that answered is not reported as unreachable:\n{text}"
+    );
+}
+
+#[test]
+fn a_node_that_does_not_answer_is_still_reported_as_unreachable() {
+    let odal = Odal {
+        bin: odal_binary(),
+        home: tempfile::tempdir().expect("odal home"),
+        admin_password: "unused".to_owned(),
+    };
+    // Nothing listens on port 1, so the connection is refused rather than answered.
+    odal.ok(&[
+        "init",
+        "--node-url",
+        "http://127.0.0.1:1",
+        "--resolver-url",
+        "http://127.0.0.1:1",
+    ]);
+
+    let unreachable = odal.run(&bootstrap_args());
+    let text = printed(&unreachable);
+    assert!(!unreachable.status.success(), "{text}");
+    assert!(
+        text.contains("could not reach the node"),
+        "a node that does not answer is reported as unreachable:\n{text}"
+    );
+    assert!(
+        !text.contains("ADMIN_PASSWORD"),
+        "and the credential is not blamed for it:\n{text}"
+    );
+}
+
 // ── Upgrading a node that holds passports ───────────────────────────────────
 
 /// The fixture a release left, `tests/fixtures/upgrade/<release>/`.
