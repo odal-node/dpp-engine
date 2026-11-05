@@ -820,9 +820,10 @@ async fn the_query_string_is_handed_on_when_redirecting() {
     assert_eq!(plain.header("location"), format!("{BASE}/dpp/model-1"));
 }
 
-/// Criterion 20 (recommended), not applicable: there is one link per type, so
-/// there is nothing for `Accept-Language` or `context` to choose between, and the
-/// description file declares no context values.
+/// Criterion 20 (recommended), not applicable: a passport has no language
+/// variants or contexts here, so there is nothing for `Accept-Language` or
+/// `context` to choose between, and the description file declares no context
+/// values.
 #[tokio::test]
 async fn language_and_context_choose_between_nothing() {
     let (app, _) = start(Records::model("model-1")).await;
@@ -997,4 +998,186 @@ async fn a_trailing_slash_is_tolerated() {
     // Two slashes are not one slash.
     let double = fetch(&app, &format!("/01/{GTIN}//")).await;
     assert_eq!(double.status, StatusCode::BAD_REQUEST);
+}
+
+// ── GS1's own test page ─────────────────────────────────────────────────────
+
+/// The requests GS1's published test page makes of a resolver, replayed over a
+/// real socket with the headers its helper sends, and the answers it looks for.
+///
+/// The page itself cannot be pointed at a local resolver (see
+/// `GS1_RESOLVER_CONFORMANCE.md`), so this reads what it asks from its source
+/// (`gs1/GS1DL-resolver-testsuite`, `GS1DigitalLinkResolverTestSuite.js` and
+/// `tester.php`, read on 2026-11-05) and asks the same. It is an emulation, not a
+/// run of the page: it stands in for it until the page has been run against a
+/// deployed node.
+#[tokio::test]
+async fn the_requests_gs1_s_test_page_makes_are_answered_as_it_expects() {
+    let (app, _) = start(Records::model("model-1")).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("resolver");
+    });
+    // The page follows no redirect, so that it can read where one points.
+    let client = reqwest::Client::builder()
+        .http1_only()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    // The origin its PHP helper sends on every request to the resolver.
+    const ORIGIN: &str = "https://ref.gs1.org/test-suites/resolver/";
+    let dl = format!("http://127.0.0.1:{port}/01/{GTIN}");
+    let probe = |method: reqwest::Method, url: String, accept: Option<&'static str>| {
+        let client = client.clone();
+        async move {
+            let mut request = client.request(method, url).header("Origin", ORIGIN);
+            if let Some(accept) = accept {
+                request = request.header("Accept", accept);
+            }
+            request.send().await.expect("the resolver answers")
+        }
+    };
+    let location = |r: &reqwest::Response| {
+        r.headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
+    let default = format!("{BASE}/dpp/model-1");
+
+    // `corsCheck` and `methodsCheck`: an OPTIONS request from that origin is
+    // answered with the allowed origin and the three methods.
+    let options = probe(reqwest::Method::OPTIONS, dl.clone(), None).await;
+    assert!(
+        options
+            .headers()
+            .get("access-control-allow-origin")
+            .is_some()
+    );
+    let methods = options.headers()["access-control-allow-methods"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    for method in ["GET", "HEAD", "OPTIONS"] {
+        assert!(methods.contains(method), "{method} missing from {methods}");
+    }
+    assert!(
+        probe(reqwest::Method::HEAD, dl.clone(), None)
+            .await
+            .status()
+            .is_redirection()
+    );
+
+    // `reportWith400` and `noErrorWith200`: the link with `/foo` after it is a
+    // `400`, and so not a `200`.
+    let bad = probe(reqwest::Method::GET, format!("{dl}/foo"), None).await;
+    assert_eq!(bad.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    // `trailingSlashCheck`: the same answer with and without the slash.
+    let plain = probe(reqwest::Method::GET, dl.clone(), None).await;
+    let slash = probe(reqwest::Method::GET, format!("{dl}/"), None).await;
+    assert_eq!(slash.status(), plain.status());
+    assert_eq!(location(&slash), location(&plain));
+    assert_eq!(location(&plain).as_deref(), Some(default.as_str()));
+
+    // `basicWalkUpTheTree`: a lot the resolver holds nothing for is not a `404`.
+    let walked = probe(reqwest::Method::GET, format!("{dl}/10/KL8G"), None).await;
+    assert_ne!(walked.status(), reqwest::StatusCode::NOT_FOUND);
+
+    // `legacyLinkHeaders`: a redirect carries no `Link` header of GS1 link types.
+    assert!(plain.headers().get("link").is_none());
+
+    // `qsPassedOn`: a query string appears in the redirect's target.
+    let query = probe(reqwest::Method::GET, format!("{dl}?foo=bar"), None).await;
+    assert!(location(&query).is_some_and(|l| l.contains("foo=bar")));
+
+    // `ltLinksetNoRedirect`, `ltAcceptHeader` (which also sends `linkType=all`)
+    // and `declaredContentType`: a linkset, not a redirect, with its media type.
+    let by_keyword = probe(reqwest::Method::GET, format!("{dl}?linkType=linkset"), None).await;
+    let by_accept = probe(
+        reqwest::Method::GET,
+        format!("{dl}?linkType=all"),
+        Some("application/linkset+json"),
+    )
+    .await;
+    for answer in [by_keyword, by_accept] {
+        assert_eq!(answer.status(), reqwest::StatusCode::OK);
+        assert_eq!(answer.headers()["content-type"], "application/linkset+json");
+        assert!(
+            answer.headers()["link"]
+                .to_str()
+                .unwrap()
+                .contains("json-ld#context")
+        );
+    }
+
+    // `linksetTests`: one request for each link type the linkset lists, which
+    // must redirect to that link's target; and a type it does not list is a `404`.
+    let linkset: Value = probe(reqwest::Method::GET, format!("{dl}?linkType=linkset"), None)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let context = linkset["linkset"][0].as_object().unwrap();
+    for (relation, links) in context.iter().filter(|(key, _)| *key != "anchor") {
+        let name = relation.rsplit('/').next().unwrap();
+        let answer = probe(
+            reqwest::Method::GET,
+            format!("{dl}?linkType=gs1:{name}"),
+            None,
+        )
+        .await;
+        assert!(
+            answer.status().is_redirection(),
+            "{name}: {}",
+            answer.status()
+        );
+        // The page drops the `linkType` parameter from both sides before it
+        // compares (`stripLinkType`), since a redirect hands the query on.
+        let target = location(&answer).unwrap();
+        assert_eq!(
+            target.split('?').next(),
+            links[0]["href"].as_str(),
+            "{name}"
+        );
+        assert!(target.contains(&format!("linkType=gs1:{name}")), "{name}");
+    }
+    let missing = probe(
+        reqwest::Method::GET,
+        format!("{dl}?linkType=gs1:nosuchlt"),
+        None,
+    )
+    .await;
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+}
+
+/// Where this resolver differs from what GS1's test page hopes for, pinned so it
+/// is a decision and not a surprise.
+///
+/// A request that names a serial or a lot, with a passport on record at more than
+/// one level, gets a linkset with several `pip` links and several `dpp` links whose
+/// attributes are identical. The page asks for such a link type expecting a `300
+/// Multiple Choices` and **grades its absence a warning, not a failure**
+/// (`testMultipleLinks`); the standard words it as a SHOULD (2.6.3). This resolver
+/// redirects to the nearest level's page instead, which is deterministic and is the
+/// record a scan of that label ought to reach (2.6.3 allows any deterministic
+/// answer). If that changes, the conformance record's reading of it changes too.
+#[tokio::test]
+async fn several_levels_of_one_link_type_redirect_to_the_nearest_and_never_return_a_300() {
+    let mut records = Records::model("model-1");
+    records.serials.insert("SN-1", "unit-1");
+    let (app, _) = start(records).await;
+    let path = format!("/01/{GTIN}/21/SN-1");
+
+    // The linkset holds a `pip` link for each level, identical but for their target.
+    let body = linkset(&app, &path).await;
+    assert_eq!(hrefs(&body, PIP).len(), 2);
+
+    for requested in ["gs1:pip", "gs1:dpp"] {
+        let answer = fetch(&app, &format!("{path}?linkType={requested}")).await;
+        assert_eq!(answer.status, StatusCode::TEMPORARY_REDIRECT, "{requested}");
+        let target = answer.header("location").split('?').next().unwrap();
+        assert_eq!(target, format!("{BASE}/dpp/unit-1"), "{requested}");
+    }
 }

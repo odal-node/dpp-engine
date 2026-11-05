@@ -119,9 +119,20 @@ deviation; each is written down so a later reader does not have to rediscover it
   it the way a label carrying less would be read (2.5.10, rule 4). A level whose
   passport is withdrawn adds no link. A level the vault cannot answer fails the
   request.
-- **One link per type.** There are no languages and no contexts to choose between,
-  so `gs1:defaultLinkMulti`, `Accept-Language` matching and `300 Multiple Choices`
-  are not used, and the description file declares no context values (criterion 20).
+- **No language or context to choose between.** A passport has no language
+  variants or contexts here, so `gs1:defaultLinkMulti` and `Accept-Language`
+  matching are not used, and the description file declares no context values
+  (criterion 20).
+- **Several levels of one link type redirect to the nearest, and never return a
+  `300`.** A request that names a serial or a lot, with a passport on record at more
+  than one level, has several `pip` and `dpp` links in its linkset whose attributes
+  are identical. The standard says a resolver that cannot tell which is best
+  *should* answer `300 Multiple Choices` (2.6.3), and also allows any deterministic
+  answer. This one redirects to the nearest level, the record a scan of that label
+  ought to reach. GS1's test page grades the missing `300` a **warning**, not a
+  failure, and only for a link whose request names more than the GTIN.
+  `several_levels_of_one_link_type_redirect_to_the_nearest_and_never_return_a_300`
+  pins it.
 - **The `gs1:` link types offered are `pip`, `dpp` and `defaultLink`**, all three
   in the GS1 Web Vocabulary's list of link types read on 2026-11-05. A request for
   any other link type is a `404`, including `linkType=all`, the alias an earlier
@@ -148,6 +159,24 @@ the ones the suite leaves out) against GS1's two JSON schemas, kept in
 `crates/dpp-resolver/tests/fixtures/gs1/`, in process and in CI. The linkset
 schema is identical to the Apache-2.0 copy in `gs1/linkset`. The description-file
 schema is as `ref.gs1.org` serves it and carries no licence statement.
+
+**The page's requests are replayed, not run.** Its source says what it asks and what
+it looks for, so `the_requests_gs1_s_test_page_makes_are_answered_as_it_expects`
+sends the same requests over a real socket with the headers its helper sends (an
+`OPTIONS` from its origin, the link with `/foo` after it, a trailing slash, a query
+string, `linkType=linkset`, the `Accept` probe that also sends `linkType=all`, one
+request per link type the linkset lists, and a link type it does not). That is an
+emulation read from source and can be wrong about it: it stands in until the page is
+run against a deployed node.
+
+Two things the page does that a deployment must meet, from reading it:
+
+- It looks for the default link under an `anchor` equal to the address it was given,
+  and this resolver writes `RESOLVER_BASE_URL` and the GTIN padded to 14 digits. So
+  `RESOLVER_BASE_URL` must be exactly the origin the page is pointed at, and the page
+  should be given a GTIN-14, or it finds no default link.
+- It reads a link type as `gs1:` when its URI starts `https://ref.gs1.org/voc/`, which
+  is the form this resolver writes.
 
 Running GS1's suite against a deployed node, before a claim is made, is still worth
 doing once; it is not a gate, because it cannot be one.
