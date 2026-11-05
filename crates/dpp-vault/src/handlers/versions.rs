@@ -19,7 +19,11 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::{domain::service::VersionAt, middleware::auth::AuthContext, state::AppState};
+use crate::{
+    domain::service::{StateAt, VersionAt},
+    middleware::auth::AuthContext,
+    state::AppState,
+};
 
 use super::error::{internal_error, not_found_error, parse_passport_id, validation_error};
 
@@ -93,20 +97,30 @@ pub async fn versions_handler(
             let Ok(at) = chrono::DateTime::parse_from_rfc3339(&raw) else {
                 return validation_error("asOf must be an RFC 3339 timestamp.");
             };
-            match state
+            let version = match state
                 .service
-                .version_at(passport_id, at.with_timezone(&chrono::Utc))
+                .state_at(passport_id, at.with_timezone(&chrono::Utc))
                 .await
             {
+                Ok(StateAt::Known { version, .. }) => version,
+                // A moment no change has reached yet could still be stamped by
+                // one, so answering it now could be contradicted later.
+                Ok(StateAt::NotYet) => {
+                    return validation_error(
+                        "asOf must not be in the future: nothing is yet its state then.",
+                    );
+                }
+                Err(dpp_domain::DppError::NotFound(_)) => return not_found_error("DPP not found."),
+                Err(e) => return internal_error(e),
+            };
+            match version {
                 // A one-element array, not the bare object. `200` is one shape
                 // on this route whether `asOf` was given or not, so a client
                 // parses the body the same way either way and the description
                 // has one schema rather than a `oneOf` the caller has to
                 // discriminate by recalling what it sent.
-                Ok(VersionAt::Found(version)) => {
-                    (StatusCode::OK, Json(vec![version])).into_response()
-                }
-                Ok(VersionAt::Live) => not_found_error(
+                VersionAt::Found(version) => (StatusCode::OK, Json(vec![version])).into_response(),
+                VersionAt::Live => not_found_error(
                     "No archived version covers that moment — the passport had not changed by \
                      then, or the moment is after its most recent change. The live record is \
                      the state at that time.",
@@ -114,12 +128,10 @@ pub async fn versions_handler(
                 // A different 404, and the wording is the whole point: the
                 // sentence above would tell a caller that the live record is the
                 // state at a moment when there was no record at all.
-                Ok(VersionAt::BeforeItExisted) => not_found_error(
+                VersionAt::BeforeItExisted => not_found_error(
                     "That moment is before this passport was created, so nothing was its state \
                      then — not the archive, and not the live record either.",
                 ),
-                Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
-                Err(e) => internal_error(e),
             }
         }
     }

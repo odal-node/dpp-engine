@@ -564,6 +564,13 @@ async fn an_unusable_credential_is_a_problem_response() {
         resp.headers().contains_key("www-authenticate"),
         "a 401 must tell the caller which scheme failed"
     );
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json"),
+        "an RFC 9457 body is served as one"
+    );
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["status"], json!(401));
     assert!(
@@ -1043,6 +1050,25 @@ async fn the_moments_no_version_covers_are_told_apart() {
             .is_some_and(|d| d.contains("must not be in the future")),
         "{body}"
     );
+    // And alike for a passport that does not exist, which a draft is not told
+    // apart from: the future is refused before anything is looked up.
+    let absent = "0190a9f0-dead-7abc-8def-0123456789ab";
+    let on_absent =
+        refusal(get_as_of(&base, absent, Utc::now() + Duration::days(1), Some(&header)).await)
+            .await;
+    assert_eq!(on_absent, (status, body), "the future, for no passport");
+    // The operator's route measures the future the same way.
+    let resp = client
+        .get(&format!(
+            "/api/v1/dpp/{id}/versions?asOf={}",
+            rfc3339(Utc::now() + Duration::days(1))
+        ))
+        .await;
+    assert_eq!(
+        resp.status(),
+        422,
+        "the operator's route, asked of the future"
+    );
 
     let resp = reqwest::Client::new()
         .get(format!("{base}/credential/dpp/{id}?asOf=yesterday"))
@@ -1146,4 +1172,106 @@ async fn a_moment_the_passport_was_a_draft_or_suspended_is_not_served() {
     assert_eq!(resp.status(), 200, "suspend failed");
     let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
     assert_eq!(resp.status(), 410, "a moment the passport was suspended");
+}
+
+/// A suspension that has since been lifted is still `410` for a moment inside
+/// it, answered by the archived version rather than the live record.
+///
+/// The test above reads its suspension from the live record. Here the passport
+/// is published again before the read, so the live record is published and only
+/// the version the second publish archived can say that the moment fell inside a
+/// suspension.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_moment_inside_a_lifted_suspension_is_still_gone() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+    let id = publish_battery(&client).await;
+
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "suspend failed");
+    let while_suspended = Utc::now();
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/publish"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "publishing again failed");
+
+    let resp = get_with_credential(&base, &id, Some(&header)).await;
+    assert_eq!(resp.status(), 200, "the passport is live again");
+    let (status, body) = refusal(get_as_of(&base, &id, while_suspended, Some(&header)).await).await;
+    assert_eq!(status, 410, "a moment inside the suspension: {body}");
+}
+
+/// A moment before the first publish is not served, even when no draft version
+/// was archived to say the passport was a draft then.
+///
+/// A publish archives the draft it replaces, so the archive usually answers this
+/// itself. A record stored as published with nothing archived before it has no
+/// such version, and the live record would answer for a moment it was not yet
+/// published. The record is put in that shape directly, past the store, since no
+/// route of this build leaves one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_moment_before_the_first_publish_is_not_served_without_a_draft_version() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            json!({
+                "productName": "Stored Published",
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                    "batteryChemistry": "LFP",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 48.0,
+                    "nominalCapacityAh": 100.0,
+                    "expectedLifetimeCycles": 3000,
+                    "co2ePerUnitKg": 45.2,
+                    "ratedCapacityKwh": 4.8
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201, "create failed");
+    let created: Value = resp.json().await.unwrap();
+    let id = created["id"].as_str().expect("created id").to_owned();
+    let before_publish = Utc::now();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let published_at = Utc::now();
+
+    // Published from here on, by the stored record alone: no change was made
+    // through the store, so nothing is archived.
+    dpp_dal::pg::sqlx::query(
+        "UPDATE odal.passport
+            SET doc = doc || jsonb_build_object('status', 'published', 'publishedAt', $2::text)
+          WHERE id = $1::uuid",
+    )
+    .bind(&id)
+    .bind(published_at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+    .execute(pg.dal.pool())
+    .await
+    .expect("store the passport as published");
+
+    let (status, body) = refusal(get_as_of(&base, &id, before_publish, Some(&header)).await).await;
+    assert_eq!(status, 404, "a moment before the first publish: {body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("No published version")),
+        "{body}"
+    );
 }

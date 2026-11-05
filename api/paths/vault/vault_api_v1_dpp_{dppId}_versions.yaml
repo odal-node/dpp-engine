@@ -58,6 +58,11 @@ get:
         a version at a time before the record existed is a question with no true
         answer, and answering with the initial one would assert that the passport
         existed then.
+
+        A moment in the future is `422`, by the clock that stamps each version:
+        a change not yet made could still be the state then. Any other moment is
+        answered the same way whenever it is asked, since the version is read
+        after any change in progress on the passport has committed.
       schema:
         type: string
         format: date-time
@@ -92,7 +97,7 @@ get:
     '400':
       $ref: ../../components/responses/BadRequest.yaml
     '422':
-      description: '`asOf` was given and is not an RFC 3339 timestamp.'
+      description: '`asOf` was given and is not an RFC 3339 timestamp, or is in the future.'
       content:
         application/problem+json:
           schema:

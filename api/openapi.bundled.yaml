@@ -522,6 +522,11 @@ paths:
             a version at a time before the record existed is a question with no true
             answer, and answering with the initial one would assert that the passport
             existed then.
+
+            A moment in the future is `422`, by the clock that stamps each version:
+            a change not yet made could still be the state then. Any other moment is
+            answered the same way whenever it is asked, since the version is read
+            after any change in progress on the passport has committed.
           schema:
             type: string
             format: date-time
@@ -546,7 +551,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: '`asOf` was given and is not an RFC 3339 timestamp.'
+          description: '`asOf` was given and is not an RFC 3339 timestamp, or is in the future.'
           content:
             application/problem+json:
               schema:
@@ -3216,8 +3221,8 @@ paths:
         is the same bytes for every version of a published passport, and serving it
         for a past instant would answer a question about the past with the present
         passport. A node that cannot verify credentials answers `401` too, and says
-        so. Both are decided before any version is read, and a credential presented
-        against a passport it does not cover is recorded like any other.
+        so. Both are decided before any version is served, and a credential
+        presented against a passport it does not cover is recorded like any other.
 
         A moment after the passport's last change is answered by the live record,
         which is the state at that time. A moment before the passport was created
@@ -3225,9 +3230,16 @@ paths:
         is served on the terms a live read is: a moment the passport was a draft is
         `404`, and one it was suspended `410`.
 
-        A read of a past version is recorded to the audit trail with the instant
+        The same moment is answered the same way whenever it is asked. The live
+        record and the version are read together, after any change in progress on
+        the passport has committed, and the future is measured by the clock that
+        stamps each version, so no later change can land on a moment already
+        answered.
+
+        A past version served is recorded to the audit trail with the instant
         asked for (`asOf`) and the archived version that answered it
-        (`archivedVersionId`, `null` when the live record did).
+        (`archivedVersionId`, `null` when the live record did), as is a credential
+        refused one for scope.
       tags:
         - Credentialed Access
       security: []

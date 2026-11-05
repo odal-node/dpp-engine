@@ -86,9 +86,9 @@
 //! public proof is frozen at publish, so it is the same bytes for every version of
 //! a published record, and serving it for `asOf` would answer a question about the
 //! past with the present passport — and open an unauthenticated way to read when a
-//! record was published. Both refusals are made before any version is read, and a
-//! credential presented against a passport it does not cover is recorded like any
-//! other.
+//! record was published. Both refusals are made before any version is served, and
+//! a credential presented against a passport it does not cover is recorded like
+//! any other.
 //!
 //! **Which moment answers.** A moment inside the archive is answered by the
 //! version current then; one after the last change, by the live record, which is
@@ -96,6 +96,13 @@
 //! was its state: `404` and `422`. A version is served on the terms the live read
 //! serves a passport on: one that was never published is `404` and one that was
 //! suspended at that moment `410`.
+//!
+//! **The same moment answers the same way whenever it is asked.** The live record
+//! and the version are read together under the passport's lock, and "the future"
+//! is measured by the database's clock, the one that stamps each version when its
+//! change takes that lock. A change in progress is waited for, and one that starts
+//! later stamps a moment after the read, so no change can land on a moment that
+//! has already been answered (`PassportVersionStore::state_at`).
 
 use axum::{
     extract::{Path, State},
@@ -111,7 +118,7 @@ use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::PassportAuditEntry;
 
-use crate::domain::service::{VersionAt, archived_passport};
+use crate::domain::service::{StateAt, VersionAt, archived_passport};
 use crate::extract::Query;
 use crate::middleware::credential::{
     CredentialOutcome, OutOfScope, VerifiedCredential, credential_required,
@@ -264,7 +271,7 @@ fn scope_of(
 /// Read the passport as it stood at `raw_as_of`. See "Reading a past version" in
 /// the module documentation for what is served and to whom.
 ///
-/// The order is the design. A caller is refused before any version is read, and
+/// The order is the design. A caller is refused before any version is served, and
 /// the live record is checked before the credential's scope is, so a reader whose
 /// credential does not cover a passport learns nothing about a draft that a
 /// reader with no credential at all would not.
@@ -288,19 +295,31 @@ async fn read_as_of(
         return validation_error("asOf must be an RFC 3339 timestamp.");
     };
     let at = at.with_timezone(&Utc);
-    if at > Utc::now() {
-        return validation_error("asOf must not be in the future: nothing is yet its state then.");
-    }
 
-    // The live record decides whether there is anything here to ask about. A draft
-    // is told apart from a missing passport by neither status nor sentence.
-    let live = match state.service.find_by_id_any_status(passport_id).await {
-        Ok(Some(p)) if !never_published(&p) => p,
-        Ok(_) | Err(dpp_domain::DppError::NotFound(_)) => {
+    // The live record and the version current at `at`, read together under the
+    // passport's lock, so one moment is answered one way however a change
+    // committing nearby falls. Read, not yet used: nothing below serves either
+    // before the refusals have been made.
+    let (live, version) = match state.service.state_at(passport_id, at).await {
+        Ok(StateAt::Known { live, version }) => (*live, version),
+        // By the store's clock, which stamps the versions, and before whether the
+        // passport exists, so the answer is the same for a passport and for none.
+        Ok(StateAt::NotYet) => {
+            return validation_error(
+                "asOf must not be in the future: nothing is yet its state then.",
+            );
+        }
+        Err(dpp_domain::DppError::NotFound(_)) => {
             return not_found_error("DPP not found or not published.");
         }
         Err(e) => return internal_error(e),
     };
+
+    // The live record decides whether there is anything here to ask about. A draft
+    // is told apart from a missing passport by neither status nor sentence.
+    if never_published(&live) {
+        return not_found_error("DPP not found or not published.");
+    }
 
     // Scoped against the live record, which is the passport whose restrictions
     // the clause applies to an archived attribute. A published record's group and
@@ -332,20 +351,26 @@ async fn read_as_of(
         return refusal;
     }
 
-    let (record, version) = match state.service.version_at(passport_id, at).await {
-        Ok(VersionAt::Found(v)) => match archived_passport(&v) {
-            Ok(p) => (p, Some(v.id)),
-            Err(e) => return internal_error(e),
-        },
-        // Nothing archived covers it, so the live record is the state then.
-        Ok(VersionAt::Live) => (live, None),
-        Ok(VersionAt::BeforeItExisted) => {
+    let (record, version) = match version {
+        VersionAt::BeforeItExisted => {
             return not_found_error(
                 "That moment is before this passport was created, so nothing was its state then.",
             );
         }
-        Err(dpp_domain::DppError::NotFound(_)) => return not_found_error("DPP not found."),
-        Err(e) => return internal_error(e),
+        // Before its first publish the passport was a draft, which no credential
+        // reads. A publish archives the draft it replaces, so the version says so
+        // too, but not for a passport stored published with no draft before it:
+        // the archive has nothing for that time, and the live record would answer.
+        // `published_at` is set by the first publish only.
+        _ if live.published_at.is_some_and(|first| at < first) => {
+            return not_found_error("No published version of this passport covers that moment.");
+        }
+        VersionAt::Found(v) => match archived_passport(&v) {
+            Ok(p) => (p, Some(v.id)),
+            Err(e) => return internal_error(e),
+        },
+        // Nothing archived covers it, so the live record is the state then.
+        VersionAt::Live => (live, None),
     };
 
     match record.status {
@@ -378,7 +403,7 @@ struct PastRead {
     /// The instant asked for.
     as_of: DateTime<Utc>,
     /// The archived version that answered, or `None` when the live record did, or
-    /// when the read was refused before any version was looked up.
+    /// when the read was refused for the credential's scope.
     version: Option<uuid::Uuid>,
 }
 

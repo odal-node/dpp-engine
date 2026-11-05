@@ -45,7 +45,7 @@ pub mod registry_abandon;
 pub mod registry_handle;
 /// Public: the versions route has to tell apart the two ways of having no
 /// archived version, because only one of them is answered by the live record.
-pub use query::{LabelLevel, LabelResolution, VersionAt, archived_passport};
+pub use query::{LabelLevel, LabelResolution, StateAt, VersionAt, archived_passport};
 /// Public: the seal route and the evidence dossier both need `seal_digest` to
 /// state which digest a seal covers.
 pub mod seal;

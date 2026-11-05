@@ -460,10 +460,10 @@ fn reject(detail: &str) -> Response {
             axum::http::header::WWW_AUTHENTICATE,
             CREDENTIAL_HEADER.to_ascii_lowercase(),
         )],
-        axum::Json(
-            http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                .with_detail(detail),
-        ),
+        // The `Problem` itself, not wrapped in `Json`, which would serve it as
+        // `application/json` where RFC 9457 and this route's contract say
+        // `application/problem+json`.
+        http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized").with_detail(detail),
     )
         .into_response()
 }
