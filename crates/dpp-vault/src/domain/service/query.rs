@@ -12,7 +12,7 @@ use dpp_domain::{
 use dpp_types::audit::PassportAuditEntry;
 
 use super::{PassportService, claim::Claim};
-use crate::public_view::never_published;
+use crate::public_view::{never_published, retired_draft};
 
 impl PassportService {
     /// Fetch a passport by id regardless of status.
@@ -374,9 +374,16 @@ async fn carrier_serial_is_taken(
     // Superseded records are never a chain's head, and the head is either the
     // passport being replaced or a passport that holds the serial in its own
     // right. So ignoring them cannot hide a real holder.
-    Ok(holders
-        .iter()
-        .any(|p| Some(p.id) != replaces && p.status != PassportStatus::Superseded))
+    //
+    // A draft holds its serial from create, which is the point of asking here.
+    // One that was retired without being published does not: it answers no
+    // label, and retiring is the only way an operator closes a draft, so keeping
+    // its serial would leave the operator no way to attribute it again. A
+    // passport that was published and then retired still holds it, because the
+    // product carrying that label is still out there.
+    Ok(holders.iter().any(|p| {
+        Some(p.id) != replaces && p.status != PassportStatus::Superseded && !retired_draft(p)
+    }))
 }
 
 /// The refusal for `passport`, when a live passport outside its chain already
@@ -388,7 +395,9 @@ async fn carrier_serial_is_taken(
 /// both pass it, and two published holders of one label cannot be repaired:
 /// neither declares the other, and `supersedesId` is fixed at create. Drafts do
 /// not count here because a draft answers no label, so whichever of two drafts
-/// publishes first keeps the claim and the other stays a draft.
+/// publishes first keeps the claim and the other stays a draft. Nor does a draft
+/// that was retired without being published (see [`never_published`]): it
+/// answers no label either.
 ///
 /// The label is the one the passport prints, whatever its level. Asked by serial
 /// alone, as this used to be, a model or a batch passport was checked against
@@ -414,7 +423,8 @@ pub(super) async fn held_elsewhere(
         p.id != passport.id
             && Some(p.id) != passport.supersedes_id
             && p.supersedes_id != Some(passport.id)
-            && !matches!(p.status, PassportStatus::Draft | PassportStatus::Superseded)
+            && !never_published(p)
+            && p.status != PassportStatus::Superseded
     });
     Ok(held.then(|| claim.refusal()))
 }
@@ -1126,6 +1136,31 @@ mod label_resolution {
         assert!(taken(&repo, gtin(), "SN-1", None).await);
     }
 
+    /// A draft retired without being published answers no label, and retiring is
+    /// how an operator gives up on a draft, so it does not keep its serial for
+    /// ever. Core allows `Draft → Retired`, so the status alone is not enough.
+    #[tokio::test]
+    async fn a_retired_draft_does_not_hold_its_serial() {
+        let repo = InMemoryPassportRepo::default();
+        let closed = attributing("SN-1", PassportStatus::Retired);
+        assert!(closed.published_at.is_none(), "it was never published");
+        store(&repo, &[&closed]).await;
+
+        assert!(!taken(&repo, gtin(), "SN-1", None).await);
+    }
+
+    /// A passport that was published and then retired is another matter: the
+    /// product its label was printed on is still out there.
+    #[tokio::test]
+    async fn a_retired_published_passport_still_holds_its_serial() {
+        let repo = InMemoryPassportRepo::default();
+        let mut retired = attributing("SN-1", PassportStatus::Retired);
+        retired.published_at = Some(Utc::now());
+        store(&repo, &[&retired]).await;
+
+        assert!(taken(&repo, gtin(), "SN-1", None).await);
+    }
+
     /// The passport a new one replaces shares its serial by design: one label
     /// names the whole amendment chain, and the current record answers it.
     #[tokio::test]
@@ -1166,6 +1201,29 @@ mod label_resolution {
     /// The field error publish would answer with, when it would refuse.
     async fn refusal(repo: &InMemoryPassportRepo, passport: &Passport) -> Option<FieldError> {
         held_elsewhere(repo, passport).await.expect("checks")
+    }
+
+    /// A draft retired without being published answers no label, so it holds none
+    /// against the passport going live. One that was published still does.
+    #[tokio::test]
+    async fn a_retired_draft_does_not_hold_the_label_against_a_publish() {
+        let repo = InMemoryPassportRepo::default();
+        let closed = attributing("SN-1", PassportStatus::Retired);
+        let going_live = attributing("SN-1", PassportStatus::Draft);
+        store(&repo, &[&closed, &going_live]).await;
+
+        assert!(!live_elsewhere(&repo, &going_live).await);
+    }
+
+    #[tokio::test]
+    async fn a_retired_published_passport_still_holds_the_label_against_a_publish() {
+        let repo = InMemoryPassportRepo::default();
+        let mut retired = attributing("SN-1", PassportStatus::Retired);
+        retired.published_at = Some(Utc::now());
+        let going_live = attributing("SN-1", PassportStatus::Draft);
+        store(&repo, &[&retired, &going_live]).await;
+
+        assert!(live_elsewhere(&repo, &going_live).await);
     }
 
     /// Two drafts that both passed create's check, because their creates arrived
