@@ -71,8 +71,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   label they stand for, and the linkset names the uncompressed link. A trailing
   slash on a Digital Link is tolerated, `OPTIONS` is answered, and every response
   carries CORS headers. All 25 criteria of the standard's section 5 are assessed
-  in `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`, one test each in
-  `crates/dpp-resolver/tests/gs1_conformance.rs`, and the standards register has
+  in `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`, with tests in
+  `crates/dpp-resolver/tests/gs1_conformance.rs` for every criterion except 3
+  (TLS, met by deployment), and the standards register has
   its first row for a non-IETF standard. **Conformance is not claimed:** SGTIN+,
   DSGTIN+, SGTIN++ and DSGTIN++, and every EPC scheme for a key the resolver does
   not serve, are not decoded, and the register says so. (#477)

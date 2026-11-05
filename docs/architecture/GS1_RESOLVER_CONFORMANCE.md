@@ -21,7 +21,7 @@ be a claim nothing backs, which is what the wording this record replaces did.
 | Class claimed for | A GS1-conformant resolver for the primary keys it declares |
 | Scope | The GTIN (AI 01) with its qualifiers AI 22, AI 10, AI 21 and AI 235, at `/01/…`, and the description file at `/.well-known/gs1resolver`. No other primary key is served, and the description file says so |
 | Deviation | Criterion 5: only the SGTIN-96 and SGTIN-198 EPC schemes are decoded (D1 below) |
-| Evidence | `crates/dpp-resolver/tests/gs1_conformance.rs`, one test per criterion, named in the table below |
+| Evidence | `crates/dpp-resolver/tests/gs1_conformance.rs`, tests for every criterion except 3 (TLS, met by deployment), named in the table below |
 
 `crates/dpp-node/tests/gs1_resolver_conformance.rs` holds this document to its
 own table: every row is numbered 1 to 25 in order, every test a row names exists,
@@ -80,7 +80,9 @@ Not decoded: **SGTIN+, DSGTIN+, SGTIN++ and DSGTIN++**, the Tag Data Standard 2.
 schemes for a GTIN, whose serials take any of six encodings and which can carry a
 date or a domain name; and every scheme for a primary key this resolver does not
 serve (SSCC, GRAI, GIAI and the rest). A link of one of these answers `404`, the
-answer its decoded URI would get from a resolver that does not serve that key. For
+answer its decoded URI would get from a resolver that does not serve that key. A
+link that cannot be decompressed at all (text that is not validly encoded, an EPC
+that ends early, or bytes after its last field) answers `400`. For
 the 2.x GTIN schemes that is wrong: they name a GTIN the resolver does serve, so
 the answer ought to be a resolution. Nothing else about the resolver changes when
 they are added, and `an_epc_scheme_this_resolver_does_not_decode_is_a_404` fails
@@ -119,10 +121,12 @@ deviation; each is written down so a later reader does not have to rediscover it
   it the way a label carrying less would be read (2.5.10, rule 4). A level whose
   passport is withdrawn adds no link. A level the vault cannot answer fails the
   request.
-- **No language or context to choose between.** A passport has no language
-  variants or contexts here, so `gs1:defaultLinkMulti` and `Accept-Language`
-  matching are not used, and the description file declares no context values
-  (criterion 20).
+- **No language or context to choose between.** A redirect names one target, so
+  there is nothing for `Accept-Language` or `context` to choose between. A linkset
+  can hold several `pip` and `dpp` links, one for each passport it lists, but they
+  carry no language or context attribute. So `gs1:defaultLinkMulti` and
+  `Accept-Language` matching are not used, and the description file declares no
+  context values (criterion 20).
 - **Several levels of one link type redirect to the nearest, and never return a
   `300`.** A request that names a serial or a lot, with a passport on record at more
   than one level, has several `pip` and `dpp` links in its linkset whose attributes

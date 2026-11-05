@@ -45,6 +45,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     domain::epc::{self, EpcError},
     infra::did,
+    router::acceptable_ranges,
     state::AppState,
 };
 
@@ -85,8 +86,8 @@ pub async fn resolve_by_gtin_handler(
 /// of order, repeated, not ones a GTIN takes, or empty; it fails the standard's
 /// validity tests, which it answers `400` (2.4.1), and it is not looked up. A
 /// single segment that starts `eh` or `ex` may be a compressed Digital Link
-/// (2.3) and is decompressed. Everything else is the plain `404` the router
-/// always gave.
+/// (2.3) and is decompressed. Everything else is a `404`, as the router always
+/// gave, with the problem document the other public routes answer with.
 pub async fn unserved_path_handler(
     State(state): State<AppState>,
     method: Method,
@@ -112,15 +113,22 @@ pub async fn unserved_path_handler(
                 Ok(link) => resolve_link(&state, link, &uri, &headers).await,
                 Err(error) => invalid_path(&error),
             },
-            // A recognised scheme with a field that cannot be right is a request
-            // that fails validation. Anything else is a path no Digital Link
-            // this resolver reads has, and gets what any such path gets.
-            Err(EpcError::BadField(_)) => gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL),
-            Err(_) => StatusCode::NOT_FOUND.into_response(),
+            // A compressed link that cannot be decompressed fails the standard's
+            // validity tests, so it is a `400` (2.4.1): text that is not validly
+            // encoded, an EPC that ends before its fields do, or a field that
+            // cannot be right.
+            Err(EpcError::BadEncoding | EpcError::Truncated | EpcError::BadField(_)) => {
+                gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL)
+            }
+            // A scheme this resolver does not decode is a valid link to something
+            // it holds nothing about, which is a `404`.
+            Err(EpcError::UnsupportedScheme(_) | EpcError::NotCompressed) => {
+                gtin_problem(StatusCode::NOT_FOUND, NO_SUCH_PATH)
+            }
         };
     }
 
-    StatusCode::NOT_FOUND.into_response()
+    gtin_problem(StatusCode::NOT_FOUND, NO_SUCH_PATH)
 }
 
 /// The one path segment of `/eh…` or `/ex…`, without a trailing slash.
@@ -168,6 +176,14 @@ const INVALID_LABEL: &str = "The path is not a valid GS1 Digital Link.";
 /// What the GS1 route says when a link type is asked for that the linkset does
 /// not offer (2.6.2).
 const NO_SUCH_LINK_TYPE: &str = "No link of the requested type is available for this identifier.";
+
+/// What the resolver says of a path nothing serves, or a compressed link of a
+/// scheme it does not decode.
+const NO_SUCH_PATH: &str = "Nothing is served at this path.";
+
+/// What the GS1 route says when its query string cannot be read, which is a
+/// `linkType` given more than once.
+const INVALID_QUERY: &str = "The query string is not valid: linkType may be given once.";
 
 /// The detail to serve alongside `status`.
 ///
@@ -273,22 +289,42 @@ async fn resolve_link(
     };
     let (batch, serial) = (link.batch(), link.serial());
 
+    // What the request asks for is settled before the passport is read. The link
+    // types offered are a fact about this resolver and not about the passport, so
+    // one it does not offer is answered `404` without asking the vault: an outage
+    // of the vault or of the DID must not turn the documented answer into a gateway
+    // error. A `linkType` given twice cannot be read, and is a `400`, not a request
+    // for no link type at all.
+    let link_type = match Query::<ByGtinQuery>::try_from_uri(uri) {
+        Ok(query) => query.0.link_type.filter(|lt| !lt.is_empty()),
+        Err(_) => return gtin_problem(StatusCode::BAD_REQUEST, INVALID_QUERY),
+    };
+
+    // Linkset request: ?linkType=linkset OR Accept: application/linkset+json,
+    // read by media range so that `;q=0` refuses it (RFC 9110, 12.5.1).
+    let wants_linkset = link_type.as_deref() == Some("linkset")
+        || headers
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|accept| {
+                acceptable_ranges(accept)
+                    .iter()
+                    .any(|media| media == "application/linkset+json")
+            });
+    // A named link type is redirected to when the linkset offers it, and is a
+    // `404` when it does not (2.6.2). No link type is the default link.
+    if !wants_linkset
+        && let Some(requested) = link_type.as_deref()
+        && offered_link_type(requested).is_none()
+    {
+        return gtin_problem(StatusCode::NOT_FOUND, NO_SUCH_LINK_TYPE);
+    }
+
     let id = match fetch_verified_id(state, &gtin, batch, serial).await {
         Ok(id) => id,
         Err((status, detail)) => return gtin_problem(status, detail),
     };
 
-    let link_type = Query::<ByGtinQuery>::try_from_uri(uri)
-        .ok()
-        .and_then(|q| q.0.link_type)
-        .filter(|lt| !lt.is_empty());
-
-    // Linkset request: ?linkType=linkset OR Accept: application/linkset+json
-    let wants_linkset = link_type.as_deref() == Some("linkset")
-        || headers
-            .get(header::ACCEPT)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|a| a.contains("application/linkset+json"));
     if wants_linkset {
         let mut ids = vec![id];
         match coarser_ids(state, &gtin, batch, serial, &ids[0]).await {
@@ -311,13 +347,6 @@ async fn resolve_link(
             .into_response();
     }
 
-    // A named link type is redirected to when the linkset offers it, and is a
-    // `404` when it does not (2.6.2). No link type is the default link.
-    if let Some(requested) = link_type.as_deref()
-        && offered_link_type(requested).is_none()
-    {
-        return gtin_problem(StatusCode::NOT_FOUND, NO_SUCH_LINK_TYPE);
-    }
     redirect(&format!("{base_url}/dpp/{id}"), uri.query())
 }
 

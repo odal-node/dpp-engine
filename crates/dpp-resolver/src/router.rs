@@ -190,7 +190,7 @@ async fn content_negotiation_handler(
 ///
 /// Weights are used only to exclude. Ranking the survivors is `DppMediaType`'s
 /// job for the html/json split, and this route's third type is chosen by name.
-fn acceptable_ranges(accept: &str) -> Vec<String> {
+pub(crate) fn acceptable_ranges(accept: &str) -> Vec<String> {
     accept
         .split(',')
         .filter_map(|entry| {

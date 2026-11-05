@@ -29,7 +29,7 @@ get:
     A compressed link that holds an EPC binary string is read too, at the root
     of this host: `/eh…` (hexadecimal) or `/ex…` (URI-safe base 64). Only the
     SGTIN-96 and SGTIN-198 schemes are decoded; a link of any other scheme
-    answers `404`.
+    answers `404`, and one that cannot be decompressed answers `400`.
   tags:
     - Public Resolver
   security: []
@@ -73,7 +73,7 @@ get:
         The path is not a valid GS1 Digital Link: the GTIN is not digits, has
         the wrong length or a wrong check digit, or a qualifier is out of order,
         repeated, longer than its Application Identifier allows or outside
-        GS1 character set 82.
+        GS1 character set 82, or `linkType` is given more than once.
     '404':
       description: No published DPP for this GTIN, or a link type the linkset does not offer.
     '410':

@@ -1,10 +1,12 @@
 //! The resolver description file, served at `/.well-known/gs1resolver`.
 //!
 //! The GS1 Conformant Resolver Standard asks every conformant resolver to publish
-//! one (GS1-CRSV1, section 3), and a client can tell a resolver that claims to
-//! follow the standard from one that does not by whether it is there. It names the
-//! root the resolver answers under and the primary keys it supports, and must
-//! validate against GS1's description-file schema.
+//! one (GS1-CRSV1, section 3). It is a discovery document: it names the root the
+//! resolver answers under and the primary keys it supports, and a client reads it
+//! to learn what to ask. **Publishing it establishes no conformance.** Whether this
+//! resolver conforms is a separate question, answered in
+//! `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`, and the file must validate
+//! against GS1's description-file schema whatever the answer is.
 
 use axum::{Json, extract::State};
 use serde::Serialize;

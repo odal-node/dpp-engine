@@ -139,13 +139,149 @@ fn test_sources() -> String {
     files
         .iter()
         .filter_map(|f| fs::read_to_string(f).ok())
+        .map(|text| code_only(&text))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Whether a function called `name` is declared in `sources`.
+/// `source` with every comment, and the inside of every string and character
+/// literal, blanked to spaces, so that what is left is code and a test named in
+/// a comment or quoted in a string is not found. Line breaks are kept, so a
+/// function and the attributes above it stay on the lines they were.
+fn code_only(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            // A line comment, to the end of the line.
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            // A block comment, which Rust lets nest.
+            let mut depth = 0;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(chars[i]));
+                    i += 1;
+                }
+            }
+        } else if c == 'r'
+            && matches!(next, Some('"' | '#'))
+            && raw_string_hashes(&chars, i).is_some()
+        {
+            // A raw string: r"..." or r#"..."#, with as many hashes as it opens.
+            let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+            let open = i + 2 + hashes;
+            let close: Vec<char> = std::iter::once('"')
+                .chain(std::iter::repeat_n('#', hashes))
+                .collect();
+            let mut end = open;
+            while end < chars.len() && chars[end..].get(..close.len()) != Some(&close[..]) {
+                end += 1;
+            }
+            let end = (end + close.len()).min(chars.len());
+            out.extend(chars[i..end].iter().map(|&c| blank(c)));
+            i = end;
+        } else if c == '"' {
+            // A string, to its closing quote, past any escaped one.
+            out.push(' ');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    out.push(' ');
+                    i += 1;
+                }
+                out.push(blank(chars[i]));
+                i += 1;
+            }
+            out.push(' ');
+            i += 1;
+        } else if c == '\'' {
+            // A character literal, and not a lifetime: `'x'` or `'\n'`.
+            let literal = match (chars.get(i + 1), chars.get(i + 2), chars.get(i + 3)) {
+                (Some('\\'), Some(_), Some('\'')) => Some(4),
+                (Some(a), Some('\''), _) if *a != '\'' => Some(3),
+                _ => None,
+            };
+            match literal {
+                Some(len) => {
+                    out.extend(std::iter::repeat_n(' ', len));
+                    i += len;
+                }
+                None => {
+                    out.push(c);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The number of `#` a raw string starting at `chars[at]` (an `r`) opens with, if
+/// it is a raw string at all.
+fn raw_string_hashes(chars: &[char], at: usize) -> Option<usize> {
+    // `r` must not end an identifier, as in `for"`.
+    if at > 0 && (chars[at - 1].is_alphanumeric() || chars[at - 1] == '_') {
+        return None;
+    }
+    let hashes = chars[at + 1..].iter().take_while(|&&c| c == '#').count();
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+/// Whether a function called `name` is declared in `sources` as a test: an item
+/// that carries `#[test]`, or an attribute whose path ends in `test` such as
+/// `#[tokio::test]`, with nothing but other attributes and blank lines between.
+///
+/// `sources` is [`code_only`] text. A function that lost its attribute, or sits
+/// in a comment or a string, does not count, and nor does the name of one.
 fn declares(sources: &str, name: &str) -> bool {
-    sources.contains(&format!("fn {name}("))
+    let needle = format!("fn {name}(");
+    let lines: Vec<&str> = sources.lines().collect();
+    lines.iter().enumerate().any(|(at, line)| {
+        let declared = line.find(&needle).is_some_and(|col| {
+            // `fn` starts a word: `async fn`, `pub fn`, and not `my_fn`.
+            !line[..col]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        declared
+            && lines[..at]
+                .iter()
+                .rev()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .take_while(|l| l.starts_with("#["))
+                .any(is_a_test_attribute)
+    })
+}
+
+/// Whether an attribute line is `#[test]` or `#[<path>::test…]`.
+fn is_a_test_attribute(attribute: &str) -> bool {
+    let inner = attribute.trim_start_matches("#[");
+    let path = inner.split(['(', ']']).next().unwrap_or_default().trim();
+    path == "test" || path.ends_with("::test")
 }
 
 /// Everything wrong with the criteria table, as sentences.
@@ -384,6 +520,42 @@ fn a_claim_and_a_gap_cannot_both_stand() {
     assert!(verdict_problems(&recommended, "Yes").is_empty());
 
     assert!(!verdict_problems(&all_met(), "Maybe").is_empty());
+}
+
+#[test]
+fn only_a_live_test_function_counts_as_a_test() {
+    let found = |source: &str, name: &str| declares(&code_only(source), name);
+
+    // Live, in each spelling the resolver's tests use.
+    assert!(found("#[test]\nfn a_test() {}", "a_test"));
+    assert!(found("#[tokio::test]\nasync fn a_test() {}", "a_test"));
+    assert!(found(
+        "#[tokio::test(flavor = \"multi_thread\")]\n\n/// docs\n#[ignore]\npub async fn a_test() {}",
+        "a_test"
+    ));
+
+    // A declaration in a comment, a block comment or a string is not a test.
+    assert!(!found("// #[test]\n// fn a_test() {}", "a_test"));
+    assert!(!found("#[test]\n// fn a_test() {}", "a_test"));
+    assert!(!found("/* #[test]\nfn a_test() {} */", "a_test"));
+    assert!(!found("let s = \"#[test]\\nfn a_test() {}\";", "a_test"));
+    assert!(!found("let s = r#\"#[test]\nfn a_test() {}\"#;", "a_test"));
+
+    // A function with no test attribute, or whose attribute is another one.
+    assert!(!found("fn a_test() {}", "a_test"));
+    assert!(!found("#[inline]\nfn a_test() {}", "a_test"));
+    assert!(!found("#[test]\nfn other() {}\nfn a_test() {}", "a_test"));
+
+    // A name that only ends in the one asked for.
+    assert!(!found("#[test]\nfn not_a_test() {}", "a_test"));
+    assert!(!found("#[test]\nfn my_fn_a_test() {}", "a_test"));
+}
+
+#[test]
+fn a_lifetime_is_not_mistaken_for_a_character_literal() {
+    // If `'a` opened a character literal, the real test after it would be blanked.
+    let source = "fn f<'a>(x: &'a str) -> &'a str { x }\n#[test]\nfn a_test() {}";
+    assert!(declares(&code_only(source), "a_test"));
 }
 
 #[test]

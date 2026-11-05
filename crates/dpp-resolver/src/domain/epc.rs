@@ -126,6 +126,15 @@ fn sgtin(bits: &mut Bits<'_>, alphanumeric_serial: bool) -> Result<String, EpcEr
     if serial.is_empty() {
         return Err(EpcError::BadField("serial"));
     }
+    // Whatever follows the scheme's last field is padding: zero bits, and no more
+    // than the scheme's memory leaves. SGTIN-96 is six whole words and has none;
+    // SGTIN-198 ends ten bits short of its thirteenth. Anything else is bytes the
+    // scheme does not define, and a link carrying them is not the EPC it begins
+    // with, so it is refused and not resolved as that EPC.
+    let slack = if alphanumeric_serial { 10 } else { 0 };
+    if bits.remaining() > slack || !bits.rest_is_zero() {
+        return Err(EpcError::BadField("length"));
+    }
     Ok(format!("/01/{gtin}/21/{}", percent_encode(&serial)))
 }
 
@@ -233,6 +242,16 @@ impl<'a> Bits<'a> {
             self.position += 1;
         }
         Ok(value)
+    }
+
+    /// How many bits are left to read.
+    fn remaining(&self) -> usize {
+        self.bytes.len() * 8 - self.position
+    }
+
+    /// Whether every bit left to read is zero.
+    fn rest_is_zero(&self) -> bool {
+        (self.position..self.bytes.len() * 8).all(|at| self.bytes[at / 8] >> (7 - at % 8) & 1 == 0)
     }
 }
 
@@ -350,6 +369,44 @@ mod tests {
             decompress(&format!("eh{hex}")),
             Err(EpcError::BadField("serial"))
         );
+    }
+
+    #[test]
+    fn bytes_after_the_last_field_are_refused_not_ignored() {
+        // A valid SGTIN-96 followed by more bytes is not that EPC, and resolving
+        // it as that EPC would let a malformed link reach a passport.
+        let sgtin_96 = "eh30164596f40c0e5cbe991a83";
+        assert!(decompress(sgtin_96).is_ok());
+        assert_eq!(
+            decompress(&format!("{sgtin_96}00")),
+            Err(EpcError::BadField("length"))
+        );
+        assert_eq!(
+            decompress(&format!("{sgtin_96}ff")),
+            Err(EpcError::BadField("length"))
+        );
+        // The same in the base 64 spelling: a seventeenth character.
+        assert_eq!(
+            decompress("exMBZFlvQMDly-mRqDA"),
+            Err(EpcError::BadField("length"))
+        );
+    }
+
+    #[test]
+    fn an_sgtin_198_may_carry_only_zero_padding_up_to_its_word_boundary() {
+        // The standard's example is padded with ten zero bits, to 208.
+        let sgtin_198 = "eh3666c4409047e159b2c2bf100000000000000000000000000000";
+        assert!(decompress(sgtin_198).is_ok());
+        // Two more hex digits make twenty zero bits: past the boundary.
+        assert_eq!(
+            decompress(&format!("{sgtin_198}00")),
+            Err(EpcError::BadField("length"))
+        );
+        // A non-zero bit in the padding is not padding.
+        let mut dirty = sgtin_198.to_owned();
+        dirty.pop();
+        dirty.push('1');
+        assert_eq!(decompress(&dirty), Err(EpcError::BadField("length")));
     }
 
     #[test]

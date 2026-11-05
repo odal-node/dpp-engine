@@ -1181,3 +1181,107 @@ async fn several_levels_of_one_link_type_redirect_to_the_nearest_and_never_retur
         assert_eq!(target, format!("{BASE}/dpp/unit-1"), "{requested}");
     }
 }
+
+// ── Review findings, each pinned ────────────────────────────────────────────
+
+/// A compressed link that cannot be decompressed fails the standard's validity
+/// tests, so it is a `400` (2.4.1) and not a missing product: text that is not
+/// validly encoded, an EPC that ends before its fields do, and bytes after its
+/// last field. None of them is looked up.
+#[tokio::test]
+async fn a_compressed_link_that_cannot_be_decompressed_is_a_bad_request() {
+    let (app, records) = start(Records::model("model-1")).await;
+    for compressed in [
+        // Not validly encoded.
+        "/ehzz",
+        "/ex+/",
+        // Ends before its fields do.
+        "/eh3066c4",
+        // A valid SGTIN-96 with a byte it does not define after it.
+        "/eh30164596f40c0e5cbe991a83ff",
+    ] {
+        let answer = fetch(&app, compressed).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{compressed}");
+        assert_eq!(
+            answer.header("content-type"),
+            "application/problem+json",
+            "{compressed}"
+        );
+    }
+    assert!(records.asked.lock().unwrap().is_empty());
+}
+
+/// A path nothing serves, and a compressed link of a scheme that is not decoded,
+/// answer `404` with the problem document every other public route uses.
+#[tokio::test]
+async fn an_unserved_path_is_a_404_problem_document() {
+    let (app, _) = start(Records::model("model-1")).await;
+    for path in ["/not-a-route", "/eh3166c4409047e140075bcd15"] {
+        let answer = fetch(&app, path).await;
+        assert_eq!(answer.status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(
+            answer.header("content-type"),
+            "application/problem+json",
+            "{path}"
+        );
+    }
+}
+
+/// A `linkType` given twice cannot be read. It is a `400`, and not a request for
+/// no link type at all, which would redirect to the default.
+#[tokio::test]
+async fn a_link_type_given_twice_is_a_bad_request() {
+    let (app, _) = start(Records::model("model-1")).await;
+    let answer = fetch(
+        &app,
+        &format!("/01/{GTIN}?linkType=gs1:pip&linkType=gs1:dpp"),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    assert_eq!(answer.header("content-type"), "application/problem+json");
+}
+
+/// A link type the resolver does not offer is answered before the vault is asked:
+/// it is a fact about the resolver, so an outage of the vault leaves the documented
+/// `404` intact. One it does offer still needs the passport, and fails with the
+/// gateway error the outage is.
+#[tokio::test]
+async fn an_unoffered_link_type_is_a_404_even_when_the_vault_is_down() {
+    let app = router::build(AppState {
+        vault_base_url: "http://127.0.0.1:1".into(),
+        operator_did_url: String::new(),
+        resolver_base_url: BASE.into(),
+        cache: Cache::new_noop(),
+        http: reqwest::Client::new(),
+        scan_counter: None,
+    });
+    let unoffered = fetch(&app, &format!("/01/{GTIN}?linkType=gs1:nosuchlt")).await;
+    assert_eq!(unoffered.status, StatusCode::NOT_FOUND);
+    let offered = fetch(&app, &format!("/01/{GTIN}?linkType=gs1:pip")).await;
+    assert_eq!(offered.status, StatusCode::BAD_GATEWAY);
+}
+
+/// A client that refuses the linkset media type with `q=0` is not sent one, and
+/// gets the default redirect. The match is on the media range and not on the text
+/// of the header.
+#[tokio::test]
+async fn a_linkset_media_type_refused_with_q_0_is_not_served() {
+    let (app, _) = start(Records::model("model-1")).await;
+    let path = format!("/01/{GTIN}");
+    let refused = send(
+        &app,
+        "GET",
+        &path,
+        &[("accept", "application/linkset+json;q=0, text/html")],
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::TEMPORARY_REDIRECT);
+    let wanted = send(
+        &app,
+        "GET",
+        &path,
+        &[("accept", "text/html, application/linkset+json;q=0.5")],
+    )
+    .await;
+    assert_eq!(wanted.status, StatusCode::OK);
+}

@@ -32,7 +32,7 @@ Open `http://localhost:8003/dpp/<id>` in a browser for the HTML page.
 | Route | Answers |
 |---|---|
 | `GET /01/{gtin}`, plus the `/22/{variant}`, `/10/{batch}`, `/21/{serial}` and `/235/{extension}` forms | A `307` redirect to the passport the label names, handing the query string on. `?linkType=linkset` or `Accept: application/linkset+json` answers a linkset; a link type other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is `404`. Unknown AI combinations under `/01/` are `400` |
-| `GET /eh…`, `GET /ex…` | A compressed Digital Link holding an SGTIN-96 or SGTIN-198 EPC, resolved like the label it stands for. Any other EPC scheme is `404` |
+| `GET /eh…`, `GET /ex…` | A compressed Digital Link holding an SGTIN-96 or SGTIN-198 EPC, resolved like the label it stands for. Any other EPC scheme is `404`; a link that cannot be decompressed is `400` |
 | `GET /.well-known/gs1resolver` | The resolver description file: the GTIN is the one primary key it lists |
 | `GET /dpp/{dppId}` | The public view, chosen by `Accept` (below) |
 | `GET /dpp/{dppId}/qr` | A QR code PNG for the passport's Digital Link |
