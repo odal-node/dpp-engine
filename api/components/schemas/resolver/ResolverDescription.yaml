@@ -1,0 +1,39 @@
+type: object
+description: |
+  The resolver description file that the GS1 Conformant Resolver Standard asks a
+  resolver to publish at `/.well-known/gs1resolver` (section 3). It validates
+  against the description-file schema GS1 publishes. Publishing it is not a claim
+  that this resolver conforms to the standard.
+required:
+  - name
+  - resolverRoot
+  - supportedPrimaryKeys
+  - linkTypeDefaultCanBeLinkset
+  - jsonLdContextLocation
+properties:
+  name:
+    type: string
+    description: A name for the resolver.
+  resolverRoot:
+    type: string
+    format: uri
+    description: This resolver's public root, with no trailing slash.
+  supportedPrimaryKeys:
+    type: array
+    items:
+      type: string
+    description: The GS1 primary keys, by AI, that this resolver resolves.
+  linkTypeDefaultCanBeLinkset:
+    type: boolean
+    description: Whether `linkset` may be made the default link type. It may not.
+  jsonLdContextLocation:
+    type: string
+    format: uri
+    description: The JSON-LD context a linkset's `Link` header points at.
+example:
+  name: Odal Node resolver
+  resolverRoot: https://id.odal-node.io
+  supportedPrimaryKeys:
+    - '01'
+  linkTypeDefaultCanBeLinkset: false
+  jsonLdContextLocation: https://ref.gs1.org/standards/resolver/linkset-context

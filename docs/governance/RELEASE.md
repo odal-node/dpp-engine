@@ -45,7 +45,10 @@ security fix is released as soon as it is verified.
    [`docs/architecture/STANDARDS.md`](../architecture/STANDARDS.md) at its source
    (`https://www.rfc-editor.org/info/rfcNNNN`), correct `Status as read`, and set `Read`
    to today. The gate proves every citation has a dated status; only this step proves
-   the status is still current.
+   the status is still current. The GS1 row is read at
+   `https://ref.gs1.org/standards/resolver/`: a newer release than the one recorded
+   there means [`GS1_RESOLVER_CONFORMANCE.md`](../architecture/GS1_RESOLVER_CONFORMANCE.md)
+   is assessed against it again before the release says anything about the resolver.
 8. **Verification record.** Write `docs/governance/releases/vX.Y.Z.md` and merge it, with
    any CHANGELOG corrections it makes, before the release pull request. It traces every
    pull request merged since the last tag to the entry that describes it, or says why it

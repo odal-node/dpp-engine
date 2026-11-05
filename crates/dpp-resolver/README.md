@@ -31,7 +31,9 @@ Open `http://localhost:8003/dpp/<id>` in a browser for the HTML page.
 
 | Route | Answers |
 |---|---|
-| `GET /01/{gtin}`, plus the `/10/{batch}` and `/21/{serial}` forms | A `307` redirect to the passport the label names. Unknown AI combinations under `/01/` are `400` |
+| `GET /01/{gtin}`, plus the `/22/{variant}`, `/10/{batch}`, `/21/{serial}` and `/235/{extension}` forms | A `307` redirect to the passport the label names, handing the query string on. `?linkType=linkset` or `Accept: application/linkset+json` answers a linkset; a link type other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is `404`. Unknown AI combinations under `/01/` are `400` |
+| `GET /eh…`, `GET /ex…` | A compressed Digital Link holding an SGTIN-96 or SGTIN-198 EPC, resolved like the label it stands for. Any other EPC scheme is `404`; a link that cannot be decompressed is `400` |
+| `GET /.well-known/gs1resolver` | The resolver description file: the GTIN is the one primary key it lists |
 | `GET /dpp/{dppId}` | The public view, chosen by `Accept` (below) |
 | `GET /dpp/{dppId}/qr` | A QR code PNG for the passport's Digital Link |
 | `GET /health`, `GET /ready` | Liveness, and readiness including Redis |
@@ -47,6 +49,15 @@ Open `http://localhost:8003/dpp/<id>` in a browser for the HTML page.
 
 The full description, including the AI 22 and AI 235 forms, is in
 [`api/openapi.bundled.yaml`](../../api/openapi.bundled.yaml).
+
+## GS1 conformance
+
+The GS1 routes were assessed against all 25 criteria of the GS1 Conformant Resolver
+Standard, release 1.2.1, and **conformance is not claimed**: one mandatory criterion,
+decompressing an EPC binary string, is met for two of the schemes that can name a
+GTIN. [`GS1_RESOLVER_CONFORMANCE.md`](../../docs/architecture/GS1_RESOLVER_CONFORMANCE.md)
+has the criterion-by-criterion table, and `tests/gs1_conformance.rs` the tests behind
+it.
 
 ## How a request is served
 
