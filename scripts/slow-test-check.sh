@@ -60,6 +60,8 @@ allowlist=(
     "dpp-node::nats_event_bus::event_envelope_uses_camel_case_on_wire|as above — boots its own NATS container"
     "dpp-node::registry_outbox::migration_0024_restores_registrations_lost_before_the_fix|start_pg_before boots a server the migration has not been applied to, which is the point of the test and cannot use the shared template"
     "dpp-dal::pg_retired_status_migration::migration_0041_rewrites_the_document_not_only_the_column|as above — start_pg_before boots a server without 0041, so an 'archived' row can be written before the migration runs"
+    "dpp-node::operator_paths::v0_14_0_upgrades_to_this_build|loads the dump a tagged release left into an empty database, then boots the node, which applies every migration since that release; that replay is the test, so it cannot start from the shared migrated template, and it takes longer with each migration"
+    "dpp-node::operator_paths::v0_15_0_upgrades_to_this_build|as above — the same upgrade path from the v0.15.0 fixture; it was 10.068s on the run that put it 68ms over the budget, on a shared runner"
 )
 
 violations=""
