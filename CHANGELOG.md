@@ -208,6 +208,41 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
+- **A draft retired without ever being published answers `404` on its public
+  read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
+  retention guard only to a passport that has a `published_at`, so an operator
+  can close a draft that will never publish. `serves_publicly` decided from the
+  status alone and served every `Retired` passport, on the reasoning that the
+  status is reachable only after a publish's retention period. That draft has no
+  `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
+  and answered `500`, where a draft that was never retired answers `404`; the
+  resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
+  the passport, and a retired one with no `publishedAt` is not served. The
+  continuity tier's snapshot drain decides through it too, so it removes such a
+  snapshot instead of failing to build one on every pass.
+
+  `GET /vault/public/dpp/by-gtin/{gtin}` answered `500` for it as well, and a
+  closed draft broke more than its own label. Label resolution skipped drafts
+  but read a retired one as a current passport, so beside a live passport under
+  the same GTIN (which create allows) it made the label name two records that
+  are not one amendment chain, and the lookup refused to choose: the live
+  passport's label answered `500` for as long as the closed draft existed. A
+  record that was never published, a draft or a retired draft, now answers no
+  label. A retired passport that was published is unchanged and still serves its
+  signed view. (#570)
+
 - **`odal bootstrap` names the admin credential when the node refuses it.** A
   wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
   unreachable, with the refusal printed only under `Caused by:`. A `401` or

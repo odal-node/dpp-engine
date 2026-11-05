@@ -104,7 +104,7 @@ pub async fn public_read_handler(
                 Err(e) => internal_error(e),
             }
         }
-        Ok(Some(p)) if serves_publicly(&p.status) => {
+        Ok(Some(p)) if serves_publicly(&p) => {
             // Serve the payload the public proof was computed over, not the live
             // row: the two diverge for any Public field that changes after
             // publish, and only the former verifies against the attached
