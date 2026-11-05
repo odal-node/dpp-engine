@@ -1300,6 +1300,47 @@ mod label_resolution {
         p
     }
 
+    /// A draft retired without being published holds no label against a publish
+    /// at any level: not the serial a unit prints, and not the GTIN, or the GTIN
+    /// and the lot, that a model- or batch-level passport prints.
+    #[tokio::test]
+    async fn a_retired_draft_holds_no_model_or_batch_label_against_a_publish() {
+        for (level, lot) in [
+            (Granularity::Model, None),
+            (Granularity::Batch, Some("LOT-1")),
+        ] {
+            let repo = InMemoryPassportRepo::default();
+            let closed = stating(GTIN, level, lot, PassportStatus::Retired);
+            let going_live = stating(GTIN, level, lot, PassportStatus::Draft);
+            store(&repo, &[&closed, &going_live]).await;
+
+            assert!(
+                !live_elsewhere(&repo, &going_live).await,
+                "{level:?}: a retired draft answers no label"
+            );
+        }
+    }
+
+    /// One that was published and then retired still holds it, at every level.
+    #[tokio::test]
+    async fn a_retired_published_passport_holds_its_model_or_batch_label_against_a_publish() {
+        for (level, lot) in [
+            (Granularity::Model, None),
+            (Granularity::Batch, Some("LOT-1")),
+        ] {
+            let repo = InMemoryPassportRepo::default();
+            let mut retired = stating(GTIN, level, lot, PassportStatus::Retired);
+            retired.published_at = Some(Utc::now());
+            let going_live = stating(GTIN, level, lot, PassportStatus::Draft);
+            store(&repo, &[&retired, &going_live]).await;
+
+            assert!(
+                live_elsewhere(&repo, &going_live).await,
+                "{level:?}: a retired passport that was published still holds its label"
+            );
+        }
+    }
+
     /// Two passports that state model level under one GTIN both print
     /// `/01/{gtin}`, and a label that names two passports resolves to neither.
     /// Asked by serial, which is all publish asked, the second looks free: a
