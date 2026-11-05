@@ -208,6 +208,78 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
+- **Two transfer steps that overlap no longer overwrite each other's chain.** A
+  passport's transfer chain was read, changed in memory and written back whole,
+  with a signature in between, and the write had no condition. Two initiations
+  started together on one published passport both found nothing pending and both
+  signed a handover; the second write replaced the first, so both callers got a
+  record, both left an audit entry and a `dpp.passport.transferred` event, and
+  the chain held one. An accept, a reject or a cancel racing another step on the
+  same chain lost an update the same way. Each write now names the revision of
+  the chain row it read (`odal.passport_transfer.revision`, migration `0047`) and
+  is refused when the row has moved on: the request that loses answers `422`,
+  writes nothing, and can be sent again, and the chain keeps the step that won. A
+  trigger moves the revision on every update, so a node still running the
+  previous release beside this one, whose upsert never names the column, cannot
+  write a chain under a step that read the old one. A chain stored before this
+  release starts at revision 0. (#535)
+
+- **A draft retired without ever being published answers `404` on its public
+  read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
+  retention guard only to a passport that has a `published_at`, so an operator
+  can close a draft that will never publish. `serves_publicly` decided from the
+  status alone and served every `Retired` passport, on the reasoning that the
+  status is reachable only after a publish's retention period. That draft has no
+  `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
+  and answered `500`, where a draft that was never retired answers `404`; the
+  resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
+  the passport, and a retired one with no `publishedAt` is not served. The
+  continuity tier's snapshot drain decides through it too, so it removes such a
+  snapshot instead of failing to build one on every pass.
+
+  `GET /vault/public/dpp/by-gtin/{gtin}` answered `500` for it as well, and a
+  closed draft broke more than its own label. Label resolution skipped drafts
+  but read a retired one as a current passport, so beside a live passport under
+  the same GTIN (which create allows) it made the label name two records that
+  are not one amendment chain, and the lookup refused to choose: the live
+  passport's label answered `500` for as long as the closed draft existed. A
+  record that was never published, a draft or a retired draft, now answers no
+  label. A retired passport that was published is unchanged and still serves its
+  signed view. (#570)
+
+- **`odal bootstrap` names the admin credential when the node refuses it.** A
+  wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
+  unreachable, with the refusal printed only under `Caused by:`. A `401` or
+  `403` from the node's state read now says to check both variables against the
+  node's, and a node that does not answer is still reported as unreachable.
+  (#572)
+
 - **An archived version is the passport as it was stored.** Every change to a
   passport archives the version it replaces (EN 18221 clause 4.2), and the
   archive was taken from a reading of the passport rather than the stored

@@ -560,6 +560,42 @@ impl PassportRepository for PgPassportRepo {
             .collect())
     }
 
+    /// Every passport carrying `identifier`, at any level and in any status —
+    /// the port's contract, answered from `idx_passport_identifier` rather than
+    /// the default `list()` scan.
+    ///
+    /// Filtered afterwards by the port's own rule, for the reason
+    /// [`find_by_identifier`](Self::find_by_identifier) gives.
+    ///
+    /// # A row that cannot be read fails the lookup
+    ///
+    /// Every row carrying the identifier is read, whatever its lot or status,
+    /// and one that does not decode fails the whole lookup rather than being
+    /// skipped. Publish asks this whether the identifier is already held, and a
+    /// row it cannot read is one it cannot rule out: skipped, it could be the
+    /// live holder, and two live holders of one identifier cannot be repaired,
+    /// where a publish refused for it can be retried once the row reads. The
+    /// two lookups above read their rows the same way.
+    async fn find_by_product_identifier(
+        &self,
+        identifier: &ProductIdentifier,
+    ) -> Result<Vec<Passport>, DppError> {
+        let rows = sqlx::query(concat!(
+            "SELECT doc FROM odal.passport WHERE ",
+            identifier_sql!(),
+            " = $1 ORDER BY created_at"
+        ))
+        .bind(identifier.as_str())
+        .fetch_all(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(self
+            .read_docs(rows)?
+            .into_iter()
+            .filter(|p| carries(p, identifier))
+            .collect())
+    }
+
     /// Find a passport by exact compound identity (product group, identifier,
     /// batch, serial), across `Draft` and `Published` — backs the import
     /// delta-matcher. Indexed by `0042_passport_identifier_index.sql`.

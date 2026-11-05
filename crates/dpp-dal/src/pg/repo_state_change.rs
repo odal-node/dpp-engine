@@ -23,7 +23,7 @@ use super::repo_audit::append_in_tx;
 use super::repo_passport::{PgPassportRepo, insert_passport_in_tx};
 use super::repo_registry_sync::{queue_registration_in_tx, record_status_intent};
 use super::repo_registry_transfer::queue_transfer_notice;
-use super::repo_transfer::upsert_chain;
+use super::repo_transfer::write_chain_over;
 use super::repo_webhook::fan_out;
 use super::{PgDal, db_err};
 
@@ -100,8 +100,8 @@ impl StateChangeLog for PgStateChangeLog {
             Some(write) => Some(self.write_passport(&mut tx, write).await?),
             None => None,
         };
-        if let Some(chain) = &transfer_chain {
-            upsert_chain(&mut *tx, chain).await?;
+        if let Some(over) = &transfer_chain {
+            write_chain_over(&mut *tx, over).await?;
         }
         if let Some(payload) = &registration {
             let passport = written.as_ref().ok_or_else(|| {
@@ -117,7 +117,7 @@ impl StateChangeLog for PgStateChangeLog {
                     "a transfer notice is queued only with the chain that accepted it".into(),
                 )
             })?;
-            queue_transfer_notice(&mut *tx, *transfer_id, chain.passport_id, payload).await?;
+            queue_transfer_notice(&mut *tx, *transfer_id, chain.chain.passport_id, payload).await?;
         }
         if let Some(intent) = registry_intent {
             let passport = written.as_ref().ok_or_else(|| {

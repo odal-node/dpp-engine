@@ -154,9 +154,10 @@ mkdir -p "$out"
 echo '{}' > "$work/public.json"
 # Only a `200` is captured, since only a served view has bytes to compare. Every
 # other answer is printed rather than skipped in silence: a suspended passport's
-# `410` is expected, and so, until it is fixed, is the `500` a retired draft that
-# was never published answers. A failed request means the node is not answering,
-# and nothing captured after that could be trusted, so it stops the capture.
+# `410` is expected, and so is the `404` a retired draft that was never published
+# answers. (A release before #570 answered `500` for it, so capturing one still
+# prints that.) A failed request means the node is not answering, and nothing
+# captured after that could be trusted, so it stops the capture.
 for id in $(docker exec "$container" psql -U postgres -d odal -tAc \
     "SELECT id FROM odal.passport WHERE status <> 'draft' ORDER BY id"); do
     code="$(curl -sS -o "$work/body" -w '%{http_code}' "$base/vault/public/dpp/$id" || true)"

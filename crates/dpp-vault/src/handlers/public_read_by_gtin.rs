@@ -66,7 +66,7 @@ pub async fn public_read_by_gtin_handler(
     {
         // Which states serve is `public_read`'s one rule, applied here too so the
         // two public routes cannot disagree about whether a passport exists.
-        Ok(Some(p)) if crate::public_view::serves_publicly(&p.status) => {
+        Ok(Some(p)) if crate::public_view::serves_publicly(&p) => {
             // The same signed payload the by-id route serves: both routes read
             // the one view that was actually signed.
             let view = match signed_public_view(&p) {

@@ -410,6 +410,70 @@ async fn a_fresh_node_is_onboarded_with_odal() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_admin_credential_is_named_as_the_thing_to_check() {
+    let bin = odal_binary();
+    let pg = start_pg_raw().await;
+    let node = Node::start(&pg).await;
+    let odal = Odal {
+        bin,
+        home: tempfile::tempdir().expect("odal home"),
+        // Not the password the node was started with.
+        admin_password: "not-the-node-password".to_owned(),
+    };
+    odal.ok(&[
+        "init",
+        "--node-url",
+        &node.base,
+        "--resolver-url",
+        "http://127.0.0.1:1",
+    ]);
+
+    let refused = odal.run(&bootstrap_args());
+    let text = printed(&refused);
+    assert!(
+        !refused.status.success(),
+        "bootstrap with the wrong password must fail:\n{text}"
+    );
+    assert!(
+        text.contains("ADMIN_USERNAME") && text.contains("ADMIN_PASSWORD"),
+        "a refused credential names the variables to check:\n{text}"
+    );
+    assert!(
+        !text.contains("could not reach the node"),
+        "a node that answered is not reported as unreachable:\n{text}"
+    );
+}
+
+#[test]
+fn a_node_that_does_not_answer_is_still_reported_as_unreachable() {
+    let odal = Odal {
+        bin: odal_binary(),
+        home: tempfile::tempdir().expect("odal home"),
+        admin_password: "unused".to_owned(),
+    };
+    // Nothing listens on port 1, so the connection is refused rather than answered.
+    odal.ok(&[
+        "init",
+        "--node-url",
+        "http://127.0.0.1:1",
+        "--resolver-url",
+        "http://127.0.0.1:1",
+    ]);
+
+    let unreachable = odal.run(&bootstrap_args());
+    let text = printed(&unreachable);
+    assert!(!unreachable.status.success(), "{text}");
+    assert!(
+        text.contains("could not reach the node"),
+        "a node that does not answer is reported as unreachable:\n{text}"
+    );
+    assert!(
+        !text.contains("ADMIN_PASSWORD"),
+        "and the credential is not blamed for it:\n{text}"
+    );
+}
+
 // ── Upgrading a node that holds passports ───────────────────────────────────
 
 /// The fixture a release left, `tests/fixtures/upgrade/<release>/`.
@@ -511,6 +575,35 @@ async fn upgrade_from(fixture: &Path) {
             &response.text().await.expect("body"),
             body,
             "{release}: the public view of {id} changed across the upgrade"
+        );
+    }
+
+    // The capture retires a draft, so every fixture holds one. It was never
+    // public, so it answers as the draft it was. The releases that wrote these
+    // fixtures answered `500` for it, and a public read of one that came back
+    // `500` after an upgrade would be the same defect.
+    let retired_drafts: Vec<String> = sqlx::query_scalar(
+        "SELECT id::text FROM odal.passport \
+         WHERE status = 'retired' AND published_at IS NULL ORDER BY id",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("read the retired drafts");
+    assert!(
+        !retired_drafts.is_empty(),
+        "{release}: the fixture holds no retired draft"
+    );
+    for id in &retired_drafts {
+        let response = node
+            .http
+            .get(node.url(&format!("/vault/public/dpp/{id}")))
+            .send()
+            .await
+            .expect("public read of a retired draft");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{release}: public read of the retired draft {id}"
         );
     }
 

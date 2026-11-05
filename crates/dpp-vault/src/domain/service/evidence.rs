@@ -118,7 +118,7 @@ impl PassportService {
         let eol_event = declared_eol(&audit_raw);
 
         let transfer_chain = match &self.transfer_store {
-            Some(store) => store.get_chain(id).await?,
+            Some(store) => store.get_chain(id).await?.map(|stored| stored.chain),
             None => None,
         };
 

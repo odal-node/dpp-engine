@@ -152,7 +152,9 @@ paths:
             same GTIN.** `errors[0].field` is `/carrierSerial`. A label that names
             two passports resolves to neither: choose another serial, or declare
             this passport as the successor of the one that holds it with
-            `supersedesId`.
+            `supersedesId`. A draft holds its serial, and so does a passport that
+            was published and then retired. A draft that was retired without ever
+            being published holds none.
           headers:
             Retry-After:
               description: Seconds to wait before retrying. Sent for the idempotency conflict only.
@@ -1165,6 +1167,11 @@ paths:
         transfer chain. Only a `published` DPP can be transferred. In the
         managed single-node model the caller supplies both the outgoing and
         incoming operator; the node signs on the outgoing operator's behalf.
+
+        A `422` also answers an initiation whose passport's transfer chain was
+        changed by another request while this one was running. Only one of two
+        requests started together is recorded; the other is refused, leaves nothing
+        behind, and can be sent again.
       tags:
         - DPP Lifecycle
       security:
@@ -1246,7 +1253,9 @@ paths:
         '422':
           description: |
             There is no pending handover to accept, the pending record carries no
-            outgoing signature, or that signature failed verification.
+            outgoing signature, or that signature failed verification. Also a
+            transfer chain that another request changed while this one was running:
+            nothing is written, and the request can be sent again.
           content:
             application/problem+json:
               schema:
@@ -1307,7 +1316,9 @@ paths:
         '422':
           description: |
             There is no pending handover to reject, or the record's state does not
-            permit it. Core allows a reject only from `Initiated`.
+            permit it. Core allows a reject only from `Initiated`. Also a transfer
+            chain that another request changed while this one was running: nothing
+            is written, and the request can be sent again.
           content:
             application/problem+json:
               schema:
@@ -1366,7 +1377,9 @@ paths:
         '422':
           description: |
             There is no pending handover to cancel, or the record's state does not
-            permit it. Core allows a cancel from `Initiated` or `Accepted`.
+            permit it. Core allows a cancel from `Initiated` or `Accepted`. Also a
+            transfer chain that another request changed while this one was running:
+            nothing is written, and the request can be sent again.
           content:
             application/problem+json:
               schema:
