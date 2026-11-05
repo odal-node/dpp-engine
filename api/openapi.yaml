@@ -287,6 +287,10 @@ components:
       $ref: components/schemas/access/InstalledPlugin.yaml
     NodeState:
       $ref: components/schemas/access/NodeState.yaml
+    NodeHealth:
+      $ref: components/schemas/access/NodeHealth.yaml
+    RegistryOutboxHealth:
+      $ref: components/schemas/access/RegistryOutboxHealth.yaml
     NodeProfile:
       $ref: components/schemas/access/NodeProfile.yaml
     WhoamiResponse:
@@ -446,6 +450,8 @@ paths:
     $ref: paths/vault/vault_api_v1_ruleset_reload.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault/vault_api_v1_node_state.yaml
+  /vault/api/v1/node/health:
+    $ref: paths/vault/vault_api_v1_node_health.yaml
   /vault/api/v1/whoami:
     $ref: paths/vault/vault_api_v1_whoami.yaml
   /vault/public/dpp/{dppId}:

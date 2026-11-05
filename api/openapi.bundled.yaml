@@ -2978,6 +2978,31 @@ paths:
                 $ref: '#/components/schemas/NodeState'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /vault/api/v1/node/health:
+    get:
+      operationId: getNodeHealth
+      summary: Node operational health counters
+      description: |
+        Reports the counters an operator pages on: publishes refused for a failed
+        signature and ruleset bundles refused on load, both since the node process
+        started, and the registry-sync outbox's pending, submitted, stalled and
+        rejected counts. Authenticated, so a monitor that cannot scrape `/metrics`
+        can read them with an API key. The unauthenticated `/health` answers
+        liveness only.
+      tags:
+        - Node
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      responses:
+        '200':
+          description: Node operational health counters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/whoami:
     get:
       operationId: whoami
@@ -8247,6 +8272,60 @@ components:
             the rules a passport was checked under are observable. Absent on a
             standalone vault.
           example: baseline
+    NodeHealth:
+      type: object
+      required:
+        - signingFailuresTotal
+        - rulesetLoadFailuresTotal
+      properties:
+        signingFailuresTotal:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Publishes refused because a passport could not be signed, since the node
+            process started. A restart resets it, so a restart hides failures from
+            before it.
+          example: 0
+        rulesetLoadFailuresTotal:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Compliance Current ruleset bundles refused on load, since the node process
+            started. A restart resets it.
+          example: 0
+        registryOutbox:
+          $ref: '#/components/schemas/RegistryOutboxHealth'
+          description: |
+            The registry-sync outbox's counts. Absent on a deployment with no outbox
+            wired, such as a standalone vault.
+    RegistryOutboxHealth:
+      type: object
+      required:
+        - pending
+        - submitted
+        - stalled
+        - rejected
+      properties:
+        pending:
+          type: integer
+          format: int64
+          description: Rows awaiting a drain attempt.
+        submitted:
+          type: integer
+          format: int64
+          description: Rows accepted by the registry and awaiting its verdict.
+        stalled:
+          type: integer
+          format: int64
+          description: |
+            Pending rows that have reached the stall threshold. A row here is not
+            going to succeed without someone looking at it.
+        rejected:
+          type: integer
+          format: int64
+          description: Rows the registry terminally rejected.
     NodeProfile:
       type: string
       description: 'The deployment profile a node was started under (`NODE_PROFILE`), which decides the trust tiers it will boot on. `development` boots on any tier, placeholders included, and is what an unset or unrecognised value means. `sandbox` is a real deployment against test authorities: it refuses a placeholder on a required trust port and accepts a sandbox tier. `production` accepts only live tiers on required ports.'

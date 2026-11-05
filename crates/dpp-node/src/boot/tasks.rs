@@ -8,7 +8,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_domain::ports::seal::SealPort;
 use dpp_integrator::infra::job_store::JobStore;
-use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
+use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_types::registry_transfer::{RegistryTransferCounts, RegistryTransferOutbox};
 use dpp_types::scan::ScanTelemetryRepository;
 use dpp_types::seal::{SealOutbox, SealOutboxCounts};
@@ -88,7 +88,6 @@ const DRAIN_BATCH: i64 = 50;
 /// (one statement, no object-storage work); the drain still paces the actual
 /// reconciles at its own batch size.
 const SWEEP_BATCH: i64 = 500;
-const STALL_THRESHOLD: i32 = 8;
 
 /// Reflect the registry-sync outbox's counts onto its gauges. Shared by the
 /// boot-time reconciliation log and every post-drain re-check so the two

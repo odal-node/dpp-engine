@@ -186,6 +186,8 @@ async fn start_node_with_ruleset(
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
         .with_registry_reader(operator_repo.clone())
+        // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
+        .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -351,6 +353,33 @@ async fn authenticated_node_state_reports_trust_modes() {
     assert_eq!(body["profile"], "development");
     assert_eq!(body["trustMode"]["registry_sync"], "ghost");
     assert_eq!(body["rulesetVersion"], "baseline");
+}
+
+/// The operational counters are served to an entitled caller, with the outbox
+/// they describe read from the database. Only the shape is asserted: the two
+/// process counters are shared by every test in this binary, so their values
+/// are not this test's to fix.
+#[tokio::test(flavor = "multi_thread")]
+async fn authenticated_node_health_reports_the_counters_and_the_outbox() {
+    let (base, _c) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000092");
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/vault/api/v1/node/health"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("GET /vault/api/v1/node/health failed");
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.expect("node health is JSON");
+    assert!(body["signingFailuresTotal"].is_u64(), "{body}");
+    assert!(body["rulesetLoadFailuresTotal"].is_u64(), "{body}");
+    for field in ["pending", "submitted", "stalled", "rejected"] {
+        assert!(
+            body["registryOutbox"][field].is_i64(),
+            "`registryOutbox.{field}` must be reported on a Postgres node: {body}"
+        );
+    }
 }
 
 /// The issue this route exists to close, end to end: a node that is up and
@@ -733,6 +762,7 @@ async fn route_inventory_matches_assembled_router() {
             format!("/vault/api/v1/dpp/{FAKE_ID}/verify-tree"),
         ),
         (reqwest::Method::GET, "/vault/api/v1/node/state".into()),
+        (reqwest::Method::GET, "/vault/api/v1/node/health".into()),
         (reqwest::Method::GET, "/vault/api/v1/operator".into()),
         (reqwest::Method::PATCH, "/vault/api/v1/operator".into()),
         (reqwest::Method::GET, "/vault/api/v1/api-keys".into()),
