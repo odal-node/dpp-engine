@@ -217,11 +217,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
   and answered `500`, where a draft that was never retired answers `404`; the
   resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
-  the passport, and a retired one with no `publishedAt` is not served. The GTIN
-  read and the continuity tier's snapshot drain decide through it too, so the
-  drain removes such a snapshot instead of failing to build one on every pass. A
-  retired passport that was published is unchanged and still serves its signed
-  view. (#570)
+  the passport, and a retired one with no `publishedAt` is not served. The
+  continuity tier's snapshot drain decides through it too, so it removes such a
+  snapshot instead of failing to build one on every pass.
+
+  `GET /vault/public/dpp/by-gtin/{gtin}` answered `500` for it as well, and a
+  closed draft broke more than its own label. Label resolution skipped drafts
+  but read a retired one as a current passport, so beside a live passport under
+  the same GTIN (which create allows) it made the label name two records that
+  are not one amendment chain, and the lookup refused to choose: the live
+  passport's label answered `500` for as long as the closed draft existed. A
+  record that was never published, a draft or a retired draft, now answers no
+  label. A retired passport that was published is unchanged and still serves its
+  signed view. (#570)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's

@@ -276,6 +276,29 @@ pub async fn sign_disclosure_views(
     Ok(signatures)
 }
 
+/// Whether a passport has never been published: a draft, or a draft that was
+/// retired without ever going live.
+///
+/// The status alone cannot say. Core allows `Draft → Retired`, and `retire`
+/// applies the retention guard only to a passport with a `published_at`, so an
+/// operator can close a draft that will never publish — and `Retired` is
+/// otherwise reachable only after a publish's retention period. Everything that
+/// reads `Retired` as "this was once live" is wrong about that record: the public
+/// read looked for a `publicJwsSignature` it never had, and a label lookup
+/// counted it as a current passport beside the live one.
+///
+/// This is the one place the question is answered. The record is told apart by
+/// `published_at`, which `publish` sets on the first publish and nothing clears
+/// on a record (an amendment's successor is a new draft).
+#[must_use]
+pub fn never_published(passport: &Passport) -> bool {
+    match passport.status {
+        PassportStatus::Draft => true,
+        PassportStatus::Retired => passport.published_at.is_none(),
+        _ => false,
+    }
+}
+
 /// Whether a passport is served on the public tier.
 ///
 /// A match, not a list of equality checks: the question "is this state public?"
@@ -312,15 +335,11 @@ pub async fn sign_disclosure_views(
 ///   already signed, and withdrawing it buys nothing while breaking every
 ///   carrier still in circulation.
 ///
-///   **Unless it was never published.** Core allows `Draft → Retired`, and
-///   `retire` applies the retention guard only to a passport with a
-///   `published_at`, so an operator can close a draft that will never publish.
-///   That record was never public and carries no `publicJwsSignature`, so the
-///   reasoning above does not reach it: it answers `404`, as the draft it was
-///   did. Serving it reached `signed_public_view`, which fails closed on the
-///   missing proof — rightly, for a published passport — and answered `500`.
-///   The record is told apart by `published_at`, which `publish` sets and
-///   nothing clears.
+///   **Unless it was never published** — see [`never_published`]. That record
+///   was never public and carries no `publicJwsSignature`, so the reasoning
+///   above does not reach it: it answers `404`, as the draft it was did.
+///   Serving it reached `signed_public_view`, which fails closed on the missing
+///   proof — rightly, for a published passport — and answered `500`.
 ///
 /// The ones that do not serve mean something else. `Suspended` is a deliberate
 /// withdrawal and says so with `410 Gone` rather than by vanishing; `Draft` was
@@ -334,7 +353,7 @@ pub fn serves_publicly(passport: &Passport) -> bool {
         PassportStatus::Published | PassportStatus::Deactivated | PassportStatus::Superseded => {
             true
         }
-        PassportStatus::Retired => passport.published_at.is_some(),
+        PassportStatus::Retired => !never_published(passport),
         PassportStatus::Suspended | PassportStatus::Draft => false,
         other => {
             tracing::warn!(
@@ -1088,6 +1107,32 @@ pub(crate) mod tests {
             serves_publicly(&passport),
             "a retired passport that was published keeps serving its signed view"
         );
+    }
+
+    /// A draft never was published, and a retired passport is told apart by
+    /// whether it was. Every other status was published by definition.
+    #[test]
+    fn a_passport_was_never_published_if_it_is_a_draft_or_a_retired_draft() {
+        for status in PassportStatus::ALL {
+            let mut passport = stub_passport();
+            passport.status = status.clone();
+
+            passport.published_at = None;
+            let without = never_published(&passport);
+            passport.published_at = Some(chrono::Utc::now());
+            let with = never_published(&passport);
+
+            let (expected_without, expected_with) = match status {
+                PassportStatus::Draft => (true, true),
+                PassportStatus::Retired => (true, false),
+                _ => (false, false),
+            };
+            assert_eq!(
+                (without, with),
+                (expected_without, expected_with),
+                "{status:?}, without and with a publish time"
+            );
+        }
     }
 
     /// The question is asked of the passport only where the status cannot

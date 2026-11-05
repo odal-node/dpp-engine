@@ -12,6 +12,7 @@ use dpp_domain::{
 use dpp_types::audit::PassportAuditEntry;
 
 use super::{PassportService, claim::Claim};
+use crate::public_view::never_published;
 
 impl PassportService {
     /// Fetch a passport by id regardless of status.
@@ -81,7 +82,9 @@ impl PassportService {
     ///
     /// Drafts are never an answer. An amendment writes its successor as a draft
     /// before publishing it, and one whose publish was refused stays behind as a
-    /// draft; neither is the record the label names.
+    /// draft; neither is the record the label names. Nor is a draft that was
+    /// retired without being published (see [`never_published`]): closing a
+    /// draft does not make it a passport, or a rival to the one that is live.
     ///
     /// A published successor whose predecessor is not yet superseded is not an
     /// answer either: the label is the predecessor's until the supersede, and
@@ -297,8 +300,8 @@ async fn resolve_label(
 
 /// The one current passport among `named`, or `None` when none is current.
 ///
-/// Drafts never answer, amendments are followed, and two current records that are
-/// not one chain are refused.
+/// A record that was never published never answers, amendments are followed, and
+/// two current records that are not one chain are refused.
 async fn current_for(
     repo: &dyn PassportRepository,
     identifier: &ProductIdentifier,
@@ -306,7 +309,7 @@ async fn current_for(
 ) -> Result<Option<Passport>, DppError> {
     let mut current: Vec<Passport> = Vec::new();
     for record in named {
-        if record.status == PassportStatus::Draft {
+        if never_published(&record) {
             continue;
         }
         let record = current_record(repo, record).await?;
@@ -734,6 +737,47 @@ mod label_resolution {
         store(&repo, &[&live, &refused]).await;
 
         assert_eq!(resolved(&repo, None, Some(&label)).await, Some(live.id));
+    }
+
+    /// Core allows `Draft → Retired`, so a draft closed without being published
+    /// is `Retired` with no `published_at`. It is not a current passport, and
+    /// beside the live one under the same label it must not make the label an
+    /// error.
+    #[tokio::test]
+    async fn a_retired_draft_does_not_rival_the_live_passport_for_its_label() {
+        let repo = InMemoryPassportRepo::default();
+        let live = passport(PassportStatus::Published);
+        let label = live.effective_carrier_serial().into_owned();
+        let mut closed = passport(PassportStatus::Retired);
+        closed.carrier_serial = Some(label.clone());
+        assert!(closed.published_at.is_none(), "it was never published");
+        store(&repo, &[&live, &closed]).await;
+
+        assert_eq!(resolved(&repo, None, Some(&label)).await, Some(live.id));
+    }
+
+    /// And alone it names nothing, as the draft it was did.
+    #[tokio::test]
+    async fn a_retired_draft_alone_names_nothing() {
+        let repo = InMemoryPassportRepo::default();
+        let closed = passport(PassportStatus::Retired);
+        let label = closed.effective_carrier_serial().into_owned();
+        store(&repo, &[&closed]).await;
+
+        assert_eq!(resolved(&repo, None, Some(&label)).await, None);
+    }
+
+    /// A passport that was published and then retired still names its label: the
+    /// product it was printed on is still out there.
+    #[tokio::test]
+    async fn a_retired_published_passport_still_names_its_label() {
+        let repo = InMemoryPassportRepo::default();
+        let mut retired = passport(PassportStatus::Retired);
+        retired.published_at = Some(Utc::now());
+        let label = retired.effective_carrier_serial().into_owned();
+        store(&repo, &[&retired]).await;
+
+        assert_eq!(resolved(&repo, None, Some(&label)).await, Some(retired.id));
     }
 
     /// A withdrawn passport is still found, so the route can answer `410` — the
