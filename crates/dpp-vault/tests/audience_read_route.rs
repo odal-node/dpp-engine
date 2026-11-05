@@ -683,6 +683,16 @@ async fn an_unconfigured_node_serves_public_and_grants_nothing() {
 // past moment is retrievable by authenticated, authorised actors, and an archived
 // attribute is limited as the live one is.
 
+/// "Now" by the database's clock: the one that stamps each version and that the
+/// route measures the future by. A moment a test asks about is read here and not
+/// from this process's clock, which can drift from it where Postgres runs in a VM.
+async fn db_now(dal: &dpp_dal::pg::PgDal) -> chrono::DateTime<Utc> {
+    dpp_dal::pg::sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(dal.pool())
+        .await
+        .expect("the database's clock")
+}
+
 /// An instant as a query-string value. `Z` and not `+00:00`: a literal `+` in a
 /// query is a space, and the offset form would have to be percent-encoded.
 fn rfc3339(at: chrono::DateTime<Utc>) -> String {
@@ -780,7 +790,7 @@ async fn a_past_version_is_served_to_each_credential_as_its_own_classes_with_a_p
         .await
         .unwrap();
 
-    let moment = Utc::now();
+    let moment = db_now(&pg.dal).await;
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
         .await;
@@ -851,7 +861,7 @@ async fn a_past_version_is_refused_without_a_credential_not_answered_with_the_pr
     let token = make_jwt("00000000-0000-0000-0000-000000000002");
     let client = TestClient::new(&base, &token);
     let id = publish_battery(&client).await;
-    let moment = Utc::now();
+    let moment = db_now(&pg.dal).await;
 
     let resp = get_as_of(&base, &id, moment, None).await;
     assert_eq!(resp.status(), 401);
@@ -919,7 +929,7 @@ async fn a_credential_that_does_not_cover_the_passport_is_refused_a_past_version
     let token = make_jwt("00000000-0000-0000-0000-000000000002");
     let client = TestClient::new(&base, &token);
     let id = publish_battery(&client).await;
-    let moment = Utc::now();
+    let moment = db_now(&pg.dal).await;
 
     let header = credential_header(CredentialRole::AuthorisedRepairer, &["textile"]);
     let resp = get_as_of(&base, &id, moment, Some(&header)).await;
@@ -964,7 +974,7 @@ async fn a_read_of_a_past_version_is_recorded_with_its_instant_and_the_version()
     let client = TestClient::new(&base, &token);
     let id = publish_battery(&client).await;
 
-    let moment = Utc::now();
+    let moment = db_now(&pg.dal).await;
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
         .await;
@@ -1086,7 +1096,7 @@ async fn the_moments_no_version_covers_are_told_apart() {
     );
 
     // Nothing has changed since publish, so the live record is the state now.
-    let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
+    let resp = get_as_of(&base, &id, db_now(&pg.dal).await, Some(&header)).await;
     assert_eq!(
         resp.status(),
         200,
@@ -1138,13 +1148,14 @@ async fn a_moment_the_passport_was_a_draft_or_suspended_is_not_served() {
     assert_eq!(resp.status(), 201, "create failed");
     let created: Value = resp.json().await.unwrap();
     let id = created["id"].as_str().expect("created id").to_owned();
-    let as_a_draft = Utc::now();
+    let as_a_draft = db_now(&pg.dal).await;
 
     // Still a draft: not a published passport, and told apart from none by
     // neither status nor sentence.
     let absent = "0190a9f0-dead-7abc-8def-0123456789ab";
-    let on_draft = refusal(get_as_of(&base, &id, Utc::now(), Some(&header)).await).await;
-    let on_absent = refusal(get_as_of(&base, absent, Utc::now(), Some(&header)).await).await;
+    let on_draft = refusal(get_as_of(&base, &id, db_now(&pg.dal).await, Some(&header)).await).await;
+    let on_absent =
+        refusal(get_as_of(&base, absent, db_now(&pg.dal).await, Some(&header)).await).await;
     assert_eq!(on_draft.0, 404);
     assert_eq!(
         on_draft, on_absent,
@@ -1170,7 +1181,7 @@ async fn a_moment_the_passport_was_a_draft_or_suspended_is_not_served() {
         .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
         .await;
     assert_eq!(resp.status(), 200, "suspend failed");
-    let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
+    let resp = get_as_of(&base, &id, db_now(&pg.dal).await, Some(&header)).await;
     assert_eq!(resp.status(), 410, "a moment the passport was suspended");
 }
 
@@ -1196,7 +1207,7 @@ async fn a_moment_inside_a_lifted_suspension_is_still_gone() {
         .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
         .await;
     assert_eq!(resp.status(), 200, "suspend failed");
-    let while_suspended = Utc::now();
+    let while_suspended = db_now(&pg.dal).await;
     let resp = client
         .post_json(&format!("/api/v1/dpp/{id}/publish"), json!({}))
         .await;
@@ -1249,9 +1260,9 @@ async fn a_moment_before_the_first_publish_is_not_served_without_a_draft_version
     assert_eq!(resp.status(), 201, "create failed");
     let created: Value = resp.json().await.unwrap();
     let id = created["id"].as_str().expect("created id").to_owned();
-    let before_publish = Utc::now();
+    let before_publish = db_now(&pg.dal).await;
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    let published_at = Utc::now();
+    let published_at = db_now(&pg.dal).await;
 
     // Published from here on, by the stored record alone: no change was made
     // through the store, so nothing is archived.

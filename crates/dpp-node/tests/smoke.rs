@@ -2480,6 +2480,17 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
     id
 }
 
+/// "Now" by the database's clock: the one that stamps each version and that the
+/// versions route measures the future by. A moment the test asks about is read
+/// here and not from this process's clock, which can drift from it where Postgres
+/// runs in a VM.
+async fn db_now(pg: &TestPg) -> chrono::DateTime<chrono::Utc> {
+    dpp_dal::pg::sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pg.dal.pool())
+        .await
+        .expect("the database's clock")
+}
+
 /// A change to a passport is retrievable afterwards, and the route tells its two
 /// empty-handed answers apart.
 ///
@@ -2497,7 +2508,7 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
 /// way and only this can tell whether the sentences beside them are true.
 #[tokio::test]
 async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_uncovered_one() {
-    let (base, _container) = start_db_and_node().await;
+    let (base, pg) = start_db_and_node().await;
     let token = make_jwt("00000000-0000-0000-0000-000000000077");
     let client = reqwest::Client::new();
 
@@ -2542,7 +2553,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
         "a passport that has never changed has no archived versions"
     );
 
-    let before_the_change = chrono::Utc::now();
+    let before_the_change = db_now(&pg).await;
 
     let resp = client
         .put(format!("{base}/vault/api/v1/dpp/{id}"))
@@ -2554,7 +2565,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     assert_eq!(status, 200, "update failed: {body}");
-    let after_the_change = chrono::Utc::now();
+    let after_the_change = db_now(&pg).await;
 
     // The change archived what it replaced, and the route hands it back.
     let (status, body) = versions(String::new()).await;
