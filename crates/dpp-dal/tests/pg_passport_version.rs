@@ -15,7 +15,7 @@
 //! 2. **A version can outlive what it is a version of.** `passport_id` carries
 //!    no foreign key deliberately; the test that proves it is an insert for a
 //!    passport that does not exist, which an FK would refuse.
-//! 3. **`version_at`'s boundary.** `superseded_at` is the instant the *next*
+//! 3. **`state_at`'s boundary.** `superseded_at` is the instant the *next*
 //!    version took over, so asking as-of exactly that instant must answer with
 //!    the successor. That is a `>` versus `>=` in one query and it is invisible
 //!    in every test that does not land on the boundary exactly.
@@ -23,6 +23,9 @@
 //!    transaction that makes each change, so this is where its writes and the
 //!    migration run together: create archives nothing, and an update, a patch, a
 //!    status change and each item of a batch archive the record before them.
+//! 5. **A moment is answered once, whenever it is asked.** `state_at` waits for
+//!    a change in progress on the passport, so a moment the change has stamped
+//!    but not committed is not answered with the record from before it.
 
 #![cfg(feature = "integration-tests")]
 
@@ -401,7 +404,13 @@ async fn a_version_may_exist_without_the_passport_it_belongs_to() {
 async fn as_of_the_moment_of_a_change_the_successor_is_current() {
     let pg = start_pg().await;
     let versions = PgPassportVersionRepo::new(pg.dal.clone());
-    let id = PassportId::new();
+    // A live row to read beside the versions, which are written by hand below
+    // so they can be stamped at chosen instants.
+    let id = PgPassportRepo::new(pg.dal.clone())
+        .create(a_passport())
+        .await
+        .expect("create")
+        .id;
 
     let noon = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
     let one = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
@@ -411,9 +420,10 @@ async fn as_of_the_moment_of_a_change_the_successor_is_current() {
     archive(&pg, id, serde_json::json!({ "productName": "second" }), one).await;
 
     let before = versions
-        .version_at(&id.to_string(), noon - chrono::Duration::seconds(1))
+        .state_at(&id.to_string(), noon - chrono::Duration::seconds(1))
         .await
         .expect("as of")
+        .version
         .expect("a version covers the time before the first change");
     assert_eq!(
         before.doc.get("productName").and_then(|v| v.as_str()),
@@ -421,9 +431,10 @@ async fn as_of_the_moment_of_a_change_the_successor_is_current() {
     );
 
     let at = versions
-        .version_at(&id.to_string(), noon)
+        .state_at(&id.to_string(), noon)
         .await
         .expect("as of")
+        .version
         .expect("a version covers the instant of the first change");
     assert_eq!(
         at.doc.get("productName").and_then(|v| v.as_str()),
@@ -433,11 +444,102 @@ async fn as_of_the_moment_of_a_change_the_successor_is_current() {
 
     assert!(
         versions
-            .version_at(&id.to_string(), one)
+            .state_at(&id.to_string(), one)
             .await
             .expect("as of")
+            .version
             .is_none(),
         "past the most recent change nothing is archived — the live record is the answer, \
          and this route deliberately does not serve it"
+    );
+}
+
+/// A moment inside a change that has stamped its version but not committed is
+/// answered once that change commits, and as it will be answered afterwards.
+///
+/// A change archives the record it replaces under the passport's lock, stamped
+/// when it takes it, and its version is invisible until it commits. Read without
+/// waiting for that lock, a moment after the stamp found no version past it and
+/// the live record from before the change, then, asked again after the commit,
+/// the live record from after it: two answers for one moment. The change is held
+/// open here between its stamp and its commit, and the moment is asked inside it.
+#[tokio::test]
+async fn a_moment_inside_a_change_is_answered_as_it_is_after_the_commit() {
+    use std::time::{Duration, Instant};
+
+    let pg = start_pg().await;
+    let versions = std::sync::Arc::new(PgPassportVersionRepo::new(pg.dal.clone()));
+    let id = PgPassportRepo::new(pg.dal.clone())
+        .create(a_passport())
+        .await
+        .expect("create")
+        .id;
+
+    // The change, as `PgPassportRepo` makes one: lock, archive, write. Held open.
+    let mut change = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM odal.passport WHERE id = $1 FOR UPDATE")
+        .bind(id.0)
+        .execute(&mut *change)
+        .await
+        .expect("lock the passport");
+    sqlx::query(
+        "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
+         SELECT $1, id, doc, clock_timestamp() FROM odal.passport WHERE id = $2",
+    )
+    .bind(uuid::Uuid::now_v7())
+    .bind(id.0)
+    .execute(&mut *change)
+    .await
+    .expect("archive");
+    sqlx::query(
+        "UPDATE odal.passport SET doc = jsonb_set(doc, '{productName}', '\"Changed\"') \
+         WHERE id = $1",
+    )
+    .bind(id.0)
+    .execute(&mut *change)
+    .await
+    .expect("write");
+
+    // A moment after the change's stamp, by the clock that stamped it.
+    let at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pg.dal.pool())
+        .await
+        .expect("the database's clock");
+
+    let during = tokio::spawn({
+        let versions = versions.clone();
+        async move { versions.state_at(&id.to_string(), at).await }
+    });
+    // The read waits for the change, or has nothing to wait on and finishes.
+    let patience = Duration::from_secs(10);
+    let started = Instant::now();
+    while !during.is_finished() && sessions_waiting_for_a_lock(&pg).await < 1 {
+        assert!(
+            started.elapsed() < patience,
+            "the read neither waited nor finished"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    change.commit().await.expect("commit the change");
+
+    let during = during.await.expect("join").expect("read during the change");
+    let after = versions
+        .state_at(&id.to_string(), at)
+        .await
+        .expect("read after the change");
+    let name = |live: &Option<serde_json::Value>| {
+        live.as_ref()
+            .map(|doc| doc["productName"].clone())
+            .expect("the passport exists")
+    };
+    assert_eq!(
+        (name(&during.live), during.version.map(|v| v.id)),
+        (name(&after.live), after.version.map(|v| v.id)),
+        "one moment, two answers: the read did not wait for the change in progress"
+    );
+    assert_eq!(name(&after.live), "Changed");
+    assert!(
+        during.read_at >= at,
+        "the store's clock is read once it holds the row"
     );
 }

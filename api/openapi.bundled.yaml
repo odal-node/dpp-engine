@@ -484,6 +484,12 @@ paths:
 
         Each version is the complete record, so a reader reconstitutes rather than
         replays. Versions are append-only and are kept for the passport's lifetime.
+
+        **This is the operator's own machine access.** An authority, a notified body
+        or a person with a legitimate interest holds a credential and no API key, and
+        reads a past version with `asOf` on `GET /vault/credential/dpp/{dppId}`
+        (`readDppByCredential`), which serves it filtered to the credential's
+        audience, with the proof for that audience.
       tags:
         - DPP Management
       security:
@@ -516,6 +522,11 @@ paths:
             a version at a time before the record existed is a question with no true
             answer, and answering with the initial one would assert that the passport
             existed then.
+
+            A moment in the future is `422`, by the clock that stamps each version:
+            a change not yet made could still be the state then. Any other moment is
+            answered the same way whenever it is asked, since the version is read
+            after any change in progress on the passport has committed.
           schema:
             type: string
             format: date-time
@@ -540,7 +551,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: '`asOf` was given and is not an RFC 3339 timestamp.'
+          description: '`asOf` was given and is not an RFC 3339 timestamp, or is in the future.'
           content:
             application/problem+json:
               schema:
@@ -3190,6 +3201,45 @@ paths:
 
         Returns the public view (not an error) when credential verification
         is not configured on this node.
+
+        ✅ **A past version: `asOf`.** EN 18221:2026 clause 4.2 expects the
+        version of a passport at a past moment to be retrievable by authenticated,
+        authorised actors. With `asOf` this route returns the version that was
+        current at that instant, to the readers who hold a credential and no API
+        key, which `GET /dpp/{dppId}/versions?asOf=` is not for. It is the same body
+        a live read gives the same credential: the payload that audience's
+        publish-time proof covers, with that proof attached and `disclosureSet`
+        naming the classes. A published passport's views are frozen when it is
+        signed, so a version carries exactly the classes it was published with, and
+        the proof verifies against the operator's key as a live one does.
+
+        **`asOf` needs a credential that grants more than the public view.** The
+        clause speaks of *authenticated, authorised* actors, so the rule above does
+        not apply: without a credential the answer is `401`, and a credential that
+        does not cover this passport gets `403` naming the axis in
+        `X-DPP-Credential-Out-Of-Scope`. The public proof is frozen at publish, so it
+        is the same bytes for every version of a published passport, and serving it
+        for a past instant would answer a question about the past with the present
+        passport. A node that cannot verify credentials answers `401` too, and says
+        so. Both are decided before any version is served, and a credential
+        presented against a passport it does not cover is recorded like any other.
+
+        A moment after the passport's last change is answered by the live record,
+        which is the state at that time. A moment before the passport was created
+        is `404`, and one in the future `422`: nothing was its state then. A version
+        is served on the terms a live read is: a moment the passport was a draft is
+        `404`, and one it was suspended `410`.
+
+        The same moment is answered the same way whenever it is asked. The live
+        record and the version are read together, after any change in progress on
+        the passport has committed, and the future is measured by the clock that
+        stamps each version, so no later change can land on a moment already
+        answered.
+
+        A past version served is recorded to the audit trail with the instant
+        asked for (`asOf`) and the archived version that answered it
+        (`archivedVersionId`, `null` when the live record did), as is a credential
+        refused one for scope.
       tags:
         - Credentialed Access
       security: []
@@ -3202,9 +3252,25 @@ paths:
         - name: X-DPP-Credential
           in: header
           required: false
-          description: A verifiable access credential. Absent means public access.
+          description: |
+            A verifiable access credential. Absent means public access, except with
+            `asOf`, which is read only with one.
           schema:
             type: string
+        - name: asOf
+          in: query
+          required: false
+          description: |
+            An RFC 3339 instant. Returns the passport as it stood then, filtered to
+            the credential's audience. Requires a credential that covers this
+            passport: see the description above.
+
+            Not before the passport was created (`404`), and not in the future
+            (`422`). Write the offset as `Z`: a literal `+` in a query string is a
+            space.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           description: Passport filtered to the resolved audience.
@@ -3238,19 +3304,56 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
-          description: The presented credential failed verification.
+          description: |
+            The presented credential failed verification. Also `asOf` without a
+            credential, which a past version is read only with, and `asOf` on a node
+            that cannot verify credentials, which says so.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: |
+            `asOf` with a verified credential that grants nothing beyond the public
+            view on this passport, so it cannot read a past version. Never returned
+            without `asOf`, where such a credential is served the public view.
+          headers:
+            X-DPP-Credential-Out-Of-Scope:
+              description: |
+                The axis the credential missed, as on a `200`: `product-group`,
+                `product-category` or `no-product-category`. Absent when the
+                credential covers the passport and its audience is the public one.
+              required: false
+              schema:
+                type: string
+                enum:
+                  - product-group
+                  - product-category
+                  - no-product-category
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '404':
-          description: Not found or not published.
+          description: |
+            Not found or not published. With `asOf`, also a moment before the
+            passport was created, and a moment it was not yet published, where no
+            published version covers it.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         '410':
-          description: This passport has been suspended.
+          description: |
+            This passport has been suspended. With `asOf`, it was suspended at that
+            moment.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: |
+            `asOf` was given and is not an RFC 3339 timestamp, or is in the future.
           content:
             application/problem+json:
               schema:

@@ -1,15 +1,19 @@
 //! Read paths: fetch by id or printed label, paginated list, count, and audit
 //! history.
 
+use std::sync::OnceLock;
+
 use dpp_domain::{
     FieldError, Gtin, ProductIdentifier,
+    catalog::ProductGroupCatalog,
     error::DppError,
     passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
+    schemas::LensRegistry,
     status::PassportStatus,
 };
-use dpp_types::audit::PassportAuditEntry;
+use dpp_types::audit::{PassportAuditEntry, PassportVersion};
 
 use super::{PassportService, claim::Claim};
 use crate::public_view::{never_published, retired_draft};
@@ -204,44 +208,65 @@ impl PassportService {
             .await
     }
 
-    /// The version that was current at `at`.
+    /// The passport as it stood at `at`: which record was its state then, with
+    /// the live record, both read under the passport's lock.
     ///
     /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — the passport as it stood at
     /// any given moment can be retrieved.
     ///
+    /// One read of the store rather than the live record and then a version: a
+    /// change committing between the two would answer one moment with two
+    /// states, and a moment the store's clock has not reached could still be
+    /// stamped by a change not yet made. See
+    /// [`PassportVersionStore::state_at`](dpp_types::audit::PassportVersionStore::state_at),
+    /// which makes the same moment answer the same way whenever it is asked.
+    ///
     /// # Errors
     ///
-    /// `NotFound` for an unknown id; otherwise the store's own failure.
-    pub async fn version_at(
+    /// `NotFound` for an unknown id; otherwise the store's own failure, or the
+    /// live record's own refusal to read.
+    pub async fn state_at(
         &self,
         id: PassportId,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<VersionAt, DppError> {
-        let passport = self.find_by_id(id).await?;
+    ) -> Result<StateAt, DppError> {
+        let read = self
+            .versions
+            .as_ref()
+            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
+            .state_at(&id.to_string(), at)
+            .await?;
+
+        // Before whether the passport exists, so a moment in the future is
+        // refused alike for a passport and for none.
+        if at > read.read_at {
+            return Ok(StateAt::NotYet);
+        }
+        let live = stored_passport(
+            read.live
+                .ok_or_else(|| DppError::NotFound(id.to_string()))?,
+        )?;
 
         // 🚨 Before the passport existed, the store answers the wrong question.
         //
-        // `version_at` asks for the earliest version that stopped being current
+        // The store asks for the earliest version that stopped being current
         // *after* `at`, and for any instant before the first change that is the
         // initial version — including instants before the passport was created.
         // So "what did this say in 1990" returned the initial record, which
         // asserts the passport existed in 1990.
         //
         // Checked here rather than in the store because this is where the live
-        // record is in hand; the store holds versions and has no way to know
-        // when the thing they are versions of came into being.
-        if at < passport.created_at {
-            return Ok(VersionAt::BeforeItExisted);
-        }
-
-        let found = self
-            .versions
-            .as_ref()
-            .ok_or_else(|| DppError::Internal("version archive not configured".into()))?
-            .version_at(&id.to_string(), at)
-            .await?;
-
-        Ok(found.map_or(VersionAt::Live, VersionAt::Found))
+        // record is read; the store holds versions and has no way to know when
+        // the thing they are versions of came into being.
+        let version = if at < live.created_at {
+            VersionAt::BeforeItExisted
+        } else {
+            read.version.map_or(VersionAt::Live, VersionAt::Found)
+        };
+        Ok(StateAt::Known {
+            live: Box::new(live),
+            version,
+        })
     }
 }
 
@@ -528,7 +553,46 @@ impl LabelResolution {
     }
 }
 
-/// What [`PassportService::version_at`] found.
+/// The passport an archived version holds, read the way a stored one is.
+///
+/// Through [`Passport::from_stored`] and not a bare deserialise, as every read of
+/// the live row is: a version is a stored document, and one taken before its
+/// product group's schema moved on needs the same upcast through the lens chain,
+/// or it fails the one document instead of reading it.
+///
+/// # Errors
+///
+/// Whatever `from_stored` refuses the document with. A caller serving the version
+/// fails closed on it: a version that cannot be read is not one to guess at.
+pub fn archived_passport(version: &PassportVersion) -> Result<Passport, DppError> {
+    stored_passport(version.doc.clone())
+}
+
+/// A passport document as stored, read as the passport store reads its rows:
+/// through the lens chain, with this build's catalog.
+fn stored_passport(doc: serde_json::Value) -> Result<Passport, DppError> {
+    static READ: OnceLock<(LensRegistry, ProductGroupCatalog)> = OnceLock::new();
+    let (lenses, catalog) = READ.get_or_init(|| (LensRegistry::new(), ProductGroupCatalog::new()));
+    Passport::from_stored(doc, lenses, catalog)
+}
+
+/// What [`PassportService::state_at`] read.
+#[derive(Debug, Clone)]
+pub enum StateAt {
+    /// The passport, and which record was its state at the instant.
+    Known {
+        /// The live record, read in the same transaction as `version`. Boxed
+        /// because it is most of this type's size.
+        live: Box<Passport>,
+        /// Which record was the state then.
+        version: VersionAt,
+    },
+    /// The instant is after the store's clock when it read: a change not yet
+    /// made could still be the passport's state then, so nothing is yet.
+    NotYet,
+}
+
+/// Which record was a passport's state at an instant.
 ///
 /// Three answers rather than two, because the two ways of having no archived
 /// version are different facts and only one of them is answered by the live
@@ -550,6 +614,61 @@ pub enum VersionAt {
     Live,
     /// The instant is before the passport was created.
     BeforeItExisted,
+}
+
+#[cfg(test)]
+mod archived_versions {
+    //! A version is stored as its passport was, never upcast, so reading one is
+    //! where the lens chain earns its place.
+
+    use dpp_domain::product_group::ProductGroupData;
+    use dpp_types::audit::PassportVersion;
+
+    use super::archived_passport;
+
+    /// A textile version stored at schema 1.1.0, before `countryOfManufacturing`
+    /// was renamed. A bare deserialise fails on the missing field; read the way a
+    /// stored passport is, the lens carries the country across.
+    #[test]
+    fn a_version_stored_under_an_earlier_schema_is_read_through_the_lens_chain() {
+        let version = PassportVersion {
+            id: uuid::Uuid::now_v7(),
+            passport_id: "019f3aa5-579d-73c1-a3e6-a8002df5e06b".into(),
+            doc: serde_json::json!({
+                "id": "019f3aa5-579d-73c1-a3e6-a8002df5e06b",
+                "productGroup": "textile",
+                "status": "published",
+                "batchId": null,
+                "version": 1,
+                "createdAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-01T00:00:00Z",
+                "materials": [],
+                "qrCodeUrl": null,
+                "productGroupData": {
+                    "productGroup": "textile",
+                    "gtin": "09506000134352",
+                    "careInstructions": "Hand wash cold.",
+                    "fibreComposition": [{ "pct": 100.0, "fibre": "linen" }],
+                    "countryOfManufacturing": "BD",
+                    "chemicalComplianceStandard": "EU REACH Annex XVII"
+                },
+                "co2ePerUnit": null,
+                "productName": "Example Linen Shirt",
+                "publishedAt": "2026-07-01T00:00:00Z",
+                "jwsSignature": null,
+                "manufacturer": { "name": "Example Clothing GmbH", "address": "DE", "didWebUrl": null },
+                "schemaVersion": "1.1.0",
+                "retentionLocked": false
+            }),
+            superseded_at: chrono::Utc::now(),
+        };
+
+        let passport = archived_passport(&version).expect("the lens chain reads it");
+        let Some(ProductGroupData::Textile(textile)) = passport.product_group_data else {
+            panic!("a textile passport");
+        };
+        assert_eq!(textile.country_of_origin, "BD");
+    }
 }
 
 #[cfg(test)]

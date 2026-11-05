@@ -61,6 +61,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **An authority or a person with a legitimate interest can read the passport
+  as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of
+  a passport at a past moment to be retrievable by authenticated, authorised
+  actors, and the archive was read only through the operator's API key, which
+  these readers deliberately do not hold. `GET /vault/credential/dpp/{dppId}`
+  now takes `?asOf=<RFC 3339>` and serves the version that was current then, as
+  the payload that reader's audience's publish-time proof covers, with that proof
+  attached and `disclosureSet` naming the classes: byte for byte what the same
+  credential was given live before the change, and verifiable against the
+  operator's key. A published passport's views are frozen when it is signed, so
+  a version carries exactly the classes it was published with. A moment after the
+  last change is answered by the live record, one before the passport existed is
+  `404` and one in the future `422`; a moment it was a draft is `404` and one it
+  was suspended `410`, as on a live read. Every version served is recorded to the
+  audit trail with the instant asked for (`asOf`) and the archived version that
+  answered (`archivedVersionId`).
+
+  **Anonymous readers do not get a past version.** Without a credential, or with
+  one that grants nothing beyond the public view on that passport, `asOf` is
+  `401` and `403` rather than the public view the route answers everything else
+  with. The public proof is frozen at publish, so it is the same bytes for every
+  version of a published passport: serving it for a past instant would answer a
+  question about the past with the present passport, and open an unauthenticated
+  way to read when a record was published. A node that cannot verify credentials
+  answers `401` too, and says so.
+
+  **A moment is answered the same way whenever it is asked**, here and on the
+  operator's `GET /vault/api/v1/dpp/{dppId}/versions?asOf=`. A change stamps the
+  version it replaces inside its transaction, and the version is visible only
+  once that commits, so a moment between the two was answered with the record
+  before the change and, asked again, with the record after it; and the live
+  record and the version were two reads a change could fall between. Both are
+  now read together under the passport's lock, after any change in progress
+  commits, and "the future" is measured by the database's clock, which stamps
+  the versions: a moment past it is `422` on both routes, where the operator's
+  route answered it as covered by the live record. (#470)
+
 - **A lost submission handle is found again.** A replayed idempotency key is
   answered with the conflict and not the submission, so a node whose first
   attempt got through and whose record of the answer was lost, by a crash
