@@ -1,5 +1,7 @@
-//! Handlers for the GS1 Digital Link routes. Not assessed against the GS1
-//! Conformant Resolver Standard (GS1-CRSV1), so nothing here claims conformance.
+//! Handlers for the GS1 Digital Link routes. Whether the resolver conforms to the
+//! GS1 Conformant Resolver Standard (GS1-CRSV1), release 1.2.1, is answered
+//! criterion by criterion in `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`; the
+//! comments here cite the standard's sections where a rule shapes the code.
 //!
 //! A printed carrier may carry more than the GTIN. This node's publisher emits
 //! `/01/{gtin}` for a model-level passport, `/01/{gtin}/10/{batch}` for a
@@ -21,20 +23,30 @@
 //! A qualifier with no passport of its own resolves, in the vault, to the level
 //! above it, as a GS1 resolver answers a granular identifier (GS1-CRSV1, 2.5.9
 //! and 2.5.10). So a `404` here means nothing is on record at any level the label
-//! names, and a GTIN that cannot be one is a `400`: the standard keeps those two
-//! apart (2.4.1) and so does this route.
+//! names, and a path that cannot be a Digital Link is a `400`: the standard keeps
+//! those two apart (2.4.1) and so does this route.
+//!
+//! **The path is read once, by `DigitalLink::parse`.** That is where the lengths,
+//! character sets, check digit and qualifier order are held to GS1's syntax
+//! dictionary, so this module restates none of them, and where the anchor of a
+//! linkset comes from: [`DigitalLink::build`] writes the uncompressed form the
+//! standard asks for (2.3), whether the request was compressed or not.
 
 use axum::{
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, Uri, header},
-    response::IntoResponse,
+    extract::{Query, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
+    response::{IntoResponse, Response},
 };
 use dpp_common::http_problem;
-use dpp_digital_link::Gs1LinkType;
+use dpp_digital_link::{DigitalLink, DigitalLinkError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
-use crate::{infra::did, state::AppState};
+use crate::{
+    domain::epc::{self, EpcError},
+    infra::did,
+    state::AppState,
+};
 
 /// Query parameters for the GS1 Digital Link resolver endpoint (`/01/{gtin}`).
 #[derive(Deserialize, Serialize)]
@@ -46,165 +58,85 @@ pub struct ByGtinQuery {
     pub link_type: Option<String>,
 }
 
-/// GS1 Digital Link resolver — `GET /01/{gtin}[?linkType=…]`
+/// GS1 Digital Link resolver — `GET /01/{gtin}[…qualifiers][?linkType=…]`
 ///
-/// Implements GS1 Digital Link resolution as described below; not assessed
-/// against the GS1 Conformant Resolver Standard (GS1-CRSV1):
 /// - `?linkType=linkset` or `Accept: application/linkset+json` → RFC 9264 linkset
-/// - `?linkType=gs1:pip` / `?linkType=gs1:dpp` → 307 redirect to DPP page
-/// - Default (no qualifier) → 307 redirect to the HTML product page
+/// - `?linkType=gs1:pip` / `gs1:dpp` / `gs1:defaultLink` → 307 redirect to the
+///   DPP page; any other link type → 404, because the linkset does not offer it
+/// - Default (no link type) → 307 redirect to the HTML product page
+///
+/// A redirect carries the request's query string on (GS1-CRSV1, 2.12).
 pub async fn resolve_by_gtin_handler(
-    state: State<AppState>,
-    Path(gtin): Path<String>,
-    query: Query<ByGtinQuery>,
+    State(state): State<AppState>,
+    uri: Uri,
     headers: HeaderMap,
-) -> impl IntoResponse {
-    resolve_gtin(state, Label::default(), gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/21/{serial}` — GTIN + serial: one unit.
-pub async fn resolve_by_gtin_serial_handler(
-    state: State<AppState>,
-    Path((gtin, serial)): Path<(String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: None,
-        serial: Some(serial),
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/10/{batch}` — GTIN + batch/lot: one production run.
-pub async fn resolve_by_gtin_batch_handler(
-    state: State<AppState>,
-    Path((gtin, batch)): Path<(String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: Some(batch),
-        serial: None,
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/10/{batch}/21/{serial}` — the shape this node printed for a
-/// batched product before the carrier followed the passport's level. The
-/// serial identifies the unit; the vault does not consult the batch once a
-/// serial is present.
-pub async fn resolve_by_gtin_batch_serial_handler(
-    state: State<AppState>,
-    Path((gtin, batch, serial)): Path<(String, String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: Some(batch),
-        serial: Some(serial),
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/22/{variant}` — GTIN + consumer product variant.
-///
-/// A variant (AI 22) is a valid part of a Digital Link, and a label printed
-/// elsewhere may carry one. This node holds no record at that level, so the value
-/// takes no part in the lookup and the label resolves as it would without it. The
-/// resolver standard answers a granular identifier with what is registered at
-/// each level it names and above (2.5.10); a level with nothing registered adds
-/// nothing.
-pub async fn resolve_by_gtin_variant_handler(
-    state: State<AppState>,
-    Path((gtin, _variant)): Path<(String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    resolve_gtin(state, Label::default(), gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/22/{variant}/21/{serial}` — a variant's unit. The variant is
-/// not looked up; see [`resolve_by_gtin_variant_handler`].
-pub async fn resolve_by_gtin_variant_serial_handler(
-    state: State<AppState>,
-    Path((gtin, _variant, serial)): Path<(String, String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: None,
-        serial: Some(serial),
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/22/{variant}/10/{batch}` — a variant's production run. The
-/// variant is not looked up; see [`resolve_by_gtin_variant_handler`].
-pub async fn resolve_by_gtin_variant_batch_handler(
-    state: State<AppState>,
-    Path((gtin, _variant, batch)): Path<(String, String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: Some(batch),
-        serial: None,
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/22/{variant}/10/{batch}/21/{serial}` — every qualifier a GTIN
-/// takes. The variant is not looked up; see [`resolve_by_gtin_variant_handler`].
-pub async fn resolve_by_gtin_variant_batch_serial_handler(
-    state: State<AppState>,
-    Path((gtin, _variant, batch, serial)): Path<(String, String, String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let label = Label {
-        batch: Some(batch),
-        serial: Some(serial),
-    };
-    resolve_gtin(state, label, gtin, query, headers).await
-}
-
-/// `GET /01/{gtin}/235/{extension}` — GTIN + third-party serialised extension.
-///
-/// An extension (AI 235) stands alone: the standard allows no further qualifier
-/// after it. This node issues no such extension, so the value takes no part in
-/// the lookup and the label resolves as the bare GTIN does.
-pub async fn resolve_by_gtin_extension_handler(
-    state: State<AppState>,
-    Path((gtin, _extension)): Path<(String, String)>,
-    query: Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    resolve_gtin(state, Label::default(), gtin, query, headers).await
+) -> Response {
+    match read_path(uri.path()) {
+        Ok(link) => resolve_link(&state, link, &uri, &headers).await,
+        Err(error) => invalid_path(&error),
+    }
 }
 
 /// What the router answers for a path no route serves.
 ///
-/// Under `/01/` that is a request whose qualifiers are out of order, repeated,
-/// not ones a GTIN takes, or empty. It fails the resolver standard's validity
-/// tests, which it answers `400` (2.4.1), and it is not looked up. Anywhere else
-/// it is the plain `404` the router always gave.
-pub async fn unserved_path_handler(uri: Uri) -> axum::response::Response {
-    if uri.path().starts_with("/01/") {
-        gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL)
-    } else {
-        StatusCode::NOT_FOUND.into_response()
+/// Three things reach here. A path under `/01/` that carries the trailing slash
+/// the standard asks a resolver to tolerate (2.13) is read like the same path
+/// without it. Any other path under `/01/` is a request whose qualifiers are out
+/// of order, repeated, not ones a GTIN takes, or empty; it fails the standard's
+/// validity tests, which it answers `400` (2.4.1), and it is not looked up. A
+/// single segment that starts `eh` or `ex` may be a compressed Digital Link
+/// (2.3) and is decompressed. Everything else is the plain `404` the router
+/// always gave.
+pub async fn unserved_path_handler(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    let reads = matches!(method, Method::GET | Method::HEAD);
+    let path = uri.path();
+
+    if path.starts_with("/01/") {
+        if !reads {
+            return StatusCode::METHOD_NOT_ALLOWED.into_response();
+        }
+        return match read_path(path) {
+            Ok(link) => resolve_link(&state, link, &uri, &headers).await,
+            Err(error) => invalid_path(&error),
+        };
     }
+
+    if reads && let Some(segment) = compressed_segment(path) {
+        return match epc::decompress(segment) {
+            Ok(uncompressed) => match read_path(&uncompressed) {
+                Ok(link) => resolve_link(&state, link, &uri, &headers).await,
+                Err(error) => invalid_path(&error),
+            },
+            // A recognised scheme with a field that cannot be right is a request
+            // that fails validation. Anything else is a path no Digital Link
+            // this resolver reads has, and gets what any such path gets.
+            Err(EpcError::BadField(_)) => gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL),
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+
+    StatusCode::NOT_FOUND.into_response()
 }
 
-/// The qualifiers a label printed after its GTIN, forwarded to the vault as
-/// the `batch` and `serial` query parameters of its by-GTIN route.
-#[derive(Default)]
-struct Label {
-    /// AI 10.
-    batch: Option<String>,
-    /// AI 21.
-    serial: Option<String>,
+/// The one path segment of `/eh…` or `/ex…`, without a trailing slash.
+fn compressed_segment(path: &str) -> Option<&str> {
+    let segment = path.strip_prefix('/')?;
+    let segment = segment.strip_suffix('/').unwrap_or(segment);
+    (!segment.contains('/') && (segment.starts_with("eh") || segment.starts_with("ex")))
+        .then_some(segment)
+}
+
+/// Read a request path as a Digital Link on this resolver.
+///
+/// The host is a placeholder: [`resolve_link`] replaces the base with the
+/// resolver's own, so nothing the request names reaches an anchor or a redirect.
+fn read_path(path: &str) -> Result<DigitalLink, DigitalLinkError> {
+    DigitalLink::parse(&format!("https://resolver.invalid{path}"))
 }
 
 /// What the GS1 route says when no passport resolves for the GTIN.
@@ -233,6 +165,10 @@ const INVALID_GTIN: &str = "The GTIN in the request is not valid.";
 /// at all, whatever its GTIN. See [`unserved_path_handler`].
 const INVALID_LABEL: &str = "The path is not a valid GS1 Digital Link.";
 
+/// What the GS1 route says when a link type is asked for that the linkset does
+/// not offer (2.6.2).
+const NO_SUCH_LINK_TYPE: &str = "No link of the requested type is available for this identifier.";
+
 /// The detail to serve alongside `status`.
 ///
 /// A `410` from the vault is a recall and has its own sentence, a `400` is a
@@ -246,6 +182,18 @@ fn detail_for(status: StatusCode) -> &'static str {
     }
 }
 
+/// The `400` for a path that is not a Digital Link, naming the GTIN when that
+/// is what failed.
+fn invalid_path(error: &DigitalLinkError) -> Response {
+    let detail = match error {
+        DigitalLinkError::InvalidGtin(_) | DigitalLinkError::InvalidGtinCheckDigit { .. } => {
+            INVALID_GTIN
+        }
+        _ => INVALID_LABEL,
+    };
+    gtin_problem(StatusCode::BAD_REQUEST, detail)
+}
+
 /// Render a GS1-route failure as RFC 9457, the shape every other public route
 /// on this resolver uses.
 ///
@@ -253,7 +201,7 @@ fn detail_for(status: StatusCode) -> &'static str {
 /// `/dpp/{id}` answered with a problem document, so the two public doors
 /// described the same failure in two different vocabularies and a client had to
 /// know which one it had knocked on.
-fn gtin_problem(status: StatusCode, detail: &str) -> axum::response::Response {
+fn gtin_problem(status: StatusCode, detail: &str) -> Response {
     let problem = http_problem::Problem::new(status, status.canonical_reason().unwrap_or("Error"))
         .with_detail(detail);
     (
@@ -264,210 +212,264 @@ fn gtin_problem(status: StatusCode, detail: &str) -> axum::response::Response {
         .into_response()
 }
 
+/// The GS1 Web Vocabulary namespace `gs1:` stands for (GS1-CRSV1, 2.14).
+const GS1_VOC: &str = "https://ref.gs1.org/voc/";
+
+/// Where GS1 publishes the JSON-LD context for linksets (2.10). The newest, not
+/// a version of it, which is the one the standard recommends. The description
+/// file declares the same location.
+pub(crate) const LINKSET_CONTEXT: &str = "https://ref.gs1.org/standards/resolver/linkset-context";
+
+/// The `Link` header that points a linkset at that context (2.10).
+const LINKSET_CONTEXT_LINK: &str = "<https://ref.gs1.org/standards/resolver/linkset-context>; \
+     rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"";
+
+/// The title every link to the product page carries; the standard asks for one on
+/// every link (2.5.3).
+const PAGE_TITLE: &str = "Product information page";
+
+/// The title every link to the passport carries.
+const PASSPORT_TITLE: &str = "Digital Product Passport";
+
+/// The link types this resolver offers for a passport, as the local names the
+/// `gs1:` prefix stands before. Nothing else is offered, so nothing else is
+/// redirected to: a request for a type the linkset does not list is a `404`
+/// (2.6.2), not a guess.
+const OFFERED_LINK_TYPES: [&str; 3] = ["pip", "dpp", "defaultLink"];
+
+/// The local name of the offered link type `requested` names, if it names one.
+///
+/// Both spellings of a GS1 link type are read: the compact `gs1:pip` and the
+/// full `https://ref.gs1.org/voc/pip`.
+fn offered_link_type(requested: &str) -> Option<&'static str> {
+    let local = requested
+        .strip_prefix("gs1:")
+        .or_else(|| requested.strip_prefix(GS1_VOC))?;
+    OFFERED_LINK_TYPES.into_iter().find(|name| *name == local)
+}
+
 /// Shared implementation: every GS1 Digital Link route resolves on the GTIN and
 /// whatever qualifiers the label carried.
-async fn resolve_gtin(
-    State(state): State<AppState>,
-    label: Label,
-    gtin: String,
-    Query(query): Query<ByGtinQuery>,
-    headers: HeaderMap,
-) -> axum::response::Response {
-    // Validate the GTIN at the edge before it reaches the server-to-server vault
-    // URL — a percent-decoded `../admin` must not path-traverse/SSRF the vault.
-    // The batch and serial travel as query parameters, which `reqwest` encodes,
-    // so they cannot reach the path.
-    if !crate::domain::is_valid_gtin(&gtin) {
-        return gtin_problem(StatusCode::BAD_REQUEST, INVALID_GTIN);
-    }
-
-    let passport = match fetch_by_gtin(&state, &gtin, &label).await {
-        Ok(v) => v,
-        Err(status) => return gtin_problem(status, detail_for(status)),
-    };
-
-    // Verify the public signature against the operator DID before trusting
-    // anything the vault returned — every other resolver route (by id) does
-    // this; resolving by GTIN must not be a second, unverified path to the
-    // same passport data. Fails closed, same as `resolve_json`/`resolve_html`.
-    let passport =
-        match did::verify_passport_jws(&state.http, &state.operator_did_url, &passport).await {
-            Ok(v) => v,
-            Err(status) => {
-                return gtin_problem(status, "The passport's signature could not be verified.");
-            }
-        };
-
-    let passport_id = match passport.get("id").and_then(Value::as_str) {
-        Some(id) => id.to_owned(),
-        None => {
-            return (StatusCode::BAD_GATEWAY, "").into_response();
-        }
-    };
-
+async fn resolve_link(
+    state: &AppState,
+    mut link: DigitalLink,
+    uri: &Uri,
+    headers: &HeaderMap,
+) -> Response {
     // The resolver's own trusted base URL. It is NOT derived from the passport's
     // `qrCodeUrl`: that field is mutable and content-binding-exempt (tamperable),
     // so trusting it would let an altered value 307-redirect the scan to an
     // attacker host — the exact open redirect the QR-code handler hardcodes
-    // against.
-    let base_url = state.resolver_base_url.as_str();
+    // against. Nor is it the host the request named.
+    link.resolver_base = state.resolver_base_url.trim_end_matches('/').to_owned();
+    let base_url = link.resolver_base.clone();
+    let anchor = link.build();
+
+    // Only the GTIN, batch and serial leave this module for the vault. They were
+    // validated by the parse, and the batch and serial travel as query
+    // parameters, which `reqwest` encodes, so none of them can reach the path.
+    let Some(gtin) = link.gtin().map(|g| g.as_str().to_owned()) else {
+        return gtin_problem(StatusCode::BAD_REQUEST, INVALID_LABEL);
+    };
+    let (batch, serial) = (link.batch(), link.serial());
+
+    let id = match fetch_verified_id(state, &gtin, batch, serial).await {
+        Ok(id) => id,
+        Err((status, detail)) => return gtin_problem(status, detail),
+    };
+
+    let link_type = Query::<ByGtinQuery>::try_from_uri(uri)
+        .ok()
+        .and_then(|q| q.0.link_type)
+        .filter(|lt| !lt.is_empty());
 
     // Linkset request: ?linkType=linkset OR Accept: application/linkset+json
-    let wants_linkset = query.link_type.as_deref() == Some("linkset")
+    let wants_linkset = link_type.as_deref() == Some("linkset")
         || headers
             .get(header::ACCEPT)
             .and_then(|v| v.to_str().ok())
-            .map(|a| a.contains("application/linkset+json"))
-            .unwrap_or(false);
-
+            .is_some_and(|a| a.contains("application/linkset+json"));
     if wants_linkset {
-        let body = serde_json::to_string(&build_linkset(base_url, &gtin, &passport_id, &passport))
-            .unwrap_or_default();
+        let mut ids = vec![id];
+        match coarser_ids(state, &gtin, batch, serial, &ids[0]).await {
+            Ok(more) => ids.extend(more),
+            Err((status, detail)) => return gtin_problem(status, detail),
+        }
+        let body =
+            serde_json::to_string(&build_linkset(&base_url, &anchor, &ids)).unwrap_or_default();
         return (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/linkset+json")],
+            [
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/linkset+json"),
+                ),
+                (header::LINK, HeaderValue::from_static(LINKSET_CONTEXT_LINK)),
+            ],
             body,
         )
             .into_response();
     }
 
-    // Named link type redirect
-    if let Some(ref lt) = query.link_type {
-        let parsed = Gs1LinkType::parse(lt);
-        match parsed {
-            Gs1LinkType::ProductInformationPage
-            | Gs1LinkType::DigitalProductPassport
-            | Gs1LinkType::ElectronicLeaflet
-            | Gs1LinkType::SustainabilityInfo
-            | Gs1LinkType::RecyclingInfo
-            | Gs1LinkType::CertificationInfo => {
-                return redirect(&format!("{base_url}/dpp/{passport_id}"));
-            }
-            _ => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    [(header::CONTENT_TYPE, "application/json")],
-                    format!(r#"{{"error":"LINK_TYPE_NOT_FOUND","linkType":{lt:?}}}"#),
-                )
-                    .into_response();
-            }
-        }
+    // A named link type is redirected to when the linkset offers it, and is a
+    // `404` when it does not (2.6.2). No link type is the default link.
+    if let Some(requested) = link_type.as_deref()
+        && offered_link_type(requested).is_none()
+    {
+        return gtin_problem(StatusCode::NOT_FOUND, NO_SUCH_LINK_TYPE);
     }
-
-    // Default: redirect to the DPP page (HTML)
-    redirect(&format!("{base_url}/dpp/{passport_id}"))
+    redirect(&format!("{base_url}/dpp/{id}"), uri.query())
 }
 
-fn redirect(location: &str) -> axum::response::Response {
+/// Redirect to `location`, handing the request's query string on to the target
+/// (GS1-CRSV1, 2.12). The target may read what the resolver does not.
+fn redirect(location: &str, query: Option<&str>) -> Response {
+    let location = match query.filter(|q| !q.is_empty()) {
+        Some(query) => format!("{location}?{query}"),
+        None => location.to_owned(),
+    };
     (
         StatusCode::TEMPORARY_REDIRECT,
-        [(header::LOCATION, location.to_owned())],
+        [(header::LOCATION, location)],
         "",
     )
         .into_response()
 }
 
-/// Build a GS1 linkset per RFC 9264 / GS1 Digital Link standard. When the
-/// passport cites a predecessor (second-life successor linkage), the linkset
-/// also advertises an Odal `predecessor` relation pointing at the source
-/// passport, so a scanner can walk up the lineage.
-fn build_linkset(
-    base_url: &str,
+/// Why a level of a label could not be answered: the status, and the sentence a
+/// problem document carries for it.
+type Failure = (StatusCode, &'static str);
+
+/// What the GS1 route says when a passport's signature does not verify.
+const SIGNATURE_UNVERIFIED: &str = "The passport's signature could not be verified.";
+
+/// The id of the passport the label resolves to, after its public signature has
+/// been checked against the operator's DID.
+///
+/// Verification comes before anything the vault returned is trusted — every other
+/// resolver route (by id) does this; resolving by GTIN must not be a second,
+/// unverified path to the same passport data. Fails closed, same as
+/// `resolve_json`/`resolve_html`.
+async fn fetch_verified_id(
+    state: &AppState,
     gtin: &str,
-    passport_id: &str,
-    passport: &serde_json::Value,
-) -> serde_json::Value {
-    let anchor = format!("{base_url}/01/{gtin}");
-    let dpp_url = format!("{base_url}/dpp/{passport_id}");
-    let mut linkset = serde_json::json!({
-        "anchor": anchor,
-        "linkset": [{
-            "anchor": anchor,
-            "https://ref.gs1.org/voc/pip": [
-                {"href": dpp_url, "type": "text/html"}
-            ],
-            "https://ref.gs1.org/voc/dpp": [
-                {"href": dpp_url, "type": "application/ld+json"}
-            ]
-        }]
-    });
-    // Lineage: one `predecessor` relation per predecessor cited. Art. 77(7) is
-    // plural on both sides, so `derivedFrom` is a list and a second-life unit
-    // may name several.
-    let predecessor_links: Vec<serde_json::Value> = passport
-        .get("derivedFrom")
-        .and_then(serde_json::Value::as_array)
-        .map(|edges| edges.iter().filter_map(ref_uri).map(ld_link).collect())
-        .or_else(|| {
-            // The shape `derivedFrom` replaced, still reachable here. What this
-            // function is handed is a **signed** public view, and one published
-            // before the change cannot be regenerated without breaking the
-            // signature over it — so the old key is not legacy tolerance, it is
-            // the only form those passports will ever have.
-            passport
-                .get("parentPassportRef")
-                .and_then(ref_uri)
-                .map(|uri| vec![ld_link(uri)])
-        })
-        .unwrap_or_default();
-    if !predecessor_links.is_empty()
-        && let Some(inner) = linkset["linkset"][0].as_object_mut()
-    {
-        inner.insert(
-            Gs1LinkType::Predecessor.as_gs1_uri().to_owned(),
-            serde_json::Value::Array(predecessor_links),
+    batch: Option<&str>,
+    serial: Option<&str>,
+) -> Result<String, Failure> {
+    let passport = fetch_by_gtin(state, gtin, batch, serial)
+        .await
+        .map_err(|status| (status, detail_for(status)))?;
+    let passport = did::verify_passport_jws(&state.http, &state.operator_did_url, &passport)
+        .await
+        .map_err(|status| (status, SIGNATURE_UNVERIFIED))?;
+    passport
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or((StatusCode::BAD_GATEWAY, "The passport carries no id."))
+}
+
+/// The ids of the passports on record at the levels *above* the one the label
+/// resolved to, for a linkset.
+///
+/// A linkset for a granular identifier is the union of what is registered at the
+/// level named and at each level up to the GTIN (GS1-CRSV1, 2.9, 2.5.10). The
+/// vault answers one record, the most specific that exists, so the levels above
+/// are read the way a label that carried less would be. A level with nothing on
+/// record, or whose passport is withdrawn, adds no link and is not an error here
+/// (a withdrawal of the level the label names is: that is the recall the request
+/// answers). A level the vault cannot answer *is* an error: leaving it out would
+/// publish a linkset that silently lacks links the standard says it holds.
+async fn coarser_ids(
+    state: &AppState,
+    gtin: &str,
+    batch: Option<&str>,
+    serial: Option<&str>,
+    found: &str,
+) -> Result<Vec<String>, Failure> {
+    let mut levels: Vec<(Option<&str>, Option<&str>)> = Vec::with_capacity(2);
+    if serial.is_some() && batch.is_some() {
+        levels.push((batch, None));
+    }
+    if serial.is_some() || batch.is_some() {
+        levels.push((None, None));
+    }
+
+    let mut ids: Vec<String> = Vec::new();
+    for (batch, serial) in levels {
+        match fetch_verified_id(state, gtin, batch, serial).await {
+            Ok(id) if id != found && !ids.contains(&id) => ids.push(id),
+            Ok(_) | Err((StatusCode::NOT_FOUND | StatusCode::GONE, _)) => {}
+            Err(failure) => return Err(failure),
+        }
+    }
+    Ok(ids)
+}
+
+/// Build a GS1 linkset per RFC 9264 and the standard's linkset schema, for the
+/// request URI `anchor` (uncompressed, GS1-CRSV1 2.3).
+///
+/// `passport_ids` runs from the level the label named up to the GTIN. The first is
+/// the default link: exactly one link carries `gs1:defaultLink`, with a title and
+/// no other attribute (2.5.8), and it is described by a second type, `gs1:pip`,
+/// because a default is also some kind of resource. A level above contributes its
+/// passport as a further `pip` and `dpp` link, and never as the default, so the
+/// default is the record that is closest to what the label names, which is the one
+/// a scan is redirected to.
+///
+/// No relation outside the `gs1:` namespace is offered. The standard's linkset
+/// schema matches a relation by a pattern that has no room for a hyphen, so a
+/// relation in a namespace whose host has one — as the host of this project's
+/// own vocabulary does — makes the whole document fail the schema that criterion
+/// 10 holds it to. `gs1_linkset_schema_cannot_carry_a_hyphenated_relation_host`
+/// pins that.
+fn build_linkset(base_url: &str, anchor: &str, passport_ids: &[String]) -> Value {
+    let page = |id: &str| format!("{base_url}/dpp/{id}");
+    let relation = |name: &str| format!("{GS1_VOC}{name}");
+
+    let mut context = Map::new();
+    context.insert("anchor".into(), json!(anchor));
+    if let Some(first) = passport_ids.first() {
+        context.insert(
+            relation("defaultLink"),
+            json!([{ "href": page(first), "title": PAGE_TITLE }]),
         );
     }
-    // Bill of materials: one `hasComponent` relation per constituent passport, so
-    // a scanner can walk down into the assembly.
-    let component_links: Vec<serde_json::Value> = passport
-        .get("componentRefs")
-        .and_then(serde_json::Value::as_array)
-        .map(|refs| refs.iter().filter_map(ref_uri).map(ld_link).collect())
-        .unwrap_or_default();
-    if !component_links.is_empty()
-        && let Some(inner) = linkset["linkset"][0].as_object_mut()
-    {
-        inner.insert(
-            Gs1LinkType::HasComponent.as_gs1_uri().to_owned(),
-            serde_json::Value::Array(component_links),
-        );
-    }
-    linkset
+    context.insert(
+        relation("pip"),
+        passport_ids
+            .iter()
+            .map(|id| json!({ "href": page(id), "title": PAGE_TITLE }))
+            .collect(),
+    );
+    context.insert(
+        relation("dpp"),
+        passport_ids
+            .iter()
+            .map(|id| {
+                json!({
+                    "href": page(id),
+                    "title": PASSPORT_TITLE,
+                    "type": "application/ld+json",
+                })
+            })
+            .collect(),
+    );
+    json!({ "linkset": [Value::Object(context)] })
 }
 
-/// The URI out of a cross-operator reference, in either shape it may arrive in.
-///
-/// The current one wraps the reference under `reference` so the entry can carry
-/// qualifiers beside it — a component's quantity, a derivation's operation. The
-/// bare one put `uri` at the top level.
-///
-/// Both are read because what reaches this module is a **signed** public view.
-/// A passport published before the shape changed cannot be rewritten into the
-/// new one without invalidating the signature over it, so its entries stay bare
-/// for as long as the passport exists. Reading only the current shape drops
-/// every relation on those passports — silently, since a missing key is
-/// indistinguishable here from a passport that cites nothing.
-fn ref_uri(value: &serde_json::Value) -> Option<&str> {
-    value
-        .get("reference")
-        .and_then(|r| r.get("uri"))
-        .or_else(|| value.get("uri"))
-        .and_then(serde_json::Value::as_str)
-}
-
-/// One GS1 linkset target for a passport URI.
-fn ld_link(uri: &str) -> serde_json::Value {
-    serde_json::json!({ "href": uri, "type": "application/ld+json" })
-}
-
-async fn fetch_by_gtin(state: &AppState, gtin: &str, label: &Label) -> Result<Value, StatusCode> {
+async fn fetch_by_gtin(
+    state: &AppState,
+    gtin: &str,
+    batch: Option<&str>,
+    serial: Option<&str>,
+) -> Result<Value, StatusCode> {
     let url = format!("{}/public/dpp/by-gtin/{gtin}", state.vault_base_url);
     let mut qualifiers: Vec<(&str, &str)> = Vec::with_capacity(2);
-    if let Some(batch) = &label.batch {
+    if let Some(batch) = batch {
         qualifiers.push(("batch", batch));
     }
-    if let Some(serial) = &label.serial {
+    if let Some(serial) = serial {
         qualifiers.push(("serial", serial));
     }
     let resp = state
@@ -512,161 +514,122 @@ async fn fetch_by_gtin(state: &AppState, gtin: &str, label: &Label) -> Result<Va
 mod tests {
     use super::*;
 
-    #[test]
-    fn build_linkset_has_correct_structure() {
-        let ls = build_linkset(
-            "https://id.odal-node.io",
-            "09506000134352",
-            "abc-123",
-            &serde_json::json!({}),
-        );
-        assert_eq!(
-            ls["anchor"].as_str().unwrap(),
-            "https://id.odal-node.io/01/09506000134352"
-        );
-        let inner = &ls["linkset"][0];
-        assert!(inner.get("https://ref.gs1.org/voc/pip").is_some());
-        assert!(inner.get("https://ref.gs1.org/voc/dpp").is_some());
-        // No lineage relation for a passport that cites no predecessor.
-        assert!(
-            inner
-                .get("https://ref.odal-node.io/voc/predecessor")
-                .is_none()
-        );
+    const BASE: &str = "https://id.odal-node.io";
+    const ANCHOR: &str = "https://id.odal-node.io/01/09506000134352/10/LOT-1/21/SN-1";
+
+    fn ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
     }
 
-    /// The hrefs of one relation, in order.
-    fn hrefs<'a>(ls: &'a serde_json::Value, relation: &str) -> Vec<&'a str> {
-        ls["linkset"][0][relation]
+    fn hrefs<'a>(linkset: &'a Value, relation: &str) -> Vec<&'a str> {
+        linkset["linkset"][0][relation]
             .as_array()
-            .unwrap_or_else(|| panic!("{relation} relation present"))
+            .unwrap_or_else(|| panic!("{relation} present"))
             .iter()
-            .filter_map(|c| c["href"].as_str())
+            .filter_map(|link| link["href"].as_str())
             .collect()
     }
 
-    /// Art. 77(7) is plural on both sides, so a second-life unit may cite
-    /// several predecessors and each earns its own relation.
     #[test]
-    fn build_linkset_advertises_every_predecessor_cited() {
-        let passport = serde_json::json!({
-            "derivedFrom": [
-                {
-                    "reference": {
-                        "uri": "https://id.other-op.example/dpp/parent-xyz",
-                        "publicJwsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    },
-                    "operation": "repurposing"
-                },
-                {
-                    "reference": {
-                        "uri": "https://id.other-op.example/dpp/parent-abc",
-                        "publicJwsHash": "b1946ac92492d2347c6235b4d2611184e1946ac92492d2347c6235b4d2611184"
-                    },
-                    "operation": "remanufacturing"
-                }
-            ]
-        });
-        let ls = build_linkset(
-            "https://id.odal-node.io",
-            "09506000134352",
-            "abc-123",
-            &passport,
-        );
-        assert_eq!(
-            hrefs(&ls, "https://ref.odal-node.io/voc/predecessor"),
-            [
-                "https://id.other-op.example/dpp/parent-xyz",
-                "https://id.other-op.example/dpp/parent-abc"
-            ]
-        );
+    fn the_linkset_is_one_context_anchored_at_the_request() {
+        let linkset = build_linkset(BASE, ANCHOR, &ids(&["abc-123"]));
+        assert_eq!(linkset["linkset"].as_array().map(Vec::len), Some(1));
+        assert_eq!(linkset["linkset"][0]["anchor"], ANCHOR);
+        // RFC 9264 puts nothing beside `linkset` at the top.
+        assert_eq!(linkset.as_object().map(Map::len), Some(1));
     }
 
-    /// A signed public view published before the lineage shape changed still
-    /// resolves.
-    ///
-    /// It cannot be rewritten into the current shape — the signature covers it —
-    /// so reading only `derivedFrom` would drop the relation for as long as that
-    /// passport exists, and drop it *silently*: an absent key looks exactly like
-    /// a passport that cites no predecessor.
     #[test]
-    fn build_linkset_still_reads_a_frozen_pre_change_lineage_view() {
-        let passport = serde_json::json!({
-            "parentPassportRef": {
-                "uri": "https://id.other-op.example/dpp/parent-xyz",
-                "publicJwsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    fn the_nearest_passport_is_the_only_default_link() {
+        let linkset = build_linkset(BASE, ANCHOR, &ids(&["unit", "lot", "model"]));
+        assert_eq!(
+            hrefs(&linkset, "https://ref.gs1.org/voc/defaultLink"),
+            ["https://id.odal-node.io/dpp/unit"]
+        );
+        // The default carries a title and no other attribute.
+        let default = &linkset["linkset"][0]["https://ref.gs1.org/voc/defaultLink"][0];
+        assert_eq!(default.as_object().map(Map::len), Some(2));
+        assert!(default["title"].is_string());
+    }
+
+    #[test]
+    fn every_level_contributes_its_passport_nearest_first() {
+        let linkset = build_linkset(BASE, ANCHOR, &ids(&["unit", "lot", "model"]));
+        let expected = [
+            "https://id.odal-node.io/dpp/unit",
+            "https://id.odal-node.io/dpp/lot",
+            "https://id.odal-node.io/dpp/model",
+        ];
+        assert_eq!(hrefs(&linkset, "https://ref.gs1.org/voc/pip"), expected);
+        assert_eq!(hrefs(&linkset, "https://ref.gs1.org/voc/dpp"), expected);
+    }
+
+    #[test]
+    fn every_link_has_a_title() {
+        let linkset = build_linkset(BASE, ANCHOR, &ids(&["unit", "model"]));
+        for (relation, links) in linkset["linkset"][0].as_object().expect("a context") {
+            if relation == "anchor" {
+                continue;
             }
-        });
-        let ls = build_linkset(
-            "https://id.odal-node.io",
-            "09506000134352",
-            "abc-123",
-            &passport,
-        );
-        assert_eq!(
-            hrefs(&ls, "https://ref.odal-node.io/voc/predecessor"),
-            ["https://id.other-op.example/dpp/parent-xyz"]
-        );
-    }
-
-    /// Both component shapes resolve, for the same reason lineage's two do.
-    #[test]
-    fn build_linkset_advertises_components_in_either_shape() {
-        let passport = serde_json::json!({
-            "componentRefs": [
-                {
-                    "reference": { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" },
-                    "quantity": { "value": 2.0, "unit": "kg" }
-                },
-                { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
-            ]
-        });
-        let ls = build_linkset(
-            "https://id.odal-node.io",
-            "09506000134352",
-            "pack-1",
-            &passport,
-        );
-        assert_eq!(
-            hrefs(&ls, "https://ref.odal-node.io/voc/hasComponent"),
-            [
-                "https://id.a.example/dpp/mod-1",
-                "https://id.b.example/dpp/mod-2"
-            ]
-        );
+            for link in links.as_array().expect("links") {
+                assert!(
+                    link["title"].as_str().is_some_and(|t| !t.is_empty()),
+                    "{relation}: {link}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn build_linkset_advertises_each_component() {
-        let passport = serde_json::json!({
-            "componentRefs": [
-                {
-                    "reference": { "uri": "https://id.a.example/dpp/mod-1", "publicJwsHash": "aa" }
-                },
-                {
-                    "reference": { "uri": "https://id.b.example/dpp/mod-2", "publicJwsHash": "bb" }
-                }
-            ]
-        });
-        let ls = build_linkset(
-            "https://id.odal-node.io",
-            "09506000134352",
-            "pack-1",
-            &passport,
-        );
-        let components = ls["linkset"][0]["https://ref.odal-node.io/voc/hasComponent"]
-            .as_array()
-            .expect("hasComponent relation present");
-        let hrefs: Vec<&str> = components
-            .iter()
-            .filter_map(|c| c["href"].as_str())
-            .collect();
+    fn the_gs1_prefix_and_the_full_address_name_the_same_link_type() {
+        assert_eq!(offered_link_type("gs1:pip"), Some("pip"));
         assert_eq!(
-            hrefs,
-            [
-                "https://id.a.example/dpp/mod-1",
-                "https://id.b.example/dpp/mod-2"
-            ]
+            offered_link_type("https://ref.gs1.org/voc/dpp"),
+            Some("dpp")
         );
+        assert_eq!(offered_link_type("gs1:defaultLink"), Some("defaultLink"));
+    }
+
+    #[test]
+    fn a_link_type_the_linkset_does_not_offer_is_not_offered() {
+        for requested in [
+            "gs1:recyclingInfo",
+            "gs1:epil",
+            "gs1:nosuchlt",
+            "pip",
+            "gs1:",
+            "https://ref.odal-node.io/voc/predecessor",
+            "all",
+        ] {
+            assert_eq!(offered_link_type(requested), None, "{requested}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_hands_the_query_string_on_unchanged() {
+        let response = redirect("https://id.odal-node.io/dpp/x", Some("foo=bar&a=b%20c"));
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "https://id.odal-node.io/dpp/x?foo=bar&a=b%20c"
+        );
+        let response = redirect("https://id.odal-node.io/dpp/x", None);
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "https://id.odal-node.io/dpp/x"
+        );
+        let response = redirect("https://id.odal-node.io/dpp/x", Some(""));
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "https://id.odal-node.io/dpp/x"
+        );
+    }
+
+    #[test]
+    fn only_a_single_eh_or_ex_segment_may_be_compressed() {
+        assert_eq!(compressed_segment("/ehabc"), Some("ehabc"));
+        assert_eq!(compressed_segment("/exabc/"), Some("exabc"));
+        assert_eq!(compressed_segment("/health"), None);
+        assert_eq!(compressed_segment("/dpp/ehabc"), None);
+        assert_eq!(compressed_segment("/"), None);
     }
 }

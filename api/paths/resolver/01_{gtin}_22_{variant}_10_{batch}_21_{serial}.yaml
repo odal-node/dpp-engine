@@ -44,20 +44,35 @@ get:
       description: e.g. linkset, gs1:pip, gs1:dpp
   responses:
     '200':
-      description: RFC 9264 linkset (when a linkset is requested).
+      description: >-
+        RFC 9264 linkset (when a linkset is requested). It validates against
+        GS1's linkset schema, is anchored at the uncompressed request URI, and
+        holds the links of every level from the one the request names up to the
+        GTIN.
+      headers:
+        Link:
+          description: >-
+            The JSON-LD context for the linkset, with relation
+            `http://www.w3.org/ns/json-ld#context`.
+          schema:
+            type: string
       content:
         application/linkset+json:
           schema:
             type: object
     '307':
-      description: Redirect to the DPP page (`Location` header).
+      description: >-
+        Redirect to the DPP page (`Location` header), carrying the request's
+        query string on.
     '400':
       description: >-
-        The GTIN in the path is not valid: not digits, the wrong length, or a
-        wrong check digit.
+        The path is not a valid GS1 Digital Link: the GTIN is not digits, has
+        the wrong length or a wrong check digit, or a qualifier is out of order,
+        repeated, longer than its Application Identifier allows or outside
+        GS1 character set 82.
     '404':
       description: >-
-        No published DPP at any level the label names, or unknown link type.
+        No published DPP at any level the label names, or a link type the linkset does not offer.
     '410':
       $ref: ../../components/responses/Gone.yaml
     '409':

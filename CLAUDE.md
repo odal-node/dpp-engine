@@ -540,6 +540,8 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
 | GET | `/01/{gtin}/22/{variant}[/10/{batch}][/21/{serial}]` | None | Four routes: a consumer product variant (AI 22), accepted and not looked up. The node never prints one |
 | GET | `/01/{gtin}/235/{extension}` | None | A third-party extension (AI 235), accepted and not looked up. Any other path under `/01/` is a `400` |
+| GET | `/eh{hex}`, `/ex{base64url}` | None | A compressed Digital Link holding an SGTIN-96 or SGTIN-198 EPC binary string, read like the label it decodes to. Any other scheme is a `404` |
+| GET | `/.well-known/gs1resolver` | None | The resolver description file (GS1 resolver standard, section 3). Lists the GTIN (`01`) and no other primary key |
 
 > **Scan telemetry (privacy-safe aggregates).** When `SCAN_INGEST_URL` is set,
 > the resolver counts *terminal-view* resolutions (`/dpp/{dppId}` html + json)
