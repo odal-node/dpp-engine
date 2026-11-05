@@ -1486,6 +1486,85 @@ mod label_resolution {
         }
     }
 
+    /// Whatever its lot. The lot is not part of what a link or a DID names, so a
+    /// passport stating another lot, or none, is a second holder all the same. It
+    /// was found by the passport's own batch and serial, which missed it.
+    #[tokio::test]
+    async fn a_second_passport_under_one_link_or_did_and_another_lot_cannot_go_live() {
+        for identifier in [did(), link()] {
+            for (held, wanted) in [(Some("LOT-1"), Some("LOT-2")), (Some("LOT-1"), None)] {
+                let repo = InMemoryPassportRepo::default();
+                let mut first = passport_identified(identifier.clone(), PassportStatus::Published);
+                first.batch_id = held.map(str::to_owned);
+                let mut second = passport_identified(identifier.clone(), PassportStatus::Draft);
+                second.batch_id = wanted.map(str::to_owned);
+                store(&repo, &[&first, &second]).await;
+
+                assert!(
+                    live_elsewhere(&repo, &second).await,
+                    "{identifier} held under {held:?} must refuse {wanted:?}"
+                );
+            }
+        }
+    }
+
+    /// Whatever its serial number, for the same reason. This node states none,
+    /// but a passport stating one, another, or only one of the two is a second
+    /// holder of the identifier all the same: the old lookup narrowed to the
+    /// passport's own serial number as well as its lot.
+    #[tokio::test]
+    async fn a_second_passport_under_one_link_or_did_and_another_serial_cannot_go_live() {
+        for identifier in [did(), link()] {
+            for (held, wanted) in [
+                (Some("SN-1"), Some("SN-2")),
+                (Some("SN-1"), None),
+                (None, Some("SN-1")),
+            ] {
+                let repo = InMemoryPassportRepo::default();
+                let mut first = passport_identified(identifier.clone(), PassportStatus::Published);
+                first.serial_number = held.map(str::to_owned);
+                let mut second = passport_identified(identifier.clone(), PassportStatus::Draft);
+                second.serial_number = wanted.map(str::to_owned);
+                store(&repo, &[&first, &second]).await;
+
+                assert!(
+                    live_elsewhere(&repo, &second).await,
+                    "{identifier} held under serial {held:?} must refuse {wanted:?}"
+                );
+            }
+        }
+    }
+
+    /// A draft retired without being published holds nothing, under any lot: it
+    /// answers no label and is not a rival to the passport that goes live (see
+    /// [`never_published`](crate::public_view::never_published)). One that was
+    /// published and then retired still holds
+    /// the identifier, since the product it names is still out there.
+    #[tokio::test]
+    async fn a_draft_retired_unpublished_holds_no_link_or_did() {
+        for identifier in [did(), link()] {
+            let repo = InMemoryPassportRepo::default();
+            let mut closed = passport_identified(identifier.clone(), PassportStatus::Retired);
+            closed.batch_id = Some("LOT-1".into());
+            let mut retired = passport_identified(identifier.clone(), PassportStatus::Retired);
+            retired.published_at = Some(Utc::now());
+            let mut draft = passport_identified(identifier.clone(), PassportStatus::Draft);
+            draft.batch_id = Some("LOT-2".into());
+
+            store(&repo, &[&closed, &draft]).await;
+            assert!(
+                !live_elsewhere(&repo, &draft).await,
+                "{identifier}: a closed draft is not a holder"
+            );
+
+            store(&repo, &[&retired]).await;
+            assert!(
+                live_elsewhere(&repo, &draft).await,
+                "{identifier}: a retired published passport still is"
+            );
+        }
+    }
+
     /// The other direction, so the case above is not a check that refuses every
     /// link and DID: another value, a superseded holder and a chain are all free.
     #[tokio::test]
@@ -1558,6 +1637,31 @@ mod label_resolution {
 
         let first = passport_identified(did(), PassportStatus::Draft);
         let second = passport_identified(did(), PassportStatus::Draft);
+
+        let held = super::super::label_lock::hold(&first).await;
+        assert!(held.is_some(), "an identifier is held");
+        let waiting = tokio::time::timeout(
+            Duration::from_millis(150),
+            super::super::label_lock::hold(&second),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "the second publish must wait for the first"
+        );
+    }
+
+    /// And under different lots, since the lot is not part of what the DID
+    /// claims. Keyed on the lot as well, two such publishes took different
+    /// stripes and could both ask before either had written.
+    #[tokio::test]
+    async fn two_publishes_of_one_did_under_different_lots_take_turns() {
+        use std::time::Duration;
+
+        let mut first = passport_identified(did(), PassportStatus::Draft);
+        first.batch_id = Some("LOT-1".into());
+        let mut second = passport_identified(did(), PassportStatus::Draft);
+        second.batch_id = Some("LOT-2".into());
 
         let held = super::super::label_lock::hold(&first).await;
         assert!(held.is_some(), "an identifier is held");

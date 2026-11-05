@@ -32,18 +32,9 @@ pub(super) enum Claim<'a> {
         qualifier: CarrierQualifier<'a>,
     },
     /// An identification link or a DID. There is no GTIN to qualify and nothing
-    /// printed after it: the value is the whole key.
-    ///
-    /// Found by the passport's own batch and serial, which is every holder this
-    /// node can produce, since it states no serial number and accepts one lot per
-    /// passport. A second holder that differs only in its batch is not found
-    /// here: that needs a lookup by the whole value, which dpp-core has added
-    /// (`find_by_product_identifier`) and its 0.22.0 does not carry.
-    Identifier {
-        identifier: &'a ProductIdentifier,
-        batch: Option<&'a str>,
-        serial: Option<&'a str>,
-    },
+    /// printed after it: the value is the whole key, so every passport carrying
+    /// it is a holder, whatever lot or serial it states.
+    Identifier { identifier: &'a ProductIdentifier },
 }
 
 impl<'a> Claim<'a> {
@@ -61,11 +52,7 @@ impl<'a> Claim<'a> {
                 qualifier: passport.carrier_qualifier()?,
             })
         } else {
-            Some(Self::Identifier {
-                identifier,
-                batch: passport.batch_id.as_deref(),
-                serial: passport.serial_number.as_deref(),
-            })
+            Some(Self::Identifier { identifier })
         }
     }
 
@@ -79,11 +66,7 @@ impl<'a> Claim<'a> {
                 identifier,
                 qualifier,
             } => repo.find_by_carrier(identifier, qualifier).await,
-            Self::Identifier {
-                identifier,
-                batch,
-                serial,
-            } => repo.find_by_identifier(identifier, *batch, *serial).await,
+            Self::Identifier { identifier } => repo.find_by_product_identifier(identifier).await,
         }
     }
 
@@ -95,11 +78,7 @@ impl<'a> Claim<'a> {
                 identifier,
                 qualifier,
             } => format!("{}|{qualifier:?}", identifier.as_str()),
-            Self::Identifier {
-                identifier,
-                batch,
-                serial,
-            } => format!("{}|{batch:?}|{serial:?}", identifier.as_str()),
+            Self::Identifier { identifier } => identifier.as_str().to_owned(),
         }
     }
 
@@ -153,7 +132,7 @@ impl<'a> Claim<'a> {
                     identifier.as_str()
                 ),
             },
-            Self::Identifier { identifier, .. } => FieldError {
+            Self::Identifier { identifier } => FieldError {
                 field: IDENTIFIER_FIELD.to_owned(),
                 message: format!(
                     "{} already identifies another published passport, and an identifier names \

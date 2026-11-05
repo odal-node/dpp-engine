@@ -220,6 +220,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   retired, since the product its label was printed on is still out there.
   (#583)
 
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
 - **A draft retired without ever being published answers `404` on its public
   read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
   retention guard only to a passport that has a `published_at`, so an operator

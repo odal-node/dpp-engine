@@ -380,16 +380,22 @@ async fn publish_refused(client: &TestClient, id: &str) -> serde_json::Value {
 
 /// An identifier that is the whole key. A link or a DID names a product with
 /// nothing after it to narrow by, so a second published passport carrying the
-/// same value is a second holder of the identifier, and publish used to return
-/// `200` for it.
-///
-/// Both drafts state no lot, which is every holder this node can produce.
-/// One that differs only in its lot needs dpp-core's lookup by the whole value
-/// (`find_by_product_identifier`), which its 0.22.0 does not carry.
-async fn the_second_holder_of_one_identifier_is_refused(identifier: serde_json::Value) {
+/// same value is a second holder of the identifier, whatever lot either states,
+/// and publish used to return `200` for it.
+async fn the_second_holder_of_one_identifier_is_refused(
+    identifier: serde_json::Value,
+    lots: [Option<&str>; 2],
+) {
+    let under = |name, lot: Option<&str>| {
+        let mut body = draft(name, identifier.clone(), None);
+        if let Some(lot) = lot {
+            body["batchId"] = serde_json::json!(lot);
+        }
+        body
+    };
     let (client, _pg) = client().await;
-    let first = create(&client, draft("First", identifier.clone(), None)).await;
-    let second = create(&client, draft("Second", identifier, None)).await;
+    let first = create(&client, under("First", lots[0])).await;
+    let second = create(&client, under("Second", lots[1])).await;
     let first_id = first["id"].as_str().unwrap().to_owned();
     let second_id = second["id"].as_str().unwrap().to_owned();
 
@@ -403,19 +409,49 @@ async fn the_second_holder_of_one_identifier_is_refused(identifier: serde_json::
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_published_passport_under_one_identification_link_is_refused() {
-    the_second_holder_of_one_identifier_is_refused(serde_json::json!({
-        "scheme": "identificationLink",
-        "url": "https://id.acme.example/p/1"
-    }))
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://id.acme.example/p/1"
+        }),
+        [None, None],
+    )
     .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_published_passport_under_one_did_is_refused() {
-    the_second_holder_of_one_identifier_is_refused(serde_json::json!({
-        "scheme": "did",
-        "did": "did:web:acme.example:b:1"
-    }))
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "did",
+            "did": "did:web:acme.example:b:1"
+        }),
+        [None, None],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_published_passport_under_one_identification_link_and_another_lot_is_refused() {
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://id.acme.example/p/1"
+        }),
+        [Some("LOT-1"), Some("LOT-2")],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_published_passport_under_one_did_and_another_lot_is_refused() {
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "did",
+            "did": "did:web:acme.example:b:1"
+        }),
+        [Some("LOT-1"), Some("LOT-2")],
+    )
     .await;
 }
 
