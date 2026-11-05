@@ -1,15 +1,19 @@
 //! Read paths: fetch by id or printed label, paginated list, count, and audit
 //! history.
 
+use std::sync::OnceLock;
+
 use dpp_domain::{
     FieldError, Gtin, ProductIdentifier,
+    catalog::ProductGroupCatalog,
     error::DppError,
     passport::{CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
+    schemas::LensRegistry,
     status::PassportStatus,
 };
-use dpp_types::audit::PassportAuditEntry;
+use dpp_types::audit::{PassportAuditEntry, PassportVersion};
 
 use super::{PassportService, claim::Claim};
 use crate::public_view::never_published;
@@ -516,6 +520,23 @@ impl LabelResolution {
     pub fn inherited(&self) -> bool {
         self.requested != self.resolved
     }
+}
+
+/// The passport an archived version holds, read the way a stored one is.
+///
+/// Through [`Passport::from_stored`] and not a bare deserialise, as every read of
+/// the live row is: a version is a stored document, and one taken before its
+/// product group's schema moved on needs the same upcast through the lens chain,
+/// or it fails the one document instead of reading it.
+///
+/// # Errors
+///
+/// Whatever `from_stored` refuses the document with. A caller serving the version
+/// fails closed on it: a version that cannot be read is not one to guess at.
+pub fn archived_passport(version: &PassportVersion) -> Result<Passport, DppError> {
+    static READ: OnceLock<(LensRegistry, ProductGroupCatalog)> = OnceLock::new();
+    let (lenses, catalog) = READ.get_or_init(|| (LensRegistry::new(), ProductGroupCatalog::new()));
+    Passport::from_stored(version.doc.clone(), lenses, catalog)
 }
 
 /// What [`PassportService::version_at`] found.

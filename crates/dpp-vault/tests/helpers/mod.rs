@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
+    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo,
+    PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
@@ -281,6 +282,49 @@ impl IdentityPort for MockIdentity {
     }
 }
 
+/// A signer with a real key, and the verification key a reader resolves from its
+/// DID document.
+///
+/// For a test that has to show a proof *verifies*. [`MockIdentity`] signs nothing,
+/// so a test over it can say the payload matches the proof and not that anyone
+/// could check the proof against the operator.
+pub struct RealSigner {
+    pub identity: Arc<dpp_vc::LocalIdentityService>,
+    /// The key as a verifier gets it: resolved from the DID document by the
+    /// `kid` a token this signer made names, base64url.
+    pub public_key: String,
+    /// Returned and held, not dropped: the key store lives in it, and
+    /// `CLAUDE.md` asks that a test keystore's directory outlive the store.
+    _key_dir: tempfile::TempDir,
+}
+
+pub async fn real_signer() -> RealSigner {
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let store =
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
+            .expect("open keystore");
+    store.generate_key("root").expect("generate key");
+    let did_document = dpp_vc::build_did_document(&store, "signer-test.example.com", "root")
+        .expect("build did document");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "signer-test.example.com".to_owned(),
+    ));
+    let probe = identity
+        .sign_passport(PassportId::new(), &serde_json::json!({}))
+        .await
+        .expect("sign probe")
+        .jws;
+    let public_key = dpp_crypto::jws::resolve_verification_key(&did_document, &probe)
+        .expect("did document carries the signing key");
+    RealSigner {
+        identity,
+        public_key,
+        _key_dir: key_dir,
+    }
+}
+
 /// [`MockIdentity`], taking its time over each signature.
 ///
 /// Signing sits between publish's last check and its write, so a slow signer
@@ -467,6 +511,25 @@ pub async fn start_vault_with_credentials(
     .await
 }
 
+/// [`start_vault_with_credentials`], signing with `identity` instead of
+/// [`MockIdentity`]: the proofs a test reads back can then be verified against
+/// the key that made them, which a mock's cannot.
+pub async fn start_vault_with_credentials_signed_by(
+    dal: PgDal,
+    identity: Arc<dyn IdentityPort>,
+    directory: Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
+    trust: Arc<dyn dpp_vc::TrustedIssuerRegistry>,
+) -> String {
+    start_vault_with_identity(
+        dal,
+        identity,
+        Some((directory, trust)),
+        SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
+}
+
 type CredentialWiring = (
     Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
     Arc<dyn dpp_vc::TrustedIssuerRegistry>,
@@ -490,7 +553,16 @@ async fn start_vault_with_identity(
         }
     }
 
-    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
+    // Wrapped as `boot::db` wraps it, with the store handed to the service: a
+    // harness over a bare repository archives nothing on the writes that do not
+    // go through the state-change log, and answers the versions a node would
+    // have taken from an empty table.
+    let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
+        Arc::new(PgPassportVersionRepo::new(dal.clone()));
+    let passport_repo = Arc::new(ArchivingPassportRepo::new(
+        PgPassportRepo::new(dal.clone()),
+        version_store.clone(),
+    ));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     let api_key_repo = Arc::new(PgApiKeyRepo::new(dal.clone()));
@@ -526,7 +598,8 @@ async fn start_vault_with_identity(
     // The node commits every state change through the state-change log, so a
     // harness without it would write the parts one after another, a path no
     // real deployment takes.
-    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())));
+    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())))
+    .with_versions(version_store);
 
     // Wired after the chain rather than inside it, because unlike every port
     // above these two are what a test is *about* when it is about sealing: any

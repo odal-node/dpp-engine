@@ -588,7 +588,7 @@
       "get": {
         "operationId": "getDppVersions",
         "summary": "List a DPP's archived versions, or reconstitute one",
-        "description": "Returns every archived version of a passport, oldest first, or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can\nretrieve the passport as it stood at any given moment.\n\n**Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word (historical versions of a passport that is\nstill live) and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
+        "description": "Returns every archived version of a passport, oldest first, or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can\nretrieve the passport as it stood at any given moment.\n\n**Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word (historical versions of a passport that is\nstill live) and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n\n**This is the operator's own machine access.** An authority, a notified body\nor a person with a legitimate interest holds a credential and no API key, and\nreads a past version with `asOf` on `GET /vault/credential/dpp/{dppId}`\n(`readDppByCredential`), which serves it filtered to the credential's\naudience, with the proof for that audience.\n",
         "tags": [
           "DPP Management"
         ],
@@ -3779,7 +3779,7 @@
       "get": {
         "operationId": "readDppByCredential",
         "summary": "Audience-scoped read of a published DPP",
-        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\n**A credential that does not cover this passport gets the public view,\nnot an error.** A credential may narrow itself to product groups and to\nproduct categories, and both are checked against the passport being read:\nthe group against its `productGroup`, the category against the one its\ndata states, such as a battery's `batteryType`. A credential naming\ncategories does not cover a passport whose group states none. Out of scope,\na valid credential gets a `200` with the public view, byte-identical to\n`/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an\nelevated view names one. Denying instead would make this route a probe for\nwhich group or category a passport is in. The read is still recorded to\nthe audit trail, with the public classes it was reduced to. `401` is for a\ncredential that fails verification, never for one out of scope.\n\n**Why a credential was out of scope is in the\n`X-DPP-Credential-Out-Of-Scope` header**, not the body, because the body\nis the public view exactly: the payload `publicJwsSignature` signs. The\ngroup is checked first, so a credential that misses both axes is reported\nfor the group. The header says nothing the public body does not: the group\nis in the body, and every group's category field is public.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n",
+        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\n**A credential that does not cover this passport gets the public view,\nnot an error.** A credential may narrow itself to product groups and to\nproduct categories, and both are checked against the passport being read:\nthe group against its `productGroup`, the category against the one its\ndata states, such as a battery's `batteryType`. A credential naming\ncategories does not cover a passport whose group states none. Out of scope,\na valid credential gets a `200` with the public view, byte-identical to\n`/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an\nelevated view names one. Denying instead would make this route a probe for\nwhich group or category a passport is in. The read is still recorded to\nthe audit trail, with the public classes it was reduced to. `401` is for a\ncredential that fails verification, never for one out of scope.\n\n**Why a credential was out of scope is in the\n`X-DPP-Credential-Out-Of-Scope` header**, not the body, because the body\nis the public view exactly: the payload `publicJwsSignature` signs. The\ngroup is checked first, so a credential that misses both axes is reported\nfor the group. The header says nothing the public body does not: the group\nis in the body, and every group's category field is public.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n\n✅ **A past version: `asOf`.** EN 18221:2026 clause 4.2 expects the\nversion of a passport at a past moment to be retrievable by authenticated,\nauthorised actors. With `asOf` this route returns the version that was\ncurrent at that instant, to the readers who hold a credential and no API\nkey, which `GET /dpp/{dppId}/versions?asOf=` is not for. It is the same body\na live read gives the same credential: the payload that audience's\npublish-time proof covers, with that proof attached and `disclosureSet`\nnaming the classes. A published passport's views are frozen when it is\nsigned, so a version carries exactly the classes it was published with, and\nthe proof verifies against the operator's key as a live one does.\n\n**`asOf` needs a credential that grants more than the public view.** The\nclause speaks of *authenticated, authorised* actors, so the rule above does\nnot apply: without a credential the answer is `401`, and a credential that\ndoes not cover this passport gets `403` naming the axis in\n`X-DPP-Credential-Out-Of-Scope`. The public proof is frozen at publish, so it\nis the same bytes for every version of a published passport, and serving it\nfor a past instant would answer a question about the past with the present\npassport. A node that cannot verify credentials answers `401` too, and says\nso. Both are decided before any version is read, and a credential presented\nagainst a passport it does not cover is recorded like any other.\n\nA moment after the passport's last change is answered by the live record,\nwhich is the state at that time. A moment before the passport was created\nis `404`, and one in the future `422`: nothing was its state then. A version\nis served on the terms a live read is: a moment the passport was a draft is\n`404`, and one it was suspended `410`.\n\nA read of a past version is recorded to the audit trail with the instant\nasked for (`asOf`) and the archived version that answered it\n(`archivedVersionId`, `null` when the live record did).\n",
         "tags": [
           "Credentialed Access"
         ],
@@ -3797,9 +3797,19 @@
             "name": "X-DPP-Credential",
             "in": "header",
             "required": false,
-            "description": "A verifiable access credential. Absent means public access.",
+            "description": "A verifiable access credential. Absent means public access, except with\n`asOf`, which is read only with one.\n",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "asOf",
+            "in": "query",
+            "required": false,
+            "description": "An RFC 3339 instant. Returns the passport as it stood then, filtered to\nthe credential's audience. Requires a credential that covers this\npassport: see the description above.\n\nNot before the passport was created (`404`), and not in the future\n(`422`). Write the offset as `Z`: a literal `+` in a query string is a\nspace.\n",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ],
@@ -3832,7 +3842,31 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "The presented credential failed verification.",
+            "description": "The presented credential failed verification. Also `asOf` without a\ncredential, which a past version is read only with, and `asOf` on a node\nthat cannot verify credentials, which says so.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`asOf` with a verified credential that grants nothing beyond the public\nview on this passport, so it cannot read a past version. Never returned\nwithout `asOf`, where such a credential is served the public view.\n",
+            "headers": {
+              "X-DPP-Credential-Out-Of-Scope": {
+                "description": "The axis the credential missed, as on a `200`: `product-group`,\n`product-category` or `no-product-category`. Absent when the\ncredential covers the passport and its audience is the public one.\n",
+                "required": false,
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "product-group",
+                    "product-category",
+                    "no-product-category"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3842,7 +3876,7 @@
             }
           },
           "404": {
-            "description": "Not found or not published.",
+            "description": "Not found or not published. With `asOf`, also a moment before the\npassport was created, and a moment it was not yet published, where no\npublished version covers it.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3852,7 +3886,17 @@
             }
           },
           "410": {
-            "description": "This passport has been suspended.",
+            "description": "This passport has been suspended. With `asOf`, it was suspended at that\nmoment.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`asOf` was given and is not an RFC 3339 timestamp, or is in the future.\n",
             "content": {
               "application/problem+json": {
                 "schema": {

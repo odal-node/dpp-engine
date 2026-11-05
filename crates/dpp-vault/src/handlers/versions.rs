@@ -62,12 +62,16 @@ pub struct AsOf {
 /// are none — so the whole record is the correct answer here.
 ///
 /// ⚠️ That equivalence is what makes this route simple, and it does **not**
-/// extend to a credential-scoped reader. Serving versions to an audience-scoped
-/// caller means running the live passport's policy over the archived document —
-/// the *live* policy, because the clause ties archived attributes to the
-/// **current** passport's restrictions rather than to the ones in force when the
-/// version was taken. No such route exists yet; building one without that step
-/// would disclose fields the current passport withholds.
+/// extend to a credential-scoped reader. That reader is served by `asOf` on the
+/// audience read ([`super::audience_read`]), which never runs a redaction over
+/// an archived document: it serves the version's own publish-time view for the
+/// caller's disclosure set, the payload the live read serves for the same
+/// credential. A published passport's views are frozen when it is signed, so
+/// that is the current passport's restriction on the attribute and the one the
+/// version was published with at once; a policy run over the archived record
+/// instead would give a body no proof covers. A version taken before the
+/// passport was published has no signed view at all, and the archive holds the
+/// operator's unpublished drafts: no credential reads one.
 pub async fn versions_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,

@@ -27,8 +27,8 @@ use base64::Engine as _;
 use chrono::{Duration, Utc};
 use ed25519_dalek::{Signer, SigningKey};
 use helpers::{
-    TestClient, make_jwt, seed_complete_operator, start_postgres, start_vault,
-    start_vault_with_credentials,
+    TestClient, make_jwt, real_signer, seed_complete_operator, start_postgres, start_vault,
+    start_vault_with_credentials, start_vault_with_credentials_signed_by,
 };
 use serde_json::{Value, json};
 
@@ -666,4 +666,484 @@ async fn an_unconfigured_node_serves_public_and_grants_nothing() {
             && body.get("lintResult").is_none(),
         "an unconfigured node must not grant restricted data either"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Reading a past version: ?asOf=
+// ---------------------------------------------------------------------------
+//
+// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — the version of a passport at a
+// past moment is retrievable by authenticated, authorised actors, and an archived
+// attribute is limited as the live one is.
+
+/// An instant as a query-string value. `Z` and not `+00:00`: a literal `+` in a
+/// query is a space, and the offset form would have to be percent-encoded.
+fn rfc3339(at: chrono::DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+}
+
+/// GET the audience route for the passport as it stood at `at`.
+async fn get_as_of(
+    base: &str,
+    id: &str,
+    at: chrono::DateTime<Utc>,
+    credential: Option<&str>,
+) -> reqwest::Response {
+    let mut req =
+        reqwest::Client::new().get(format!("{base}/credential/dpp/{id}?asOf={}", rfc3339(at)));
+    if let Some(c) = credential {
+        req = req.header("X-DPP-Credential", c);
+    }
+    req.send().await.expect("request failed")
+}
+
+/// Check a served non-public view the way a reader would: the attached proof
+/// verifies against the operator's key, and covers exactly the body it arrived
+/// with.
+fn assert_proof_verifies(body: &Value, public_key: &str) {
+    let proof = body["disclosureJwsSignature"]
+        .as_str()
+        .expect("a non-public view carries its proof");
+    assert!(
+        dpp_crypto::jws::verify_jws(proof, public_key).expect("the verifier ran"),
+        "the proof does not verify against the operator's key"
+    );
+
+    let mut payload = body.clone();
+    let obj = payload.as_object_mut().expect("a view is an object");
+    obj.remove("disclosureJwsSignature");
+    obj.remove("disclosureSet");
+    let seg = proof.split('.').nth(1).expect("compact JWS");
+    let signed: Value = serde_json::from_slice(&B64.decode(seg).expect("base64url")).expect("JSON");
+    assert_eq!(
+        payload, signed,
+        "the served body is not what its proof covers"
+    );
+}
+
+/// The reason a refusal gave, with the per-request id taken out so two refusals
+/// can be compared.
+async fn refusal(resp: reqwest::Response) -> (u16, Value) {
+    let status = resp.status().as_u16();
+    let mut body: Value = resp.json().await.expect("a problem document");
+    if let Some(o) = body.as_object_mut() {
+        o.remove("requestId");
+    }
+    (status, body)
+}
+
+/// The done-when for reading a version at a past instant: an authority and a
+/// legitimate interest each receive only their own classes, with a proof that
+/// verifies against the operator's key.
+///
+/// The passport is suspended afterwards, so the live read is `410` and the only
+/// thing that can have answered the past one is the archived version. Each past
+/// view is also byte-identical to what the same credential was given live before
+/// the change: the version carries the classes it was published with, and the
+/// route releases nothing the passport's own signed views do not.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_past_version_is_served_to_each_credential_as_its_own_classes_with_a_proof_that_verifies()
+{
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let signer = real_signer().await;
+    let base = start_vault_with_credentials_signed_by(
+        pg.dal.clone(),
+        signer.identity.clone(),
+        directory,
+        trust,
+    )
+    .await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+
+    let repairer = credential_header(CredentialRole::AuthorisedRepairer, &["battery"]);
+    let authority = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+
+    let live_repairer: Value = get_with_credential(&base, &id, Some(&repairer))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let live_authority: Value = get_with_credential(&base, &id, Some(&authority))
+        .await
+        .json()
+        .await
+        .unwrap();
+
+    let moment = Utc::now();
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "suspend failed");
+    assert_eq!(
+        get_with_credential(&base, &id, Some(&repairer))
+            .await
+            .status(),
+        410,
+        "the passport is withdrawn now, so a read of the past can only come from the archive"
+    );
+
+    let resp = get_as_of(&base, &id, moment, Some(&repairer)).await;
+    assert_eq!(resp.status(), 200, "a legitimate interest reads the past");
+    let past_repairer: Value = resp.json().await.unwrap();
+    assert_eq!(
+        past_repairer["disclosureSet"],
+        json!("public+restricted+individual")
+    );
+    assert_eq!(
+        product_group_data(&past_repairer).get("stateOfHealthPct"),
+        Some(&json!(87.5)),
+        "a legitimate interest receives individual-item data"
+    );
+    assert!(
+        past_repairer.get("retentionLocked").is_none(),
+        "and not conformity evidence"
+    );
+    assert_proof_verifies(&past_repairer, &signer.public_key);
+    assert_eq!(
+        past_repairer, live_repairer,
+        "the past view is what the same credential was given before the change"
+    );
+
+    let resp = get_as_of(&base, &id, moment, Some(&authority)).await;
+    assert_eq!(resp.status(), 200, "an authority reads the past");
+    let past_authority: Value = resp.json().await.unwrap();
+    assert_eq!(
+        past_authority["disclosureSet"],
+        json!("public+restricted+conformity")
+    );
+    assert_eq!(
+        past_authority.get("retentionLocked"),
+        Some(&json!(true)),
+        "an authority receives conformity evidence"
+    );
+    assert!(
+        !product_group_data(&past_authority).contains_key("stateOfHealthPct"),
+        "and not individual-item data: Art. 77(2)(b) withholds point 4 from authorities"
+    );
+    assert_proof_verifies(&past_authority, &signer.public_key);
+    assert_eq!(past_authority, live_authority);
+}
+
+/// A past version has no public view to fall back to.
+///
+/// Without a credential the live route answers with the public view. For `asOf`
+/// that would answer a question about the past with the present passport, so it
+/// is refused instead, with the `401` and `WWW-Authenticate` a failed credential
+/// gets. A node that cannot verify credentials says so, because telling its
+/// caller to present one would send them in a circle.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_past_version_is_refused_without_a_credential_not_answered_with_the_present_passport() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+    let moment = Utc::now();
+
+    let resp = get_as_of(&base, &id, moment, None).await;
+    assert_eq!(resp.status(), 401);
+    assert!(
+        resp.headers().contains_key("www-authenticate"),
+        "a 401 must tell the caller which header to present"
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body.get("id").is_none() && body.get("productName").is_none(),
+        "the refusal is a problem document, not the passport: {body}"
+    );
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("X-DPP-Credential")),
+        "and it names the header to present: {body}"
+    );
+
+    // The same passport's public read is untouched: the refusal is for `asOf`.
+    assert_eq!(
+        reqwest::get(format!("{base}/public/dpp/{id}"))
+            .await
+            .expect("public read")
+            .status(),
+        200
+    );
+
+    // A node with the credential path unconfigured honours no credential, so
+    // presenting one cannot help and the answer must not say it can.
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+    let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
+    assert_eq!(
+        resp.status(),
+        401,
+        "an unconfigured node serves no past version, not a present one"
+    );
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("does not verify access credentials")),
+        "{body}"
+    );
+}
+
+/// A credential that does not cover the passport is refused, and the refusal
+/// names the axis that missed and lands in the audit trail.
+///
+/// The live route serves such a credential the public view. There is none here
+/// to serve, and answering `200` would make "any valid credential" the rule for
+/// reading history, which clause 4.2 does not say: it says authorised.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_that_does_not_cover_the_passport_is_refused_a_past_version() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+    let moment = Utc::now();
+
+    let header = credential_header(CredentialRole::AuthorisedRepairer, &["textile"]);
+    let resp = get_as_of(&base, &id, moment, Some(&header)).await;
+    assert_eq!(resp.status(), 403);
+    assert_eq!(
+        out_of_scope(&resp),
+        Some("product-group"),
+        "the holder is told which axis missed, as on the live route"
+    );
+
+    let history: Value = client
+        .get(&format!("/api/v1/dpp/{id}/history"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let entry = history
+        .as_array()
+        .expect("history")
+        .iter()
+        .rev()
+        .find(|e| e["action"] == json!("credentialed_read"))
+        .expect("the refused read was recorded");
+    assert_eq!(
+        entry["metadata"]["disclosureSet"],
+        json!("public"),
+        "the record shows what was actually granted"
+    );
+    assert_eq!(entry["metadata"]["asOf"], json!(rfc3339(moment)));
+}
+
+/// Every credentialed read of a past version names the instant it asked for and
+/// the archived version that answered, so the operator's evidence of who was
+/// shown which moment can be tied to the archive row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_of_a_past_version_is_recorded_with_its_instant_and_the_version() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+
+    let moment = Utc::now();
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "suspend failed");
+
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+    assert_eq!(
+        get_as_of(&base, &id, moment, Some(&header)).await.status(),
+        200
+    );
+
+    // The archive row the operator's own route names for that moment.
+    let versions: Value = client
+        .get(&format!(
+            "/api/v1/dpp/{id}/versions?asOf={}",
+            rfc3339(moment)
+        ))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let version_id = versions[0]["id"].clone();
+    assert!(version_id.is_string(), "the operator route names it");
+
+    let history: Value = client
+        .get(&format!("/api/v1/dpp/{id}/history"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let entry = history
+        .as_array()
+        .expect("history")
+        .iter()
+        .rev()
+        .find(|e| e["action"] == json!("credentialed_read"))
+        .expect("the read was recorded");
+    assert_eq!(entry["metadata"]["asOf"], json!(rfc3339(moment)));
+    assert_eq!(
+        entry["metadata"]["archivedVersionId"], version_id,
+        "the entry names the archived version that answered"
+    );
+    assert_eq!(
+        entry["metadata"]["disclosureSet"],
+        json!("public+restricted+conformity")
+    );
+}
+
+/// The instants nothing was the passport's state at are told apart from each
+/// other, and a moment after the last change is answered by the live record.
+///
+/// `422` is the instant that cannot be asked about (not a timestamp, or not yet
+/// reached) and `404` the one that is well formed and falls before the passport
+/// existed: the same pair the operator's route draws.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_moments_no_version_covers_are_told_apart() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let before_it_existed = Utc::now() - Duration::days(1);
+    let id = publish_battery(&client).await;
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+
+    let (status, body) =
+        refusal(get_as_of(&base, &id, before_it_existed, Some(&header)).await).await;
+    assert_eq!(status, 404);
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("before this passport was created")),
+        "{body}"
+    );
+
+    let (status, body) =
+        refusal(get_as_of(&base, &id, Utc::now() + Duration::days(1), Some(&header)).await).await;
+    assert_eq!(status, 422);
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("must not be in the future")),
+        "{body}"
+    );
+
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/credential/dpp/{id}?asOf=yesterday"))
+        .header("X-DPP-Credential", &header)
+        .send()
+        .await
+        .expect("request failed");
+    let (status, body) = refusal(resp).await;
+    assert_eq!(status, 422);
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("RFC 3339")),
+        "{body}"
+    );
+
+    // Nothing has changed since publish, so the live record is the state now.
+    let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "the live record answers a moment after the last change"
+    );
+    let at_now: Value = resp.json().await.unwrap();
+    let live: Value = get_with_credential(&base, &id, Some(&header))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(at_now, live);
+}
+
+/// A version is served on the terms the live read serves a passport on: a moment
+/// when it was a draft is `404`, and one when it was suspended is `410`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_moment_the_passport_was_a_draft_or_suspended_is_not_served() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+
+    // Created, not yet published: the version current then is the draft, which
+    // was never public and has no proof to serve.
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            json!({
+                "productName": "Draft Then Published",
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                    "batteryChemistry": "LFP",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 48.0,
+                    "nominalCapacityAh": 100.0,
+                    "expectedLifetimeCycles": 3000,
+                    "co2ePerUnitKg": 45.2,
+                    "ratedCapacityKwh": 4.8
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201, "create failed");
+    let created: Value = resp.json().await.unwrap();
+    let id = created["id"].as_str().expect("created id").to_owned();
+    let as_a_draft = Utc::now();
+
+    // Still a draft: not a published passport, and told apart from none by
+    // neither status nor sentence.
+    let absent = "0190a9f0-dead-7abc-8def-0123456789ab";
+    let on_draft = refusal(get_as_of(&base, &id, Utc::now(), Some(&header)).await).await;
+    let on_absent = refusal(get_as_of(&base, absent, Utc::now(), Some(&header)).await).await;
+    assert_eq!(on_draft.0, 404);
+    assert_eq!(
+        on_draft, on_absent,
+        "a draft must not be told apart from a passport that does not exist"
+    );
+
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/publish"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "publish failed");
+
+    let (status, body) = refusal(get_as_of(&base, &id, as_a_draft, Some(&header)).await).await;
+    assert_eq!(status, 404, "a moment the passport was a draft: {body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("No published version")),
+        "{body}"
+    );
+
+    // Suspended now, and the live record is the state at this moment.
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/suspend"), json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "suspend failed");
+    let resp = get_as_of(&base, &id, Utc::now(), Some(&header)).await;
+    assert_eq!(resp.status(), 410, "a moment the passport was suspended");
 }
