@@ -147,40 +147,58 @@ deviation; each is written down so a later reader does not have to rediscover it
 ## GS1's own test suite
 
 GS1 publishes a test suite for this release (<https://ref.gs1.org/test-suites/resolver/>,
-source at `gs1/GS1DL-resolver-testsuite`, Apache-2.0). **It was not run, and is not
-evidence here.** It is JavaScript that runs in a browser and sends every request
-through a PHP helper hosted by the suite's author at a fixed address (`testUri`
-in `GS1DigitalLinkResolverTestSuite.js`), which makes the calls from there. So it
-reaches only a resolver on a public HTTPS host whose name contains a dot, and a
-resolver on `localhost` is out of its reach by construction. Running it would mean
-putting a node on the public internet and sending its address to a third party.
-It also does not exercise every criterion: in the revision read on 2026-11-05, the
-compression checks and the check of `supportedPrimaryKeys` in the description file
-are commented out.
+source at `gs1/GS1DL-resolver-testsuite`, Apache-2.0). As shipped it cannot be pointed
+at a resolver on `localhost`: it is JavaScript that runs in a browser and sends every
+request through a PHP helper hosted by the suite's author at a fixed address (`testUri`
+in `GS1DigitalLinkResolverTestSuite.js`), the target must be an `https` host whose name
+contains a dot, and the helper makes the calls from its own side.
 
-What stands in its place is `gs1_conformance.rs`, which checks the same facts (and
-the ones the suite leaves out) against GS1's two JSON schemas, kept in
-`crates/dpp-resolver/tests/fixtures/gs1/`, in process and in CI. The linkset
-schema is identical to the Apache-2.0 copy in `gs1/linkset`. The description-file
-schema is as `ref.gs1.org` serves it and carries no licence statement.
+**It was run anyway, on one machine, with that one address changed.** On 2026-11-05 the
+suite's page (revision `32597c1`, 2026-08-07) and its unmodified `tester.php` were served
+locally, with `testUri` pointed at the local helper and nothing else in the suite's
+JavaScript touched (a diff against GS1's copy shows that line only). The target was the
+real stack, not a stub: a node and a resolver built from `1eb8f60e`, a published passport
+signed by that node, and Caddy in front for TLS (`tls internal`, HTTP/2), at
+`https://resolver.localhost:8443`. The helper trusted Caddy's root and nothing else.
 
-**The page's requests are replayed, not run.** Its source says what it asks and what
-it looks for, so `the_requests_gs1_s_test_page_makes_are_answered_as_it_expects`
-sends the same requests over a real socket with the headers its helper sends (an
-`OPTIONS` from its origin, the link with `/foo` after it, a trailing slash, a query
-string, `linkType=linkset`, the `Accept` probe that also sends `linkType=all`, one
-request per link type the linkset lists, and a link type it does not). That is an
-emulation read from source and can be wrong about it: it stands in until the page is
-run against a deployed node.
+Against a GTIN-level address, **25 of the page's 27 checks pass.** The two that fail
+are the page's own browser-side fetches of the host, "HTTP over TLS" and "resolver
+description file", and the browser reported `net::ERR_CERT_AUTHORITY_INVALID` for both:
+it did not trust the local certificate authority. The same two URLs answer correctly to
+`curl` with that root pinned, and the helper fetched through the same TLS front. **So
+neither has been seen to pass in the page**, and the page reports a missing description
+file as its one critical issue, so its overall verdict in this run was a failure. A run
+against a host with a publicly trusted certificate is what would settle both, and this
+record does not claim them until then. Criterion 3 and criterion 21 therefore rest on
+the runbook and on `gs1_conformance.rs`, as before.
 
-Two things the page does that a deployment must meet, from reading it:
+Two things the run showed that the in-process tests did not:
 
-- It looks for the default link under an `anchor` equal to the address it was given,
-  and this resolver writes `RESOLVER_BASE_URL` and the GTIN padded to 14 digits. So
-  `RESOLVER_BASE_URL` must be exactly the origin the page is pointed at, and the page
-  should be given a GTIN-14, or it finds no default link.
-- It reads a link type as `gs1:` when its URI starts `https://ref.gs1.org/voc/`, which
-  is the form this resolver writes.
+- **The page needs a record at the GTIN.** It takes the GTIN out of any address it is
+  given and asks for that GTIN with a lot it invented (`/10/KL8G`), expecting anything but
+  a `404`. A product with passports only at serial level has nothing at its GTIN, so the
+  resolver answers `404` there, which is right by the standard (nothing is registered at
+  any level of that request, criterion 8), and the page reads as a failure to walk up the
+  tree. The first run, against a serial-level carrier, failed that check for this reason
+  and for no other. The second, against a passport with no batch, resolvable at its bare
+  GTIN, passed it.
+- **The page finds the default link by exact address.** It looks for the link under an
+  `anchor` equal to the address it was given, and this resolver writes `RESOLVER_BASE_URL`
+  and the GTIN padded to 14 digits. So `RESOLVER_BASE_URL` must be exactly the origin the
+  page is pointed at, and the page should be given a GTIN-14, or it finds no default link.
+  It reads a link type as `gs1:` when its URI starts `https://ref.gs1.org/voc/`, which is
+  the form this resolver writes.
 
-Running GS1's suite against a deployed node, before a claim is made, is still worth
-doing once; it is not a gate, because it cannot be one.
+What the page does not exercise: its compression check is commented out, so criterion 5,
+the one this resolver meets in part, was not in the run.
+
+**The page's requests are also replayed in CI.** Its source says what it asks and what it
+looks for, so `the_requests_gs1_s_test_page_makes_are_answered_as_it_expects` sends the
+same requests over a real socket with the headers its helper sends. That is an emulation
+read from source and can be wrong about it; it stands in for the page in CI, where the
+page cannot run.
+
+The schemas the page validates against are kept in `crates/dpp-resolver/tests/fixtures/gs1/`
+and checked in `gs1_conformance.rs`. The linkset schema is identical to the Apache-2.0
+copy in `gs1/linkset`. The description-file schema is as `ref.gs1.org` serves it and
+carries no licence statement.
