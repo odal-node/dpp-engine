@@ -17,7 +17,7 @@ use dpp_dal::pg::{
     PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog,
     PgTransferRepo, PgWebhookRepo, sqlx,
 };
-use dpp_dal::test_harness::{TestPg, start_pg};
+use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::DppError;
 use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
@@ -255,17 +255,6 @@ async fn a_status_write_is_checked_against_the_locked_passport() {
         .expect("audit");
     assert_eq!(audit.len(), 1, "only the supersession was recorded");
     assert_eq!(pending_deliveries(&pg).await, 0);
-}
-
-/// Sessions on this test's database waiting for a lock.
-async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_stat_activity
-         WHERE datname = current_database() AND wait_event_type = 'Lock'",
-    )
-    .fetch_one(pg.dal.pool())
-    .await
-    .expect("read pg_stat_activity")
 }
 
 /// Two changes that append to one passport's audit trail at once still leave

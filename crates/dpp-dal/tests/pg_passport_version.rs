@@ -29,7 +29,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 
 use dpp_dal::pg::{PgPassportRepo, PgPassportVersionRepo};
-use dpp_dal::test_harness::{TestPg, start_pg};
+use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
@@ -229,17 +229,6 @@ async fn a_batch_update_archives_every_item() {
             "a bulk update is a change per item, and each one is archived"
         );
     }
-}
-
-/// Sessions on this test's database waiting for a lock.
-async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_stat_activity
-         WHERE datname = current_database() AND wait_event_type = 'Lock'",
-    )
-    .fetch_one(pg.dal.pool())
-    .await
-    .expect("read pg_stat_activity")
 }
 
 /// Two changes made at once each archive the record the other left.
