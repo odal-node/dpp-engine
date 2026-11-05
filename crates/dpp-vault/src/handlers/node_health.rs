@@ -20,7 +20,8 @@ pub struct RegistryOutboxHealth {
     pub pending: i64,
     /// Rows accepted by the registry and awaiting its verdict.
     pub submitted: i64,
-    /// Pending rows that have reached the stall threshold and need a person.
+    /// Pending and submitted rows that have reached the stall threshold and need a
+    /// person.
     pub stalled: i64,
     /// Rows the registry terminally rejected.
     pub rejected: i64,

@@ -74,3 +74,88 @@ pub fn record_signing_failure() {
 pub fn record_ruleset_load_failure() {
     metrics::counter!("ruleset_load_failures_total").increment(1);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use metrics::{
+        Counter, CounterFn, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
+    };
+
+    use super::*;
+
+    /// A recorder that totals every counter by name: the exported side of a
+    /// refusal, for a test to read. Gauges and histograms are not kept.
+    #[derive(Clone, Default)]
+    struct ExportedCounters(Arc<Mutex<HashMap<String, u64>>>);
+
+    struct Increments {
+        name: String,
+        totals: Arc<Mutex<HashMap<String, u64>>>,
+    }
+
+    impl CounterFn for Increments {
+        fn increment(&self, value: u64) {
+            *self
+                .totals
+                .lock()
+                .unwrap()
+                .entry(self.name.clone())
+                .or_default() += value;
+        }
+
+        fn absolute(&self, value: u64) {
+            self.totals.lock().unwrap().insert(self.name.clone(), value);
+        }
+    }
+
+    impl Recorder for ExportedCounters {
+        fn describe_counter(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn describe_gauge(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn describe_histogram(&self, _: KeyName, _: Option<Unit>, _: SharedString) {}
+
+        fn register_counter(&self, key: &Key, _: &Metadata<'_>) -> Counter {
+            Counter::from_arc(Arc::new(Increments {
+                name: key.name().to_owned(),
+                totals: Arc::clone(&self.0),
+            }))
+        }
+
+        fn register_gauge(&self, _: &Key, _: &Metadata<'_>) -> Gauge {
+            Gauge::noop()
+        }
+
+        fn register_histogram(&self, _: &Key, _: &Metadata<'_>) -> Histogram {
+            Histogram::noop()
+        }
+    }
+
+    /// How far the exported counter called `name` moves while `record` runs.
+    fn exported_increase(name: &str, record: fn()) -> u64 {
+        let exported = ExportedCounters::default();
+        metrics::with_local_recorder(&exported, record);
+        exported.0.lock().unwrap().get(name).copied().unwrap_or(0)
+    }
+
+    /// A refused signature moves the counter `/metrics` exports, under the name
+    /// monitors already scrape.
+    #[test]
+    fn a_refused_signature_moves_the_exported_counter() {
+        assert_eq!(
+            exported_increase("signing_failures_total", record_signing_failure),
+            1
+        );
+    }
+
+    #[test]
+    fn a_refused_ruleset_bundle_moves_the_exported_counter() {
+        assert_eq!(
+            exported_increase("ruleset_load_failures_total", record_ruleset_load_failure),
+            1
+        );
+    }
+}
