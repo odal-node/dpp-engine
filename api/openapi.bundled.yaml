@@ -152,7 +152,9 @@ paths:
             same GTIN.** `errors[0].field` is `/carrierSerial`. A label that names
             two passports resolves to neither: choose another serial, or declare
             this passport as the successor of the one that holds it with
-            `supersedesId`.
+            `supersedesId`. A draft holds its serial, and so does a passport that
+            was published and then retired. A draft that was retired without ever
+            being published holds none.
           headers:
             Retry-After:
               description: Seconds to wait before retrying. Sent for the idempotency conflict only.

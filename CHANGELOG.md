@@ -208,6 +208,32 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
 - **Two transfer steps that overlap no longer overwrite each other's chain.** A
   passport's transfer chain was read, changed in memory and written back whole,
   with a signature in between, and the write had no condition. Two initiations
@@ -246,6 +272,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   record that was never published, a draft or a retired draft, now answers no
   label. A retired passport that was published is unchanged and still serves its
   signed view. (#570)
+
+- **`odal bootstrap` names the admin credential when the node refuses it.** A
+  wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
+  unreachable, with the refusal printed only under `Caused by:`. A `401` or
+  `403` from the node's state read now says to check both variables against the
+  node's, and a node that does not answer is still reported as unreachable.
+  (#572)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
