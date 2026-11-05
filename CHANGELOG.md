@@ -217,7 +217,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   node answers from the existing identifier index, and two publishes of one link
   or DID take turns whatever lots they state. The second is still a `422` naming
   `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
-  still publishes. (#498)
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
+- **A draft retired without ever being published answers `404` on its public
+  read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
+  retention guard only to a passport that has a `published_at`, so an operator
+  can close a draft that will never publish. `serves_publicly` decided from the
+  status alone and served every `Retired` passport, on the reasoning that the
+  status is reachable only after a publish's retention period. That draft has no
+  `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
+  and answered `500`, where a draft that was never retired answers `404`; the
+  resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
+  the passport, and a retired one with no `publishedAt` is not served. The
+  continuity tier's snapshot drain decides through it too, so it removes such a
+  snapshot instead of failing to build one on every pass.
+
+  `GET /vault/public/dpp/by-gtin/{gtin}` answered `500` for it as well, and a
+  closed draft broke more than its own label. Label resolution skipped drafts
+  but read a retired one as a current passport, so beside a live passport under
+  the same GTIN (which create allows) it made the label name two records that
+  are not one amendment chain, and the lookup refused to choose: the live
+  passport's label answered `500` for as long as the closed draft existed. A
+  record that was never published, a draft or a retired draft, now answers no
+  label. A retired passport that was published is unchanged and still serves its
+  signed view. (#570)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's

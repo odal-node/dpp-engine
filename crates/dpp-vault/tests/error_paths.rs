@@ -1,10 +1,15 @@
 #![cfg(feature = "integration-tests")]
 
 mod helpers;
+use dpp_dal::pg::PgPassportRepo;
+use dpp_domain::passport::PassportId;
+use dpp_domain::ports::passport_repo::PassportRepository;
+use dpp_domain::status::PassportStatus;
 use helpers::{
     TestClient, make_jwt, seed_complete_operator, start_postgres, start_vault,
     start_vault_failing_signer,
 };
+use uuid::Uuid;
 
 fn op() -> String {
     "00000000-0000-0000-0000-000000000001".to_owned()
@@ -355,6 +360,107 @@ async fn public_read_suspended_returns_410_gone() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 410);
+}
+
+/// A draft closed without ever being published was never public, so it answers
+/// as the draft it was: `404`, not `500`.
+///
+/// Core allows `Draft → Retired`, and an operator needs it to close a draft that
+/// will never publish. `Retired` serves because it is reachable only after a
+/// publish's retention period, but this one has no `publicJwsSignature`, and
+/// reading it as published failed closed on that. Both public routes decide
+/// through `serves_publicly`, so both are asked.
+#[tokio::test(flavor = "multi_thread")]
+async fn public_read_retired_never_published_draft_returns_404() {
+    const GTIN: &str = "09506000134352";
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            serde_json::json!({
+                "productName": "Closed Draft",
+                "manufacturer": {"name": "Draft Inc", "address": "Test"},
+                "materials": [{"name": "Nickel", "weightKg": 0.5}],
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": GTIN },
+                    "batteryChemistry": "NiMH",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 12.0,
+                    "nominalCapacityAh": 40.0,
+                    "expectedLifetimeCycles": 1000,
+                    "co2ePerUnitKg": 20.0
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201);
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "a draft may be retired");
+
+    for path in [
+        format!("/public/dpp/{id}"),
+        format!("/public/dpp/by-gtin/{GTIN}"),
+    ] {
+        let resp = reqwest::get(format!("{base}{path}")).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            404,
+            "{path}: a retired draft was never public"
+        );
+    }
+}
+
+/// The other half of the rule above: a passport that *was* published and has
+/// since been retired keeps serving the view it was signed with.
+///
+/// Retiring a published passport inside the test needs the repository, since
+/// the API refuses it until the retention period has run.
+#[tokio::test(flavor = "multi_thread")]
+async fn public_read_retired_published_passport_still_serves_its_signed_view() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+    let id = create_and_publish(&client).await;
+
+    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "the passport must be published first");
+
+    PgPassportRepo::new(pg.dal.clone())
+        .update_status(
+            PassportId(id.parse::<Uuid>().expect("a passport id")),
+            PassportStatus::Retired,
+        )
+        .await
+        .expect("retire the published passport");
+
+    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "retiring a published passport does not withdraw it"
+    );
+    let view: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        view.get("publicJwsSignature").is_some(),
+        "the retired passport serves the view it was signed with, got {view}"
+    );
 }
 
 // ── Regression W-1: signing failure must be fail-closed ──────────────────────
