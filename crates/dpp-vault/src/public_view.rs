@@ -276,12 +276,15 @@ pub async fn sign_disclosure_views(
     Ok(signatures)
 }
 
-/// Whether a passport in this state is still served on the public tier.
+/// Whether a passport is served on the public tier.
 ///
 /// A match, not a list of equality checks: the question "is this state public?"
 /// has to be answered for every state, and a `||` chain answers it only for the
 /// ones someone remembered. Three distinct terminal states used to fall through
 /// a `_` arm into one `404`, which is how the question stopped being asked.
+///
+/// It takes the passport rather than its status because the status alone cannot
+/// answer it for `Retired`: see below.
 ///
 /// `PassportStatus` is `#[non_exhaustive]`, so a wildcard is unavoidable. It
 /// **fails closed** and logs: publishing a state that should not be public is
@@ -303,25 +306,35 @@ pub async fn sign_disclosure_views(
 ///   retire before `retention_until`.
 /// - `Superseded` replaces the record, not the goods. Products made under the
 ///   old specification are still out there with carriers resolving to it.
-/// - `Retired` is only reachable *after* `retention_until`, so it is the one
-///   state where the obligation has genuinely lapsed. It serves anyway: nothing
-///   requires a node to stop, the data is already public and already signed, and
-///   withdrawing it buys nothing while breaking every carrier still in
-///   circulation.
+/// - `Retired` is only reachable *after* `retention_until` of a publish, so it
+///   is the one state where the obligation has genuinely lapsed. It serves
+///   anyway: nothing requires a node to stop, the data is already public and
+///   already signed, and withdrawing it buys nothing while breaking every
+///   carrier still in circulation.
 ///
-/// The two that do not serve are the two that mean something else. `Suspended`
-/// is a deliberate withdrawal and says so with `410 Gone` rather than by
-/// vanishing; `Draft` was never public at all.
+///   **Unless it was never published.** Core allows `Draft → Retired`, and
+///   `retire` applies the retention guard only to a passport with a
+///   `published_at`, so an operator can close a draft that will never publish.
+///   That record was never public and carries no `publicJwsSignature`, so the
+///   reasoning above does not reach it: it answers `404`, as the draft it was
+///   did. Serving it reached `signed_public_view`, which fails closed on the
+///   missing proof — rightly, for a published passport — and answered `500`.
+///   The record is told apart by `published_at`, which `publish` sets and
+///   nothing clears.
+///
+/// The ones that do not serve mean something else. `Suspended` is a deliberate
+/// withdrawal and says so with `410 Gone` rather than by vanishing; `Draft` was
+/// never public at all.
 ///
 /// In every serving case it is the same `signed_public_view` a published
 /// passport gets, filtered by the same disclosure lens. Retirement widens
 /// nothing.
-pub fn serves_publicly(status: &PassportStatus) -> bool {
-    match status {
-        PassportStatus::Published
-        | PassportStatus::Deactivated
-        | PassportStatus::Superseded
-        | PassportStatus::Retired => true,
+pub fn serves_publicly(passport: &Passport) -> bool {
+    match &passport.status {
+        PassportStatus::Published | PassportStatus::Deactivated | PassportStatus::Superseded => {
+            true
+        }
+        PassportStatus::Retired => passport.published_at.is_some(),
         PassportStatus::Suspended | PassportStatus::Draft => false,
         other => {
             tracing::warn!(
@@ -1051,6 +1064,52 @@ pub(crate) mod tests {
                 "{audience:?} received a productGroupData key for a passport that has \
                  none — serving `null` says 'there is nothing here' in a field a \
                  reader has to special-case: {view}"
+            );
+        }
+    }
+
+    /// Core allows `Draft → Retired`, so `Retired` alone cannot say whether a
+    /// public view ever existed. A retired draft has no `publicJwsSignature`,
+    /// and serving it reached `signed_public_view`, which fails closed on that
+    /// and answered `500` where the draft it was answered `404`.
+    #[test]
+    fn a_retired_passport_serves_only_if_it_was_ever_published() {
+        let mut passport = stub_passport();
+        passport.status = PassportStatus::Retired;
+
+        passport.published_at = None;
+        assert!(
+            !serves_publicly(&passport),
+            "a retired draft was never public and has no proof to serve"
+        );
+
+        passport.published_at = Some(chrono::Utc::now());
+        assert!(
+            serves_publicly(&passport),
+            "a retired passport that was published keeps serving its signed view"
+        );
+    }
+
+    /// The question is asked of the passport only where the status cannot
+    /// answer it. Every other status is decided as it was, so publication
+    /// changes nothing for them.
+    #[test]
+    fn only_a_retired_passport_is_told_apart_by_publication() {
+        for status in PassportStatus::ALL {
+            if *status == PassportStatus::Retired {
+                continue;
+            }
+            let mut passport = stub_passport();
+            passport.status = status.clone();
+
+            passport.published_at = None;
+            let unpublished = serves_publicly(&passport);
+            passport.published_at = Some(chrono::Utc::now());
+
+            assert_eq!(
+                unpublished,
+                serves_publicly(&passport),
+                "{status:?} is decided by its status alone"
             );
         }
     }

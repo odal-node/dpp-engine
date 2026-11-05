@@ -208,6 +208,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without ever being published answers `404` on its public
+  read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
+  retention guard only to a passport that has a `published_at`, so an operator
+  can close a draft that will never publish. `serves_publicly` decided from the
+  status alone and served every `Retired` passport, on the reasoning that the
+  status is reachable only after a publish's retention period. That draft has no
+  `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
+  and answered `500`, where a draft that was never retired answers `404`; the
+  resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
+  the passport, and a retired one with no `publishedAt` is not served. The GTIN
+  read and the continuity tier's snapshot drain decide through it too, so the
+  drain removes such a snapshot instead of failing to build one on every pass. A
+  retired passport that was published is unchanged and still serves its signed
+  view. (#570)
+
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's
   successor the one its predecessor was signed with. So an operator that changed
