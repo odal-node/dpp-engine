@@ -514,6 +514,35 @@ async fn upgrade_from(fixture: &Path) {
         );
     }
 
+    // The capture retires a draft, so every fixture holds one. It was never
+    // public, so it answers as the draft it was. The releases that wrote these
+    // fixtures answered `500` for it, and a public read of one that came back
+    // `500` after an upgrade would be the same defect.
+    let retired_drafts: Vec<String> = sqlx::query_scalar(
+        "SELECT id::text FROM odal.passport \
+         WHERE status = 'retired' AND published_at IS NULL ORDER BY id",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("read the retired drafts");
+    assert!(
+        !retired_drafts.is_empty(),
+        "{release}: the fixture holds no retired draft"
+    );
+    for id in &retired_drafts {
+        let response = node
+            .http
+            .get(node.url(&format!("/vault/public/dpp/{id}")))
+            .send()
+            .await
+            .expect("public read of a retired draft");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{release}: public read of the retired draft {id}"
+        );
+    }
+
     let primary = apply_documented_migrations(&node, release).await;
 
     let rows: Vec<(String, String)> =

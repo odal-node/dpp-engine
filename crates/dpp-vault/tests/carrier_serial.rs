@@ -418,3 +418,85 @@ async fn a_second_published_passport_under_one_did_is_refused() {
     }))
     .await;
 }
+
+/// Retire `id`, expecting `200`. A draft may be retired, and needs to be: it is
+/// how an operator closes one that will never publish.
+async fn retire(client: &TestClient, id: &str) {
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), serde_json::json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "a draft may be retired");
+}
+
+/// A draft closed without ever being published was never the record a label
+/// names, so the label finds nothing — as it did before the draft was closed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_draft_is_not_found_by_its_label() {
+    let (client, _pg) = client().await;
+    let closed = create(&client, draft("Closed", gs1(GTIN), Some("SN-1"))).await;
+    retire(&client, closed["id"].as_str().unwrap()).await;
+
+    // Every level the label can be read at, reported together rather than
+    // stopping at the first.
+    let mut answers = Vec::new();
+    for query in ["", "?serial=SN-1", "?serial=SN-2"] {
+        let resp = client
+            .get(&format!("/public/dpp/by-gtin/{GTIN}{query}"))
+            .await;
+        answers.push((query, resp.status().as_u16()));
+    }
+    assert!(
+        answers.iter().all(|(_, status)| *status == 404),
+        "a retired draft is not what a label names: {answers:?}"
+    );
+}
+
+/// Closing a draft must not break the label of the passport that is live.
+///
+/// Both drafts share a GTIN, which create allows. The label then names two
+/// current records that are not one amendment chain, and the lookup refuses to
+/// choose between them — right for two published passports, wrong when one of
+/// them was never published at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_draft_does_not_make_a_live_passports_label_ambiguous() {
+    let (client, _pg) = client().await;
+    let live = create(&client, draft("Live", gs1(GTIN), None)).await;
+    let closed = create(&client, draft("Closed", gs1(GTIN), None)).await;
+    let live_id = live["id"].as_str().unwrap().to_owned();
+    publish(&client, &live_id).await;
+    retire(&client, closed["id"].as_str().unwrap()).await;
+
+    let resp = client.get(&format!("/public/dpp/by-gtin/{GTIN}")).await;
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    assert_eq!(
+        status, 200,
+        "the live passport's label must still resolve: {text}"
+    );
+    let served: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(served["id"], live_id.as_str());
+}
+
+/// A draft that was closed holds no label against the passport that goes live
+/// after it. Publish refuses a passport whose label another live passport
+/// already holds, and a draft is not one — nor is a draft that was closed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retired_draft_does_not_hold_the_label_against_a_passport_that_publishes() {
+    let (client, _pg) = client().await;
+    let closed = create(&client, draft("Closed", gs1(GTIN), None)).await;
+    retire(&client, closed["id"].as_str().unwrap()).await;
+
+    let next = create(&client, draft("Next", gs1(GTIN), None)).await;
+    let next_id = next["id"].as_str().unwrap().to_owned();
+    publish(&client, &next_id).await;
+
+    let resp = client.get(&format!("/public/dpp/by-gtin/{GTIN}")).await;
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    assert_eq!(
+        status, 200,
+        "the published passport's label resolves: {text}"
+    );
+    let served: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(served["id"], next_id.as_str());
+}
