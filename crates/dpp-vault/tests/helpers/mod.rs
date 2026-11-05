@@ -401,6 +401,19 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
     .await
 }
 
+/// A vault signing with `identity` — for a test that has to decide when each
+/// signature returns.
+pub async fn start_vault_with_signer(dal: PgDal, identity: Arc<dyn IdentityPort>) -> String {
+    start_vault_with_identity(
+        dal,
+        identity,
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
+}
+
 /// A vault whose seal ports are wired to order — for the routes whose answers
 /// turn on whether this node can read a seal, or buy one.
 pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {

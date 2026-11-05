@@ -47,7 +47,9 @@ post:
     '422':
       description: |
         There is no pending handover to cancel, or the record's state does not
-        permit it. Core allows a cancel from `Initiated` or `Accepted`.
+        permit it. Core allows a cancel from `Initiated` or `Accepted`. Also a
+        transfer chain that another request changed while this one was running:
+        nothing is written, and the request can be sent again.
       content:
         application/problem+json:
           schema:

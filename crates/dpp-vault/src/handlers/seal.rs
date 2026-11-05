@@ -447,7 +447,7 @@ pub async fn seal_handler(
     // the transfer store is down, deliberately.
     let responsibility_may_have_transferred = match state.service.transfer_store.as_ref() {
         Some(store) => match store.get_chain(passport_id).await {
-            Ok(Some(chain)) => chain.transfer_count() > 0,
+            Ok(Some(stored)) => stored.chain.transfer_count() > 0,
             Ok(None) => false,
             Err(e) => return internal_error(e),
         },

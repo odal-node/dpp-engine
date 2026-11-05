@@ -38,7 +38,9 @@ post:
     '422':
       description: |
         There is no pending handover to accept, the pending record carries no
-        outgoing signature, or that signature failed verification.
+        outgoing signature, or that signature failed verification. Also a
+        transfer chain that another request changed while this one was running:
+        nothing is written, and the request can be sent again.
       content:
         application/problem+json:
           schema:
