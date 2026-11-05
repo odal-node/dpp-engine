@@ -380,16 +380,22 @@ async fn publish_refused(client: &TestClient, id: &str) -> serde_json::Value {
 
 /// An identifier that is the whole key. A link or a DID names a product with
 /// nothing after it to narrow by, so a second published passport carrying the
-/// same value is a second holder of the identifier, and publish used to return
-/// `200` for it.
-///
-/// Both drafts state no lot, which is every holder this node can produce.
-/// One that differs only in its lot needs dpp-core's lookup by the whole value
-/// (`find_by_product_identifier`), which its 0.22.0 does not carry.
-async fn the_second_holder_of_one_identifier_is_refused(identifier: serde_json::Value) {
+/// same value is a second holder of the identifier, whatever lot either states,
+/// and publish used to return `200` for it.
+async fn the_second_holder_of_one_identifier_is_refused(
+    identifier: serde_json::Value,
+    lots: [Option<&str>; 2],
+) {
+    let under = |name, lot: Option<&str>| {
+        let mut body = draft(name, identifier.clone(), None);
+        if let Some(lot) = lot {
+            body["batchId"] = serde_json::json!(lot);
+        }
+        body
+    };
     let (client, _pg) = client().await;
-    let first = create(&client, draft("First", identifier.clone(), None)).await;
-    let second = create(&client, draft("Second", identifier, None)).await;
+    let first = create(&client, under("First", lots[0])).await;
+    let second = create(&client, under("Second", lots[1])).await;
     let first_id = first["id"].as_str().unwrap().to_owned();
     let second_id = second["id"].as_str().unwrap().to_owned();
 
@@ -403,19 +409,49 @@ async fn the_second_holder_of_one_identifier_is_refused(identifier: serde_json::
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_published_passport_under_one_identification_link_is_refused() {
-    the_second_holder_of_one_identifier_is_refused(serde_json::json!({
-        "scheme": "identificationLink",
-        "url": "https://id.acme.example/p/1"
-    }))
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://id.acme.example/p/1"
+        }),
+        [None, None],
+    )
     .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_published_passport_under_one_did_is_refused() {
-    the_second_holder_of_one_identifier_is_refused(serde_json::json!({
-        "scheme": "did",
-        "did": "did:web:acme.example:b:1"
-    }))
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "did",
+            "did": "did:web:acme.example:b:1"
+        }),
+        [None, None],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_published_passport_under_one_identification_link_and_another_lot_is_refused() {
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "identificationLink",
+            "url": "https://id.acme.example/p/1"
+        }),
+        [Some("LOT-1"), Some("LOT-2")],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_published_passport_under_one_did_and_another_lot_is_refused() {
+    the_second_holder_of_one_identifier_is_refused(
+        serde_json::json!({
+            "scheme": "did",
+            "did": "did:web:acme.example:b:1"
+        }),
+        [Some("LOT-1"), Some("LOT-2")],
+    )
     .await;
 }
 
@@ -499,4 +535,69 @@ async fn a_retired_draft_does_not_hold_the_label_against_a_passport_that_publish
     );
     let served: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(served["id"], next_id.as_str());
+}
+
+/// A draft closed without being published gives its serial back.
+///
+/// A draft holds the serial it was created with, so that two creates cannot both
+/// attribute it. Retiring is how an operator gives up on a draft, and the `409`
+/// for a held serial offers a declared successor, which a draft that never
+/// published cannot have: without this the serial could never be attributed
+/// again. Create, the dry run and publish all have to agree it is free.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_serial_a_retired_draft_held_can_be_attributed_again() {
+    let (client, _pg) = client().await;
+    let closed = create(&client, draft("Closed", gs1(GTIN), Some("SN-1"))).await;
+    let again = draft("Again", gs1(GTIN), Some("SN-1"));
+
+    let resp = client.post_json("/api/v1/dpp", again.clone()).await;
+    assert_eq!(
+        resp.status(),
+        409,
+        "while it is a draft, it holds the serial"
+    );
+
+    retire(&client, closed["id"].as_str().unwrap()).await;
+
+    let resp = client
+        .post_json("/api/v1/dpp/validate", again.clone())
+        .await;
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    assert_eq!(status, 200, "the dry run must agree with create: {text}");
+
+    let next = create(&client, again).await;
+    let next_id = next["id"].as_str().unwrap().to_owned();
+    publish(&client, &next_id).await;
+    assert_eq!(label_reaches(&client, "SN-1").await, next_id);
+}
+
+/// A passport that was published and then retired is another matter. The product
+/// its label was printed on is still out there, and a second passport attributing
+/// the same serial would make that label name two.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_serial_a_published_then_retired_passport_held_stays_held() {
+    use dpp_dal::pg::PgPassportRepo;
+    use dpp_domain::{
+        passport::PassportId, ports::passport_repo::PassportRepository, status::PassportStatus,
+    };
+
+    let (client, pg) = client().await;
+    let first = create(&client, draft("Published", gs1(GTIN), Some("SN-1"))).await;
+    let first_id = first["id"].as_str().unwrap().to_owned();
+    publish(&client, &first_id).await;
+
+    // The API refuses to retire it until its retention period has run.
+    PgPassportRepo::new(pg.dal.clone())
+        .update_status(
+            PassportId(first_id.parse().unwrap()),
+            PassportStatus::Retired,
+        )
+        .await
+        .expect("retire the published passport");
+
+    let resp = client
+        .post_json("/api/v1/dpp", draft("Second", gs1(GTIN), Some("SN-1")))
+        .await;
+    assert_eq!(resp.status(), 409, "a published passport keeps its serial");
 }

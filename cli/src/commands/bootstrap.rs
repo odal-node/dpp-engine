@@ -3,12 +3,13 @@
 //! All fields must be provided via flags or environment variables.
 //! Interactive operators should run `odal` instead.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
+use reqwest::StatusCode;
 
 use crate::{
     config::Config,
     core::{
-        onboarding::{action_bootstrap, action_node_state},
+        onboarding::{NodeStateRejected, action_bootstrap, action_node_state},
         types::BootstrapParams,
     },
     http::OdalClient,
@@ -35,9 +36,15 @@ pub async fn run_bootstrap(
     let admin = OdalClient::with_local_admin(&user, &pass);
 
     // Idempotency guard: refuse to re-bootstrap a node that is already claimed.
-    let state = action_node_state(&admin, &cfg).await.context(
-        "could not reach the node to check its setup state — is it running? (`odal up`)",
-    )?;
+    let state = action_node_state(&admin, &cfg).await.map_err(|err| {
+        if credential_refused(&err) {
+            err.context(
+                "the node refused the admin credential — check ADMIN_USERNAME and ADMIN_PASSWORD against the node's",
+            )
+        } else {
+            err.context("could not reach the node to check its setup state — is it running? (`odal up`)")
+        }
+    })?;
     if state.bootstrapped && !force {
         bail!(
             "this node is already bootstrapped (an active API key exists).\n\
@@ -71,6 +78,15 @@ pub async fn run_bootstrap(
         operator_complete,
     );
     Ok(())
+}
+
+/// Whether the node answered and turned the admin credential down. A node that
+/// did not answer at all carries no status, so it is not this.
+fn credential_refused(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<NodeStateRejected>()
+        .is_some_and(|rejected| {
+            rejected.status == StatusCode::UNAUTHORIZED || rejected.status == StatusCode::FORBIDDEN
+        })
 }
 
 fn from_flag_or_env(flag: Option<String>, env_var: &str, what: &str) -> Result<String> {

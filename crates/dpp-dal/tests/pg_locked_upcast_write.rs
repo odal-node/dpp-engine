@@ -27,18 +27,26 @@
 //! first two tests and turn the guard's refusal of a real edit into a silent
 //! no-op. The third test holds that line: an edit to the content is still
 //! refused.
+//!
+//! # What a change archives
+//!
+//! EN 18221 clause 4.2 archives the version a change replaces, and the version
+//! is the record as it was stored. A reading of it is this build's upcast,
+//! carrying a `productIdentifier` the operator never published, so a version
+//! archived from a reading would not hold what was signed. Every writer is
+//! checked here against the same old shape.
 
 #![cfg(feature = "integration-tests")]
 
 use std::path::Path;
 
-use dpp_dal::pg::{PgPassportRepo, PgRegistrySyncRepo, PgStateChangeLog};
+use dpp_dal::pg::{PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog};
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::DppError;
 use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::status::PassportStatus;
-use dpp_types::audit::PassportAuditEntry;
+use dpp_types::audit::{PassportAuditEntry, PassportVersionStore};
 use dpp_types::registry_sync::RegistrySyncOutbox;
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 use serde_json::Value;
@@ -105,6 +113,18 @@ async fn stored(pg: &TestPg, id: PassportId) -> Value {
         .expect("read the stored doc")
 }
 
+/// Every archived `doc` of `id`, oldest first, from the store the versions route
+/// serves.
+async fn archived(pg: &TestPg, id: PassportId) -> Vec<Value> {
+    PgPassportVersionRepo::new(pg.dal.clone())
+        .versions(&id.to_string())
+        .await
+        .expect("read the archive")
+        .into_iter()
+        .map(|version| version.doc)
+        .collect()
+}
+
 /// Every stored key a status change does not own is byte-identical to what was
 /// signed: the change wrote `status` and `updatedAt`, and nothing it only read.
 fn only_the_status_moved(before: &Value, after: &Value) {
@@ -150,6 +170,92 @@ async fn a_passport_published_before_a_lens_hop_can_still_change_status() {
             .and_then(dpp_domain::product_group::ProductGroupData::product_identifier)
             .is_some(),
         "reads still see the current shape: the lens runs on the way out"
+    );
+}
+
+#[tokio::test]
+async fn a_status_change_archives_the_record_as_it_was_stored() {
+    let pg = start_pg().await;
+    let id = seed(&pg, published_before_the_lens_hop()).await;
+    let before = stored(&pg, id).await;
+
+    PgPassportRepo::new(pg.dal.clone())
+        .update_status(id, PassportStatus::Suspended)
+        .await
+        .expect("suspend");
+
+    assert_eq!(
+        archived(&pg, id).await,
+        [before],
+        "the version is the stored record, still carrying its `gtin`, not this build's reading"
+    );
+}
+
+#[tokio::test]
+async fn the_state_change_log_archives_the_record_as_it_was_stored() {
+    let pg = start_pg().await;
+    let id = seed(&pg, published_before_the_lens_hop()).await;
+    let before = stored(&pg, id).await;
+
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(
+            StateChange::new(PassportAuditEntry::new(
+                &id.to_string(),
+                "suspended",
+                "locked-upcast-test",
+                Some("active"),
+                Some("suspended"),
+            ))
+            .with_passport(PassportWrite::Status(id, PassportStatus::Suspended)),
+        )
+        .await
+        .expect("the change commits");
+
+    assert_eq!(archived(&pg, id).await, [before]);
+}
+
+/// A draft in the old shape, patched. The patch writes the stored document back
+/// with the change merged in, and the version is that document before it.
+#[tokio::test]
+async fn a_patch_archives_the_record_as_it_was_stored() {
+    let pg = start_pg().await;
+    let mut draft = published_before_the_lens_hop();
+    draft["status"] = "draft".into();
+    draft["retentionLocked"] = false.into();
+    let id = seed(&pg, draft).await;
+    let before = stored(&pg, id).await;
+
+    PgPassportRepo::new(pg.dal.clone())
+        .patch_fields(id, serde_json::json!({ "productName": "Renamed" }))
+        .await
+        .expect("patch the draft");
+
+    assert_eq!(archived(&pg, id).await, [before]);
+}
+
+/// `commit_publish` writes through the same statement as an update, so it
+/// archives what it replaces like any other change.
+#[tokio::test]
+async fn a_publish_through_the_registry_outbox_archives_the_record_as_it_was_stored() {
+    let pg = start_pg().await;
+    let id = seed(&pg, published_before_the_lens_hop()).await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let mut passport = repo
+        .update_status(id, PassportStatus::Suspended)
+        .await
+        .expect("suspend");
+    let suspended = stored(&pg, id).await;
+
+    passport.status = PassportStatus::Published;
+    PgRegistrySyncRepo::new(pg.dal.clone())
+        .commit_publish(&passport, serde_json::json!({}))
+        .await
+        .expect("re-publish");
+
+    assert_eq!(
+        archived(&pg, id).await.last(),
+        Some(&suspended),
+        "the re-publish archives the suspended record it replaced"
     );
 }
 
@@ -203,6 +309,10 @@ async fn a_real_edit_to_its_product_group_data_is_still_refused() {
     assert_eq!(
         stored(&pg, id).await["productGroupData"],
         before["productGroupData"]
+    );
+    assert!(
+        archived(&pg, id).await.is_empty(),
+        "a refused change archives nothing: the version rolls back with the write"
     );
 }
 

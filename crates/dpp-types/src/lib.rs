@@ -90,7 +90,7 @@ pub use snapshot::{
 };
 pub use state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent};
 pub use successor::SuccessorLookup;
-pub use transfer::TransferStore;
+pub use transfer::{TransferStore, VersionedChain};
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use unsold_goods::{
     CreateUnsoldGoodsEntry, Destination, DiscardReason, ProductCategory, UnsoldGoodsEntry,

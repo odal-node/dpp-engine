@@ -191,7 +191,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "description": "One of two conflicts, told apart by the problem document.\n\n**An earlier attempt carrying this `Idempotency-Key` is still running.**\nReturned instead of letting a duplicate execute alongside it. Retry\nshortly with the same key and the same body; `Retry-After` carries the\nsuggested delay. A claim left behind by a process that died mid-request\nis reclaimed automatically after 60 seconds, so this can never wedge a\nkey permanently.\n\n**`carrierSerial` is already attributed to another passport under the\nsame GTIN.** `errors[0].field` is `/carrierSerial`. A label that names\ntwo passports resolves to neither: choose another serial, or declare\nthis passport as the successor of the one that holds it with\n`supersedesId`.\n",
+            "description": "One of two conflicts, told apart by the problem document.\n\n**An earlier attempt carrying this `Idempotency-Key` is still running.**\nReturned instead of letting a duplicate execute alongside it. Retry\nshortly with the same key and the same body; `Retry-After` carries the\nsuggested delay. A claim left behind by a process that died mid-request\nis reclaimed automatically after 60 seconds, so this can never wedge a\nkey permanently.\n\n**`carrierSerial` is already attributed to another passport under the\nsame GTIN.** `errors[0].field` is `/carrierSerial`. A label that names\ntwo passports resolves to neither: choose another serial, or declare\nthis passport as the successor of the one that holds it with\n`supersedesId`. A draft holds its serial, and so does a passport that\nwas published and then retired. A draft that was retired without ever\nbeing published holds none.\n",
             "headers": {
               "Retry-After": {
                 "description": "Seconds to wait before retrying. Sent for the idempotency conflict only.",
@@ -1309,7 +1309,7 @@
       "post": {
         "operationId": "initiateDppTransfer",
         "summary": "Initiate a transfer of responsibility",
-        "description": "The outgoing operator signs a pending handover onto the passport's\ntransfer chain. Only a `published` DPP can be transferred. In the\nmanaged single-node model the caller supplies both the outgoing and\nincoming operator; the node signs on the outgoing operator's behalf.\n",
+        "description": "The outgoing operator signs a pending handover onto the passport's\ntransfer chain. Only a `published` DPP can be transferred. In the\nmanaged single-node model the caller supplies both the outgoing and\nincoming operator; the node signs on the outgoing operator's behalf.\n\nA `422` also answers an initiation whose passport's transfer chain was\nchanged by another request while this one was running. Only one of two\nrequests started together is recorded; the other is refused, leaves nothing\nbehind, and can be sent again.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1430,7 +1430,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to accept, the pending record carries no\noutgoing signature, or that signature failed verification.\n",
+            "description": "There is no pending handover to accept, the pending record carries no\noutgoing signature, or that signature failed verification. Also a\ntransfer chain that another request changed while this one was running:\nnothing is written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1499,7 +1499,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to reject, or the record's state does not\npermit it. Core allows a reject only from `Initiated`.\n",
+            "description": "There is no pending handover to reject, or the record's state does not\npermit it. Core allows a reject only from `Initiated`. Also a transfer\nchain that another request changed while this one was running: nothing\nis written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1568,7 +1568,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to cancel, or the record's state does not\npermit it. Core allows a cancel from `Initiated` or `Accepted`.\n",
+            "description": "There is no pending handover to cancel, or the record's state does not\npermit it. Core allows a cancel from `Initiated` or `Accepted`. Also a\ntransfer chain that another request changed while this one was running:\nnothing is written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10151,12 +10151,12 @@
           },
           "doc": {
             "type": "object",
-            "description": "The complete record as it stood at the time, not a diff.\n\nWhole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for."
+            "description": "The complete record as it stood at the time, not a diff.\n\nAs it was stored, and never upcast: a version taken from a passport written under an earlier schema keeps that schema's shape, which can differ from the shape the live passport is read in. It is the record as the operator stored it then: a draft's own changes are archived too, so a version can be a draft that was never published.\n\nWhole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for."
           },
           "supersededAt": {
             "type": "string",
             "format": "date-time",
-            "description": "When this version stopped being current: the instant the change that replaced it was applied.\n\nOne timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree."
+            "description": "When this version stopped being current: the instant the change that replaced it was applied, by the database's clock, so versions order as their changes did whichever process made them.\n\nOne timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree."
           }
         }
       },

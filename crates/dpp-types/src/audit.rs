@@ -421,21 +421,16 @@ pub struct PassportVersion {
 /// not before. A node that archived on create would hold a "version" that was
 /// never superseded and would report it as the state at every time before the
 /// first change — which is true, and which the live record already says.
+///
+/// # Read-side only
+///
+/// A version is written by the passport store itself, in the transaction of the
+/// change that replaces it, because only there is the stored record at hand: a
+/// caller holding a `Passport` holds a reading of it, upcast through the lens
+/// chain, and a version taken from that would hold a shape the passport was
+/// never signed in. So this trait has no method that archives a document.
 #[async_trait]
 pub trait PassportVersionStore: Send + Sync {
-    /// Record `doc` as the version that stopped being current at
-    /// `superseded_at`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the store's own failure.
-    async fn archive(
-        &self,
-        passport_id: &str,
-        doc: &serde_json::Value,
-        superseded_at: DateTime<Utc>,
-    ) -> Result<(), DppError>;
-
     /// Every archived version of `passport_id`, oldest first.
     ///
     /// # Errors

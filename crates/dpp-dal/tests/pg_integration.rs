@@ -623,6 +623,105 @@ async fn a_carried_serial_names_every_record_in_the_chain() {
     assert_eq!(found, expected);
 }
 
+/// A link or a DID finds every passport carrying it, whatever its lot, serial
+/// or status, and no passport carrying another, through the indexed SQL.
+///
+/// Publish asks this whether a link or a DID is already held, so a holder the
+/// SQL missed is a second live passport under one identifier.
+#[tokio::test]
+async fn a_link_or_did_finds_every_passport_carrying_it() {
+    use dpp_domain::ProductIdentifier;
+
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let identified = |identifier: &ProductIdentifier, batch: Option<&str>, status| {
+        let mut p = battery_passport_with("09506000134352", batch, status);
+        if let Some(ProductGroupData::Battery(battery)) = &mut p.product_group_data {
+            battery.product_identifier = identifier.clone();
+        }
+        p
+    };
+
+    let did = ProductIdentifier::did("did:web:acme.example:b:1").expect("did");
+    let link = ProductIdentifier::identification_link("https://id.acme.example/p/1").expect("link");
+    let other = ProductIdentifier::did("did:web:acme.example:b:2").expect("did");
+
+    let mut unit = identified(&did, Some("LOT-B"), PassportStatus::Draft);
+    unit.serial_number = Some("SN-1".into());
+    let did_holders = [
+        identified(&did, None, PassportStatus::Published),
+        identified(&did, Some("LOT-A"), PassportStatus::Superseded),
+        unit,
+    ];
+    let link_holder = identified(&link, Some("LOT-A"), PassportStatus::Published);
+    for p in did_holders.iter().chain([&link_holder]) {
+        repo.create(p.clone()).await.expect("create");
+    }
+    repo.create(identified(&other, None, PassportStatus::Published))
+        .await
+        .expect("create");
+
+    let found = |identifier| {
+        let repo = &repo;
+        async move {
+            let mut ids: Vec<PassportId> = repo
+                .find_by_product_identifier(identifier)
+                .await
+                .expect("query")
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
+            ids.sort_by_key(|id| id.0);
+            ids
+        }
+    };
+    let mut expected: Vec<PassportId> = did_holders.iter().map(|p| p.id).collect();
+    expected.sort_by_key(|id| id.0);
+    assert_eq!(found(&did).await, expected);
+    assert_eq!(found(&link).await, [link_holder.id]);
+}
+
+/// A row carrying the identifier that does not read fails the lookup, rather
+/// than being left out of it.
+///
+/// Publish asks this lookup whether a link or a DID is already held. A row it
+/// cannot read might be the live holder, so the lookup fails closed: a publish
+/// refused for it can be retried once the row reads, and two live holders of
+/// one identifier cannot be repaired.
+#[tokio::test]
+async fn a_row_carrying_the_identifier_that_cannot_be_read_fails_the_lookup() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let did = dpp_domain::ProductIdentifier::did("did:web:acme.example:b:1").expect("did");
+
+    // A document that names the DID and nothing else a passport needs.
+    let admin = sqlx::postgres::PgPoolOptions::new()
+        .connect(&pg.admin_url)
+        .await
+        .expect("admin");
+    sqlx::query(
+        "INSERT INTO odal.passport
+           (id, product_group, status, retention_locked, schema_version, version,
+            created_at, updated_at, doc)
+         VALUES ($1, 'battery', 'draft', false, '1.0.0', 1, now(), now(), $2)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(serde_json::json!({
+        "productGroupData": {
+            "productGroup": "battery",
+            "productIdentifier": { "scheme": "did", "did": did.as_str() }
+        }
+    }))
+    .execute(&admin)
+    .await
+    .expect("insert the unreadable row");
+
+    assert!(
+        repo.find_by_product_identifier(&did).await.is_err(),
+        "an unreadable row carrying the identifier must fail the lookup, not vanish from it"
+    );
+}
+
 // T8 — grant coverage: the app role can read every table a migration creates.
 // Catches the "0010's grants were a snapshot" lesson (0017 had to re-grant): a
 // migration that adds a table after 0010 must ship its own odal_app grant, or

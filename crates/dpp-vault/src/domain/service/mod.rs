@@ -70,7 +70,7 @@ use dpp_types::{
     seal::SealOutbox,
     snapshot::SnapshotOutbox,
     state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent},
-    transfer::TransferStore,
+    transfer::{TransferStore, VersionedChain},
     webhook::WebhookOutbox,
 };
 
@@ -126,8 +126,8 @@ pub struct PassportService {
     /// this field is the whole of our clause 4.2 read path.
     ///
     /// `None` disables the versions route. It does **not** disable archiving —
-    /// that happens in the repository decorator, which a node wires or does
-    /// not wire independently of this.
+    /// the passport store archives every change it writes, whatever is wired
+    /// here.
     pub versions: Option<Arc<dyn dpp_types::audit::PassportVersionStore>>,
     /// Finds the passport that replaced a superseded one, so a printed carrier
     /// keeps landing on the current record.
@@ -264,10 +264,9 @@ impl PassportService {
 
     /// Provide the archived-version store, enabling the versions route.
     ///
-    /// Read-side only. Whether versions are *written* is decided by whether the
-    /// composition root wrapped the repository in the archiving decorator, and
-    /// a node that wires one without the other gets a route with nothing behind
-    /// it or an archive nothing reads.
+    /// Read-side only. Versions are *written* by the passport store, in the
+    /// transaction of each change, so a node that leaves this out still archives
+    /// and has an archive nothing reads.
     #[must_use]
     pub fn with_versions(mut self, store: Arc<dyn dpp_types::audit::PassportVersionStore>) -> Self {
         self.versions = Some(store);
@@ -497,7 +496,10 @@ impl PassportService {
         {
             outbox.enqueue_status(p.id, intent).await?;
         }
-        if let Some(chain) = transfer_chain {
+        // The revision the chain was read at is not checked here: this path
+        // writes through ports that take the chain alone, and only the
+        // state-change log refuses a chain written since it was read.
+        if let Some(VersionedChain { chain, .. }) = transfer_chain {
             match (transfer_notice, &self.transfer_outbox) {
                 (Some((transfer_id, payload)), Some(outbox)) => {
                     outbox.commit_accept(&chain, transfer_id, payload).await?;

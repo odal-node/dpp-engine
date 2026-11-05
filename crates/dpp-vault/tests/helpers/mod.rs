@@ -13,10 +13,9 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use dpp_dal::pg::{
-    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
-    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
-    PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo,
-    PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgPassportVersionRepo, PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo,
+    PgScanTelemetryRepo, PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
@@ -445,6 +444,19 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
     .await
 }
 
+/// A vault signing with `identity` — for a test that has to decide when each
+/// signature returns.
+pub async fn start_vault_with_signer(dal: PgDal, identity: Arc<dyn IdentityPort>) -> String {
+    start_vault_with_identity(
+        dal,
+        identity,
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
+}
+
 /// A vault whose seal ports are wired to order — for the routes whose answers
 /// turn on whether this node can read a seal, or buy one.
 pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {
@@ -553,16 +565,12 @@ async fn start_vault_with_identity(
         }
     }
 
-    // Wrapped as `boot::db` wraps it, with the store handed to the service: a
-    // harness over a bare repository archives nothing on the writes that do not
-    // go through the state-change log, and answers the versions a node would
-    // have taken from an empty table.
+    // The repository archives every change it writes, as `boot::db` wires it;
+    // the store is handed to the service so the versions a node would have
+    // taken are read back rather than answered from nothing.
     let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
         Arc::new(PgPassportVersionRepo::new(dal.clone()));
-    let passport_repo = Arc::new(ArchivingPassportRepo::new(
-        PgPassportRepo::new(dal.clone()),
-        version_store.clone(),
-    ));
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     let api_key_repo = Arc::new(PgApiKeyRepo::new(dal.clone()));

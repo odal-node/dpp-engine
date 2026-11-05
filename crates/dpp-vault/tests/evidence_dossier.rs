@@ -33,7 +33,7 @@ use dpp_types::{
     evidence::{
         EvidenceDossierRecord, EvidenceDossierRepository, EvidenceDossierSummary, content_hash,
     },
-    transfer::TransferStore,
+    transfer::{TransferStore, VersionedChain},
 };
 use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
@@ -88,8 +88,19 @@ struct InMemoryTransferStore {
 
 #[async_trait]
 impl TransferStore for InMemoryTransferStore {
-    async fn get_chain(&self, passport_id: PassportId) -> Result<Option<TransferChain>, DppError> {
-        Ok(self.chains.lock().unwrap().get(&passport_id).cloned())
+    async fn get_chain(&self, passport_id: PassportId) -> Result<Option<VersionedChain>, DppError> {
+        // This double never advances a revision: nothing here writes a chain
+        // through the state-change log, which is the only reader of one.
+        Ok(self
+            .chains
+            .lock()
+            .unwrap()
+            .get(&passport_id)
+            .cloned()
+            .map(|chain| VersionedChain {
+                chain,
+                revision: Some(0),
+            }))
     }
     async fn save_chain(&self, chain: &TransferChain) -> Result<(), DppError> {
         self.chains
