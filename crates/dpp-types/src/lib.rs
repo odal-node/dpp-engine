@@ -29,6 +29,7 @@ pub mod api_key;
 pub mod audit;
 pub mod auth;
 pub mod evidence;
+pub mod node_failure;
 pub mod operator;
 pub mod passport_request;
 pub mod qualification;

@@ -1,24 +1,22 @@
 type: object
-required:
-  - signingFailuresTotal
-  - rulesetLoadFailuresTotal
 properties:
   signingFailuresTotal:
     type: integer
     format: int64
     minimum: 0
     description: |
-      Publishes refused because a passport could not be signed, since the node
-      process started. A restart resets it, so a restart hides failures from
-      before it.
+      Publishes refused because a passport could not be signed, since the node was
+      first started. Kept in the database, so a restart does not reset it. Absent
+      on a deployment with no durable counter wired.
     example: 0
   rulesetLoadFailuresTotal:
     type: integer
     format: int64
     minimum: 0
     description: |
-      Compliance Current ruleset bundles refused on load, since the node process
-      started. A restart resets it.
+      Compliance Current ruleset bundles refused on load, since the node was first
+      started. Kept in the database, so a restart does not reset it. Absent on a
+      deployment with no durable counter wired.
     example: 0
   registryOutbox:
     $ref: ./RegistryOutboxHealth.yaml

@@ -18,9 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgPassportVersionRepo, PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo,
-    PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeFailureRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -188,6 +188,7 @@ async fn start_node_with_ruleset(
         .with_registry_reader(operator_repo.clone())
         // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
         .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
+        .with_failure_counter(Arc::new(PgNodeFailureRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -430,7 +431,7 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         ActiveRuleset::baseline()
             .with_channel(Box::new(FileRulesetSource::new(&bundle_path)), &pubkey),
     );
-    dpp_node::infra::ruleset::reload_and_report(&ruleset, true).await;
+    dpp_node::infra::ruleset::reload_and_report(&ruleset, true, None).await;
 
     let pg = start_pg().await;
     let base = start_node_with_ruleset(pg.dal.clone(), ruleset).await;

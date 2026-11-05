@@ -76,6 +76,7 @@ pub use dpp_rules::bundle::{
     AcceptancePolicy, RulesetAcceptance, RulesetError, RulesetManifest, RulesetProvenance,
     SignedBundle, content_hash, verify_bundle,
 };
+use dpp_types::node_failure::{FailureKind, NodeFailureCounter};
 
 /// How often the poller re-reads the channel when `RULESET_POLL_INTERVAL_SECS`
 /// is unset. Five minutes: a regulatory ruleset changes on the order of
@@ -500,7 +501,11 @@ fn poll_interval_from_env() -> Option<Duration> {
 /// `at_boot` only changes the wording: at boot a refusal means the node is
 /// serving its baseline, later it means the node is still serving the last
 /// bundle that was good.
-pub async fn reload_and_report(active: &ActiveRuleset, at_boot: bool) {
+pub async fn reload_and_report(
+    active: &ActiveRuleset,
+    at_boot: bool,
+    failure_counter: Option<&dyn NodeFailureCounter>,
+) {
     match active.reload().await {
         Ok(r) if r.changed => {
             metrics::counter!("ruleset_swaps_total").increment(1);
@@ -515,6 +520,14 @@ pub async fn reload_and_report(active: &ActiveRuleset, at_boot: bool) {
         Err(RulesetReloadError::NotConfigured) => {}
         Err(e) => {
             dpp_common::metrics::record_ruleset_load_failure();
+            if let Some(counter) = failure_counter
+                && let Err(count_err) = counter.record(FailureKind::RulesetLoad).await
+            {
+                tracing::error!(
+                    error = %count_err,
+                    "refused ruleset bundle could not be counted durably"
+                );
+            }
             tracing::error!(
                 code = event_codes::RULESET_LOAD_FAILED,
                 error = %e,

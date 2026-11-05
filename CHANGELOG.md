@@ -63,11 +63,12 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **An authenticated node health route reports the counters an operator pages
   on.** `GET /vault/api/v1/node/health` returns the publishes refused for a failed
-  signature and the ruleset bundles refused on load, both since the node process
-  started, and the registry-sync outbox's pending, submitted, stalled and rejected
-  counts. A monitor that cannot scrape `/metrics` can read them with an API key.
-  The unauthenticated `/health` still answers liveness only. The two process
-  counters reset on restart; the outbox does not. (#138)
+  signature and the ruleset bundles refused on load, and the registry-sync
+  outbox's pending, submitted, stalled and rejected counts. A monitor that cannot
+  scrape `/metrics` can read them with an API key. The unauthenticated `/health`
+  still answers liveness only. The two refusal counts are kept in the database and
+  survive a restart, as the outbox counts always have. The Prometheus counters on
+  `/metrics` still reset on restart. (#138, #590)
 
 - **An authority or a person with a legitimate interest can read the passport
   as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of

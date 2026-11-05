@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dpp_common::ruleset_admin::RulesetReloadError;
+use dpp_types::node_failure::FailureKind;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -45,7 +46,20 @@ pub async fn reload_ruleset_handler(
 
     match admin.reload().await {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(e) => reload_error(e),
+        Err(e) => {
+            if !matches!(e, RulesetReloadError::NotConfigured) {
+                dpp_common::metrics::record_ruleset_load_failure();
+                if let Some(counter) = &state.service.failure_counter
+                    && let Err(count_err) = counter.record(FailureKind::RulesetLoad).await
+                {
+                    tracing::error!(
+                        error = %count_err,
+                        "refused ruleset bundle could not be counted durably"
+                    );
+                }
+            }
+            reload_error(e)
+        }
     }
 }
 

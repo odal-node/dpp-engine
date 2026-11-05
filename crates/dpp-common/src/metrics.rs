@@ -17,7 +17,6 @@
 //! breaking change for anyone already scraping it, so this is flagged, not
 //! fixed, here.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use axum::{extract::Request, middleware::Next, response::Response};
@@ -64,56 +63,14 @@ pub async fn http_metrics_middleware(request: Request, next: Next) -> Response {
     response
 }
 
-/// Signing failures since this process started. The Prometheus recorder cannot be
-/// read back, so the node-health route reads these instead.
-static SIGNING_FAILURES: AtomicU64 = AtomicU64::new(0);
-/// Ruleset bundles refused on load since this process started, as above.
-static RULESET_LOAD_FAILURES: AtomicU64 = AtomicU64::new(0);
-
-/// Count one publish refused because a passport could not be signed.
-///
-/// Every increment goes through here, not `metrics::counter!` directly, so the
-/// count `/metrics` exports and the one the node-health route reports cannot drift.
+/// Count one publish refused because a passport could not be signed, on the
+/// Prometheus counter `/metrics` exports. The durable count is kept beside it by
+/// the publish path, see `dpp_types::node_failure`.
 pub fn record_signing_failure() {
-    SIGNING_FAILURES.fetch_add(1, Ordering::Relaxed);
     metrics::counter!("signing_failures_total").increment(1);
 }
 
 /// Count one ruleset bundle refused on load. See [`record_signing_failure`].
 pub fn record_ruleset_load_failure() {
-    RULESET_LOAD_FAILURES.fetch_add(1, Ordering::Relaxed);
     metrics::counter!("ruleset_load_failures_total").increment(1);
-}
-
-/// Signing failures since process start. A restart resets it.
-#[must_use]
-pub fn signing_failures() -> u64 {
-    SIGNING_FAILURES.load(Ordering::Relaxed)
-}
-
-/// Ruleset bundles refused since process start. A restart resets it.
-#[must_use]
-pub fn ruleset_load_failures() -> u64 {
-    RULESET_LOAD_FAILURES.load(Ordering::Relaxed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A refused signature shows up on the readable count, not only on the
-    /// exported counter the route cannot read.
-    #[test]
-    fn a_recorded_signing_failure_is_counted_where_the_route_reads_it() {
-        let before = signing_failures();
-        record_signing_failure();
-        assert_eq!(signing_failures(), before + 1);
-    }
-
-    #[test]
-    fn a_recorded_ruleset_failure_is_counted_where_the_route_reads_it() {
-        let before = ruleset_load_failures();
-        record_ruleset_load_failure();
-        assert_eq!(ruleset_load_failures(), before + 1);
-    }
 }

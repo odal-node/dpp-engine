@@ -31,11 +31,14 @@ pub struct RegistryOutboxHealth {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeHealth {
-    /// Publishes refused because a passport could not be signed, since the
-    /// process started.
-    pub signing_failures_total: u64,
-    /// Ruleset bundles refused on load, since the process started.
-    pub ruleset_load_failures_total: u64,
+    /// Publishes refused because a passport could not be signed, since the node
+    /// was first started. Absent on a deployment with no durable counter wired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signing_failures_total: Option<i64>,
+    /// Ruleset bundles refused on load, since the node was first started. Absent
+    /// on a deployment with no durable counter wired.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ruleset_load_failures_total: Option<i64>,
     /// Absent on a deployment with no registry-sync outbox wired, rather than
     /// reported as zeros a monitor would read as an empty queue.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,12 +50,19 @@ pub struct NodeHealth {
 /// as `/node/state`: a failing signer or a stalled queue is a description of
 /// where the node is weak. The unauthenticated `/health` answers liveness only.
 ///
-/// The two process counters reset when the node restarts, so a restart hides
-/// failures from before it. The outbox is read from the database and does not.
+/// The two refusal counts are kept in the database, so a restart does not clear
+/// them. The Prometheus counters on `/metrics` still reset on restart.
 pub async fn node_health_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
+    let refusals = match &state.service.failure_counter {
+        Some(counter) => match counter.counts().await {
+            Ok(c) => Some(c),
+            Err(e) => return internal_error(e),
+        },
+        None => None,
+    };
     let registry_outbox = match &state.service.registry_outbox {
         Some(outbox) => match outbox.status_counts(STALL_THRESHOLD).await {
             Ok(c) => Some(RegistryOutboxHealth {
@@ -69,8 +79,8 @@ pub async fn node_health_handler(
     (
         StatusCode::OK,
         Json(NodeHealth {
-            signing_failures_total: dpp_common::metrics::signing_failures(),
-            ruleset_load_failures_total: dpp_common::metrics::ruleset_load_failures(),
+            signing_failures_total: refusals.map(|c| c.signing),
+            ruleset_load_failures_total: refusals.map(|c| c.ruleset_load),
             registry_outbox,
         }),
     )
@@ -81,18 +91,17 @@ pub async fn node_health_handler(
 mod tests {
     use super::*;
 
-    /// With no outbox wired the block is omitted entirely; the counters stay.
+    /// With no counter or outbox wired, each block is omitted rather than reported
+    /// as zeros a monitor would read as a healthy node.
     #[test]
-    fn an_unwired_outbox_is_omitted_rather_than_reported_as_empty() {
+    fn an_unwired_counter_and_outbox_are_omitted_rather_than_reported_as_zero() {
         let json = serde_json::to_value(NodeHealth {
-            signing_failures_total: 0,
-            ruleset_load_failures_total: 0,
+            signing_failures_total: None,
+            ruleset_load_failures_total: None,
             registry_outbox: None,
         })
         .expect("serialises");
 
-        assert!(json.get("registryOutbox").is_none(), "{json}");
-        assert_eq!(json["signingFailuresTotal"], 0);
-        assert_eq!(json["rulesetLoadFailuresTotal"], 0);
+        assert_eq!(json, serde_json::json!({}), "{json}");
     }
 }
