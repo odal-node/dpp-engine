@@ -67,7 +67,29 @@
 # expires:    2027-04-27
 # release-on: `x509-verify` moves to the 0.14 curve crates, or is replaced by
 #             a verifier that does not pull crypto-bigint 0.5.
+# --- RUSTSEC-2026-0440 --------------------------------------------------
+# crate:      astral-tokio-tar 0.6.4
+# path:       dpp-dal / dpp-vault / dpp-node [dev-dependencies] -> testcontainers
+#             0.27 -> astral-tokio-tar
+# class:      dev-only
+# rationale:  The advisory is "unmaintained", not a vulnerability: it names no
+#             flaw. The crate is a tar library that `testcontainers` depends on,
+#             and `testcontainers` is a dev-dependency of the crates above (the
+#             DAL reaches it through its `test-harness` feature, which is only
+#             ever enabled from `[dev-dependencies]`), so it is compiled into the
+#             Docker-backed test suites and into no shipped binary.
+#             `scripts/check-audit-register.sh` checks the second half of that:
+#             it fails if the crate appears in the normal dependency graph.
+#             `testcontainers` 0.28.0, the newest release, still depends on it,
+#             so a bump does not clear the advisory.
+# anchor:     crates/dpp-dal/Cargo.toml::test-harness
+# owner:      LKSNDRTMLKV
+# recorded:   2026-11-05
+# expires:    2027-02-05
+# release-on: `testcontainers` releases a version that no longer depends on
+#             `astral-tokio-tar`, or the crate is maintained again.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0387",
+    "RUSTSEC-2026-0440",
 ]
