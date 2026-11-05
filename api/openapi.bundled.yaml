@@ -8320,8 +8320,8 @@ components:
           type: integer
           format: int64
           description: |
-            Pending rows that have reached the stall threshold. A row here is not
-            going to succeed without someone looking at it.
+            Pending and submitted rows that have reached the stall threshold. A row here
+            is not going to succeed without someone looking at it.
         rejected:
           type: integer
           format: int64

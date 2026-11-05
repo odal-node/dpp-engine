@@ -9577,7 +9577,7 @@
           "stalled": {
             "type": "integer",
             "format": "int64",
-            "description": "Pending rows that have reached the stall threshold. A row here is not\ngoing to succeed without someone looking at it.\n"
+            "description": "Pending and submitted rows that have reached the stall threshold. A row here\nis not going to succeed without someone looking at it.\n"
           },
           "rejected": {
             "type": "integer",

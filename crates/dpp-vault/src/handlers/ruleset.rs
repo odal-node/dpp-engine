@@ -45,7 +45,12 @@ pub async fn reload_ruleset_handler(
 
     match admin.reload().await {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(e) => reload_error(e),
+        Err(e) => {
+            if !matches!(e, RulesetReloadError::NotConfigured) {
+                dpp_common::metrics::record_ruleset_load_failure();
+            }
+            reload_error(e)
+        }
     }
 }
 
