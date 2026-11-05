@@ -57,31 +57,86 @@
 //! because the body cannot: it is the public view byte for byte. Without the
 //! header, a holder whose reads came back public could not tell a credential
 //! for the wrong group from one for the wrong category.
+//!
+//! # Reading a past version: `?asOf=`
+//!
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — the version of a passport at a
+//! past moment is retrievable by authenticated, authorised actors, and an
+//! archived attribute is limited exactly as the live one is.
+//!
+//! The archive is read through `GET /api/v1/dpp/{id}/versions`, which is the
+//! operator's own machine access. The readers the clause is for — an authority,
+//! a notified body, a person with a legitimate interest — hold a credential and
+//! no API key, for the reason given above, so `asOf` answers here for them.
+//!
+//! **What is served.** The version that was current at that instant, as that
+//! audience's publish-time proof covers it: the decoded payload of the version's
+//! *own* `disclosureSignatures` entry, with that proof attached, exactly as a live
+//! read serves it. Not a redaction run over the archived document under today's
+//! policy, which would be a body no proof covers. A published passport's views are
+//! frozen when it is signed, so a version carries the classes it was published
+//! with — the same bytes the live read serves — and nothing can be released from
+//! one that the passport's own signed views withhold.
+//!
+//! **Who may ask: a credential that grants more than the public view.** Clause 4.2
+//! speaks of *authenticated, authorised* actors, so an anonymous request is
+//! refused `401` and a credential that does not cover the passport `403`. That is
+//! the opposite of the live read, which answers both with the public view, and
+//! deliberately so: there is no public view of a past instant worth giving. The
+//! public proof is frozen at publish, so it is the same bytes for every version of
+//! a published record, and serving it for `asOf` would answer a question about the
+//! past with the present passport — and open an unauthenticated way to read when a
+//! record was published. Both refusals are made before any version is served, and
+//! a credential presented against a passport it does not cover is recorded like
+//! any other.
+//!
+//! **Which moment answers.** A moment inside the archive is answered by the
+//! version current then; one after the last change, by the live record, which is
+//! the state at that time. Before the passport existed, or in the future, nothing
+//! was its state: `404` and `422`. A version is served on the terms the live read
+//! serves a passport on: one that was never published is `404` and one that was
+//! suspended at that moment `410`.
+//!
+//! **The same moment answers the same way whenever it is asked.** The live record
+//! and the version are read together under the passport's lock, and "the future"
+//! is measured by the database's clock, the one that stamps each version when its
+//! change takes that lock. A change in progress is waited for, and one that starts
+//! later stamps a moment after the read, so no change can land on a moment that
+//! has already been answered (`PassportVersionStore::state_at`).
 
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 
 use dpp_domain::Audience;
+use dpp_domain::passport::{Passport, PassportId};
 use dpp_domain::product_group::ProductGroupData;
 use dpp_domain::status::PassportStatus;
 
 use dpp_types::audit::PassportAuditEntry;
 
+use crate::domain::service::{StateAt, VersionAt, archived_passport};
+use crate::extract::Query;
 use crate::middleware::credential::{
-    CredentialOutcome, VerifiedCredential, out_of_scope_header_name, read_and_verify,
+    CredentialOutcome, OutOfScope, VerifiedCredential, credential_required,
+    out_of_scope_header_name, read_and_verify,
 };
-use crate::public_view::{signed_audience_view, signed_public_view};
+use crate::public_view::{never_published, signed_audience_view, signed_public_view};
 use crate::state::AppState;
 
-use super::error::{api_error, internal_error, not_found_error, parse_passport_id};
+use super::error::{
+    api_error, internal_error, not_found_error, parse_passport_id, validation_error,
+};
+use super::versions::AsOf;
 
 /// Read a published passport, filtered to the caller's audience.
 pub async fn audience_read_handler(
     State(state): State<AppState>,
     Path(dpp_id): Path<String>,
+    Query(query): Query<AsOf>,
     headers: HeaderMap,
 ) -> axum::response::Response {
     let passport_id = match parse_passport_id(&dpp_id) {
@@ -94,36 +149,21 @@ pub async fn audience_read_handler(
     // this route cannot be used to probe for passport ids. The credential is
     // only held here — what it *grants* depends on the passport's product group, which
     // is not known until the row is loaded.
-    let credential = match (&state.credential_directory, &state.trusted_issuers) {
-        (Some(directory), Some(trust)) => {
-            match read_and_verify(&headers, directory.as_ref(), trust.as_ref()).await {
-                CredentialOutcome::Absent => None,
-                CredentialOutcome::Verified(c) => Some(c),
-                CredentialOutcome::Rejected(resp) => return resp,
-            }
-        }
-        // Credential verification is not configured. Serving the public view is
-        // the honest answer: the node reports the capability as absent in its
-        // trust report, and a caller presenting a credential gets public data
-        // rather than a misleading success.
-        _ => None,
+    let credential = match resolve_credential(&state, &headers).await {
+        Ok(credential) => credential,
+        Err(resp) => return resp,
     };
+
+    if let Some(raw) = query.as_of {
+        return read_as_of(&state, passport_id, &raw, credential.as_deref()).await;
+    }
 
     match state.service.find_by_id_any_status(passport_id).await {
         Ok(Some(p)) if p.status == PassportStatus::Published => {
             // Scope the credential to *this* passport's product group and
             // category. A credential issued for batteries grants nothing extra on
             // a textile passport, nor one issued for EV batteries on an LMT one.
-            let scope = match (&credential, &state.trusted_issuers) {
-                (Some(c), Some(trust)) => c.audience_for(
-                    p.product_group.catalog_key(),
-                    p.product_group_data
-                        .as_ref()
-                        .and_then(ProductGroupData::product_category),
-                    trust.as_ref(),
-                ),
-                _ => Ok(Audience::Public),
-            };
+            let scope = scope_of(&state, credential.as_deref(), &p);
             let audience = scope.unwrap_or(Audience::Public);
 
             // Record the access before serving it. A credentialed read is the
@@ -138,7 +178,7 @@ pub async fn audience_read_handler(
             // cover is exactly the event an operator wants to find later, and
             // it is invisible if only elevated reads are logged.
             if let Some(c) = &credential
-                && let Err(e) = record_access(&state, &p, c, audience).await
+                && let Err(e) = record_access(&state, &p, c, audience, None).await
             {
                 return internal_error(e).into_response();
             }
@@ -184,6 +224,189 @@ pub async fn audience_read_handler(
     }
 }
 
+/// The credential on a request, if there is one and it holds.
+///
+/// `Err` is the refusal to send: a presented credential that does not verify.
+#[allow(clippy::result_large_err)]
+async fn resolve_credential(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<Box<VerifiedCredential>>, axum::response::Response> {
+    match (&state.credential_directory, &state.trusted_issuers) {
+        (Some(directory), Some(trust)) => {
+            match read_and_verify(headers, directory.as_ref(), trust.as_ref()).await {
+                CredentialOutcome::Absent => Ok(None),
+                CredentialOutcome::Verified(c) => Ok(Some(c)),
+                CredentialOutcome::Rejected(resp) => Err(resp),
+            }
+        }
+        // Credential verification is not configured. Serving the public view is
+        // the honest answer: the node reports the capability as absent in its
+        // trust report, and a caller presenting a credential gets public data
+        // rather than a misleading success.
+        _ => Ok(None),
+    }
+}
+
+/// The audience `credential` grants over `passport`, or the reason it grants
+/// nothing beyond the public view there.
+fn scope_of(
+    state: &AppState,
+    credential: Option<&VerifiedCredential>,
+    passport: &Passport,
+) -> Result<Audience, OutOfScope> {
+    match (credential, &state.trusted_issuers) {
+        (Some(c), Some(trust)) => c.audience_for(
+            passport.product_group.catalog_key(),
+            passport
+                .product_group_data
+                .as_ref()
+                .and_then(ProductGroupData::product_category),
+            trust.as_ref(),
+        ),
+        _ => Ok(Audience::Public),
+    }
+}
+
+/// Read the passport as it stood at `raw_as_of`. See "Reading a past version" in
+/// the module documentation for what is served and to whom.
+///
+/// The order is the design. A caller is refused before any version is served, and
+/// the live record is checked before the credential's scope is, so a reader whose
+/// credential does not cover a passport learns nothing about a draft that a
+/// reader with no credential at all would not.
+async fn read_as_of(
+    state: &AppState,
+    passport_id: PassportId,
+    raw_as_of: &str,
+    credential: Option<&VerifiedCredential>,
+) -> axum::response::Response {
+    let Some(credential) = credential else {
+        return credential_required(
+            if state.credential_directory.is_some() && state.trusted_issuers.is_some() {
+                "A past version is read with an access credential in the X-DPP-Credential header."
+            } else {
+                "This node does not verify access credentials, so it cannot serve a past version."
+            },
+        );
+    };
+
+    let Ok(at) = DateTime::parse_from_rfc3339(raw_as_of) else {
+        return validation_error("asOf must be an RFC 3339 timestamp.");
+    };
+    let at = at.with_timezone(&Utc);
+
+    // The live record and the version current at `at`, read together under the
+    // passport's lock, so one moment is answered one way however a change
+    // committing nearby falls. Read, not yet used: nothing below serves either
+    // before the refusals have been made.
+    let (live, version) = match state.service.state_at(passport_id, at).await {
+        Ok(StateAt::Known { live, version }) => (*live, version),
+        // By the store's clock, which stamps the versions, and before whether the
+        // passport exists, so the answer is the same for a passport and for none.
+        Ok(StateAt::NotYet) => {
+            return validation_error(
+                "asOf must not be in the future: nothing is yet its state then.",
+            );
+        }
+        Err(dpp_domain::DppError::NotFound(_)) => {
+            return not_found_error("DPP not found or not published.");
+        }
+        Err(e) => return internal_error(e),
+    };
+
+    // The live record decides whether there is anything here to ask about. A draft
+    // is told apart from a missing passport by neither status nor sentence.
+    if never_published(&live) {
+        return not_found_error("DPP not found or not published.");
+    }
+
+    // Scoped against the live record, which is the passport whose restrictions
+    // the clause applies to an archived attribute. A published record's group and
+    // category cannot change, so this is also the version's own.
+    let scope = scope_of(state, Some(credential), &live);
+    let audience = scope.unwrap_or(Audience::Public);
+    if audience == Audience::Public {
+        // Recorded as a live out-of-scope read is: a credential presented against
+        // a passport it does not cover is what an operator wants to find later.
+        let past = PastRead {
+            as_of: at,
+            version: None,
+        };
+        if let Err(e) = record_access(state, &live, credential, audience, Some(&past)).await {
+            return internal_error(e);
+        }
+        let mut refusal = api_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "This credential grants no access to this passport beyond the public view, and a \
+             past version is read only with one that does.",
+        );
+        if let Err(miss) = scope {
+            refusal.headers_mut().insert(
+                out_of_scope_header_name(),
+                HeaderValue::from_static(miss.header_value()),
+            );
+        }
+        return refusal;
+    }
+
+    let (record, version) = match version {
+        VersionAt::BeforeItExisted => {
+            return not_found_error(
+                "That moment is before this passport was created, so nothing was its state then.",
+            );
+        }
+        // Before its first publish the passport was a draft, which no credential
+        // reads. A publish archives the draft it replaces, so the version says so
+        // too, but not for a passport stored published with no draft before it:
+        // the archive has nothing for that time, and the live record would answer.
+        // `published_at` is set by the first publish only.
+        _ if live.published_at.is_some_and(|first| at < first) => {
+            return not_found_error("No published version of this passport covers that moment.");
+        }
+        VersionAt::Found(v) => match archived_passport(&v) {
+            Ok(p) => (p, Some(v.id)),
+            Err(e) => return internal_error(e),
+        },
+        // Nothing archived covers it, so the live record is the state then.
+        VersionAt::Live => (live, None),
+    };
+
+    match record.status {
+        PassportStatus::Published => {}
+        PassportStatus::Suspended => {
+            return api_error(
+                StatusCode::GONE,
+                "SUSPENDED",
+                "This passport was suspended at that moment.",
+            );
+        }
+        _ => {
+            return not_found_error("No published version of this passport covers that moment.");
+        }
+    }
+
+    // Recorded before it is served, for the reason a live read is.
+    let past = PastRead { as_of: at, version };
+    if let Err(e) = record_access(state, &record, credential, audience, Some(&past)).await {
+        return internal_error(e);
+    }
+    match signed_audience_view(&record, audience) {
+        Ok(v) => (StatusCode::OK, axum::Json(v)).into_response(),
+        Err(e) => internal_error(e).into_response(),
+    }
+}
+
+/// What a read of a past version adds to its audit entry.
+struct PastRead {
+    /// The instant asked for.
+    as_of: DateTime<Utc>,
+    /// The archived version that answered, or `None` when the live record did, or
+    /// when the read was refused for the credential's scope.
+    version: Option<uuid::Uuid>,
+}
+
 /// Action code for a read performed against a verified access credential.
 pub const CREDENTIALED_READ: &str = "credentialed_read";
 
@@ -210,11 +433,16 @@ pub const CREDENTIALED_READ: &str = "credentialed_read";
 /// An **out-of-scope** credential is still recorded, with the public classes it
 /// was reduced to. A credential presented against a product it does not cover is
 /// exactly the event an operator wants to be able to find later.
+///
+/// A read of a past version also records the instant asked for (`asOf`) and the
+/// archived version that answered it (`archivedVersionId`, `null` when the live
+/// record did): the grant says what was released, and these say of which moment.
 async fn record_access(
     state: &AppState,
-    passport: &dpp_domain::passport::Passport,
+    passport: &Passport,
     credential: &VerifiedCredential,
     granted: Audience,
+    past: Option<&PastRead>,
 ) -> Result<(), dpp_domain::DppError> {
     let subject = &credential.credential().credential_subject;
     let classes: Vec<&str> = granted
@@ -223,6 +451,20 @@ async fn record_access(
         .map(dpp_domain::Disclosure::token)
         .collect();
 
+    let mut metadata = serde_json::json!({
+        "issuerDid": credential.credential().issuer,
+        "holderDid": subject.id,
+        "holderName": subject.name,
+        "disclosureSet": granted.disclosure_key(),
+        "disclosureClasses": classes,
+        "productGroup": passport.product_group.catalog_key(),
+    });
+    if let Some(past) = past {
+        metadata["asOf"] =
+            serde_json::json!(past.as_of.to_rfc3339_opts(SecondsFormat::Micros, true));
+        metadata["archivedVersionId"] = serde_json::json!(past.version);
+    }
+
     let entry = PassportAuditEntry::new(
         &passport.id.to_string(),
         CREDENTIALED_READ,
@@ -230,14 +472,7 @@ async fn record_access(
         None,
         None,
     )
-    .with_metadata(serde_json::json!({
-        "issuerDid": credential.credential().issuer,
-        "holderDid": subject.id,
-        "holderName": subject.name,
-        "disclosureSet": granted.disclosure_key(),
-        "disclosureClasses": classes,
-        "productGroup": passport.product_group.catalog_key(),
-    }));
+    .with_metadata(metadata);
 
     state.service.audit.append(entry).await
 }

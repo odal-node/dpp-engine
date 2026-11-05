@@ -797,6 +797,13 @@ fn query_cases() -> Vec<QueryCase> {
         "/vault/api/v1/dpp/{dppId}/versions",
         fixtures::versions_query()
     );
+    // The credentialed read takes the same `asOf` the operator's route does, from
+    // the same struct, so one fixture serves both.
+    case!(
+        "get",
+        "/vault/credential/dpp/{dppId}",
+        fixtures::versions_query()
+    );
     case!(
         "get",
         "/vault/api/v1/unsold-goods",

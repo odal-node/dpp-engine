@@ -15,17 +15,21 @@ use uuid::Uuid;
 
 use dpp_dal::pg::{
     PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog,
-    PgWebhookRepo, sqlx,
+    PgTransferRepo, PgWebhookRepo, sqlx,
 };
-use dpp_dal::test_harness::{TestPg, start_pg};
+use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::DppError;
+use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::status::PassportStatus;
+use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord, TransferStatus};
+use dpp_types::TransferStore;
 use dpp_types::audit::{AuditRepository, PassportAuditEntry, PassportVersionStore};
 use dpp_types::registry_sync::{RegistryStatusIntent, RegistrySyncOutbox};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent};
+use dpp_types::transfer::VersionedChain;
 use dpp_types::webhook::{CreateWebhookRequest, WebhookOutbox, WebhookSubscriptionStore};
 
 fn passport(status: PassportStatus) -> Passport {
@@ -251,17 +255,6 @@ async fn a_status_write_is_checked_against_the_locked_passport() {
         .expect("audit");
     assert_eq!(audit.len(), 1, "only the supersession was recorded");
     assert_eq!(pending_deliveries(&pg).await, 0);
-}
-
-/// Sessions on this test's database waiting for a lock.
-async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_stat_activity
-         WHERE datname = current_database() AND wait_event_type = 'Lock'",
-    )
-    .fetch_one(pg.dal.pool())
-    .await
-    .expect("read pg_stat_activity")
 }
 
 /// Two changes that append to one passport's audit trail at once still leave
@@ -501,4 +494,277 @@ async fn a_refused_change_records_no_registry_status() {
     );
 
     assert_eq!(registry_intent(&pg, id).await, None);
+}
+
+fn operator(did: &str) -> ResponsibleOperator {
+    ResponsibleOperator {
+        did: did.to_owned(),
+        name: "Operator".to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
+        country: "DE".to_owned(),
+        identifier: None,
+    }
+}
+
+/// A handover to `to`, pending, as an initiation builds it.
+fn handover(id: PassportId, to: &str) -> TransferRecord {
+    TransferRecord {
+        transfer_id: Uuid::now_v7(),
+        passport_id: id,
+        from_operator: operator("did:web:acme.example"),
+        to_operator: operator(to),
+        reason: TransferReason::Sale,
+        from_signature: Some("from-jws".to_owned()),
+        node_acceptance_attestation: None,
+        initiated_at: Utc::now(),
+        completed_at: None,
+        rejected_at: None,
+        cancelled_at: None,
+        notes: None,
+    }
+}
+
+/// A chain holding one pending handover to `to`.
+fn pending_to(id: PassportId, to: &str) -> TransferChain {
+    let mut chain = TransferChain::new(id, operator("did:web:acme.example"));
+    chain
+        .initiate_transfer(handover(id, to))
+        .expect("the first handover");
+    chain
+}
+
+/// A change that writes only `chain`, as a transfer step does.
+fn chain_change(id: PassportId, chain: VersionedChain) -> StateChange {
+    StateChange::new(PassportAuditEntry::new(
+        &id.to_string(),
+        "transferred",
+        "state-change-test",
+        None,
+        None,
+    ))
+    .with_transfer_chain(chain)
+}
+
+async fn audit_entries(pg: &TestPg, id: PassportId) -> usize {
+    PgAuditRepo::new(pg.dal.clone())
+        .list_by_passport(&id.to_string())
+        .await
+        .expect("audit")
+        .len()
+}
+
+/// Two initiations that both read "no chain yet": the second to write is
+/// refused rather than replacing the first, and its audit entry goes with it.
+///
+/// The upsert behind this had no `WHERE`, so the second chain overwrote the
+/// first and the first caller's handover had an audit entry and no place in the
+/// chain.
+#[tokio::test]
+async fn a_chain_first_written_after_this_one_was_read_is_not_replaced() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    assert!(store.get_chain(p.id).await.expect("read").is_none());
+
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("the first initiation");
+    let refused = log
+        .commit(chain_change(
+            p.id,
+            VersionedChain::unstored(pending_to(p.id, "did:web:b.example")),
+        ))
+        .await
+        .expect_err("the second read no chain either");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+
+    let stored = store.get_chain(p.id).await.expect("read").expect("a chain");
+    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(
+        stored.chain.transfers[0].to_operator.did,
+        "did:web:a.example"
+    );
+    assert_eq!(
+        audit_entries(&pg, p.id).await,
+        1,
+        "the refused entry stayed"
+    );
+}
+
+/// Two steps that both read a pending handover: whichever writes second is
+/// refused, and the chain says what the first did.
+#[tokio::test]
+async fn a_chain_changed_after_it_was_read_is_not_overwritten() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+
+    let mut cancel = store.get_chain(p.id).await.expect("read").expect("chain");
+    let mut reject = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_eq!(cancel.revision, reject.revision);
+    cancel.chain.transfers[0].cancel().expect("cancel");
+    reject.chain.transfers[0].reject().expect("reject");
+
+    log.commit(chain_change(p.id, cancel))
+        .await
+        .expect("the first step");
+    let refused = log
+        .commit(chain_change(p.id, reject))
+        .await
+        .expect_err("the second step read the chain before the first wrote it");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+
+    let stored = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_eq!(
+        stored.chain.transfers[0].status(),
+        TransferStatus::Cancelled
+    );
+
+    // A step that reads again is over the revision the first one left.
+    let mut again = stored;
+    again
+        .chain
+        .initiate_transfer(handover(p.id, "did:web:c.example"))
+        .expect("a cancelled handover frees the chain");
+    log.commit(chain_change(p.id, again))
+        .await
+        .expect("a step over the current revision");
+    assert_eq!(audit_entries(&pg, p.id).await, 3);
+}
+
+/// `save_chain` writes whatever is stored, but it moves the revision all the
+/// same: a step that read the chain before it is refused, not left to write over
+/// it.
+#[tokio::test]
+async fn an_unconditional_save_still_moves_the_revision() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+
+    let read = store.get_chain(p.id).await.expect("read").expect("chain");
+    store.save_chain(&read.chain).await.expect("save");
+
+    let refused = log
+        .commit(chain_change(p.id, read))
+        .await
+        .expect_err("the save came after the read");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+}
+
+/// The upsert the previous release ran never names the revision, and a node
+/// still running it beside this one must not be able to write a chain under a
+/// step that read the old one: the table moves the revision, not the writer.
+#[tokio::test]
+async fn a_write_that_never_names_the_revision_still_moves_it() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+    let read = store.get_chain(p.id).await.expect("read").expect("chain");
+
+    sqlx::query(
+        r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (passport_id)
+           DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
+    )
+    .bind(p.id.0)
+    .bind(serde_json::to_value(&read.chain).expect("serialise"))
+    .execute(pg.dal.pool())
+    .await
+    .expect("the previous release's upsert");
+
+    let moved = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_ne!(moved.revision, read.revision);
+    let refused = log
+        .commit(chain_change(p.id, read))
+        .await
+        .expect_err("the upsert came after the read");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+}
+
+/// Several first initiations committed at once: exactly one stands.
+///
+/// The sequential tests above fix what a stale write is; this one is the
+/// database arbitrating between writers that are really in flight, the insert
+/// racing on the unique key. Without the check every writer succeeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_several_first_initiations_written_together_exactly_one_stands() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+
+    let writers: Vec<_> = (0..6)
+        .map(|n| {
+            let log = PgStateChangeLog::new(pg.dal.clone());
+            let change = chain_change(
+                p.id,
+                VersionedChain::unstored(pending_to(p.id, &format!("did:web:to{n}.example"))),
+            );
+            tokio::spawn(async move { log.commit(change).await })
+        })
+        .collect();
+    let mut won = Vec::new();
+    for (n, writer) in writers.into_iter().enumerate() {
+        match writer.await.expect("join") {
+            Ok(_) => won.push(n),
+            Err(e) => assert!(matches!(e, DppError::Validation(_)), "{e:?}"),
+        }
+    }
+    assert_eq!(won.len(), 1, "writers that succeeded: {won:?}");
+
+    let stored = PgTransferRepo::new(pg.dal.clone())
+        .get_chain(p.id)
+        .await
+        .expect("read")
+        .expect("chain");
+    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(
+        stored.chain.transfers[0].to_operator.did,
+        format!("did:web:to{}.example", won[0])
+    );
+    assert_eq!(audit_entries(&pg, p.id).await, 1);
 }

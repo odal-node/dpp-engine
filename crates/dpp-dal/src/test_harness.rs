@@ -180,6 +180,25 @@ pub async fn start_pg() -> TestPg {
     }
 }
 
+/// Sessions on `pg`'s database waiting for a lock.
+///
+/// For a race test that holds a row and has to know the request it started is
+/// queued behind it before letting go, rather than hoping a sleep was long
+/// enough.
+///
+/// # Panics
+///
+/// If `pg_stat_activity` cannot be read.
+pub async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    )
+    .fetch_one(pg.dal.pool())
+    .await
+    .expect("read pg_stat_activity")
+}
+
 /// Swap the database name in a Postgres URL.
 fn with_database(url: &str, database: &str) -> String {
     let base = url.split('?').next().unwrap_or(url);

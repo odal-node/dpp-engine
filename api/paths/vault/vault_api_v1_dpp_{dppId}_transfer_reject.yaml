@@ -49,7 +49,9 @@ post:
     '422':
       description: |
         There is no pending handover to reject, or the record's state does not
-        permit it. Core allows a reject only from `Initiated`.
+        permit it. Core allows a reject only from `Initiated`. Also a transfer
+        chain that another request changed while this one was running: nothing
+        is written, and the request can be sent again.
       content:
         application/problem+json:
           schema:

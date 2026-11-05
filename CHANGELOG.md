@@ -76,6 +76,42 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   its first row for a non-IETF standard. **Conformance is not claimed:** SGTIN+,
   DSGTIN+, SGTIN++ and DSGTIN++, and every EPC scheme for a key the resolver does
   not serve, are not decoded, and the register says so. (#477)
+- **An authority or a person with a legitimate interest can read the passport
+  as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of
+  a passport at a past moment to be retrievable by authenticated, authorised
+  actors, and the archive was read only through the operator's API key, which
+  these readers deliberately do not hold. `GET /vault/credential/dpp/{dppId}`
+  now takes `?asOf=<RFC 3339>` and serves the version that was current then, as
+  the payload that reader's audience's publish-time proof covers, with that proof
+  attached and `disclosureSet` naming the classes: byte for byte what the same
+  credential was given live before the change, and verifiable against the
+  operator's key. A published passport's views are frozen when it is signed, so
+  a version carries exactly the classes it was published with. A moment after the
+  last change is answered by the live record, one before the passport existed is
+  `404` and one in the future `422`; a moment it was a draft is `404` and one it
+  was suspended `410`, as on a live read. Every version served is recorded to the
+  audit trail with the instant asked for (`asOf`) and the archived version that
+  answered (`archivedVersionId`).
+
+  **Anonymous readers do not get a past version.** Without a credential, or with
+  one that grants nothing beyond the public view on that passport, `asOf` is
+  `401` and `403` rather than the public view the route answers everything else
+  with. The public proof is frozen at publish, so it is the same bytes for every
+  version of a published passport: serving it for a past instant would answer a
+  question about the past with the present passport, and open an unauthenticated
+  way to read when a record was published. A node that cannot verify credentials
+  answers `401` too, and says so.
+
+  **A moment is answered the same way whenever it is asked**, here and on the
+  operator's `GET /vault/api/v1/dpp/{dppId}/versions?asOf=`. A change stamps the
+  version it replaces inside its transaction, and the version is visible only
+  once that commits, so a moment between the two was answered with the record
+  before the change and, asked again, with the record after it; and the live
+  record and the version were two reads a change could fall between. Both are
+  now read together under the passport's lock, after any change in progress
+  commits, and "the future" is measured by the database's clock, which stamps
+  the versions: a moment past it is `422` on both routes, where the operator's
+  route answered it as covered by the live record. (#470)
 
 - **A lost submission handle is found again.** A replayed idempotency key is
   answered with the conflict and not the submission, so a node whose first
@@ -243,6 +279,48 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
+- **Two transfer steps that overlap no longer overwrite each other's chain.** A
+  passport's transfer chain was read, changed in memory and written back whole,
+  with a signature in between, and the write had no condition. Two initiations
+  started together on one published passport both found nothing pending and both
+  signed a handover; the second write replaced the first, so both callers got a
+  record, both left an audit entry and a `dpp.passport.transferred` event, and
+  the chain held one. An accept, a reject or a cancel racing another step on the
+  same chain lost an update the same way. Each write now names the revision of
+  the chain row it read (`odal.passport_transfer.revision`, migration `0047`) and
+  is refused when the row has moved on: the request that loses answers `422`,
+  writes nothing, and can be sent again, and the chain keeps the step that won. A
+  trigger moves the revision on every update, so a node still running the
+  previous release beside this one, whose upsert never names the column, cannot
+  write a chain under a step that read the old one. A chain stored before this
+  release starts at revision 0. (#535)
+
 - **A draft retired without ever being published answers `404` on its public
   read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
   retention guard only to a passport that has a `published_at`, so an operator
@@ -265,6 +343,30 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   record that was never published, a draft or a retired draft, now answers no
   label. A retired passport that was published is unchanged and still serves its
   signed view. (#570)
+
+- **`odal bootstrap` names the admin credential when the node refuses it.** A
+  wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
+  unreachable, with the refusal printed only under `Caused by:`. A `401` or
+  `403` from the node's state read now says to check both variables against the
+  node's, and a node that does not answer is still reported as unreachable.
+  (#572)
+
+- **An archived version is the passport as it was stored.** Every change to a
+  passport archives the version it replaces (EN 18221 clause 4.2), and the
+  archive was taken from a reading of the passport rather than the stored
+  record. Every read upcasts through `dpp-core`'s lens chain, which since core
+  0.22.0 reads a stored `productGroupData.gtin` as a `productIdentifier`, so a
+  version archived from a passport stored before that upgrade held a shape it
+  was never published in. The passport store now copies the stored document
+  into the archive under the row lock, in the transaction of the change, for
+  every writer: the repository, the state-change log, and the registry outbox's
+  publish, which a service with no state-change log uses and which archived
+  nothing. A refused change now leaves no version behind, where it used to leave
+  one identical to the live record. `GET /vault/api/v1/dpp/{dppId}/versions`
+  serves such a version in its stored shape. Its `supersededAt` is the
+  database's clock once the change holds the lock, where it was the clock of the
+  process that made the change, so versions order as their changes did whichever
+  process made them. (#571)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's

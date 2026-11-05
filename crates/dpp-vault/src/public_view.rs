@@ -292,11 +292,20 @@ pub async fn sign_disclosure_views(
 /// on a record (an amendment's successor is a new draft).
 #[must_use]
 pub fn never_published(passport: &Passport) -> bool {
-    match passport.status {
-        PassportStatus::Draft => true,
-        PassportStatus::Retired => passport.published_at.is_none(),
-        _ => false,
-    }
+    passport.status == PassportStatus::Draft || retired_draft(passport)
+}
+
+/// Whether a passport is a draft that was retired without ever being published:
+/// the part of [`never_published`] that is no longer a draft.
+///
+/// Apart from it because a plain draft and a closed one are alike in answering no
+/// label and unlike in what they hold. A draft holds the carrier serial it was
+/// created with, so that two creates under one GTIN cannot both attribute it. A
+/// closed draft holds nothing: `retire` is how an operator gives up on a draft,
+/// and a serial it kept for ever would have nothing left to release it.
+#[must_use]
+pub fn retired_draft(passport: &Passport) -> bool {
+    passport.status == PassportStatus::Retired && passport.published_at.is_none()
 }
 
 /// Whether a passport is served on the public tier.
@@ -1130,6 +1139,27 @@ pub(crate) mod tests {
             assert_eq!(
                 (without, with),
                 (expected_without, expected_with),
+                "{status:?}, without and with a publish time"
+            );
+        }
+    }
+
+    /// A retired draft is the closed half of `never_published`: not a draft any
+    /// more, and not a retired passport that was ever live.
+    #[test]
+    fn a_retired_draft_is_a_retired_passport_that_was_never_published() {
+        for status in PassportStatus::ALL {
+            let mut passport = stub_passport();
+            passport.status = status.clone();
+
+            passport.published_at = None;
+            let without = retired_draft(&passport);
+            passport.published_at = Some(chrono::Utc::now());
+            let with = retired_draft(&passport);
+
+            assert_eq!(
+                (without, with),
+                (*status == PassportStatus::Retired, false),
                 "{status:?}, without and with a publish time"
             );
         }

@@ -18,9 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
-    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
-    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
+    PgPassportVersionRepo, PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo,
+    PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -120,16 +120,12 @@ async fn start_node_with_ruleset(
     let port = listener.local_addr().unwrap().port();
     let base_url = format!("http://127.0.0.1:{port}");
 
-    // Wrapped exactly as `boot::db` wraps it. A bare `PgPassportRepo` here would
-    // leave the EN 18221 clause 4.2 archive unwired, so the versions route would
-    // answer from an empty table and the smoke suite would agree with a node
-    // that archives nothing.
+    // As `boot::db` wires them. The repository archives every change it writes
+    // (EN 18221 clause 4.2), and the versions route reads that archive through
+    // the version store.
     let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
         Arc::new(PgPassportVersionRepo::new(dal.clone()));
-    let passport_repo = Arc::new(ArchivingPassportRepo::new(
-        PgPassportRepo::new(dal.clone()),
-        version_store.clone(),
-    ));
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     // Seed a complete operator so the publish-completeness gate passes. The node
@@ -2484,24 +2480,35 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
     id
 }
 
+/// "Now" by the database's clock: the one that stamps each version and that the
+/// versions route measures the future by. A moment the test asks about is read
+/// here and not from this process's clock, which can drift from it where Postgres
+/// runs in a VM.
+async fn db_now(pg: &TestPg) -> chrono::DateTime<chrono::Utc> {
+    dpp_dal::pg::sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pg.dal.pool())
+        .await
+        .expect("the database's clock")
+}
+
 /// A change to a passport is retrievable afterwards, and the route tells its two
 /// empty-handed answers apart.
 ///
 /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — an authenticated, authorised
 /// reader can retrieve the passport as it stood at any given moment.
 ///
-/// 🚨 Nothing but an assembled node proves this. The decorator is wired in the
-/// composition root, so a suite that builds its own `PassportService` over a
-/// bare repository would pass while the shipped node archived nothing.
+/// 🚨 Nothing but an assembled node proves this. The version store is wired in
+/// the composition root, so a suite that builds its own `PassportService` without
+/// it would pass while the shipped node served no versions.
 ///
 /// The `404`/`422` pair is the one CLAUDE.md asks to be constructed rather than
-/// described: `422` means the `asOf` value is not a timestamp, and `404` means
-/// it is a perfectly good timestamp that no archived version covers. Both are
-/// reachable, so the contract gate is satisfied either way and only this can
-/// tell whether the sentences beside them are true.
+/// described: `422` means the `asOf` value is not a timestamp, or names the
+/// future, and `404` means it is a perfectly good past moment that no archived
+/// version covers. Both are reachable, so the contract gate is satisfied either
+/// way and only this can tell whether the sentences beside them are true.
 #[tokio::test]
 async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_uncovered_one() {
-    let (base, _container) = start_db_and_node().await;
+    let (base, pg) = start_db_and_node().await;
     let token = make_jwt("00000000-0000-0000-0000-000000000077");
     let client = reqwest::Client::new();
 
@@ -2546,7 +2553,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
         "a passport that has never changed has no archived versions"
     );
 
-    let before_the_change = chrono::Utc::now();
+    let before_the_change = db_now(&pg).await;
 
     let resp = client
         .put(format!("{base}/vault/api/v1/dpp/{id}"))
@@ -2558,6 +2565,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     assert_eq!(status, 200, "update failed: {body}");
+    let after_the_change = db_now(&pg).await;
 
     // The change archived what it replaced, and the route hands it back.
     let (status, body) = versions(String::new()).await;
@@ -2602,11 +2610,10 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     );
 
     // A good timestamp that nothing covers — the passport's most recent change
-    // is behind us, so the live record is the state then. `404`, not `422`.
+    // is behind it, so the live record is the state then. `404`, not `422`.
     let (status, after_the_last_change) = versions(format!(
         "?asOf={}",
-        (chrono::Utc::now() + chrono::Duration::days(365))
-            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+        after_the_change.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
     ))
     .await;
     assert_eq!(
@@ -2616,6 +2623,20 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     assert!(
         after_the_last_change.contains("The live record is the state at that time"),
         "and it says so: {after_the_last_change}"
+    );
+
+    // The future is not a moment nothing covers but one nothing has reached: a
+    // change not yet made could still be its state, so it is refused, `422`.
+    let (status, in_the_future) = versions(format!(
+        "?asOf={}",
+        (chrono::Utc::now() + chrono::Duration::days(365))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    ))
+    .await;
+    assert_eq!(status, 422, "a moment in the future: {in_the_future}");
+    assert!(
+        in_the_future.contains("must not be in the future"),
+        "and it says why: {in_the_future}"
     );
 
     // 🚨 Before the passport existed. Also a `404`, and deliberately **not the
