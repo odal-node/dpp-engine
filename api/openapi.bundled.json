@@ -3580,7 +3580,7 @@
       "get": {
         "operationId": "getNodeHealth",
         "summary": "Node operational health counters",
-        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset bundles refused on load, counted since the node was\nfirst started and kept across restarts, and the registry-sync outbox's\npending, submitted, stalled and rejected counts. Authenticated, so a monitor\nthat cannot scrape `/metrics` can read them with an API key. The\nunauthenticated `/health` answers liveness only.\n",
+        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset bundles refused on load, counted since the node was\nfirst started and kept across restarts, each with the time of its latest\nrefusal, and the registry-sync outbox's pending, submitted, stalled and\nrejected counts. Authenticated, so a monitor\nthat cannot scrape `/metrics` can read them with an API key. The\nunauthenticated `/health` answers liveness only.\n",
         "tags": [
           "Node"
         ],
@@ -9535,15 +9535,25 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Publishes refused because a passport could not be signed, since the node was\nfirst started. Kept in the database, so a restart does not reset it. Absent\non a deployment with no durable counter wired.\n",
+            "description": "Publishes refused because a passport could not be signed, since the node was\nfirst started. Kept in the database, so a restart does not reset it, and\nnothing else does either: alarm on `lastSigningFailureAt`, or on a rise in\nthis count, not on the count being above zero. Absent on a deployment with\nno durable counter wired.\n",
             "example": 0
+          },
+          "lastSigningFailureAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest refused signature was counted, by the node's database\nclock. Absent until the first.\n"
           },
           "rulesetLoadFailuresTotal": {
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Compliance Current ruleset bundles refused on load, since the node was first\nstarted. Kept in the database, so a restart does not reset it. Absent on a\ndeployment with no durable counter wired.\n",
+            "description": "Compliance Current ruleset bundles refused on load, since the node was first\nstarted. Kept in the database, so a restart does not reset it, and nothing\nelse does either: alarm on `lastRulesetLoadFailureAt`, or on a rise in this\ncount. Absent on a deployment with no durable counter wired.\n",
             "example": 0
+          },
+          "lastRulesetLoadFailureAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest refused ruleset bundle was counted, by the node's database\nclock. Absent until the first.\n"
           },
           "registryOutbox": {
             "$ref": "#/components/schemas/RegistryOutboxHealth",

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 
 use dpp_domain::DppError;
-use dpp_types::node_failure::{FailureCounts, FailureKind, NodeFailureCounter};
+use dpp_types::node_failure::{FailureCounts, FailureKind, NodeFailureCounter, Refusals};
 
 use super::{PgDal, db_err};
 
@@ -35,9 +35,11 @@ impl NodeFailureCounter for PgNodeFailureRepo {
         // One statement: the first refusal creates the row and later ones add to
         // it, so two refusals of the same kind racing each other cannot lose one.
         sqlx::query(
-            "INSERT INTO odal.node_failure_counter (name, refusals) VALUES ($1, 1) \
+            "INSERT INTO odal.node_failure_counter (name, refusals, last_refused_at) \
+             VALUES ($1, 1, now()) \
              ON CONFLICT (name) DO UPDATE \
-             SET refusals = odal.node_failure_counter.refusals + 1",
+             SET refusals = odal.node_failure_counter.refusals + 1, \
+                 last_refused_at = EXCLUDED.last_refused_at",
         )
         .bind(name_of(kind))
         .execute(self.dal.pool())
@@ -47,14 +49,18 @@ impl NodeFailureCounter for PgNodeFailureRepo {
     }
 
     async fn counts(&self) -> Result<FailureCounts, DppError> {
-        let rows = sqlx::query("SELECT name, refusals FROM odal.node_failure_counter")
-            .fetch_all(self.dal.pool())
-            .await
-            .map_err(db_err)?;
+        let rows =
+            sqlx::query("SELECT name, refusals, last_refused_at FROM odal.node_failure_counter")
+                .fetch_all(self.dal.pool())
+                .await
+                .map_err(db_err)?;
         let mut counts = FailureCounts::default();
         for row in rows {
             let name: String = row.get("name");
-            let refusals: i64 = row.get("refusals");
+            let refusals = Refusals {
+                total: row.get("refusals"),
+                last_at: Some(row.get("last_refused_at")),
+            };
             match name.as_str() {
                 "signing" => counts.signing = refusals,
                 "ruleset_load" => counts.ruleset_load = refusals,

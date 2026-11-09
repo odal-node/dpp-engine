@@ -139,16 +139,6 @@ fn gate_outcome(
 }
 
 impl PassportService {
-    /// Sign and publish a draft passport with Ed25519 / JWS.
-    ///
-    /// Validates product group data, calls the identity service to sign, atomically
-    /// writes the JWS + QR URL + `Published` status, seals the retention clock,
-    /// fires non-blocking EU registry sync, and emits `dpp.passport.published`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DppError::InvalidTransition` if the passport is not in a publishable
-    /// state, or `DppError::Signing` if the identity service fails.
     /// Count one refused signature on the Prometheus counter and, when a durable
     /// counter is wired, in the database. A failure to count it durably is logged
     /// rather than returned: the publish is already refused, and that refusal is the
@@ -162,6 +152,16 @@ impl PassportService {
         }
     }
 
+    /// Sign and publish a draft passport with Ed25519 / JWS.
+    ///
+    /// Validates product group data, calls the identity service to sign, atomically
+    /// writes the JWS + QR URL + `Published` status, seals the retention clock,
+    /// fires non-blocking EU registry sync, and emits `dpp.passport.published`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DppError::InvalidTransition` if the passport is not in a publishable
+    /// state, or `DppError::Signing` if the identity service fails.
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
     pub async fn publish(&self, id: PassportId, auth: &AuthContext) -> Result<Passport, DppError> {
         let mut passport = self.find_by_id(id).await?;

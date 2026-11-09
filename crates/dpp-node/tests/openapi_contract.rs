@@ -3867,7 +3867,9 @@ mod fixtures {
     pub fn node_health() -> NodeHealth {
         NodeHealth {
             signing_failures_total: Some(1),
-            ruleset_load_failures_total: Some(0),
+            last_signing_failure_at: Some(ts()),
+            ruleset_load_failures_total: Some(2),
+            last_ruleset_load_failure_at: Some(ts()),
             registry_outbox: Some(registry_outbox_health()),
         }
     }

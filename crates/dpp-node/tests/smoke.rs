@@ -473,6 +473,10 @@ async fn node_health_counts_follow_the_outbox_and_the_refusals() {
     let signing_before = at_threshold["signingFailuresTotal"]
         .as_u64()
         .expect("a count");
+    assert!(
+        at_threshold.get("lastSigningFailureAt").is_none(),
+        "no refusal yet: {at_threshold}"
+    );
     PgNodeFailureRepo::new(pg.dal.clone())
         .record(FailureKind::Signing)
         .await
@@ -483,6 +487,7 @@ async fn node_health_counts_follow_the_outbox_and_the_refusals() {
         Some(signing_before + 1),
         "{after}"
     );
+    assert!(after["lastSigningFailureAt"].is_string(), "{after}");
 }
 
 async fn node_health(base: &str, token: &str) -> serde_json::Value {
@@ -599,6 +604,10 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
     assert_eq!(body["changed"], false);
     assert_eq!(body["rulesetVersion"], "2026-Q3.2");
 
+    let quiet = node_health(&base, &token).await;
+    assert_eq!(quiet["rulesetLoadFailuresTotal"], 0, "{quiet}");
+    assert!(quiet.get("lastRulesetLoadFailureAt").is_none(), "{quiet}");
+
     // An authentic but older bundle served on the channel is refused as a
     // rollback, and the node keeps the ruleset it had.
     publish("2026-Q3.0", 3, 30);
@@ -614,6 +623,12 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         "a rollback must be refused, not adopted"
     );
     assert_eq!(state_version().await, "2026-Q3.2");
+
+    // The refusal the operator's reload met is counted where a restart cannot
+    // clear it, and stamped as the latest.
+    let refused = node_health(&base, &token).await;
+    assert_eq!(refused["rulesetLoadFailuresTotal"], 1, "{refused}");
+    assert!(refused["lastRulesetLoadFailureAt"].is_string(), "{refused}");
 }
 
 /// A node with no channel says so, rather than reporting a verification failure

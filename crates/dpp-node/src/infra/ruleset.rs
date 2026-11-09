@@ -914,6 +914,56 @@ mod tests {
         assert_eq!(active.get().content()["textileFibreThreshold"], 7);
     }
 
+    /// Remembers every refusal it is told to count.
+    #[derive(Default)]
+    struct Tally(std::sync::Mutex<Vec<FailureKind>>);
+
+    #[async_trait]
+    impl NodeFailureCounter for Tally {
+        async fn record(&self, kind: FailureKind) -> Result<(), dpp_domain::DppError> {
+            self.0.lock().unwrap().push(kind);
+            Ok(())
+        }
+
+        async fn counts(
+            &self,
+        ) -> Result<dpp_types::node_failure::FailureCounts, dpp_domain::DppError> {
+            unreachable!("only recorded here")
+        }
+    }
+
+    /// The poller's refusals reach the durable count, not only the Prometheus
+    /// counter. It is the path that runs with nobody watching.
+    #[tokio::test]
+    async fn a_refusal_the_poller_meets_is_counted_durably() {
+        let (store, kid, pubkey, _dir) = publisher();
+        let drop = ChannelDrop::new();
+        drop.write(&bundle_at(
+            &store,
+            &kid,
+            "2026-Q3.2",
+            7,
+            Utc::now() - chrono::Duration::days(2),
+        ));
+        let active = ActiveRuleset::baseline().with_channel(drop.source(), &pubkey);
+        let tally = Tally::default();
+        reload_and_report(&active, false, Some(&tally)).await;
+        assert!(
+            tally.0.lock().unwrap().is_empty(),
+            "an adopted bundle is not a refusal"
+        );
+
+        drop.write(&bundle_at(
+            &store,
+            &kid,
+            "2026-Q3.1",
+            5,
+            Utc::now() - chrono::Duration::days(9),
+        ));
+        reload_and_report(&active, false, Some(&tally)).await;
+        assert_eq!(*tally.0.lock().unwrap(), [FailureKind::RulesetLoad]);
+    }
+
     #[tokio::test]
     async fn a_future_dated_bundle_is_held_rather_than_rejected() {
         let (store, kid, pubkey, _dir) = publisher();

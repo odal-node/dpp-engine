@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use dpp_types::registry_sync::STALL_THRESHOLD;
@@ -36,10 +37,17 @@ pub struct NodeHealth {
     /// was first started. Absent on a deployment with no durable counter wired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_failures_total: Option<i64>,
+    /// When the latest of those refusals was counted. Absent until the first, so
+    /// a monitor that keeps no state can alarm on a recent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_signing_failure_at: Option<DateTime<Utc>>,
     /// Ruleset bundles refused on load, since the node was first started. Absent
     /// on a deployment with no durable counter wired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ruleset_load_failures_total: Option<i64>,
+    /// When the latest of those refusals was counted. Absent until the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_ruleset_load_failure_at: Option<DateTime<Utc>>,
     /// Absent on a deployment with no registry-sync outbox wired, rather than
     /// reported as zeros a monitor would read as an empty queue.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,7 +60,9 @@ pub struct NodeHealth {
 /// where the node is weak. The unauthenticated `/health` answers liveness only.
 ///
 /// The two refusal counts are kept in the database, so a restart does not clear
-/// them. The Prometheus counters on `/metrics` still reset on restart.
+/// them, and neither does anything else: each comes with the time of its latest
+/// refusal, which is what tells a failing node from one that failed once. The
+/// Prometheus counters on `/metrics` still reset on restart.
 pub async fn node_health_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
@@ -80,8 +90,10 @@ pub async fn node_health_handler(
     (
         StatusCode::OK,
         Json(NodeHealth {
-            signing_failures_total: refusals.map(|c| c.signing),
-            ruleset_load_failures_total: refusals.map(|c| c.ruleset_load),
+            signing_failures_total: refusals.map(|c| c.signing.total),
+            last_signing_failure_at: refusals.and_then(|c| c.signing.last_at),
+            ruleset_load_failures_total: refusals.map(|c| c.ruleset_load.total),
+            last_ruleset_load_failure_at: refusals.and_then(|c| c.ruleset_load.last_at),
             registry_outbox,
         }),
     )
@@ -98,7 +110,9 @@ mod tests {
     fn an_unwired_counter_and_outbox_are_omitted_rather_than_reported_as_zero() {
         let json = serde_json::to_value(NodeHealth {
             signing_failures_total: None,
+            last_signing_failure_at: None,
             ruleset_load_failures_total: None,
+            last_ruleset_load_failure_at: None,
             registry_outbox: None,
         })
         .expect("serialises");

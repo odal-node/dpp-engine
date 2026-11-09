@@ -6,18 +6,33 @@ properties:
     minimum: 0
     description: |
       Publishes refused because a passport could not be signed, since the node was
-      first started. Kept in the database, so a restart does not reset it. Absent
-      on a deployment with no durable counter wired.
+      first started. Kept in the database, so a restart does not reset it, and
+      nothing else does either: alarm on `lastSigningFailureAt`, or on a rise in
+      this count, not on the count being above zero. Absent on a deployment with
+      no durable counter wired.
     example: 0
+  lastSigningFailureAt:
+    type: string
+    format: date-time
+    description: |
+      When the latest refused signature was counted, by the node's database
+      clock. Absent until the first.
   rulesetLoadFailuresTotal:
     type: integer
     format: int64
     minimum: 0
     description: |
       Compliance Current ruleset bundles refused on load, since the node was first
-      started. Kept in the database, so a restart does not reset it. Absent on a
-      deployment with no durable counter wired.
+      started. Kept in the database, so a restart does not reset it, and nothing
+      else does either: alarm on `lastRulesetLoadFailureAt`, or on a rise in this
+      count. Absent on a deployment with no durable counter wired.
     example: 0
+  lastRulesetLoadFailureAt:
+    type: string
+    format: date-time
+    description: |
+      When the latest refused ruleset bundle was counted, by the node's database
+      clock. Absent until the first.
   registryOutbox:
     $ref: ./RegistryOutboxHealth.yaml
     description: |

@@ -4,8 +4,9 @@ get:
   description: |
     Reports the counters an operator pages on: publishes refused for a failed
     signature and ruleset bundles refused on load, counted since the node was
-    first started and kept across restarts, and the registry-sync outbox's
-    pending, submitted, stalled and rejected counts. Authenticated, so a monitor
+    first started and kept across restarts, each with the time of its latest
+    refusal, and the registry-sync outbox's pending, submitted, stalled and
+    rejected counts. Authenticated, so a monitor
     that cannot scrape `/metrics` can read them with an API key. The
     unauthenticated `/health` answers liveness only.
   tags:
