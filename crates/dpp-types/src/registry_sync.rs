@@ -185,6 +185,11 @@ pub struct RegistrySyncRow {
     pub next_attempt_at: DateTime<Utc>,
 }
 
+/// Attempts after which a row counts as stalled: a registration row that is pending
+/// or submitted, or a transfer row that is pending. The node's gauges, its alarms
+/// and `GET /vault/api/v1/node/health` all count at this threshold.
+pub const STALL_THRESHOLD: i32 = 8;
+
 /// Aggregate counts for boot reconciliation and metrics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegistrySyncCounts {
@@ -205,8 +210,8 @@ pub struct RegistrySyncCounts {
     /// Rows carrying an outstanding status intent. Independent of the counts
     /// above — a row can be `pending` *and* carry an intent.
     pub status_intents: i64,
-    /// Pending rows whose `attempts` have reached the stall threshold — these
-    /// are the ones a human must investigate (never silently dropped).
+    /// Pending and submitted rows whose `attempts` have reached the stall threshold
+    /// — these are the ones a human must investigate (never silently dropped).
     pub stalled: i64,
 }
 
