@@ -186,8 +186,9 @@ pub struct RegistrySyncRow {
 }
 
 /// Attempts after which a row counts as stalled: a registration row that is pending
-/// or submitted, or a transfer row that is pending. The node's gauges, its alarms
-/// and `GET /vault/api/v1/node/health` all count at this threshold.
+/// or submitted, or a transfer row that is pending. The node's gauges, its alarms,
+/// the vault's registry rollup and `GET /vault/api/v1/node/health` all count at
+/// this threshold.
 pub const STALL_THRESHOLD: i32 = 8;
 
 /// Aggregate counts for boot reconciliation and metrics.
