@@ -220,12 +220,21 @@ async fn a_confirmed_handle_is_recorded_and_audited() {
     let id = published(&client).await;
 
     // A row waiting for a person: submitted, no handle, retried until it stalled.
+    // One attempt short of the threshold it is not yet stalled, and the next one is.
     let repo = outbox(&pg.dal);
-    for _ in 0..6 {
+    for _ in 1..dpp_types::registry_sync::STALL_THRESHOLD {
         repo.mark_submitted_noting(pid(&id), "waiting for a person".into())
             .await
             .unwrap();
     }
+    let short = registration(&client, &id).await;
+    assert_eq!(
+        short["stalled"], false,
+        "one attempt short of the threshold"
+    );
+    repo.mark_submitted_noting(pid(&id), "waiting for a person".into())
+        .await
+        .unwrap();
     let before = registration(&client, &id).await;
     assert_eq!(before["status"], "submitted");
     assert_eq!(before["stalled"], true);

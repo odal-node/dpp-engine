@@ -19,16 +19,12 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use dpp_types::registry_sync::STALL_THRESHOLD;
 use serde::Serialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, parse_passport_id};
-
-/// Attempts after which a row is reported as stalled rather than merely
-/// retrying. Matches the node's drain-task threshold; a row that has failed this
-/// many times is not going to succeed without someone looking at it.
-const STALL_THRESHOLD: i32 = 5;
 
 /// One passport's registration, as the registry queue holds it.
 #[derive(Serialize)]
