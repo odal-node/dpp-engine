@@ -17,7 +17,6 @@
 //! breaking change for anyone already scraping it, so this is flagged, not
 //! fixed, here.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use axum::{extract::Request, middleware::Next, response::Response};
@@ -64,37 +63,17 @@ pub async fn http_metrics_middleware(request: Request, next: Next) -> Response {
     response
 }
 
-/// Signing failures since this process started. The Prometheus recorder cannot be
-/// read back, so the node-health route reads these instead.
-static SIGNING_FAILURES: AtomicU64 = AtomicU64::new(0);
-/// Ruleset bundles refused on load since this process started, as above.
-static RULESET_LOAD_FAILURES: AtomicU64 = AtomicU64::new(0);
-
-/// Count one publish refused because a passport could not be signed.
-///
-/// Every increment goes through here, not `metrics::counter!` directly, so the
-/// count `/metrics` exports and the one the node-health route reports cannot drift.
+/// Count one publish refused because a passport could not be signed, on the
+/// Prometheus counter `/metrics` exports. The durable count is kept beside it by
+/// the publish path, see `dpp_types::node_signal`.
 pub fn record_signing_failure() {
-    SIGNING_FAILURES.fetch_add(1, Ordering::Relaxed);
     metrics::counter!("signing_failures_total").increment(1);
 }
 
-/// Count one ruleset bundle refused on load. See [`record_signing_failure`].
+/// Count one ruleset load that failed: the channel could not be read, or the
+/// bundle it served was refused. See [`record_signing_failure`].
 pub fn record_ruleset_load_failure() {
-    RULESET_LOAD_FAILURES.fetch_add(1, Ordering::Relaxed);
     metrics::counter!("ruleset_load_failures_total").increment(1);
-}
-
-/// Signing failures since process start. A restart resets it.
-#[must_use]
-pub fn signing_failures() -> u64 {
-    SIGNING_FAILURES.load(Ordering::Relaxed)
-}
-
-/// Ruleset bundles refused since process start. A restart resets it.
-#[must_use]
-pub fn ruleset_load_failures() -> u64 {
-    RULESET_LOAD_FAILURES.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -163,30 +142,21 @@ mod tests {
         exported.0.lock().unwrap().get(name).copied().unwrap_or(0)
     }
 
-    /// Each refusal moves the exported counter `/metrics` serves and the readable
-    /// count the route reports by one each, so the two cannot drift apart.
+    /// A refused signature moves the counter `/metrics` exports, under the name
+    /// monitors already scrape.
     #[test]
-    fn a_refused_signature_moves_the_exported_and_the_readable_count() {
-        let readable = signing_failures();
-        let exported = exported_increase("signing_failures_total", record_signing_failure);
-        assert_eq!(exported, 1, "the exported counter moves once per refusal");
+    fn a_refused_signature_moves_the_exported_counter() {
         assert_eq!(
-            signing_failures(),
-            readable + 1,
-            "the readable count moves once"
+            exported_increase("signing_failures_total", record_signing_failure),
+            1
         );
     }
 
     #[test]
-    fn a_refused_ruleset_bundle_moves_the_exported_and_the_readable_count() {
-        let readable = ruleset_load_failures();
-        let exported =
-            exported_increase("ruleset_load_failures_total", record_ruleset_load_failure);
-        assert_eq!(exported, 1, "the exported counter moves once per refusal");
+    fn a_refused_ruleset_bundle_moves_the_exported_counter() {
         assert_eq!(
-            ruleset_load_failures(),
-            readable + 1,
-            "the readable count moves once"
+            exported_increase("ruleset_load_failures_total", record_ruleset_load_failure),
+            1
         );
     }
 }

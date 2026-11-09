@@ -1,13 +1,15 @@
 get:
   operationId: getNodeHealth
-  summary: Node operational health counters
+  summary: Node operational health
   description: |
-    Reports the counters an operator pages on: publishes refused for a failed
-    signature and ruleset bundles refused on load, both since the node process
-    started, and the registry-sync outbox's pending, submitted, stalled and
-    rejected counts. Authenticated, so a monitor that cannot scrape `/metrics`
-    can read them with an API key. The unauthenticated `/health` answers
-    liveness only.
+    Reports what an operator pages on. `signals` are outcomes of the node's own
+    work that leave no other trace (signing at publish, loading the ruleset),
+    each with whether it is failing now, how often it has failed, and when it
+    last failed and last succeeded, kept across restarts. `registryOutbox` is
+    the registry-sync outbox's pending, submitted, stalled and rejected counts,
+    read live. Authenticated, so a monitor that cannot scrape `/metrics` can
+    read them with an API key. The unauthenticated `/health` answers liveness
+    only.
   tags:
     - Node
   security:
