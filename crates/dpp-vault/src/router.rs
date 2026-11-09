@@ -35,6 +35,7 @@ use crate::{
         info::info_handler,
         lint::lint_handler,
         list::list_handler,
+        node_health::node_health_handler,
         node_state::node_state_handler,
         operator::{operator_get_handler, operator_patch_handler},
         personal_data::personal_data_erase_handler,
@@ -163,6 +164,7 @@ pub fn build(state: AppState) -> Router {
         .route("/evidence/{id}/verify", post(verify_evidence_handler))
         // ── Node setup state ──────────────────────────────────────────
         .route("/node/state", get(node_state_handler))
+        .route("/node/health", get(node_health_handler))
         // ── Caller identity ───────────────────────────────────────────
         // Any scope: it reports only what the caller already presented, and a
         // read-only key needs it precisely to learn that it is read-only.
