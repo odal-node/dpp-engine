@@ -289,6 +289,10 @@ components:
       $ref: components/schemas/access/NodeState.yaml
     NodeHealth:
       $ref: components/schemas/access/NodeHealth.yaml
+    NodeSignals:
+      $ref: components/schemas/access/NodeSignals.yaml
+    NodeSignal:
+      $ref: components/schemas/access/NodeSignal.yaml
     RegistryOutboxHealth:
       $ref: components/schemas/access/RegistryOutboxHealth.yaml
     NodeProfile:

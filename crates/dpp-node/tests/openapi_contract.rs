@@ -578,6 +578,8 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("SupersedeRequest", fixtures::supersede_request());
     case!("NodeState", fixtures::node_state());
     case!("NodeHealth", fixtures::node_health());
+    case!("NodeSignals", fixtures::node_signals());
+    case!("NodeSignal", fixtures::node_signal());
     case!("RegistryOutboxHealth", fixtures::registry_outbox_health());
     case!("VaultInfo", fixtures::vault_info());
     case!(
@@ -2992,6 +2994,7 @@ mod fixtures {
             CheckResult, CheckStatus, DossierManifest, DossierV1, EvidenceDossierRecord,
             EvidenceDossierSummary, SignedLayer, VerificationReport,
         },
+        node_signal::{Signal, SignalState},
         operator::{OperatorConfig, UpdateOperatorConfig},
         registry_identity::{
             CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
@@ -3019,7 +3022,7 @@ mod fixtures {
             eol::EolRequest,
             info::VaultInfo,
             list::PassportListResponse,
-            node_health::{NodeHealth, RegistryOutboxHealth},
+            node_health::{NodeHealth, NodeSignal, RegistryOutboxHealth, signals_view},
             node_state::NodeState,
             personal_data::PersonalDataErasureReceipt,
             registry_abandon::{AbandonRegistrationRequest, AbandonRegistrationResponse},
@@ -3868,10 +3871,33 @@ mod fixtures {
     /// serves. The values are fixed and non-zero so each field is exercised.
     pub fn node_health() -> NodeHealth {
         NodeHealth {
-            signing_failures_total: 1,
-            ruleset_load_failures_total: 0,
+            signals: Some(node_signals()),
             registry_outbox: Some(registry_outbox_health()),
         }
+    }
+
+    /// A signal with every field set: it has failed and succeeded.
+    fn signal_state() -> SignalState {
+        SignalState {
+            failures: 2,
+            last_failed_at: Some(ts()),
+            last_succeeded_at: Some(ts()),
+        }
+    }
+
+    /// Built by the route's own `signals_view` over every `Signal`, so a signal
+    /// added in code and not documented in `NodeSignals` fails this test.
+    pub fn node_signals() -> BTreeMap<&'static str, NodeSignal> {
+        signals_view(
+            Signal::ALL
+                .into_iter()
+                .map(|signal| (signal, signal_state()))
+                .collect(),
+        )
+    }
+
+    pub fn node_signal() -> NodeSignal {
+        signal_state().into()
     }
 
     pub fn registry_outbox_health() -> RegistryOutboxHealth {

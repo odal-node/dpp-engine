@@ -1,0 +1,31 @@
+type: object
+required:
+  - failing
+  - failures
+properties:
+  failing:
+    type: boolean
+    description: |
+      Whether the latest recorded outcome is a failure. The field to alarm on:
+      it clears on the next success.
+    example: false
+  failures:
+    type: integer
+    format: int64
+    minimum: 0
+    description: |
+      Failures since the node was first started. Kept in the database and never
+      reset, so it says how often, not whether the node is failing now.
+    example: 0
+  lastFailedAt:
+    type: string
+    format: date-time
+    description: |
+      When the latest failure was recorded, by the node's database clock. Absent
+      until the first.
+  lastSucceededAt:
+    type: string
+    format: date-time
+    description: |
+      When the latest success was recorded, by the node's database clock. Absent
+      until the first.
