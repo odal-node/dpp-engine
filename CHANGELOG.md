@@ -265,6 +265,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   with the length and character set its Application Identifier allows, so a
   malformed label is a `400` before the vault is asked. (#477)
 
+- **The vault's registry rollup counts a row as stalled at the node's threshold
+  of eight attempts, not five.** `GET /vault/api/v1/registry`, and the `stalled`
+  flags on a passport's registry view, reported a registration or a transfer
+  notification stalled from its fifth attempt, while the node's gauges and alarms
+  waited for the eighth. The two now agree on one constant. A row with five to
+  seven attempts is no longer reported as stalled, so the rollup's `stalled`
+  counts can fall. (#589)
+
 - **The registry's task list is asked for newest first, and read from the front
   once the first page shows it came back that way.** The adapter read a long list
   from both ends because the registry's order was not known: a task just
