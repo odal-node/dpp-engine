@@ -16,7 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dpp_common::ruleset_admin::RulesetReloadError;
-use dpp_types::node_failure::FailureKind;
+use dpp_types::node_signal::{Outcome, Signal};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
@@ -44,22 +44,26 @@ pub async fn reload_ruleset_handler(
         );
     };
 
-    match admin.reload().await {
-        Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(e) => {
-            if !matches!(e, RulesetReloadError::NotConfigured) {
-                dpp_common::metrics::record_ruleset_load_failure();
-                if let Some(counter) = &state.service.failure_counter
-                    && let Err(count_err) = counter.record(FailureKind::RulesetLoad).await
-                {
-                    tracing::error!(
-                        error = %count_err,
-                        "failed ruleset load could not be counted durably"
-                    );
-                }
-            }
-            reload_error(e)
+    let reloaded = admin.reload().await;
+    // Recorded as the poller records it, so the `rulesetLoad` signal says how the
+    // channel's latest load went whichever asked for it.
+    let outcome = match &reloaded {
+        Ok(_) => Some(Outcome::Succeeded),
+        Err(RulesetReloadError::NotConfigured) => None,
+        Err(_) => {
+            dpp_common::metrics::record_ruleset_load_failure();
+            Some(Outcome::Failed)
         }
+    };
+    if let (Some(outcome), Some(signals)) = (outcome, &state.service.signals)
+        && let Err(e) = signals.record(Signal::RulesetLoad, outcome).await
+    {
+        tracing::error!(error = %e, ?outcome, "ruleset load outcome could not be recorded");
+    }
+
+    match reloaded {
+        Ok(report) => (StatusCode::OK, Json(report)).into_response(),
+        Err(e) => reload_error(e),
     }
 }
 

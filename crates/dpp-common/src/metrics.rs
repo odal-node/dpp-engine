@@ -65,7 +65,7 @@ pub async fn http_metrics_middleware(request: Request, next: Next) -> Response {
 
 /// Count one publish refused because a passport could not be signed, on the
 /// Prometheus counter `/metrics` exports. The durable count is kept beside it by
-/// the publish path, see `dpp_types::node_failure`.
+/// the publish path, see `dpp_types::node_signal`.
 pub fn record_signing_failure() {
     metrics::counter!("signing_failures_total").increment(1);
 }

@@ -19,7 +19,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::PassportAuditEntry,
     auth::AuthContext,
-    node_failure::FailureKind,
+    node_signal::{Outcome, Signal},
     snapshot::snapshot_json_key,
     state_change::{PassportWrite, StateChange},
 };
@@ -139,16 +139,18 @@ fn gate_outcome(
 }
 
 impl PassportService {
-    /// Count one refused signature on the Prometheus counter and, when a durable
-    /// counter is wired, in the database. A failure to count it durably is logged
-    /// rather than returned: the publish is already refused, and that refusal is the
-    /// error the caller needs.
-    async fn record_signing_refusal(&self) {
-        dpp_common::metrics::record_signing_failure();
-        if let Some(counter) = &self.failure_counter
-            && let Err(e) = counter.record(FailureKind::Signing).await
+    /// Record how signing went, on the durable signal when one is wired; a failure
+    /// is also counted on the Prometheus counter. A record that cannot be written
+    /// is logged rather than returned: it must never change what the publish
+    /// answers.
+    async fn note_signing(&self, outcome: Outcome) {
+        if outcome == Outcome::Failed {
+            dpp_common::metrics::record_signing_failure();
+        }
+        if let Some(signals) = &self.signals
+            && let Err(e) = signals.record(Signal::Signing, outcome).await
         {
-            tracing::error!(error = %e, "refused signature could not be counted durably");
+            tracing::error!(error = %e, ?outcome, "signing outcome could not be recorded");
         }
     }
 
@@ -407,7 +409,7 @@ impl PassportService {
         let jws = match self.identity.sign_passport(passport.id, &payload).await {
             Ok(c) => c.jws,
             Err(e) => {
-                self.record_signing_refusal().await;
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
@@ -433,7 +435,7 @@ impl PassportService {
         let public_jws = match self.identity.sign_passport(passport.id, &public_view).await {
             Ok(c) => c.jws,
             Err(e) => {
-                self.record_signing_refusal().await;
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
@@ -461,7 +463,7 @@ impl PassportService {
         {
             Ok(signatures) => signatures,
             Err(e) => {
-                self.record_signing_refusal().await;
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
                     .increment(1);
                 tracing::error!(
@@ -473,6 +475,9 @@ impl PassportService {
             }
         };
         passport.disclosure_signatures = disclosure_signatures;
+        // Every signature this publish needs is made. What follows can still
+        // refuse it, but not for signing.
+        self.note_signing(Outcome::Succeeded).await;
 
         // The EU-registry registration this publish owes, if one can be built.
         //

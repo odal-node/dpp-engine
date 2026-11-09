@@ -61,19 +61,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
-- **An authenticated node health route reports the counters an operator pages
-  on.** `GET /vault/api/v1/node/health` returns the publishes refused for a failed
-  signature, the ruleset loads that failed (the channel unreadable, or its bundle
-  refused), and the registry-sync outbox's pending, submitted, stalled and
-  rejected counts. A monitor that cannot scrape `/metrics` can read them with an
-  API key. The unauthenticated `/health` still answers liveness only. The two
-  failure counts are kept in the database and survive a restart, as the outbox
-  counts always have, and nothing resets them, so each comes with the time of its
-  latest failure (`lastSigningFailureAt`, `lastRulesetLoadFailureAt`): alarm on a
-  recent failure or on a rising count, not on a count above zero. The Prometheus
-  counters on `/metrics` still reset on restart. A load that fails through
-  `POST /vault/api/v1/ruleset/reload` is now counted too, on
-  `ruleset_load_failures_total` as well as here; before, only the boot load and
+- **An authenticated node health route reports what an operator pages on.**
+  `GET /vault/api/v1/node/health` returns `signals`, the outcomes of the node's
+  own work that leave no other trace, and the registry-sync outbox's pending,
+  submitted, stalled and rejected counts. Two signals so far: `signing` (signing
+  a passport at publish) and `rulesetLoad` (loading the ruleset from its
+  channel; a failure is a channel that could not be read or a bundle that was
+  refused). Each reports `failing`, whether its latest outcome was a failure,
+  which is the field to alarm on; `failures`, a count that never resets; and
+  `lastFailedAt` and `lastSucceededAt`. They are kept in the database
+  (`odal.node_signal`) and survive a restart; the Prometheus counters on
+  `/metrics` still reset on one. A monitor that cannot scrape `/metrics` can read
+  the route with an API key, and the unauthenticated `/health` still answers
+  liveness only. A load that fails through `POST /vault/api/v1/ruleset/reload` is
+  now counted on `ruleset_load_failures_total` too; before, only the boot load and
   the poller counted one. (#138, #590)
 
 - **An authority or a person with a legitimate interest can read the passport

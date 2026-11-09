@@ -3579,8 +3579,8 @@
     "/vault/api/v1/node/health": {
       "get": {
         "operationId": "getNodeHealth",
-        "summary": "Node operational health counters",
-        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset loads that failed, counted since the node was first\nstarted and kept across restarts, each with the time of its latest\nfailure, and the registry-sync outbox's pending, submitted, stalled and\nrejected counts. Authenticated, so a monitor\nthat cannot scrape `/metrics` can read them with an API key. The\nunauthenticated `/health` answers liveness only.\n",
+        "summary": "Node operational health",
+        "description": "Reports what an operator pages on. `signals` are outcomes of the node's own\nwork that leave no other trace (signing at publish, loading the ruleset),\neach with whether it is failing now, how often it has failed, and when it\nlast failed and last succeeded, kept across restarts. `registryOutbox` is\nthe registry-sync outbox's pending, submitted, stalled and rejected counts,\nread live. Authenticated, so a monitor that cannot scrape `/metrics` can\nread them with an API key. The unauthenticated `/health` answers liveness\nonly.\n",
         "tags": [
           "Node"
         ],
@@ -9531,33 +9531,62 @@
       "NodeHealth": {
         "type": "object",
         "properties": {
-          "signingFailuresTotal": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0,
-            "description": "Publishes refused because a passport could not be signed, since the node was\nfirst started. Kept in the database, so a restart does not reset it, and\nnothing else does either: alarm on `lastSigningFailureAt`, or on a rise in\nthis count, not on the count being above zero. Absent on a deployment with\nno durable counter wired.\n",
-            "example": 0
-          },
-          "lastSigningFailureAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the latest refused signature was counted, by the node's database\nclock. Absent until the first.\n"
-          },
-          "rulesetLoadFailuresTotal": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0,
-            "description": "Compliance Current ruleset loads that failed, since the node was first\nstarted: the channel could not be read, or the bundle it served was\nrefused. Either way the node keeps the ruleset it had. Kept in the\ndatabase, so a restart does not reset it, and nothing else does either:\nalarm on `lastRulesetLoadFailureAt`, or on a rise in this count. Absent on\na deployment with no durable counter wired.\n",
-            "example": 0
-          },
-          "lastRulesetLoadFailureAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the latest failed ruleset load was counted, by the node's database\nclock. Absent until the first.\n"
+          "signals": {
+            "$ref": "#/components/schemas/NodeSignals",
+            "description": "Outcomes of the node's own work that leave no other trace, by signal name,\nkept in the database across restarts. Absent on a deployment with no\nsignal store wired, such as a standalone vault.\n"
           },
           "registryOutbox": {
             "$ref": "#/components/schemas/RegistryOutboxHealth",
             "description": "The registry-sync outbox's counts. Absent on a deployment with no outbox\nwired, such as a standalone vault.\n"
+          }
+        }
+      },
+      "NodeSignals": {
+        "type": "object",
+        "description": "Every signal the node keeps, by name. Each is listed whether or not anything\nhas been recorded for it yet. A later release may add signals; alarm on each\none's `failing`.\n",
+        "required": [
+          "signing",
+          "rulesetLoad"
+        ],
+        "properties": {
+          "signing": {
+            "$ref": "#/components/schemas/NodeSignal",
+            "description": "Signing a passport at publish. A failure is a publish refused because the\npassport could not be signed.\n"
+          },
+          "rulesetLoad": {
+            "$ref": "#/components/schemas/NodeSignal",
+            "description": "Loading the Compliance Current ruleset from its channel, at boot, on each\npoll, or on an operator's reload. A failure is a channel that could not be\nread or a bundle it served that was refused; the node keeps the ruleset it\nhad. Recorded only when a channel is configured.\n"
+          }
+        }
+      },
+      "NodeSignal": {
+        "type": "object",
+        "required": [
+          "failing",
+          "failures"
+        ],
+        "properties": {
+          "failing": {
+            "type": "boolean",
+            "description": "Whether the latest recorded outcome is a failure. The field to alarm on:\nit clears on the next success.\n",
+            "example": false
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Failures since the node was first started. Kept in the database and never\nreset, so it says how often, not whether the node is failing now.\n",
+            "example": 0
+          },
+          "lastFailedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest failure was recorded, by the node's database clock. Absent\nuntil the first.\n"
+          },
+          "lastSucceededAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest success was recorded, by the node's database clock. Absent\nuntil the first.\n"
           }
         }
       },

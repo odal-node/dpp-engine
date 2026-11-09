@@ -64,7 +64,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::AuditRepository,
     evidence::EvidenceDossierRepository,
-    node_failure::NodeFailureCounter,
+    node_signal::NodeSignals,
     operator::OperatorConfigRepository,
     registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
     registry_transfer::RegistryTransferOutbox,
@@ -111,10 +111,11 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
-    /// Durable count of publishes refused for a signature. Read by the node-health
-    /// route, so the count survives a restart. `None` (test doubles) leaves the
-    /// refusals on the Prometheus counter alone, and the route omits the count.
-    pub failure_counter: Option<Arc<dyn NodeFailureCounter>>,
+    /// Outcomes of the node's own work that leave no other trace: how signing
+    /// went at publish, and how an operator's ruleset reload went. Read by the
+    /// node-health route, so they survive a restart. `None` (test doubles) leaves
+    /// failures on the Prometheus counters alone, and the route omits the signals.
+    pub signals: Option<Arc<dyn NodeSignals>>,
     /// Archived versions of passports — EN 18221:2026 clause 4.2.
     ///
     /// This is now the only thing in this struct called an archive, and it is
@@ -249,7 +250,7 @@ impl PassportService {
             registry_sync,
             backup,
             registry_outbox: None,
-            failure_counter: None,
+            signals: None,
             versions: None,
             successors: None,
             transfer_store: None,
@@ -315,11 +316,11 @@ impl PassportService {
         self
     }
 
-    /// Count the refusals this service makes in the database as well as on the
-    /// Prometheus counter, so the node-health route reports them across restarts.
+    /// Record the outcomes this service sees in the database, so the node-health
+    /// route reports them across restarts.
     #[must_use]
-    pub fn with_failure_counter(mut self, counter: Arc<dyn NodeFailureCounter>) -> Self {
-        self.failure_counter = Some(counter);
+    pub fn with_signals(mut self, signals: Arc<dyn NodeSignals>) -> Self {
+        self.signals = Some(signals);
         self
     }
 

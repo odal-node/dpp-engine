@@ -7,7 +7,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgIdempotencyRepo, PgNodeFailureRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgIdempotencyRepo, PgNodeSignalRepo,
     PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo, PgRegistrySyncRepo,
     PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo, PgSnapshotOutboxRepo,
     PgTransferRepo, PgWebhookRepo,
@@ -45,8 +45,9 @@ pub struct DbComponents {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub registry_repo: Arc<dyn RegistryIdentityRepository>,
     pub registry_outbox: Arc<dyn RegistrySyncOutbox>,
-    /// Durable refusal counts the node-health route reports across restarts.
-    pub failure_counter: Arc<dyn dpp_types::node_failure::NodeFailureCounter>,
+    /// Outcomes of the node's own work the node-health route reports across
+    /// restarts.
+    pub signals: Arc<dyn dpp_types::node_signal::NodeSignals>,
     pub transfer_store: Arc<dyn TransferStore>,
     pub transfer_outbox: Arc<dyn RegistryTransferOutbox>,
     pub evidence_store: Arc<dyn EvidenceDossierRepository>,
@@ -143,7 +144,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
         registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
-        failure_counter: Arc::new(PgNodeFailureRepo::new(dal.clone())),
+        signals: Arc::new(PgNodeSignalRepo::new(dal.clone())),
         transfer_store: Arc::new(PgTransferRepo::new(dal.clone())),
         transfer_outbox: Arc::new(PgRegistryTransferRepo::new(dal.clone())),
         evidence_store: Arc::new(PgEvidenceDossierRepo::new(dal.clone())),

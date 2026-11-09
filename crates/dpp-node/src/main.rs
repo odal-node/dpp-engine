@@ -203,12 +203,8 @@ async fn main() -> anyhow::Result<()> {
     // every start and cannot drift into a second copy of read-verify-swap.
     let ruleset_wiring = dpp_node::infra::ruleset::from_env();
     let active_ruleset = ruleset_wiring.active.clone();
-    dpp_node::infra::ruleset::reload_and_report(
-        &active_ruleset,
-        true,
-        Some(db.failure_counter.as_ref()),
-    )
-    .await;
+    dpp_node::infra::ruleset::reload_and_report(&active_ruleset, true, Some(db.signals.as_ref()))
+        .await;
     tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
     // ── Vault service state ────────────────────────────────────────────────────
@@ -271,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_registry_reader(db.operator_repo.clone())
     .with_registry_outbox(db.registry_outbox.clone())
-    .with_failure_counter(db.failure_counter.clone())
+    .with_signals(db.signals.clone())
     .with_versions(db.version_store.clone())
     .with_successors(db.successors.clone())
     .with_transfer_store(db.transfer_store.clone())
@@ -437,7 +433,7 @@ async fn main() -> anyhow::Result<()> {
     boot::tasks::spawn_ruleset_poll(
         active_ruleset.clone(),
         ruleset_wiring.poll_interval,
-        db.failure_counter.clone(),
+        db.signals.clone(),
     );
     boot::tasks::spawn_registry_drain(
         db.registry_outbox.clone(),
