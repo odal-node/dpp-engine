@@ -3576,6 +3576,39 @@
         }
       }
     },
+    "/vault/api/v1/node/health": {
+      "get": {
+        "operationId": "getNodeHealth",
+        "summary": "Node operational health counters",
+        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset bundles refused on load, both since the node process\nstarted, and the registry-sync outbox's pending, submitted, stalled and\nrejected counts. Authenticated, so a monitor that cannot scrape `/metrics`\ncan read them with an API key. The unauthenticated `/health` answers\nliveness only.\n",
+        "tags": [
+          "Node"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node operational health counters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeHealth"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/vault/api/v1/whoami": {
       "get": {
         "operationId": "whoami",
@@ -9492,6 +9525,64 @@
             "type": "string",
             "description": "Version of the Compliance Current ruleset this node validates against, so\nthe rules a passport was checked under are observable. Absent on a\nstandalone vault.\n",
             "example": "baseline"
+          }
+        }
+      },
+      "NodeHealth": {
+        "type": "object",
+        "required": [
+          "signingFailuresTotal",
+          "rulesetLoadFailuresTotal"
+        ],
+        "properties": {
+          "signingFailuresTotal": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Publishes refused because a passport could not be signed, since the node\nprocess started. A restart resets it, so a restart hides failures from\nbefore it.\n",
+            "example": 0
+          },
+          "rulesetLoadFailuresTotal": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Compliance Current ruleset bundles refused on load, since the node process\nstarted. A restart resets it.\n",
+            "example": 0
+          },
+          "registryOutbox": {
+            "$ref": "#/components/schemas/RegistryOutboxHealth",
+            "description": "The registry-sync outbox's counts. Absent on a deployment with no outbox\nwired, such as a standalone vault.\n"
+          }
+        }
+      },
+      "RegistryOutboxHealth": {
+        "type": "object",
+        "required": [
+          "pending",
+          "submitted",
+          "stalled",
+          "rejected"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows awaiting a drain attempt."
+          },
+          "submitted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows accepted by the registry and awaiting its verdict."
+          },
+          "stalled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending and submitted rows that have reached the stall threshold. A row here\nis not going to succeed without someone looking at it.\n"
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows the registry terminally rejected."
           }
         }
       },

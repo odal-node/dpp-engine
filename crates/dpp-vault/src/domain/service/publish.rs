@@ -396,7 +396,7 @@ impl PassportService {
             .await
             .map(|c| c.jws)
             .map_err(|e| {
-                metrics::counter!("signing_failures_total").increment(1);
+                dpp_common::metrics::record_signing_failure();
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
@@ -424,7 +424,7 @@ impl PassportService {
             .await
             .map(|c| c.jws)
             .map_err(|e| {
-                metrics::counter!("signing_failures_total").increment(1);
+                dpp_common::metrics::record_signing_failure();
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
@@ -449,7 +449,7 @@ impl PassportService {
         )
         .await
         .map_err(|e| {
-            metrics::counter!("signing_failures_total").increment(1);
+            dpp_common::metrics::record_signing_failure();
             metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
                 .increment(1);
             tracing::error!(

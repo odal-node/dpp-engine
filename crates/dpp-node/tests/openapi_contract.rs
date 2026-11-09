@@ -576,6 +576,8 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("AmendRequest", fixtures::amend_request());
     case!("SupersedeRequest", fixtures::supersede_request());
     case!("NodeState", fixtures::node_state());
+    case!("NodeHealth", fixtures::node_health());
+    case!("RegistryOutboxHealth", fixtures::registry_outbox_health());
     case!("VaultInfo", fixtures::vault_info());
     case!(
         "TransferInitiateRequest",
@@ -2506,6 +2508,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/info.rs"),
         include_str!("../../dpp-vault/src/handlers/lint.rs"),
         include_str!("../../dpp-vault/src/handlers/list.rs"),
+        include_str!("../../dpp-vault/src/handlers/node_health.rs"),
         include_str!("../../dpp-vault/src/handlers/node_state.rs"),
         include_str!("../../dpp-vault/src/handlers/operator.rs"),
         include_str!("../../dpp-vault/src/handlers/personal_data.rs"),
@@ -3014,6 +3017,7 @@ mod fixtures {
             eol::EolRequest,
             info::VaultInfo,
             list::PassportListResponse,
+            node_health::{NodeHealth, RegistryOutboxHealth},
             node_state::NodeState,
             personal_data::PersonalDataErasureReceipt,
             registry_abandon::{AbandonRegistrationRequest, AbandonRegistrationResponse},
@@ -3855,6 +3859,25 @@ mod fixtures {
             operator_complete: true,
             trust: Some(report.posture_json()),
             ruleset_version: Some("2026.1.0".into()),
+        }
+    }
+
+    /// The node-health counters with an outbox wired, the shape a Postgres node
+    /// serves. The values are fixed and non-zero so each field is exercised.
+    pub fn node_health() -> NodeHealth {
+        NodeHealth {
+            signing_failures_total: 1,
+            ruleset_load_failures_total: 0,
+            registry_outbox: Some(registry_outbox_health()),
+        }
+    }
+
+    pub fn registry_outbox_health() -> RegistryOutboxHealth {
+        RegistryOutboxHealth {
+            pending: 2,
+            submitted: 1,
+            stalled: 0,
+            rejected: 0,
         }
     }
 

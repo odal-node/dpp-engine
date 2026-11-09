@@ -514,7 +514,7 @@ pub async fn reload_and_report(active: &ActiveRuleset, at_boot: bool) {
         // `from_env` has already said so once at boot.
         Err(RulesetReloadError::NotConfigured) => {}
         Err(e) => {
-            metrics::counter!("ruleset_load_failures_total").increment(1);
+            dpp_common::metrics::record_ruleset_load_failure();
             tracing::error!(
                 code = event_codes::RULESET_LOAD_FAILED,
                 error = %e,

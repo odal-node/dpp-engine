@@ -30,6 +30,7 @@ use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as In
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
+use dpp_types::registry_sync::{RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
     domain::{
@@ -186,6 +187,8 @@ async fn start_node_with_ruleset(
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
         .with_registry_reader(operator_repo.clone())
+        // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
+        .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -351,6 +354,140 @@ async fn authenticated_node_state_reports_trust_modes() {
     assert_eq!(body["profile"], "development");
     assert_eq!(body["trustMode"]["registry_sync"], "ghost");
     assert_eq!(body["rulesetVersion"], "baseline");
+}
+
+/// The node-health counters follow what the node did. A passport's registration
+/// row is stalled from the stall threshold and not one attempt before it, and a
+/// refusal recorded in this process moves the counter the route reports by one.
+#[tokio::test(flavor = "multi_thread")]
+async fn node_health_counts_follow_the_outbox_and_the_refusals() {
+    let (base, pg) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000092");
+    let client = reqwest::Client::new();
+
+    // Battery is in force, so publish also needs a default facility and a primary
+    // operator identifier (Annex III / Art. 13), as the route-inventory test seeds.
+    let facility = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "Default Plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility seed request failed");
+    assert!(
+        facility.status().is_success(),
+        "facility seed failed: {}",
+        facility.status()
+    );
+    let operator_id = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true
+        }))
+        .send()
+        .await
+        .expect("operator-identifier seed request failed");
+    assert!(
+        operator_id.status().is_success(),
+        "operator-identifier seed failed: {}",
+        operator_id.status()
+    );
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Node Health Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "productGroupData": {
+                "productGroup": "battery",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                "batteryChemistry": "LFP",
+                "batteryType": "portable",
+                "nominalVoltageV": 48.0,
+                "nominalCapacityAh": 100.0,
+                "expectedLifetimeCycles": 3000,
+                "co2ePerUnitKg": 45.2
+            }
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .expect("create response must be JSON");
+    let id = created["id"]
+        .as_str()
+        .expect("id in create response")
+        .to_owned();
+    let published = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let (publish_status, publish_body) = (
+        published.status(),
+        published.text().await.unwrap_or_default(),
+    );
+    assert!(
+        publish_status.is_success(),
+        "publish: {publish_status} {publish_body}"
+    );
+
+    // Publishing queued the registration. The drain is not running in this
+    // harness, so its attempts are driven here, one at a time.
+    let outbox = dpp_dal::pg::PgRegistrySyncRepo::new(pg.dal.clone());
+    let passport = dpp_domain::passport::PassportId(id.parse().expect("a uuid"));
+    for _ in 1..STALL_THRESHOLD {
+        outbox
+            .mark_submitted_noting(passport, "waiting for a person".into())
+            .await
+            .expect("attempt recorded");
+    }
+    let short = node_health(&base, &token).await;
+    assert_eq!(
+        short["registryOutbox"]["stalled"], 0,
+        "one attempt short of the threshold: {short}"
+    );
+
+    outbox
+        .mark_submitted_noting(passport, "waiting for a person".into())
+        .await
+        .expect("attempt recorded");
+    let at_threshold = node_health(&base, &token).await;
+    assert_eq!(
+        at_threshold["registryOutbox"]["stalled"], 1,
+        "at the threshold: {at_threshold}"
+    );
+
+    let signing_before = at_threshold["signingFailuresTotal"]
+        .as_u64()
+        .expect("a count");
+    dpp_common::metrics::record_signing_failure();
+    let after = node_health(&base, &token).await;
+    assert_eq!(
+        after["signingFailuresTotal"].as_u64(),
+        Some(signing_before + 1),
+        "{after}"
+    );
+}
+
+async fn node_health(base: &str, token: &str) -> serde_json::Value {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/vault/api/v1/node/health"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("GET /vault/api/v1/node/health failed");
+    assert_eq!(resp.status(), 200);
+    resp.json().await.expect("node health is JSON")
 }
 
 /// The issue this route exists to close, end to end: a node that is up and
@@ -733,6 +870,7 @@ async fn route_inventory_matches_assembled_router() {
             format!("/vault/api/v1/dpp/{FAKE_ID}/verify-tree"),
         ),
         (reqwest::Method::GET, "/vault/api/v1/node/state".into()),
+        (reqwest::Method::GET, "/vault/api/v1/node/health".into()),
         (reqwest::Method::GET, "/vault/api/v1/operator".into()),
         (reqwest::Method::PATCH, "/vault/api/v1/operator".into()),
         (reqwest::Method::GET, "/vault/api/v1/api-keys".into()),

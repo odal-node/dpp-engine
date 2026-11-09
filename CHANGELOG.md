@@ -61,6 +61,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **An authenticated node health route reports the counters an operator pages
+  on.** `GET /vault/api/v1/node/health` returns the publishes refused for a failed
+  signature and the ruleset bundles refused on load, both since the node process
+  started, and the registry-sync outbox's pending, submitted, stalled and rejected
+  counts. A monitor that cannot scrape `/metrics` can read them with an API key.
+  The unauthenticated `/health` still answers liveness only. The two process
+  counters reset on restart; the outbox does not. (#138)
+
 - **An authority or a person with a legitimate interest can read the passport
   as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of
   a passport at a past moment to be retrievable by authenticated, authorised
@@ -221,12 +229,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
-- **The vault's registry rollup counts a registration as stalled at the node's
-  threshold of eight attempts, not five.** `GET /vault/api/v1/registry`, and the
-  `stalled` flag on a passport's registry view, reported a row stalled from its
-  fifth failed attempt, while the node's gauges and alarms waited for the eighth.
-  The two now agree on one constant. A row with five to seven attempts is no longer
-  reported as stalled, so the rollup's `stalled` count can fall. (#589)
+- **The vault's registry rollup counts a row as stalled at the node's threshold
+  of eight attempts, not five.** `GET /vault/api/v1/registry`, and the `stalled`
+  flags on a passport's registry view, reported a registration or a transfer
+  notification stalled from its fifth attempt, while the node's gauges and alarms
+  waited for the eighth. The two now agree on one constant. A row with five to
+  seven attempts is no longer reported as stalled, so the rollup's `stalled`
+  counts can fall. (#589)
 
 - **The registry's task list is asked for newest first, and read from the front
   once the first page shows it came back that way.** The adapter read a long list

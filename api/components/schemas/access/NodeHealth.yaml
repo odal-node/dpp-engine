@@ -1,0 +1,27 @@
+type: object
+required:
+  - signingFailuresTotal
+  - rulesetLoadFailuresTotal
+properties:
+  signingFailuresTotal:
+    type: integer
+    format: int64
+    minimum: 0
+    description: |
+      Publishes refused because a passport could not be signed, since the node
+      process started. A restart resets it, so a restart hides failures from
+      before it.
+    example: 0
+  rulesetLoadFailuresTotal:
+    type: integer
+    format: int64
+    minimum: 0
+    description: |
+      Compliance Current ruleset bundles refused on load, since the node process
+      started. A restart resets it.
+    example: 0
+  registryOutbox:
+    $ref: ./RegistryOutboxHealth.yaml
+    description: |
+      The registry-sync outbox's counts. Absent on a deployment with no outbox
+      wired, such as a standalone vault.

@@ -1,0 +1,24 @@
+get:
+  operationId: getNodeHealth
+  summary: Node operational health counters
+  description: |
+    Reports the counters an operator pages on: publishes refused for a failed
+    signature and ruleset bundles refused on load, both since the node process
+    started, and the registry-sync outbox's pending, submitted, stalled and
+    rejected counts. Authenticated, so a monitor that cannot scrape `/metrics`
+    can read them with an API key. The unauthenticated `/health` answers
+    liveness only.
+  tags:
+    - Node
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: Node operational health counters.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/access/NodeHealth.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
