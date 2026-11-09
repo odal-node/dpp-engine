@@ -70,7 +70,8 @@ pub fn record_signing_failure() {
     metrics::counter!("signing_failures_total").increment(1);
 }
 
-/// Count one ruleset bundle refused on load. See [`record_signing_failure`].
+/// Count one ruleset load that failed: the channel could not be read, or the
+/// bundle it served was refused. See [`record_signing_failure`].
 pub fn record_ruleset_load_failure() {
     metrics::counter!("ruleset_load_failures_total").increment(1);
 }

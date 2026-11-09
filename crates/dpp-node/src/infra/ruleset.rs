@@ -525,7 +525,7 @@ pub async fn reload_and_report(
             {
                 tracing::error!(
                     error = %count_err,
-                    "refused ruleset bundle could not be counted durably"
+                    "failed ruleset load could not be counted durably"
                 );
             }
             tracing::error!(

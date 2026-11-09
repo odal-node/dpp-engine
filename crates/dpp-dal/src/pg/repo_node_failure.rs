@@ -1,11 +1,11 @@
-//! `NodeFailureCounter` on PostgreSQL: the refusals this node has counted, kept
+//! `NodeFailureCounter` on PostgreSQL: the failures this node has counted, kept
 //! across restarts (`ops/pg/0048`).
 
 use async_trait::async_trait;
 use sqlx::Row;
 
 use dpp_domain::DppError;
-use dpp_types::node_failure::{FailureCounts, FailureKind, NodeFailureCounter, Refusals};
+use dpp_types::node_failure::{FailureCounts, FailureKind, Failures, NodeFailureCounter};
 
 use super::{PgDal, db_err};
 
@@ -32,14 +32,14 @@ fn name_of(kind: FailureKind) -> &'static str {
 #[async_trait]
 impl NodeFailureCounter for PgNodeFailureRepo {
     async fn record(&self, kind: FailureKind) -> Result<(), DppError> {
-        // One statement: the first refusal creates the row and later ones add to
-        // it, so two refusals of the same kind racing each other cannot lose one.
+        // One statement: the first failure creates the row and later ones add to
+        // it, so two failures of the same kind racing each other cannot lose one.
         sqlx::query(
-            "INSERT INTO odal.node_failure_counter (name, refusals, last_refused_at) \
+            "INSERT INTO odal.node_failure_counter (name, failures, last_failed_at) \
              VALUES ($1, 1, now()) \
              ON CONFLICT (name) DO UPDATE \
-             SET refusals = odal.node_failure_counter.refusals + 1, \
-                 last_refused_at = EXCLUDED.last_refused_at",
+             SET failures = odal.node_failure_counter.failures + 1, \
+                 last_failed_at = EXCLUDED.last_failed_at",
         )
         .bind(name_of(kind))
         .execute(self.dal.pool())
@@ -50,20 +50,20 @@ impl NodeFailureCounter for PgNodeFailureRepo {
 
     async fn counts(&self) -> Result<FailureCounts, DppError> {
         let rows =
-            sqlx::query("SELECT name, refusals, last_refused_at FROM odal.node_failure_counter")
+            sqlx::query("SELECT name, failures, last_failed_at FROM odal.node_failure_counter")
                 .fetch_all(self.dal.pool())
                 .await
                 .map_err(db_err)?;
         let mut counts = FailureCounts::default();
         for row in rows {
             let name: String = row.get("name");
-            let refusals = Refusals {
-                total: row.get("refusals"),
-                last_at: Some(row.get("last_refused_at")),
+            let failures = Failures {
+                total: row.get("failures"),
+                last_at: Some(row.get("last_failed_at")),
             };
             match name.as_str() {
-                "signing" => counts.signing = refusals,
-                "ruleset_load" => counts.ruleset_load = refusals,
+                "signing" => counts.signing = failures,
+                "ruleset_load" => counts.ruleset_load = failures,
                 _ => {}
             }
         }

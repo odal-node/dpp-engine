@@ -2984,9 +2984,9 @@ paths:
       summary: Node operational health counters
       description: |
         Reports the counters an operator pages on: publishes refused for a failed
-        signature and ruleset bundles refused on load, counted since the node was
-        first started and kept across restarts, each with the time of its latest
-        refusal, and the registry-sync outbox's pending, submitted, stalled and
+        signature and ruleset loads that failed, counted since the node was first
+        started and kept across restarts, each with the time of its latest
+        failure, and the registry-sync outbox's pending, submitted, stalled and
         rejected counts. Authenticated, so a monitor
         that cannot scrape `/metrics` can read them with an API key. The
         unauthenticated `/health` answers liveness only.
@@ -8298,16 +8298,18 @@ components:
           format: int64
           minimum: 0
           description: |
-            Compliance Current ruleset bundles refused on load, since the node was first
-            started. Kept in the database, so a restart does not reset it, and nothing
-            else does either: alarm on `lastRulesetLoadFailureAt`, or on a rise in this
-            count. Absent on a deployment with no durable counter wired.
+            Compliance Current ruleset loads that failed, since the node was first
+            started: the channel could not be read, or the bundle it served was
+            refused. Either way the node keeps the ruleset it had. Kept in the
+            database, so a restart does not reset it, and nothing else does either:
+            alarm on `lastRulesetLoadFailureAt`, or on a rise in this count. Absent on
+            a deployment with no durable counter wired.
           example: 0
         lastRulesetLoadFailureAt:
           type: string
           format: date-time
           description: |
-            When the latest refused ruleset bundle was counted, by the node's database
+            When the latest failed ruleset load was counted, by the node's database
             clock. Absent until the first.
         registryOutbox:
           $ref: '#/components/schemas/RegistryOutboxHealth'

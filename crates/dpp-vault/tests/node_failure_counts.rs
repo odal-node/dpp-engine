@@ -7,7 +7,7 @@
 mod helpers;
 
 use dpp_dal::pg::PgNodeFailureRepo;
-use dpp_types::node_failure::{NodeFailureCounter, Refusals};
+use dpp_types::node_failure::{Failures, NodeFailureCounter};
 use helpers::{
     TestClient, make_jwt, seed_complete_operator, start_postgres, start_vault_failing_signer,
 };
@@ -63,7 +63,7 @@ async fn a_publish_refused_for_its_signature_is_counted_durably() {
     assert!(counts.signing.last_at.is_some(), "and marked the latest");
     assert_eq!(
         counts.ruleset_load,
-        Refusals::default(),
-        "no ruleset refused"
+        Failures::default(),
+        "no ruleset load failed"
     );
 }

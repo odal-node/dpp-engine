@@ -41,11 +41,12 @@ pub struct NodeHealth {
     /// a monitor that keeps no state can alarm on a recent one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_signing_failure_at: Option<DateTime<Utc>>,
-    /// Ruleset bundles refused on load, since the node was first started. Absent
-    /// on a deployment with no durable counter wired.
+    /// Ruleset loads that failed, since the node was first started: the channel
+    /// could not be read, or the bundle it served was refused. Absent on a
+    /// deployment with no durable counter wired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ruleset_load_failures_total: Option<i64>,
-    /// When the latest of those refusals was counted. Absent until the first.
+    /// When the latest of those failures was counted. Absent until the first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_ruleset_load_failure_at: Option<DateTime<Utc>>,
     /// Absent on a deployment with no registry-sync outbox wired, rather than
@@ -59,15 +60,15 @@ pub struct NodeHealth {
 /// as `/node/state`: a failing signer or a stalled queue is a description of
 /// where the node is weak. The unauthenticated `/health` answers liveness only.
 ///
-/// The two refusal counts are kept in the database, so a restart does not clear
+/// The two failure counts are kept in the database, so a restart does not clear
 /// them, and neither does anything else: each comes with the time of its latest
-/// refusal, which is what tells a failing node from one that failed once. The
+/// failure, which is what tells a failing node from one that failed once. The
 /// Prometheus counters on `/metrics` still reset on restart.
 pub async fn node_health_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
-    let refusals = match &state.service.failure_counter {
+    let failures = match &state.service.failure_counter {
         Some(counter) => match counter.counts().await {
             Ok(c) => Some(c),
             Err(e) => return internal_error(e),
@@ -90,10 +91,10 @@ pub async fn node_health_handler(
     (
         StatusCode::OK,
         Json(NodeHealth {
-            signing_failures_total: refusals.map(|c| c.signing.total),
-            last_signing_failure_at: refusals.and_then(|c| c.signing.last_at),
-            ruleset_load_failures_total: refusals.map(|c| c.ruleset_load.total),
-            last_ruleset_load_failure_at: refusals.and_then(|c| c.ruleset_load.last_at),
+            signing_failures_total: failures.map(|c| c.signing.total),
+            last_signing_failure_at: failures.and_then(|c| c.signing.last_at),
+            ruleset_load_failures_total: failures.map(|c| c.ruleset_load.total),
+            last_ruleset_load_failure_at: failures.and_then(|c| c.ruleset_load.last_at),
             registry_outbox,
         }),
     )

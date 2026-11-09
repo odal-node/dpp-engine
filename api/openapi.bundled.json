@@ -3580,7 +3580,7 @@
       "get": {
         "operationId": "getNodeHealth",
         "summary": "Node operational health counters",
-        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset bundles refused on load, counted since the node was\nfirst started and kept across restarts, each with the time of its latest\nrefusal, and the registry-sync outbox's pending, submitted, stalled and\nrejected counts. Authenticated, so a monitor\nthat cannot scrape `/metrics` can read them with an API key. The\nunauthenticated `/health` answers liveness only.\n",
+        "description": "Reports the counters an operator pages on: publishes refused for a failed\nsignature and ruleset loads that failed, counted since the node was first\nstarted and kept across restarts, each with the time of its latest\nfailure, and the registry-sync outbox's pending, submitted, stalled and\nrejected counts. Authenticated, so a monitor\nthat cannot scrape `/metrics` can read them with an API key. The\nunauthenticated `/health` answers liveness only.\n",
         "tags": [
           "Node"
         ],
@@ -9547,13 +9547,13 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Compliance Current ruleset bundles refused on load, since the node was first\nstarted. Kept in the database, so a restart does not reset it, and nothing\nelse does either: alarm on `lastRulesetLoadFailureAt`, or on a rise in this\ncount. Absent on a deployment with no durable counter wired.\n",
+            "description": "Compliance Current ruleset loads that failed, since the node was first\nstarted: the channel could not be read, or the bundle it served was\nrefused. Either way the node keeps the ruleset it had. Kept in the\ndatabase, so a restart does not reset it, and nothing else does either:\nalarm on `lastRulesetLoadFailureAt`, or on a rise in this count. Absent on\na deployment with no durable counter wired.\n",
             "example": 0
           },
           "lastRulesetLoadFailureAt": {
             "type": "string",
             "format": "date-time",
-            "description": "When the latest refused ruleset bundle was counted, by the node's database\nclock. Absent until the first.\n"
+            "description": "When the latest failed ruleset load was counted, by the node's database\nclock. Absent until the first.\n"
           },
           "registryOutbox": {
             "$ref": "#/components/schemas/RegistryOutboxHealth",

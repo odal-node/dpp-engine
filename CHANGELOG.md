@@ -63,17 +63,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **An authenticated node health route reports the counters an operator pages
   on.** `GET /vault/api/v1/node/health` returns the publishes refused for a failed
-  signature and the ruleset bundles refused on load, and the registry-sync
-  outbox's pending, submitted, stalled and rejected counts. A monitor that cannot
-  scrape `/metrics` can read them with an API key. The unauthenticated `/health`
-  still answers liveness only. The two refusal counts are kept in the database and
-  survive a restart, as the outbox counts always have, and nothing resets them, so
-  each comes with the time of its latest refusal (`lastSigningFailureAt`,
-  `lastRulesetLoadFailureAt`): alarm on a recent refusal or on a rising count,
-  not on a count above zero. The Prometheus counters on `/metrics` still reset on
-  restart. A bundle refused through `POST /vault/api/v1/ruleset/reload` is now
-  counted too, on `ruleset_load_failures_total` as well as here; before, only the
-  boot load and the poller counted one. (#138, #590)
+  signature, the ruleset loads that failed (the channel unreadable, or its bundle
+  refused), and the registry-sync outbox's pending, submitted, stalled and
+  rejected counts. A monitor that cannot scrape `/metrics` can read them with an
+  API key. The unauthenticated `/health` still answers liveness only. The two
+  failure counts are kept in the database and survive a restart, as the outbox
+  counts always have, and nothing resets them, so each comes with the time of its
+  latest failure (`lastSigningFailureAt`, `lastRulesetLoadFailureAt`): alarm on a
+  recent failure or on a rising count, not on a count above zero. The Prometheus
+  counters on `/metrics` still reset on restart. A load that fails through
+  `POST /vault/api/v1/ruleset/reload` is now counted too, on
+  `ruleset_load_failures_total` as well as here; before, only the boot load and
+  the poller counted one. (#138, #590)
 
 - **An authority or a person with a legitimate interest can read the passport
   as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of
