@@ -161,16 +161,37 @@ real stack, not a stub: a node and a resolver built from `1eb8f60e`, a published
 signed by that node, and Caddy in front for TLS (`tls internal`, HTTP/2), at
 `https://resolver.localhost:8443`. The helper trusted Caddy's root and nothing else.
 
-Against a GTIN-level address, **25 of the page's 27 checks pass.** The two that fail
-are the page's own browser-side fetches of the host, "HTTP over TLS" and "resolver
+Against a GTIN-level address, **25 of the page's 27 checks passed.** The two that failed
+were the page's own browser-side fetches of the host, "HTTP over TLS" and "resolver
 description file", and the browser reported `net::ERR_CERT_AUTHORITY_INVALID` for both:
-it did not trust the local certificate authority. The same two URLs answer correctly to
-`curl` with that root pinned, and the helper fetched through the same TLS front. **So
-neither has been seen to pass in the page**, and the page reports a missing description
-file as its one critical issue, so its overall verdict in this run was a failure. A run
-against a host with a publicly trusted certificate is what would settle both, and this
-record does not claim them until then. Criterion 3 and criterion 21 therefore rest on
-the runbook and on `gs1_conformance.rs`, as before.
+it did not trust the local certificate authority. The same two URLs answered correctly to
+`curl` with that root pinned, and the helper fetched through the same TLS front. The page
+reports a missing description file as its one critical issue, so its overall verdict in
+that run was a failure.
+
+**It was run again on 2026-11-09, with the browser trusting that authority: 27 of 27
+checks pass, none warns, and the page prints no critical-issue banner.** The stack was
+rebuilt from `2b901dd6`, and a passport at model level, so that the GTIN itself resolves,
+was published through the node. The page ran in Firefox 153 ESR on a throwaway profile
+whose only addition was Caddy's root. The same page in a browser that did not trust the
+root, run the same day, again passed 25 and failed the same two with the same error.
+Caddy's access log, kept this time, shows the page's own requests arriving over TLS 1.3
+and HTTP/2, among them `GET /.well-known/gs1resolver` with the page's origin, answered
+`200`, next to the helper's fourteen requests. So the two failures were the browser's
+trust and not the resolver.
+
+That settles those two checks, and not criterion 3. Both runs used a certificate from a
+local authority, so a host with a publicly trusted certificate has still not been tried,
+and criterion 3 stays met by deployment, on the runbook. Criterion 21 keeps its test in
+`gs1_conformance.rs`, and the page's check of the description file against GS1's schema
+now agrees with it.
+
+Two things differ in the re-run from the page as GS1 hosts it. The page's HTML is not in
+the suite's repository at `32597c1`, so it was taken from the last commit that had it
+(written for release 1.1.0 of the standard) with its script tags pointed at local copies
+of the suite at `32597c1`; the script is again GS1's, with the one `testUri` line
+changed. And the script needs a global `window.ajv7`, which GS1's page loads from its own
+site, so a local build of Ajv 8.20 stood in for it.
 
 Two things the run showed that the in-process tests did not:
 
