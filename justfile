@@ -258,6 +258,16 @@ coderabbit-check:
 coderabbit-check-self-test:
     bash scripts/coderabbit-check.test.sh
 
+# Compare the IETF rows of the standards register with the RFC Editor's index.
+#
+# Not in `check` or `ci`, deliberately: it asks someone else's server, and a gate
+# that fails because that server is down is a gate people stop trusting. CI runs
+# it weekly as `standards-status.yml`. It reports and never edits the register,
+# because `Read` records a person reading a source. `--self-test` runs it on
+# fixtures; `--index FILE` and `--register FILE` take saved copies. Needs Node.
+standards-status *args:
+    node .github/scripts/standards_status.mjs {{args}}
+
 # Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
 #
 # Creates and publishes a passport through the real vault, then writes the row's
