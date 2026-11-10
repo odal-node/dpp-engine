@@ -1,0 +1,96 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "@id": "https://ref.gs1.org/standards/resolver/linkset-schema",
+    "title": "JSON schema for linksets as defined in RFC 9264",
+    "type": "object",
+    "properties": {
+        "linkset": {
+            "description": "The linkset",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "anchor": {
+                        "description": "The URL at the root of the linkset, a.k.a the link context",
+                        "type": "string",
+                        "pattern": "^https?:\/\/[a-zA-z0-9./]+"
+                    },
+                    "itemDescription": {
+                        "name": "Item description",
+                        "description": "A description of the item. There are no restrictions on this so that, for example, it does not have to be a product's name. This has been deprecated in favour of description.",
+                        "type": "string"
+                    },
+                    "description": {
+                        "name": "Description",
+                        "description": "A description of the item. There are no restrictions on this so that, for example, it does not have to be a product's name. Preferred alternative to itemDescription which has been deprecated",
+                        "type": "string"
+                    }
+                },
+                "patternProperties": {
+                    "(?!(anchor|itemDescription|description))^([a-z-]+$)|(^https?:\/\/[a-zA-z0-9./]+$)": {
+                        "title": "Link object schema",
+                        "description": "The schema for each link context object for each link relation",
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "href": {
+                                    "name": "href",
+                                    "description": "The target URL",
+                                    "type": "string",
+                                    "pattern": "^https?:\/\/[a-zA-z0-9./]+"
+                                },
+                                "title": {
+                                    "title": "title",
+                                    "description": "A human-readable title for the link",
+                                    "type": "string"
+                                },
+                                "hreflang": {
+                                    "name": "hreflang",
+                                    "description": "The human language(s) of the target resource",
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "pattern": "(^\\w{2}$)|(^\\w{2}-\\w{2}$)"
+                                    }
+                                },
+                                "type": {
+                                    "name": "Type",
+                                    "description": "The content type (MIME type) of the target resource",
+                                    "type": "string",
+                                    "pattern": "\\w+/[-+.\\w]+"
+                                },
+                                  "context": {
+                                    "name":"Context",
+                                    "description":"Any additional descriptor for the link, typically a geography or jurisdiction in which the link applies",
+                                    "type":"array"
+                                  },
+                                  "fwqs" : {
+                                    "name":"Forward query strings",
+                                    "type": "boolean"
+                                  },
+                                  "public" : {
+                                    "name":"Link can be shared publicly",
+                                    "type": "boolean"
+                                  }
+                            },
+                            "required": [
+                                "href",
+                                "title"
+                            ],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": [
+                    "anchor"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "linkset"
+    ],
+    "additionalProperties": false
+}

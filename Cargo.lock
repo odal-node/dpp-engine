@@ -2547,6 +2547,7 @@ dependencies = [
  "dpp-vc",
  "ed25519-dalek 3.0.0",
  "image",
+ "jsonschema",
  "metrics",
  "metrics-exporter-prometheus",
  "qrcode",

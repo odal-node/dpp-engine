@@ -539,6 +539,7 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("PassportListResponse", fixtures::passport_list_response());
     case!("WhoamiResponse", fixtures::whoami_response());
+    case!("ResolverDescription", fixtures::resolver_description());
     case!("PassportScanStats", fixtures::passport_scan_stats());
     case!("OperatorScanStats", fixtures::operator_scan_stats());
     case!("DailyScanCount", fixtures::daily_scan_count());
@@ -2559,6 +2560,7 @@ mod handler_sources {
         include_str!("../../dpp-resolver/src/handlers/resolve_by_gtin.rs"),
         include_str!("../../dpp-resolver/src/handlers/resolve_json.rs"),
         include_str!("../../dpp-resolver/src/handlers/resolve_qr.rs"),
+        include_str!("../../dpp-resolver/src/handlers/resolver_description.rs"),
         include_str!("../../dpp-resolver/src/handlers/health.rs"),
     ];
 }
@@ -4446,6 +4448,18 @@ mod fixtures {
     pub fn template_query() -> dpp_integrator::handlers::templates::TemplateQuery {
         dpp_integrator::handlers::templates::TemplateQuery {
             format: Some("csv".into()),
+        }
+    }
+
+    pub fn resolver_description()
+    -> dpp_resolver::handlers::resolver_description::ResolverDescription {
+        dpp_resolver::handlers::resolver_description::ResolverDescription {
+            name: "Odal Node resolver".into(),
+            resolver_root: "https://id.odal-node.io".into(),
+            supported_primary_keys: vec!["01".into()],
+            link_type_default_can_be_linkset: false,
+            json_ld_context_location: "https://ref.gs1.org/standards/resolver/linkset-context"
+                .into(),
         }
     }
 

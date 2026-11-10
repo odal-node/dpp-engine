@@ -36,6 +36,7 @@ api/openapi.bundled.yaml:
     - '#/paths/~1vault~1api~1v1~1info/get/responses'
     - '#/paths/~1identity~1.well-known~1did.json/get/responses'
     - '#/paths/~1.well-known~1did.json/get/responses'
+    - '#/paths/~1.well-known~1gs1resolver/get/responses'
     - '#/paths/~1identity~1health/get/responses'
     - '#/paths/~1identity~1ready/get/responses'
     - '#/paths/~1integrator~1health/get/responses'

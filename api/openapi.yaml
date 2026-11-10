@@ -303,6 +303,8 @@ components:
       $ref: components/schemas/access/VaultInfo.yaml
     DidDocument:
       $ref: components/schemas/identity/DidDocument.yaml
+    ResolverDescription:
+      $ref: components/schemas/resolver/ResolverDescription.yaml
     InternalSignRequest:
       $ref: components/schemas/identity/InternalSignRequest.yaml
     InternalSignResponse:
@@ -514,6 +516,8 @@ paths:
     $ref: paths/resolver/01_{gtin}_22_{variant}_10_{batch}_21_{serial}.yaml
   /01/{gtin}/235/{extension}:
     $ref: paths/resolver/01_{gtin}_235_{extension}.yaml
+  /.well-known/gs1resolver:
+    $ref: paths/resolver/well-known_gs1resolver.yaml
   /vault/health:
     $ref: paths/health/vault_health.yaml
   /vault/ready:

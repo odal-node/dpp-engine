@@ -61,6 +61,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **The resolver describes itself at `/.well-known/gs1resolver`, decompresses an
+  EPC binary link, and its record against the GS1 Conformant Resolver Standard is
+  written down.** The standard (release 1.2.1) asks for a description file served
+  from that path, valid against GS1's schema, that lists the primary keys the
+  resolver supports: it lists the GTIN (`01`) and no other. A compressed link
+  whose last segment is `eh` and hexadecimal, or `ex` and URI-safe base 64, holds
+  an EPC binary string; SGTIN-96 and SGTIN-198 are decoded and resolve like the
+  label they stand for, and the linkset names the uncompressed link. A trailing
+  slash on a Digital Link is tolerated, `OPTIONS` is answered, and every response
+  carries CORS headers. All 25 criteria of the standard's section 5 are assessed
+  in `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`, with tests in
+  `crates/dpp-resolver/tests/gs1_conformance.rs` for every criterion except 3
+  (TLS, met by deployment), and the standards register has
+  its first row for a non-IETF standard. **Conformance is not claimed:** SGTIN+,
+  DSGTIN+, SGTIN++ and DSGTIN++, and every EPC scheme for a key the resolver does
+  not serve, are not decoded, and the register says so. (#477)
+
 - **An authenticated node health route reports what an operator pages on.**
   `GET /vault/api/v1/node/health` returns `signals`, the outcomes of the node's
   own work that leave no other trace, and the registry-sync outbox's pending,
@@ -236,6 +253,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   (#502)
 
 ### Changed
+
+- **A GS1 linkset now validates against GS1's linkset schema, and a redirect
+  hands the query string on.** *(Breaking for a reader of the linkset.)* The
+  linkset was a context with no `title` on any link and an `anchor` beside
+  `linkset` at the top, so it failed the schema the standard holds it to. It is now
+  one context, anchored at the request's uncompressed link, with a title on every
+  link, exactly one `gs1:defaultLink` (also described as `gs1:pip`), and the links
+  of every level from the one the label names up to the GTIN, nearest first. A
+  redirect carries the request's query string on to its target. A `linkType`
+  other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is now a `404` with a
+  problem document, where it redirected to the passport for six types (among
+  them `gs1:epil`, a patient leaflet, and `gs1:recyclingInfo`, which is not a GS1
+  link type) and answered an ad-hoc JSON body for the rest. The linkset no longer carries the
+  `predecessor` and `hasComponent` relations: GS1's schema matches a relation by a
+  pattern with no room for the hyphen in `ref.odal-node.io`, so a linkset holding
+  one is invalid. The lineage and the bill of materials are in the passport
+  itself. A GTIN is validated at the edge with the check digit and each qualifier
+  with the length and character set its Application Identifier allows, so a
+  malformed label is a `400` before the vault is asked. (#477)
 
 - **The vault's registry rollup counts a row as stalled at the node's threshold
   of eight attempts, not five.** `GET /vault/api/v1/registry`, and the `stalled`

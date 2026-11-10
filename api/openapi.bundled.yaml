@@ -4230,13 +4230,21 @@ paths:
       summary: GS1 Digital Link resolver
       description: |
         GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints
-        for a model-level passport. It has not been assessed against the GS1
-        Conformant Resolver Standard, and nothing here claims conformance. Behaviour
-        depends on the `linkType` query / `Accept` header:
+        for a model-level passport. It was assessed against release 1.2.1 of the GS1
+        Conformant Resolver Standard, and this node does not claim to conform to it:
+        `docs/architecture/GS1_RESOLVER_CONFORMANCE.md` in the engine repository
+        lists, criterion by criterion, what is met and what is not.
+
+        Behaviour depends on the `linkType` query / `Accept` header:
         - default → `307` redirect to the HTML DPP page
-        - `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP
+        - `?linkType=gs1:pip`, `gs1:dpp` or `gs1:defaultLink` → `307` redirect to
+          the DPP page. Any other link type → `404`: the linkset does not offer it
         - `?linkType=linkset` or `Accept: application/linkset+json` → `200`
           RFC 9264 linkset
+
+        A redirect carries the request's query string on to its target. A trailing
+        slash is tolerated. A GTIN of fewer than 14 digits is read as its
+        14-digit form, which is also how a linkset names it.
 
         A GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a
         serial (AI 21), in that order and each optional, or a third-party
@@ -4244,6 +4252,11 @@ paths:
         Any other path under `/01/` cannot be a GS1 Digital Link, because its
         qualifiers are out of order, repeated, not ones a GTIN takes, or empty, and
         answers `400` without a lookup.
+
+        A compressed link that holds an EPC binary string is read too, at the root
+        of this host: `/eh…` (hexadecimal) or `/ex…` (URI-safe base 64). Only the
+        SGTIN-96 and SGTIN-198 schemes are decoded; a link of any other scheme
+        answers `404`, and one that cannot be decompressed answers `400`.
       tags:
         - Public Resolver
       security: []
@@ -4262,17 +4275,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP for this GTIN, or unknown link type.
+          description: No published DPP for this GTIN, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4318,17 +4336,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4373,17 +4396,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4435,17 +4463,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4488,17 +4521,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4548,17 +4586,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4608,17 +4651,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4674,17 +4722,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4729,17 +4782,22 @@ paths:
           description: e.g. linkset, gs1:pip, gs1:dpp
       responses:
         '200':
-          description: RFC 9264 linkset (when a linkset is requested).
+          description: RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.
+          headers:
+            Link:
+              description: The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.
+              schema:
+                type: string
           content:
             application/linkset+json:
               schema:
                 type: object
         '307':
-          description: Redirect to the DPP page (`Location` header).
+          description: Redirect to the DPP page (`Location` header), carrying the request's query string on.
         '400':
-          description: 'The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit.'
+          description: 'The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once.'
         '404':
-          description: No published DPP at any level the label names, or unknown link type.
+          description: No published DPP at any level the label names, or a link type the linkset does not offer.
         '409':
           $ref: '#/components/responses/PassportSignatureUnverified'
         '410':
@@ -4748,6 +4806,30 @@ paths:
           $ref: '#/components/responses/ResolverUpstreamFailure'
         '503':
           $ref: '#/components/responses/PassportVerificationUnavailable'
+  /.well-known/gs1resolver:
+    get:
+      operationId: getResolverDescription
+      summary: GS1 resolver description file
+      description: |
+        The resolver description file that the GS1 Conformant Resolver Standard asks
+        a resolver to publish at this path (section 3). It names the root this
+        resolver answers under and the GS1 primary keys it supports, which is the GTIN
+        (AI 01) and no other. A client can read it to learn what a resolver at this
+        host resolves before asking it. Public, unauthenticated.
+
+        The document validates against the description-file schema GS1 publishes.
+        Publishing it is not a claim of conformance to the standard; see
+        `/01/{gtin}`.
+      tags:
+        - Public Resolver
+      security: []
+      responses:
+        '200':
+          description: The description file.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolverDescription'
   /vault/health:
     get:
       operationId: vaultHealth
@@ -8453,6 +8535,46 @@ components:
           - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
         assertionMethod:
           - did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
+    ResolverDescription:
+      type: object
+      description: |
+        The resolver description file that the GS1 Conformant Resolver Standard asks a
+        resolver to publish at `/.well-known/gs1resolver` (section 3). It validates
+        against the description-file schema GS1 publishes. Publishing it is not a claim
+        that this resolver conforms to the standard.
+      required:
+        - name
+        - resolverRoot
+        - supportedPrimaryKeys
+        - linkTypeDefaultCanBeLinkset
+        - jsonLdContextLocation
+      properties:
+        name:
+          type: string
+          description: A name for the resolver.
+        resolverRoot:
+          type: string
+          format: uri
+          description: This resolver's public root, with no trailing slash.
+        supportedPrimaryKeys:
+          type: array
+          items:
+            type: string
+          description: The GS1 primary keys, by AI, that this resolver resolves.
+        linkTypeDefaultCanBeLinkset:
+          type: boolean
+          description: Whether `linkset` may be made the default link type. It may not.
+        jsonLdContextLocation:
+          type: string
+          format: uri
+          description: The JSON-LD context a linkset's `Link` header points at.
+      example:
+        name: Odal Node resolver
+        resolverRoot: https://id.odal-node.io
+        supportedPrimaryKeys:
+          - '01'
+        linkTypeDefaultCanBeLinkset: false
+        jsonLdContextLocation: https://ref.gs1.org/standards/resolver/linkset-context
     InternalSignRequest:
       type: object
       required:
