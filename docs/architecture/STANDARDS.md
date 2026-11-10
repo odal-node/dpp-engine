@@ -52,6 +52,16 @@ source and updates `Read`. The source for an RFC is
 records. The source for the GS1 row is the standard's own page, whose latest
 release is what the row is compared with.
 
+**Every week, a job compares each row with the index.** `.github/workflows/standards-status.yml`
+runs `.github/scripts/standards_status.mjs` against the RFC Editor's `rfc-index.xml`, which
+lists every RFC's current status and the RFCs that update or obsolete it. For each RFC it
+checks that the row's status is the index's, that every RFC the index names as updating or
+obsoleting it is named in the row, and that every RFC the row names as updating or obsoleting
+it is one the index lists. For each Internet-Draft it checks whether the draft has since been
+published as an RFC. It reports a difference and never edits the register. It reads the
+index, not a specification's text, and it cannot tell whether a draft's cited revision is
+still the current one.
+
 ## Claiming conformance
 
 This repository claims conformance to no specification: citing one says what the

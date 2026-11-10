@@ -1,0 +1,41 @@
+name: Standards status
+
+# Weekly: do the IETF rows of the standards register still say what the RFC
+# Editor's index says?
+#
+# `standard_citations.rs` proves every citation has a row and that the row has a
+# status somebody dated. It cannot prove the status is still true, and the
+# release-time re-read is the only other check, so it runs on the release's
+# schedule and not on the RFC Editor's. A specification can be updated or
+# obsoleted between two releases with nothing here changing, and a row that has
+# gone stale reads exactly like one that has not.
+#
+# Report only. It fails the run to say a row differs and never edits the register:
+# the `Read` date records a person reading a source, and a job that moved it would
+# turn "somebody checked" into "a job ran".
+#
+# Deliberately not a pull-request check: it asks someone else's server, and a
+# gate that fails because that server is down is a gate people stop trusting.
+on:
+  schedule:
+    # Mondays 07:00 UTC.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    name: IETF rows match the RFC Editor's index
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The comparison is shown to find a difference before it is trusted to say
+      # there is none: a check that has never failed is not known to be one.
+      - name: The comparison finds the differences it should
+        run: node .github/scripts/standards_status.mjs --self-test
+      - name: Compare the register with the index
+        run: node .github/scripts/standards_status.mjs
