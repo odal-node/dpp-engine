@@ -1018,6 +1018,78 @@ async fn a_patch_with_no_determination_removes_the_stored_one() {
     assert!(!after.in_doc && after.assessed_at.is_none() && after.ruleset_version.is_none());
 }
 
+/// A status-only write through the repository reads the passport under the lock
+/// it writes with. Read before it, the write stores what the passport carried
+/// then, and an edit that stored a determination while the write waited would
+/// have it removed by a change that is about the status.
+#[tokio::test]
+async fn a_status_write_keeps_a_determination_stored_while_it_waited() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let draft = repo
+        .create(passport(PassportStatus::Draft))
+        .await
+        .expect("create");
+    assert!(!stored(&pg, draft.id).await.in_doc);
+    let patience = Duration::from_secs(10);
+
+    let mut hold = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM odal.passport WHERE id = $1 FOR UPDATE")
+        .bind(draft.id.0)
+        .execute(&mut *hold)
+        .await
+        .expect("lock the row");
+
+    let status = tokio::spawn({
+        let repo = PgPassportRepo::new(pg.dal.clone());
+        let id = draft.id;
+        async move { repo.update_status(id, PassportStatus::Retired).await }
+    });
+    let started = Instant::now();
+    while !status.is_finished() && sessions_waiting_for_a_lock(&pg).await < 1 {
+        assert!(
+            started.elapsed() < patience,
+            "the status write never waited"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!status.is_finished(), "the status write was not held");
+
+    // An edit stores its determination while the status write waits.
+    let result = determination(7.5, Some("ruleset@1"));
+    sqlx::query(
+        r#"UPDATE odal.passport SET
+             doc = jsonb_set(doc, '{complianceResult}', $2),
+             assessed_at = NULLIF($2->>'assessedAt','')::timestamptz,
+             ruleset_version = $2->>'rulesetVersion'
+           WHERE id = $1"#,
+    )
+    .bind(draft.id.0)
+    .bind(serde_json::to_value(&result).expect("serialise"))
+    .execute(&mut *hold)
+    .await
+    .expect("store the determination");
+    hold.commit().await.expect("release the row");
+
+    let written = status
+        .await
+        .expect("join")
+        .expect("the status write succeeds");
+    assert_eq!(written.status, PassportStatus::Retired);
+    assert_eq!(
+        written
+            .compliance_result
+            .as_ref()
+            .and_then(|r| r.co2e_score),
+        Some(7.5),
+        "it wrote the passport as it stood once the lock was its own"
+    );
+    let after = stored(&pg, draft.id).await;
+    assert!(after.in_doc && after.assessed_at.is_some());
+    assert_eq!(after.co2e, Some(7.5));
+    assert_eq!(after.ruleset_version.as_deref(), Some("ruleset@1"));
+}
+
 /// A published passport's determination is frozen with the rest of its content,
 /// and the retention guard does not list it among the mutable keys. A status
 /// change carries the stored one and writes nothing of it; a write that carries a

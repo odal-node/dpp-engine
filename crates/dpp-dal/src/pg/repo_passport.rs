@@ -811,18 +811,27 @@ impl PassportRepository for PgPassportRepo {
         Ok(passport)
     }
 
-    /// Convenience wrapper: load, set status and `updated_at`, then call `update`.
+    /// Convenience wrapper: load, set status and `updated_at`, then write.
+    ///
+    /// The passport is read under the row lock the write holds, in the same
+    /// transaction, as the state-change log's status write reads it. A read
+    /// before the lock is a reading of a row that may change while the write
+    /// waits, and the write stores the passport's determination exactly: a
+    /// status-only change would then remove one an edit had just stored.
     async fn update_status(
         &self,
         id: PassportId,
         status: PassportStatus,
     ) -> Result<Passport, DppError> {
-        let Some(mut passport) = self.find_by_id(id).await? else {
+        let mut tx = self.dal.begin().await?;
+        let Some(mut passport) = self.current_for_update_in_tx(&mut tx, id).await? else {
             return Err(DppError::NotFound(id.to_string()));
         };
         passport.status = status;
         passport.updated_at = chrono::Utc::now();
-        self.update(passport).await
+        self.update_in_tx(&mut tx, &passport).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(passport)
     }
 
     /// List passports with optional status filter, full-text ILIKE search, and
