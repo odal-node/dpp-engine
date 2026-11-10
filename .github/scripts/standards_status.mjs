@@ -204,6 +204,26 @@ function selfTest() {
   return 0;
 }
 
+// One request to someone else's server; a blip should not fail the job.
+const FETCH_ATTEMPTS = 3;
+
+async function fetchIndex() {
+  let failure;
+  for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(INDEX_URL, { signal: AbortSignal.timeout(90_000) });
+      if (!res.ok) throw new Error(`answered HTTP ${res.status}`);
+      return await res.text();
+    } catch (e) {
+      failure = e;
+      if (attempt < FETCH_ATTEMPTS) await new Promise((done) => setTimeout(done, 2000 * attempt));
+    }
+  }
+  // fetch's own message is only "fetch failed"; the code on its cause says why.
+  const cause = failure.cause?.code ?? failure.cause?.message;
+  throw new Error(`${INDEX_URL} ${failure.message}${cause ? ` (${cause})` : ""} after ${FETCH_ATTEMPTS} attempts`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--self-test")) return selfTest();
@@ -213,9 +233,7 @@ async function main() {
     if (at >= 0) {
       xml = readFileSync(args[at + 1], "utf8");
     } else {
-      const res = await fetch(INDEX_URL, { signal: AbortSignal.timeout(90_000) });
-      if (!res.ok) throw new Error(`${INDEX_URL} answered HTTP ${res.status}`);
-      xml = await res.text();
+      xml = await fetchIndex();
     }
   } catch (e) {
     console.error(`could not read the index: ${e.message}`);
