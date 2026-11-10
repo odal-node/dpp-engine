@@ -18,9 +18,9 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgPassportVersionRepo, PgRegistryIdentityRepo, PgScanTelemetryRepo, PgTransferRepo,
-    PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeSignalRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
 use dpp_dal::test_harness::{TestPg, start_pg};
 use dpp_domain::passport::PassportRef;
@@ -30,6 +30,7 @@ use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as In
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
+use dpp_types::node_signal::{NodeSignals, Outcome, Signal};
 use dpp_types::registry_sync::{RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
@@ -189,6 +190,7 @@ async fn start_node_with_ruleset(
         .with_registry_reader(operator_repo.clone())
         // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
         .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
+        .with_signals(Arc::new(PgNodeSignalRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -356,11 +358,12 @@ async fn authenticated_node_state_reports_trust_modes() {
     assert_eq!(body["rulesetVersion"], "baseline");
 }
 
-/// The node-health counters follow what the node did. A passport's registration
-/// row is stalled from the stall threshold and not one attempt before it, and a
-/// refusal recorded in this process moves the counter the route reports by one.
+/// The node-health route follows what the node did. A passport's registration
+/// row is stalled from the stall threshold and not one attempt before it, a
+/// publish that signed is a success on the `signing` signal, and a failure
+/// recorded after it leaves the signal failing.
 #[tokio::test(flavor = "multi_thread")]
-async fn node_health_counts_follow_the_outbox_and_the_refusals() {
+async fn node_health_follows_the_outbox_and_the_signals() {
     let (base, pg) = start_db_and_node().await;
     let token = make_jwt("00000000-0000-0000-0000-000000000092");
     let client = reqwest::Client::new();
@@ -467,16 +470,23 @@ async fn node_health_counts_follow_the_outbox_and_the_refusals() {
         "at the threshold: {at_threshold}"
     );
 
-    let signing_before = at_threshold["signingFailuresTotal"]
-        .as_u64()
-        .expect("a count");
-    dpp_common::metrics::record_signing_failure();
+    // The publish above signed, and the route says so.
+    let signed = &at_threshold["signals"]["signing"];
+    assert_eq!(signed["failing"], false, "{at_threshold}");
+    assert_eq!(signed["failures"], 0, "{at_threshold}");
+    assert!(signed["lastSucceededAt"].is_string(), "{at_threshold}");
+    assert!(signed.get("lastFailedAt").is_none(), "{at_threshold}");
+
+    // A later refusal is the latest outcome, so the signal is failing now.
+    PgNodeSignalRepo::new(pg.dal.clone())
+        .record(Signal::Signing, Outcome::Failed)
+        .await
+        .expect("failure recorded");
     let after = node_health(&base, &token).await;
-    assert_eq!(
-        after["signingFailuresTotal"].as_u64(),
-        Some(signing_before + 1),
-        "{after}"
-    );
+    let refused = &after["signals"]["signing"];
+    assert_eq!(refused["failing"], true, "{after}");
+    assert_eq!(refused["failures"], 1, "{after}");
+    assert!(refused["lastFailedAt"].is_string(), "{after}");
 }
 
 async fn node_health(base: &str, token: &str) -> serde_json::Value {
@@ -538,7 +548,7 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         ActiveRuleset::baseline()
             .with_channel(Box::new(FileRulesetSource::new(&bundle_path)), &pubkey),
     );
-    dpp_node::infra::ruleset::reload_and_report(&ruleset, true).await;
+    dpp_node::infra::ruleset::reload_and_report(&ruleset, true, None).await;
 
     let pg = start_pg().await;
     let base = start_node_with_ruleset(pg.dal.clone(), ruleset).await;
@@ -593,6 +603,13 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
     assert_eq!(body["changed"], false);
     assert_eq!(body["rulesetVersion"], "2026-Q3.2");
 
+    // The operator's reloads, the quiet one included, are successes.
+    let quiet = node_health(&base, &token).await;
+    let loaded = &quiet["signals"]["rulesetLoad"];
+    assert_eq!(loaded["failing"], false, "{quiet}");
+    assert_eq!(loaded["failures"], 0, "{quiet}");
+    assert!(loaded["lastSucceededAt"].is_string(), "{quiet}");
+
     // An authentic but older bundle served on the channel is refused as a
     // rollback, and the node keeps the ruleset it had.
     publish("2026-Q3.0", 3, 30);
@@ -608,6 +625,14 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         "a rollback must be refused, not adopted"
     );
     assert_eq!(state_version().await, "2026-Q3.2");
+
+    // The refusal the operator's reload met is recorded where a restart cannot
+    // clear it, and is the latest outcome, so the signal is failing now.
+    let after = node_health(&base, &token).await;
+    let refused = &after["signals"]["rulesetLoad"];
+    assert_eq!(refused["failing"], true, "{after}");
+    assert_eq!(refused["failures"], 1, "{after}");
+    assert!(refused["lastFailedAt"].is_string(), "{after}");
 }
 
 /// A node with no channel says so, rather than reporting a verification failure
