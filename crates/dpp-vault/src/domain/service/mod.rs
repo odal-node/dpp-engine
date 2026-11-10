@@ -64,6 +64,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::AuditRepository,
     evidence::EvidenceDossierRepository,
+    node_signal::NodeSignals,
     operator::OperatorConfigRepository,
     registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
     registry_transfer::RegistryTransferOutbox,
@@ -110,6 +111,11 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
+    /// Outcomes of the node's own work that leave no other trace: how signing
+    /// went at publish, and how an operator's ruleset reload went. Read by the
+    /// node-health route, so they survive a restart. `None` (test doubles) leaves
+    /// failures on the Prometheus counters alone, and the route omits the signals.
+    pub signals: Option<Arc<dyn NodeSignals>>,
     /// Archived versions of passports — EN 18221:2026 clause 4.2.
     ///
     /// This is now the only thing in this struct called an archive, and it is
@@ -244,6 +250,7 @@ impl PassportService {
             registry_sync,
             backup,
             registry_outbox: None,
+            signals: None,
             versions: None,
             successors: None,
             transfer_store: None,
@@ -306,6 +313,14 @@ impl PassportService {
     #[must_use]
     pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
         self.registry_outbox = Some(outbox);
+        self
+    }
+
+    /// Record the outcomes this service sees in the database, so the node-health
+    /// route reports them across restarts.
+    #[must_use]
+    pub fn with_signals(mut self, signals: Arc<dyn NodeSignals>) -> Self {
+        self.signals = Some(signals);
         self
     }
 

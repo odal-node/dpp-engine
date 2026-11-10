@@ -1,11 +1,15 @@
+use std::collections::BTreeMap;
+
 use axum::{
     Json,
     extract::{Extension, State},
     http::StatusCode,
     response::IntoResponse,
 };
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+use dpp_types::node_signal::{Signal, SignalState};
 use dpp_types::registry_sync::STALL_THRESHOLD;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
@@ -27,33 +31,79 @@ pub struct RegistryOutboxHealth {
     pub rejected: i64,
 }
 
-/// The counters an operator pages on. Public so the OpenAPI contract test can
-/// serialise it, as [`super::node_state::NodeState`] is.
+/// One signal, as the route serves it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeSignal {
+    /// Whether the latest recorded outcome is a failure: the field to alarm on.
+    pub failing: bool,
+    /// Failures since the node was first started. Never resets, so it says how
+    /// often, not whether the node is failing now.
+    pub failures: i64,
+    /// When the latest failure was recorded. Absent until the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_failed_at: Option<DateTime<Utc>>,
+    /// When the latest success was recorded. Absent until the first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_succeeded_at: Option<DateTime<Utc>>,
+}
+
+impl From<SignalState> for NodeSignal {
+    fn from(state: SignalState) -> Self {
+        Self {
+            failing: state.is_failing(),
+            failures: state.failures,
+            last_failed_at: state.last_failed_at,
+            last_succeeded_at: state.last_succeeded_at,
+        }
+    }
+}
+
+/// Every signal, keyed by its name. The one place the wire map is built, so the
+/// OpenAPI contract test's fixture lists exactly the signals the route serves.
+pub fn signals_view(states: Vec<(Signal, SignalState)>) -> BTreeMap<&'static str, NodeSignal> {
+    states
+        .into_iter()
+        .map(|(signal, state)| (signal.name(), state.into()))
+        .collect()
+}
+
+/// What an operator pages on. Public so the OpenAPI contract test can serialise
+/// it, as [`super::node_state::NodeState`] is.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeHealth {
-    /// Publishes refused because a passport could not be signed, since the
-    /// process started.
-    pub signing_failures_total: u64,
-    /// Ruleset bundles refused on load, since the process started.
-    pub ruleset_load_failures_total: u64,
+    /// Outcomes of the node's own work that leave no other trace, by signal name.
+    /// Absent on a deployment with no signal store wired, rather than reported as
+    /// a healthy node.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signals: Option<BTreeMap<&'static str, NodeSignal>>,
     /// Absent on a deployment with no registry-sync outbox wired, rather than
     /// reported as zeros a monitor would read as an empty queue.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_outbox: Option<RegistryOutboxHealth>,
 }
 
-/// `GET /api/v1/node/health` — the operational counters a monitor needs, for a
-/// deployment that cannot scrape `/metrics`. Authenticated, for the same reason
-/// as `/node/state`: a failing signer or a stalled queue is a description of
-/// where the node is weak. The unauthenticated `/health` answers liveness only.
+/// `GET /api/v1/node/health` — what a monitor needs, for a deployment that
+/// cannot scrape `/metrics`. Authenticated, for the same reason as
+/// `/node/state`: a failing signer or a stalled queue is a description of where
+/// the node is weak. The unauthenticated `/health` answers liveness only.
 ///
-/// The two process counters reset when the node restarts, so a restart hides
-/// failures from before it. The outbox is read from the database and does not.
+/// The signals are kept in the database, so a restart does not clear them. Each
+/// says whether it is failing now, which is what tells a failing node from one
+/// that failed once. The Prometheus counters on `/metrics` still reset on
+/// restart.
 pub async fn node_health_handler(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthContext>,
 ) -> impl IntoResponse {
+    let signals = match &state.service.signals {
+        Some(store) => match store.states().await {
+            Ok(states) => Some(signals_view(states)),
+            Err(e) => return internal_error(e),
+        },
+        None => None,
+    };
     let registry_outbox = match &state.service.registry_outbox {
         Some(outbox) => match outbox.status_counts(STALL_THRESHOLD).await {
             Ok(c) => Some(RegistryOutboxHealth {
@@ -70,8 +120,7 @@ pub async fn node_health_handler(
     (
         StatusCode::OK,
         Json(NodeHealth {
-            signing_failures_total: dpp_common::metrics::signing_failures(),
-            ruleset_load_failures_total: dpp_common::metrics::ruleset_load_failures(),
+            signals,
             registry_outbox,
         }),
     )
@@ -82,18 +131,35 @@ pub async fn node_health_handler(
 mod tests {
     use super::*;
 
-    /// With no outbox wired the block is omitted entirely; the counters stay.
+    /// With no signal store or outbox wired, each block is omitted rather than
+    /// reported as a healthy node.
     #[test]
-    fn an_unwired_outbox_is_omitted_rather_than_reported_as_empty() {
+    fn an_unwired_store_and_outbox_are_omitted_rather_than_reported_as_healthy() {
         let json = serde_json::to_value(NodeHealth {
-            signing_failures_total: 0,
-            ruleset_load_failures_total: 0,
+            signals: None,
             registry_outbox: None,
         })
         .expect("serialises");
 
-        assert!(json.get("registryOutbox").is_none(), "{json}");
-        assert_eq!(json["signingFailuresTotal"], 0);
-        assert_eq!(json["rulesetLoadFailuresTotal"], 0);
+        assert_eq!(json, serde_json::json!({}), "{json}");
+    }
+
+    /// A store that has recorded nothing still lists every signal, so a monitor
+    /// reading `signals.signing.failing` finds the key.
+    #[test]
+    fn every_signal_is_listed_before_anything_is_recorded() {
+        let states = Signal::ALL
+            .into_iter()
+            .map(|signal| (signal, SignalState::default()))
+            .collect();
+        let json = serde_json::to_value(signals_view(states)).expect("serialises");
+
+        for signal in Signal::ALL {
+            assert_eq!(
+                json[signal.name()],
+                serde_json::json!({ "failing": false, "failures": 0 }),
+                "{json}"
+            );
+        }
     }
 }

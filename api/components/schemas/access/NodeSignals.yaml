@@ -1,0 +1,21 @@
+type: object
+description: |
+  Every signal the node keeps, by name. Each is listed whether or not anything
+  has been recorded for it yet. A later release may add signals; alarm on each
+  one's `failing`.
+required:
+  - signing
+  - rulesetLoad
+properties:
+  signing:
+    $ref: ./NodeSignal.yaml
+    description: |
+      Signing a passport at publish. A failure is a publish refused because the
+      passport could not be signed.
+  rulesetLoad:
+    $ref: ./NodeSignal.yaml
+    description: |
+      Loading the Compliance Current ruleset from its channel, at boot, on each
+      poll, or on an operator's reload. A failure is a channel that could not be
+      read or a bundle it served that was refused; the node keeps the ruleset it
+      had. Recorded only when a channel is configured.

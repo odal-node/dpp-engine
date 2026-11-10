@@ -19,6 +19,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::PassportAuditEntry,
     auth::AuthContext,
+    node_signal::{Outcome, Signal},
     snapshot::snapshot_json_key,
     state_change::{PassportWrite, StateChange},
 };
@@ -138,6 +139,21 @@ fn gate_outcome(
 }
 
 impl PassportService {
+    /// Record how signing went, on the durable signal when one is wired; a failure
+    /// is also counted on the Prometheus counter. A record that cannot be written
+    /// is logged rather than returned: it must never change what the publish
+    /// answers.
+    async fn note_signing(&self, outcome: Outcome) {
+        if outcome == Outcome::Failed {
+            dpp_common::metrics::record_signing_failure();
+        }
+        if let Some(signals) = &self.signals
+            && let Err(e) = signals.record(Signal::Signing, outcome).await
+        {
+            tracing::error!(error = %e, ?outcome, "signing outcome could not be recorded");
+        }
+    }
+
     /// Sign and publish a draft passport with Ed25519 / JWS.
     ///
     /// Validates product group data, calls the identity service to sign, atomically
@@ -390,21 +406,19 @@ impl PassportService {
         let payload =
             serde_json::to_value(&passport).map_err(|e| DppError::Serialisation(e.to_string()))?;
 
-        let jws = self
-            .identity
-            .sign_passport(passport.id, &payload)
-            .await
-            .map(|c| c.jws)
-            .map_err(|e| {
-                dpp_common::metrics::record_signing_failure();
+        let jws = match self.identity.sign_passport(passport.id, &payload).await {
+            Ok(c) => c.jws,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
                     "publish aborted — signing failed; passport remains draft"
                 );
-                DppError::Signing(e.to_string())
-            })?;
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
         passport.jws_signature = Some(jws);
 
         // Public verifiability: also sign the *public (redacted) view* — the exact
@@ -418,21 +432,19 @@ impl PassportService {
         // over itself; the full-payload `jws_signature` above stays Confidential
         // for authenticated full-passport verification.
         let public_view = crate::public_view::public_view(&passport);
-        let public_jws = self
-            .identity
-            .sign_passport(passport.id, &public_view)
-            .await
-            .map(|c| c.jws)
-            .map_err(|e| {
-                dpp_common::metrics::record_signing_failure();
+        let public_jws = match self.identity.sign_passport(passport.id, &public_view).await {
+            Ok(c) => c.jws,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
                     "publish aborted — public-view signing failed; passport remains draft"
                 );
-                DppError::Signing(e.to_string())
-            })?;
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
         passport.public_jws_signature = Some(public_jws);
 
         // Each non-public disclosure set gets its own proof over its own view.
@@ -443,22 +455,29 @@ impl PassportService {
         // siblings so all three describe the same moment, and keyed by
         // disclosure set so the artefact names the data it covers rather than
         // the actor vocabulary of one regulation.
-        passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
+        let disclosure_signatures = match crate::public_view::sign_disclosure_views(
             self.identity.as_ref(),
             &passport,
         )
         .await
-        .map_err(|e| {
-            dpp_common::metrics::record_signing_failure();
-            metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
-                .increment(1);
-            tracing::error!(
-                code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
-                error = %e,
-                "publish aborted — disclosure-view signing failed; passport remains draft"
-            );
-            DppError::Signing(e.to_string())
-        })?;
+        {
+            Ok(signatures) => signatures,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
+                metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
+                    .increment(1);
+                tracing::error!(
+                    code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
+                    error = %e,
+                    "publish aborted — disclosure-view signing failed; passport remains draft"
+                );
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
+        passport.disclosure_signatures = disclosure_signatures;
+        // Every signature this publish needs is made. What follows can still
+        // refuse it, but not for signing.
+        self.note_signing(Outcome::Succeeded).await;
 
         // The EU-registry registration this publish owes, if one can be built.
         //

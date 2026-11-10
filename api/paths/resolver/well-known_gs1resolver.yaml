@@ -1,0 +1,23 @@
+get:
+  operationId: getResolverDescription
+  summary: GS1 resolver description file
+  description: |
+    The resolver description file that the GS1 Conformant Resolver Standard asks
+    a resolver to publish at this path (section 3). It names the root this
+    resolver answers under and the GS1 primary keys it supports, which is the GTIN
+    (AI 01) and no other. A client can read it to learn what a resolver at this
+    host resolves before asking it. Public, unauthenticated.
+
+    The document validates against the description-file schema GS1 publishes.
+    Publishing it is not a claim of conformance to the standard; see
+    `/01/{gtin}`.
+  tags:
+    - Public Resolver
+  security: []
+  responses:
+    '200':
+      description: The description file.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/resolver/ResolverDescription.yaml

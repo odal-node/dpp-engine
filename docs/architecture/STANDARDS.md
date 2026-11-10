@@ -11,7 +11,9 @@ One row per IETF specification this repository cites: every `RFC NNNN` and every
 
 **What is not here.** Acts of Union law, the CEN/CLC harmonised standards, and
 the W3C, GS1, IDTA and ETSI specifications take too many shapes to match
-reliably, so nothing checks them. The register of the library this repository
+reliably, so nothing checks their citations. One GS1 standard, the Conformant
+Resolver Standard, has a row of its own under "GS1" below, because the resolver was
+once described as conforming to it and a claim needs somewhere to live. The register of the library this repository
 builds on, [`dpp-core`'s `STANDARDS.md`](https://github.com/odal-node/dpp-core/blob/main/docs/architecture/STANDARDS.md),
 records those it cites. A specification both repositories cite has a row in
 each, because this one pins dpp-core from crates.io, which does not ship `docs/`,
@@ -47,7 +49,8 @@ re-read a walk down one table, not a search.
 source and updates `Read`. The source for an RFC is
 `https://www.rfc-editor.org/info/rfcNNNN`, whose status line and its
 "Obsoleted by" and "Updated by" lists are what the `Status as read` cell
-records.
+records. The source for the GS1 row is the standard's own page, whose latest
+release is what the row is compared with.
 
 **Every week, a job compares each row with the index.** `.github/workflows/standards-status.yml`
 runs `.github/scripts/standards_status.mjs` against the RFC Editor's `rfc-index.xml`, which
@@ -67,6 +70,15 @@ says `No`, and the gate fails on anything else. The day a claim is made it needs
 what dpp-core requires of one (a named conformance class, the scope, the known
 deviations, and evidence that is not circular, such as the specification's own
 test vectors) and a rule here that holds it to that.
+
+The one specification assessed for a claim is the GS1 Conformant Resolver
+Standard, in the table below. It was assessed against all 25 of its criteria and
+the claim is **declined**, with the reason, the scope and the evidence in
+[`GS1_RESOLVER_CONFORMANCE.md`](GS1_RESOLVER_CONFORMANCE.md). The rule that holds
+that row to its evidence is `crates/dpp-node/tests/gs1_resolver_conformance.rs`:
+it reads the criteria table in that document, and fails if a row names a test
+that does not exist, or if the row below says `Yes` while a mandatory criterion is
+not met, or says `No` when none is unmet.
 
 ## IETF
 
@@ -97,6 +109,12 @@ test vectors) and a rule here that holds it to that.
 | RFC 8017 | PKCS #1: RSA Cryptography Specifications Version 2.2 | Informational. Obsoletes RFC 3447 | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc8017) | `dpp-seal` RSA key identifiers (`cades/signature.rs`, `tests/ca_key_survey.rs`) | Unit tests | No |
 | RFC 8785 | JSON Canonicalization Scheme (JCS) | Informational | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc8785) | Delegated to dpp-core's `dpp-crypto`; cited by `dpp-identity` signing, `dpp-types` audit chain and evidence ordering, and `dpp-vault` | The audit chain's persisted golden value (`dpp-types` `audit.rs`) | No |
 | RFC 9110 | HTTP Semantics | Internet Standard. Obsoletes RFC 2818, RFC 7230, RFC 7231, RFC 7232, RFC 7233, RFC 7235, RFC 7538, RFC 7615, RFC 7694. Updates RFC 3864 | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc9110) | `dpp-resolver` `Accept` negotiation and `q=0` (§12.4, §12.5.1); `dpp-vault` authentication scheme matching (§11.1) and the public read's `Content-Location` (§8.7); `dpp-seal`'s seal-provider client reads the provider's `Date` header | Unit tests | No |
-| RFC 9264 | Linkset: Media Types and a Link Relation Type for Link Sets | Proposed Standard | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc9264) | `dpp-resolver` linkset responses for a GS1 label (`handlers/resolve_by_gtin.rs`) | No test names the linkset | No |
+| RFC 9264 | Linkset: Media Types and a Link Relation Type for Link Sets | Proposed Standard | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc9264) | `dpp-resolver` linkset responses for a GS1 label (`handlers/resolve_by_gtin.rs`) | Linksets are validated against GS1's linkset schema in `crates/dpp-resolver/tests/gs1_conformance.rs` | No |
 | RFC 9278 | JWK Thumbprint URI | Proposed Standard | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc9278) | Delegated to dpp-core; cited by the DID document schema and the demo-dossier generator | None here | No |
 | RFC 9457 | Problem Details for HTTP APIs | Proposed Standard. Obsoletes RFC 7807 | 2026-11-03 | [RFC Editor](https://www.rfc-editor.org/info/rfc9457) | `dpp-common` `Problem` (`http_problem.rs`), which every HTTP surface of the node, the integrator, the identity service and the resolver answers with, and the `Problem` schema | Unit tests (`http_problem.rs` asserts the media type); the OpenAPI contract test | No |
+
+## GS1
+
+| Standard | Revision | Status as read | Read | Source | Implemented in | Evidence | Conformance claimed |
+|---|---|---|---|---|---|---|---|
+| GS1 Conformant Resolver Standard | 1.2.1 | Ratified, August 2026; the latest release. The release before it is 1.2.0 (January 2026) | 2026-11-05 | [GS1](https://ref.gs1.org/standards/resolver/1.2.1/) | `dpp-resolver`: the GS1 Digital Link routes (`handlers/resolve_by_gtin.rs`), the description file (`handlers/resolver_description.rs`), EPC binary decompression (`domain/epc.rs`) | [`GS1_RESOLVER_CONFORMANCE.md`](GS1_RESOLVER_CONFORMANCE.md): 25 criteria, one test each, in `crates/dpp-resolver/tests/gs1_conformance.rs`; GS1's own test suite was run locally against a real stack: 25 of 27 checks pass until the browser trusts the local certificate authority, and 27 of 27 once it does (see there) | No |
