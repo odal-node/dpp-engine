@@ -265,8 +265,9 @@ coderabbit-check-self-test:
 # it weekly as `standards-status.yml`. It reports and never edits the register,
 # because `Read` records a person reading a source. `--self-test` runs it on
 # fixtures; `--index FILE` and `--register FILE` take saved copies. Needs Node.
+[positional-arguments]
 standards-status *args:
-    node .github/scripts/standards_status.mjs {{args}}
+    node .github/scripts/standards_status.mjs "$@"
 
 # Capture a frozen stored-doc fixture for the compatibility guard (needs Docker).
 #

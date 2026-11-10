@@ -210,9 +210,13 @@ async function main() {
   let xml;
   try {
     const at = args.indexOf("--index");
-    xml = at >= 0
-      ? readFileSync(args[at + 1], "utf8")
-      : await (await fetch(INDEX_URL, { signal: AbortSignal.timeout(90_000) })).text();
+    if (at >= 0) {
+      xml = readFileSync(args[at + 1], "utf8");
+    } else {
+      const res = await fetch(INDEX_URL, { signal: AbortSignal.timeout(90_000) });
+      if (!res.ok) throw new Error(`${INDEX_URL} answered HTTP ${res.status}`);
+      xml = await res.text();
+    }
   } catch (e) {
     console.error(`could not read the index: ${e.message}`);
     return 2;
