@@ -59,6 +59,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   against an earlier version keeps its classes and the bytes its signatures
   cover; a new one is written against the new version. (#561)
 
+- **A calculated CO₂e or repairability figure is no longer copied into
+  `co2ePerUnit` or `repairabilityScore`.** *(Breaking for a client that read the
+  calculated figure from either field.)* Create and `PUT /dpp/{id}` copied
+  `complianceResult.co2eScore` and `repairabilityIndex` into the two fields
+  whenever they were unset. A copied `CarbonFootprint` carries no methodology or
+  provenance, so it could not be told from a declaration, and the AAS export
+  reads both fields as the passport's own values. They now hold only what the
+  operator declared, through create or `PUT`, and the calculated figures stay in
+  `complianceResult`. A battery's or a textile's `co2ePerUnitKg` declared in its
+  product group data is still carried to `co2ePerUnit` when a create states no
+  top-level value, as before.
+
+  **Migration:** read the calculated figures from `complianceResult.co2eScore`
+  and `complianceResult.repairabilityIndex`. (#598)
+
 ### Added
 
 - **The resolver describes itself at `/.well-known/gs1resolver`, decompresses an
@@ -304,6 +319,26 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   reported as read in full. (#490)
 
 ### Fixed
+
+- **A published passport is signed with the compliance determination of the
+  content it is published with.** A draft was signed with the determination
+  computed when it was created: `PUT /dpp/{id}` recomputed one in memory and
+  never stored it, and publish computed one for its violation gate and dropped
+  it. So a draft created with one `productGroupData`, edited and then published
+  carried the violations, warnings and receipt of data it no longer had, and so
+  did one published after a ruleset reload. Publish now computes the
+  determination once, over the content it signs, and that one value is judged by
+  the gate, covered by the signatures and stored. Where the computation fails and
+  no obligation is live (nothing registered to evaluate the product group, or an
+  evaluator that cannot assess the data) the passport is published with no
+  determination, not the earlier one. A draft stores the determination of the
+  content it holds at every `PUT`, or none when it cannot be made, in the same
+  statement as the edit. A stored determination could not be replaced by none
+  before: the update merged the document over the stored one, which kept a key
+  the passport no longer carried, and `assessed_at` and `ruleset_version` were
+  kept on their old values; both now follow the passport. A re-publish keeps the
+  determination its first publish stored, since a published passport's content
+  is frozen and its determination with it. (#598)
 
 - **A draft retired without being published gives its carrier serial back.** A
   draft holds the serial it was created with, so that two creates under one GTIN
