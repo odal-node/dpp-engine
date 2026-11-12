@@ -35,6 +35,9 @@ RUN cargo install cargo-auditable --locked
 RUN cargo install cargo-about --locked --version 0.9.2 --features cli
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
+# See node.Dockerfile: the shipped binary carries no symbol table, and the
+# `.dep-v0` section survives the strip.
+ENV CARGO_PROFILE_RELEASE_STRIP=symbols
 
 # ── published: dpp-* from crates.io; strip any local [patch.crates-io] override ──
 # Never honour a developer's local dpp-core override — the sibling ../dpp-core
@@ -85,6 +88,13 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     ca-certificates libssl3 curl \
     && rm -rf /var/lib/apt/lists/*
 
+# See node.Dockerfile: no setuid or setgid bit survives, apt and dpkg go, and
+# `/var/lib/dpkg/status` stays for vulnerability scanners.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
+    && rm -f /usr/bin/apt /usr/bin/apt-get /usr/bin/apt-cache /usr/bin/apt-cdrom \
+             /usr/bin/apt-config /usr/bin/apt-key /usr/bin/apt-mark /usr/bin/dpkg /usr/bin/dpkg-* \
+    && rm -rf /etc/apt /usr/lib/apt /var/cache/apt
+
 # Fixed, non-zero uid/gid — and for the resolver this number is part of the
 # deployment contract, not an implementation detail. The shipped compose mounts
 # no volumes here, but a deployment that enables scan telemetry over mTLS
@@ -94,7 +104,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # in build_scan_flush_client. Treat a change to 1000 as a breaking change for
 # any deployment that mounts a credential in.
 RUN groupadd --system --gid 1000 odal \
-    && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
+    && useradd --system --uid 1000 --gid odal --no-create-home --home-dir /nonexistent \
+       --shell /usr/sbin/nologin odal
 
 COPY --from=builder --chmod=755 /build/dpp-engine/target/release/dpp-resolver /usr/local/bin/dpp-resolver
 

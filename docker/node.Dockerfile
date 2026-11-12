@@ -28,6 +28,12 @@ ARG BUILD_MODE=published
 FROM rust:1.99.1-slim-bookworm AS builder-base
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
+# The shipped binary carries no symbol table. It names every internal function
+# and module, which is no use to an operator and a map to anyone else, and it is
+# about a quarter of the file. Panics still print their message and source
+# location; a backtrace loses the function names. The `.dep-v0` section that
+# `cargo auditable` adds below is not a symbol and survives, which CI checks.
+ENV CARGO_PROFILE_RELEASE_STRIP=symbols
 
 # A Rust binary carries no record of what went into it. Scanning this image
 # with syft or trivy finds the Debian packages in the runtime stage and **zero**
@@ -114,11 +120,24 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Nothing in the running image installs software or changes user, so the tools
+# for both go once the packages are in. No file keeps a setuid or setgid bit, so
+# code running as the service user cannot become anyone else through one, and
+# apt and dpkg are removed. `/var/lib/dpkg/status` stays: vulnerability scanners
+# read it to list this layer's Debian packages, and without it they would report
+# none. CI's image job checks all three.
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + \
+    && rm -f /usr/bin/apt /usr/bin/apt-get /usr/bin/apt-cache /usr/bin/apt-cdrom \
+             /usr/bin/apt-config /usr/bin/apt-key /usr/bin/apt-mark /usr/bin/dpkg /usr/bin/dpkg-* \
+    && rm -rf /etc/apt /usr/lib/apt /var/cache/apt
+
 # Fixed, non-zero uid/gid — no host user correspondence needed since the
 # published deployment path only ever binds named Docker volumes, never a host
-# bind-mount.
+# bind-mount. The home is `/nonexistent`: the service needs none, and `useradd`'s
+# default would name a home directory that is not there.
 RUN groupadd --system --gid 1000 odal \
-    && useradd --system --uid 1000 --gid odal --no-create-home --shell /usr/sbin/nologin odal
+    && useradd --system --uid 1000 --gid odal --no-create-home --home-dir /nonexistent \
+       --shell /usr/sbin/nologin odal
 
 COPY --from=builder --chmod=755 /build/dpp-engine/target/release/dpp-node /usr/local/bin/dpp-node
 
