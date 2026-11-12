@@ -372,6 +372,18 @@ pub fn require_secure_transport(url: &str) -> Result<()> {
     }
 }
 
+/// The local-admin client for the vault at `vault_url`, refused over plain HTTP
+/// to a remote host.
+///
+/// The Basic credential is the node's own admin password, so it gets the check
+/// every API-key command gets in [`load_client`]. Bootstrap and guided setup
+/// build this client themselves and never pass through that function, so without
+/// the check here they would send the password in cleartext to a remote node.
+pub fn local_admin_client(vault_url: &str, user: &str, pass: &str) -> Result<OdalClient> {
+    require_secure_transport(vault_url)?;
+    Ok(OdalClient::with_local_admin(user, pass))
+}
+
 /// Load the active profile and build a client **without** requiring that
 /// anything be configured.
 ///
@@ -481,7 +493,17 @@ fn shared_trailing_clause(errors: &[ProblemFieldError]) -> Option<String> {
 
 #[cfg(test)]
 mod transport {
-    use super::require_secure_transport;
+    use super::{local_admin_client, require_secure_transport};
+
+    /// Bootstrap and guided setup send the node's admin password, and they build
+    /// their client here rather than through `load_client`, so the same rule is
+    /// pinned on this path: no admin client for plain HTTP to a remote host.
+    #[test]
+    fn the_admin_password_goes_over_https_or_to_localhost_only() {
+        assert!(local_admin_client("https://node.example/vault", "admin", "pw").is_ok());
+        assert!(local_admin_client("http://localhost:8001/vault", "admin", "pw").is_ok());
+        assert!(local_admin_client("http://node.example/vault", "admin", "pw").is_err());
+    }
 
     #[test]
     fn a_credential_goes_over_https_or_to_localhost_only() {

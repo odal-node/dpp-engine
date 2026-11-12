@@ -13,14 +13,23 @@ PUBLISH=1
 [ "${1:-}" = "--draft" ] && PUBLISH=0
 
 # The key travels as a Bearer credential, so plain HTTP is allowed only to this
-# machine. Anything else must be HTTPS.
+# machine. Anything else must be HTTPS. The whole authority (everything before the
+# first `/`) must be a loopback host with an optional numeric port: a prefix match
+# would pass `http://localhost:80@remote.example`, which curl sends to the host
+# after the `@`.
+refuse_plain_http() {
+  echo "refusing to send ODAL_API_KEY over plain HTTP to $VAULT_URL" >&2
+  exit 1
+}
 case "$VAULT_URL" in
   https://*) ;;
-  http://localhost|http://localhost[:/]*|http://127.0.0.1|http://127.0.0.1[:/]*|http://\[::1\]|http://\[::1\][:/]*) ;;
-  *)
-    echo "refusing to send ODAL_API_KEY over plain HTTP to $VAULT_URL" >&2
-    exit 1
+  http://*)
+    authority="${VAULT_URL#http://}"
+    authority="${authority%%/*}"
+    printf '%s' "$authority" | grep -Eq '^(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$' \
+      || refuse_plain_http
     ;;
+  *) refuse_plain_http ;;
 esac
 
 if [ -z "${ODAL_API_KEY:-}" ]; then

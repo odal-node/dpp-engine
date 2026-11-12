@@ -36,8 +36,9 @@ const MAX_DECOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
 /// declarations top out around a dozen).
 const MAX_ATTRS_PER_TAG: usize = 64;
 
-/// Most shared strings a workbook may declare. The reader reserves room for the
-/// declared count before it reads a single string, so the count is capped first.
+/// Most unique shared strings a workbook may declare. The reader reserves room
+/// for the declared `uniqueCount` before it reads a single string, so that count
+/// is capped first. `count`, the total number of references, sizes nothing.
 const MAX_SHARED_STRINGS: u64 = 1_000_000;
 
 /// Parse XLSX bytes into a list of rows.
@@ -174,8 +175,12 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
         let name = entry
             .name()
             .map_err(|e| ParseError::Csv(format!("XLSX entry name error: {e}")))?;
+        // The reader finds a part by its name case-insensitively and with `\` read
+        // as `/`, so the checks name parts the same way: otherwise a part named
+        // `xl/SharedStrings.xml` is read as the shared strings and escapes their cap.
+        let name = name.replace('\\', "/").to_ascii_lowercase();
         let is_worksheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
-        let is_shared_strings = name == "xl/sharedStrings.xml";
+        let is_shared_strings = name == "sharedstrings.xml" || name.ends_with("/sharedstrings.xml");
         let is_xml = name.ends_with(".xml") || name.ends_with(".rels");
         let mut limited = LimitedReader {
             inner: entry,
@@ -239,10 +244,12 @@ fn scan_xml_entry<R: BufRead>(
                         if is_cell && attr.key.local_name().as_ref() == "r" {
                             r_value = Some(attr.value.into_owned());
                         } else if is_shared_strings_root
-                            && matches!(attr.key.local_name().as_ref(), "uniqueCount" | "count")
+                            && attr.key.local_name().as_ref() == "uniqueCount"
                         {
                             // The reader reserves room for this many strings before
-                            // reading any, so a declared count is bounded here.
+                            // reading any, so the declared `uniqueCount` is bounded
+                            // here. `count` totals the references to them and sizes
+                            // nothing; an ordinary large workbook exceeds the cap by it.
                             let declared = attr.value.trim().parse::<u64>().unwrap_or(0);
                             if declared > MAX_SHARED_STRINGS {
                                 return Err(ParseError::Csv(format!(
@@ -466,6 +473,34 @@ mod tests {
         assert!(scan_xml_entry(Cursor::new(declared.as_bytes()), false, true).is_err());
         let small = br#"<sst xmlns="urn:s" count="1" uniqueCount="1"/>"#;
         assert!(scan_xml_entry(Cursor::new(&small[..]), false, true).is_ok());
+    }
+
+    /// `count` totals the references to shared strings, and 100,000 rows of eleven
+    /// text columns already pass the cap by it. Only `uniqueCount` sizes the
+    /// reader's reservation, so only it is capped.
+    #[test]
+    fn a_large_total_reference_count_is_accepted() {
+        let declared = format!(
+            r#"<sst xmlns="urn:s" count="{}" uniqueCount="1"/>"#,
+            MAX_SHARED_STRINGS + 1
+        );
+        assert!(scan_xml_entry(Cursor::new(declared.as_bytes()), false, true).is_ok());
+    }
+
+    /// The reader finds the shared strings under any letter case, so a part named
+    /// with other case is capped like the usual one.
+    #[test]
+    fn a_shared_strings_part_named_in_other_case_is_still_capped() {
+        let declared = format!(
+            r#"<sst xmlns="urn:s" count="1" uniqueCount="{}"/>"#,
+            MAX_SHARED_STRINGS + 1
+        );
+        let sheet = br#"<worksheet><sheetData><c r="A1"/></sheetData></worksheet>"#;
+        let zip = zip_with(&[
+            ("xl/worksheets/sheet1.xml", sheet),
+            ("xl/SharedStrings.xml", declared.as_bytes()),
+        ]);
+        assert!(precheck_xlsx(&zip).is_err());
     }
 
     /// The attribute-count guard must also cover non-worksheet XML parts

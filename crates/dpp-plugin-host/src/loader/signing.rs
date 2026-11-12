@@ -115,6 +115,22 @@ mod tests {
         wasm_path
     }
 
+    /// The signature is checked over the bytes the loader holds, not over the
+    /// file read again: bytes swapped on disk after the read cannot pass for the
+    /// ones that were signed, and the loader compiles exactly what it verified.
+    #[test]
+    fn verification_covers_the_supplied_bytes_not_the_file() {
+        let (signing_key, verifying_key) = keypair(9);
+        let dir = TempDir::new().unwrap();
+        let wasm_path = write_signed_plugin(&dir, b"bytes-a", &signing_key);
+        std::fs::write(&wasm_path, b"bytes-b").unwrap();
+
+        verify_plugin_signature_over(&wasm_path, b"bytes-a", &verifying_key)
+            .expect("the bytes held are the bytes that were signed");
+        verify_plugin_signature_over(&wasm_path, b"bytes-b", &verifying_key)
+            .expect_err("bytes other than the signed ones do not verify");
+    }
+
     #[test]
     fn valid_raw_signature_verifies() {
         let (signing_key, verifying_key) = keypair(1);

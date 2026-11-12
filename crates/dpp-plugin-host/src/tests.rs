@@ -387,6 +387,21 @@ fn build_engine_succeeds() {
     assert!(engine.is_ok());
 }
 
+/// The memory allowance is per memory, so a module that declares two could spend
+/// it twice. The engine refuses such a module when it is compiled; one memory, as
+/// every plugin declares, compiles.
+#[test]
+fn a_module_declaring_two_memories_is_refused_at_compile_time() {
+    let engine = crate::runtime::build_engine().unwrap();
+    let one = wat::parse_str("(module (memory 1))").expect("parse WAT");
+    assert!(wasmtime::Module::new(&engine, &one).is_ok());
+    let two = wat::parse_str("(module (memory 1) (memory 1))").expect("parse WAT");
+    assert!(
+        wasmtime::Module::new(&engine, &two).is_err(),
+        "a second memory would double the per-instance memory allowance"
+    );
+}
+
 #[test]
 fn build_store_has_fuel() {
     let engine = crate::runtime::build_engine().unwrap();

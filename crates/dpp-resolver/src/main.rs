@@ -99,7 +99,14 @@ impl RateLimiter {
         }
         drop(last_sweep);
         // Hard cap: under a flood of fresh (spoofed) IPs none are expired, so the
-        // expiry retain above can't shrink the map. Clear it to stay bounded.
+        // expiry retain above can't shrink the map. Clear it to stay bounded, but
+        // reclaim expired buckets first: the gated sweep may not have run this
+        // window, and clearing a map that expiry could have shrunk would reset
+        // the counters of clients still inside their window.
+        if buckets.len() > self.max_buckets {
+            buckets.retain(|_, (start, _)| now.duration_since(*start) < self.window);
+            *self.last_sweep.lock().unwrap() = now;
+        }
         if buckets.len() > self.max_buckets {
             buckets.clear();
         }
@@ -540,6 +547,42 @@ mod security_regression {
         }
         let len = limiter.buckets.lock().unwrap().len();
         assert!(len <= CAP, "bucket map grew to {len}, cap {CAP}");
+    }
+
+    /// Reaching the hard cap reclaims expired buckets before it clears live ones.
+    ///
+    /// The gated sweep runs at most once a window, so the map can pass its cap
+    /// while holding buckets that have already expired. Clearing it then reset
+    /// every live counter, and a client that had spent its budget was let through
+    /// again. The state is set directly rather than waited for, so the test does
+    /// not depend on timing.
+    #[test]
+    fn the_hard_cap_reclaims_expired_buckets_before_clearing_live_ones() {
+        let window = Duration::from_secs(60);
+        let limiter = RateLimiter::new(1, window, false).with_max_buckets(4);
+        let now = Instant::now();
+        let stale = now
+            .checked_sub(window * 2)
+            .expect("the clock is more than two windows past its epoch");
+        {
+            let mut buckets = limiter.buckets.lock().unwrap();
+            for i in 0u8..4 {
+                buckets.insert(IpAddr::from([10, 0, 0, i]), (stale, 1));
+            }
+        }
+        // The gated sweep has just run, so it will not run again this window.
+        *limiter.last_sweep.lock().unwrap() = now;
+
+        let client = ip("192.0.2.1");
+        assert!(
+            limiter.check(client),
+            "the first request is within the limit"
+        );
+        // The map is now past its cap, and four of its five buckets have expired.
+        assert!(
+            !limiter.check(client),
+            "a client that spent its budget is still limited"
+        );
     }
 
     /// The cap the binary actually runs with.

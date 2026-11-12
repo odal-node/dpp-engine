@@ -63,12 +63,13 @@ PARSED="$(awk '
   }
   # The array may be written on one line or many. Every quoted entry on it is
   # read, so an ID cannot hide in a layout this parser skips. An entry that is not
-  # a RUSTSEC ID is reported rather than dropped.
+  # a RUSTSEC ID is reported rather than dropped. TOML allows both basic ("...")
+  # and literal (\047...\047) strings, so both are read; \047 is a single quote.
   /^[ \t]*ignore[ \t]*=[ \t]*\[/ { inlist = 1 }
   inlist {
     rest = $0
     sub(/#.*/, "", rest)
-    while (match(rest, /"[^"]*"/)) {
+    while (match(rest, /"[^"]*"|\047[^\047]*\047/)) {
       entry = substr(rest, RSTART + 1, RLENGTH - 2)
       if (entry ~ /^RUSTSEC-[0-9]{4}-[0-9]{4}$/) print "IGNORED\t" entry
       else print "MALFORMED\t" entry

@@ -16,7 +16,7 @@ use crate::{
         },
         onboarding::{action_bootstrap, action_node_state},
     },
-    http::OdalClient,
+    http::local_admin_client,
 };
 
 use super::forms::prompt_bootstrap_params;
@@ -247,7 +247,7 @@ async fn step_onboard(cfg: &mut Config) -> Result<()> {
             .prompt()?,
     };
 
-    let admin = OdalClient::with_local_admin(&user, &pass);
+    let admin = local_admin_client(&cfg.vault_url, &user, &pass)?;
 
     // Idempotency: if the node is already claimed, don't mint a second key —
     // offer to connect this machine with an existing key instead.

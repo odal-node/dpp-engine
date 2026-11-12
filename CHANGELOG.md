@@ -431,7 +431,11 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **An API key's idempotent replays belong to that key.** Every Bearer key used to
   share one replay namespace, so a read-scoped key could replay an administrator's
-  cached response. Retries made with a rotated key now re-execute. (#576)
+  cached response. Retries made with a rotated key now re-execute. A retry, sent
+  after the upgrade, of a request that completed before it also runs again once:
+  the earlier record sits under the shared namespace, and it is not consulted, so
+  that no key can be answered with another's response. Such records expire 24
+  hours after they were written. (#576)
 
 - **The local admin credential is refused from another origin.** A state change
   arriving with a cross-origin `Origin` header and a Basic credential is refused

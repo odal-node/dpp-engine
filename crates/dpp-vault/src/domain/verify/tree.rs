@@ -402,6 +402,54 @@ mod tests {
         );
     }
 
+    /// A URI reached a second time is skipped only when it carries the same pin.
+    /// One that pins something else is a claim the first fetch contradicts, so it
+    /// is an integrity failure, not a duplicate.
+    #[tokio::test]
+    async fn a_uri_referenced_with_two_different_pins_is_a_hash_mismatch() {
+        let map = HashMap::from([("u://c".into(), node_json("csig", &[]))]);
+        let roots = [r("u://c", "csig"), r("u://c", "another-signature")];
+        let report = verify_tree(&roots, fetcher(map), 6, DEFAULT_NODE_CAP).await;
+        assert!(!report.verified);
+        assert_eq!(report.nodes.len(), 2, "{:?}", report.nodes);
+        assert_eq!(report.nodes[1].reason, Some(RefUnverifiable::HashMismatch));
+    }
+
+    /// A node listing more children than `MAX_CHILDREN_PER_NODE` is refused before
+    /// any child is copied or queued; one listing exactly that many is walked.
+    #[tokio::test]
+    async fn a_node_with_more_than_256_children_is_refused_and_256_are_walked() {
+        fn wide(count: usize) -> (HashMap<String, Value>, Vec<ComponentRef>) {
+            let children: Vec<(String, String)> = (0..count)
+                .map(|i| (format!("u://leaf{i}"), format!("leaf{i}sig")))
+                .collect();
+            let refs: Vec<(&str, &str)> = children
+                .iter()
+                .map(|(uri, sig)| (uri.as_str(), sig.as_str()))
+                .collect();
+            let mut map: HashMap<String, Value> = children
+                .iter()
+                .map(|(uri, sig)| (uri.clone(), node_json(sig, &[])))
+                .collect();
+            map.insert("u://root".into(), node_json("rootsig", &refs));
+            (map, vec![r("u://root", "rootsig")])
+        }
+
+        let (map, roots) = wide(MAX_CHILDREN_PER_NODE + 1);
+        let report = verify_tree(&roots, fetcher(map), 6, 10_000).await;
+        assert!(!report.verified);
+        assert_eq!(report.nodes.len(), 1, "no child may be queued");
+        assert_eq!(
+            report.nodes[0].reason,
+            Some(RefUnverifiable::NodeCapExceeded)
+        );
+
+        let (map, roots) = wide(MAX_CHILDREN_PER_NODE);
+        let report = verify_tree(&roots, fetcher(map), 6, 10_000).await;
+        assert!(report.verified, "{:?}", report.nodes.first());
+        assert_eq!(report.nodes.len(), MAX_CHILDREN_PER_NODE + 1);
+    }
+
     #[tokio::test]
     async fn unpublished_child_fails_closed() {
         // A child that fetches but carries no publicJwsSignature (e.g. a draft)

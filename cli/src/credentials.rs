@@ -180,6 +180,11 @@ fn parse_stdin_secret(raw: &str) -> Result<String> {
 /// the secret is being written. On Unix the file is opened owner-only. `mode`
 /// applies only when the file is created, so an existing file is tightened
 /// through the open handle before anything is written to it.
+///
+/// It is emptied only after that succeeds. Truncating on open would leave an
+/// existing file empty whenever the permission change then fails, for one owned
+/// by another account, say, where the write would otherwise have been refused
+/// with its contents intact.
 #[cfg(unix)]
 pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
@@ -187,10 +192,11 @@ pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(false)
         .mode(0o600)
         .open(path)?;
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.set_len(0)?;
     file.write_all(content)
 }
 

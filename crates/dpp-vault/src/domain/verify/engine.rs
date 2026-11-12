@@ -657,6 +657,82 @@ mod tests {
         ));
     }
 
+    /// An inspector that would accept any seal it is shown. With it in place, the
+    /// only thing that can fail the seal check is the dossier's own claim about
+    /// which signature the seal covers.
+    struct AcceptingInspector;
+
+    impl dpp_types::SealInspector for AcceptingInspector {
+        fn origin(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+        ) -> Option<dpp_types::SealOrigin> {
+            None
+        }
+        fn binding(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+            _payload_hash: &str,
+        ) -> dpp_types::SealBinding {
+            dpp_types::SealBinding::CoversThisSignature
+        }
+        fn evidenced_level(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+        ) -> Option<dpp_domain::seal::SealConformanceLevel> {
+            None
+        }
+        fn attested_sealing_time(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+        ) -> Option<chrono::DateTime<Utc>> {
+            None
+        }
+        fn archival_freshness(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+            _now: chrono::DateTime<Utc>,
+        ) -> dpp_types::ArchivalFreshness {
+            dpp_types::ArchivalFreshness::NotArchived
+        }
+        fn certificate_standing(
+            &self,
+            _envelope: &dpp_domain::seal::SealedEnvelope,
+            _now: chrono::DateTime<Utc>,
+        ) -> Option<dpp_types::CertificateStanding> {
+            None
+        }
+    }
+
+    /// A seal must cover the full view this dossier carries. The section names the
+    /// signature it covers, but that name is only as good as the dossier, so a seal
+    /// naming another signature fails even under an inspector that accepts it.
+    #[test]
+    fn a_seal_naming_a_signature_other_than_the_full_view_fails() {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut dossier = valid_dossier(&signing_key);
+        dossier.qualified_seal = Some(serde_json::json!({
+            "seal": {
+                "format": "CADES",
+                "sealValue": "p7s",
+                "sealedAt": "2026-11-12T00:00:00Z",
+                "placeholder": false,
+            },
+            "signedOverJws": "another.signature.entirely",
+            "payloadHash": "ab".repeat(32),
+        }));
+        assert_ne!(dossier.full_view.jws, "another.signature.entirely");
+        let report = verify_dossier(&dossier, Some(&AcceptingInspector));
+        assert!(
+            matches!(
+                by_name(&report, "qualified_seal"),
+                CheckStatus::Fail(reason) if reason.contains("other than the full view")
+            ),
+            "{:?}",
+            by_name(&report, "qualified_seal")
+        );
+    }
+
     #[test]
     fn tampered_full_view_payload_flips_only_that_check() {
         let signing_key = SigningKey::from_bytes(&[9u8; 32]);
