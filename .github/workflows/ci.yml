@@ -962,3 +962,39 @@ jobs:
             exit 1
           fi
           echo "${{ matrix.image }}: LICENSE and a $(grep -c '^Used by:' "$notices")-licence third-party notice are in the image."
+
+      # The runtime stage removes what a running image never needs: setuid and
+      # setgid bits, the package manager, the service user's home, and the
+      # binary's symbol table. Each is a line in the Dockerfile that a later edit
+      # could drop without any other check noticing, so each is checked here.
+      - name: The image is hardened
+        if: steps.scope.outputs.build == 'true'
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE}:ci"
+          setuid="$(docker run --rm --user 0 --entrypoint /bin/sh "$tag" -c 'find / -xdev -perm /6000 -type f 2>/dev/null; true')"
+          if [ -n "$setuid" ]; then
+            echo "::error::${IMAGE} has files with a setuid or setgid bit: ${setuid//$'\n'/, }"
+            exit 1
+          fi
+          tools="$(docker run --rm --entrypoint /bin/sh "$tag" -c 'for t in apt apt-get dpkg; do command -v "$t" || true; done')"
+          if [ -n "$tools" ]; then
+            echo "::error::${IMAGE} still carries a package manager: ${tools//$'\n'/, }"
+            exit 1
+          fi
+          if ! docker run --rm --entrypoint /bin/sh "$tag" -c 'test -s /var/lib/dpkg/status'; then
+            echo "::error::${IMAGE} has lost /var/lib/dpkg/status, so a vulnerability scan would list none of its Debian packages."
+            exit 1
+          fi
+          home="$(docker run --rm --entrypoint /bin/sh "$tag" -c 'getent passwd odal | cut -d: -f6')"
+          if [ "$home" != "/nonexistent" ]; then
+            echo "::error::${IMAGE}'s service user has home '${home}', not /nonexistent."
+            exit 1
+          fi
+          if readelf -S -W "./${IMAGE}" | grep -q '\.symtab'; then
+            echo "::error::${IMAGE}'s binary carries a symbol table; it is built without CARGO_PROFILE_RELEASE_STRIP=symbols."
+            exit 1
+          fi
+          echo "${IMAGE}: no setuid or setgid file, no package manager, home /nonexistent, binary stripped."
