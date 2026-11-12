@@ -19,23 +19,19 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use dpp_types::registry_sync::STALL_THRESHOLD;
 use serde::Serialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{internal_error, parse_passport_id};
 
-/// Attempts after which a row is reported as stalled rather than merely
-/// retrying. Matches the node's drain-task threshold; a row that has failed this
-/// many times is not going to succeed without someone looking at it.
-const STALL_THRESHOLD: i32 = 5;
-
 /// One passport's registration, as the registry queue holds it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RegistrationView {
     /// Queue state: `pending`, `submitted`, `registered`, `rejected`,
-    /// `deactivated`.
+    /// `abandoned`, `deactivated`.
     pub status: &'static str,
     /// The registry's own record id, once it has issued one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,6 +143,10 @@ pub struct RegistrationCounts {
     pub submitted: i64,
     pub registered: i64,
     pub rejected: i64,
+    /// Rows an operator gave up on after the registry was shown to hold nothing
+    /// for them. Published passports that will not be registered, kept visible
+    /// instead of read as still owed.
+    pub abandoned: i64,
     pub deactivated: i64,
     /// Status changes owed to the registry. Nothing drains these — the registry
     /// publishes no status-push API — so they are held durably and counted here
@@ -242,7 +242,8 @@ pub async fn passport_registry_handler(
     // and echoing it here would imply a handover that never happened.
     let current_operator = match state.service.transfer_store.as_ref() {
         Some(store) => match store.get_chain(passport_id).await {
-            Ok(Some(chain)) if chain.transfer_count() > 0 => {
+            Ok(Some(stored)) if stored.chain.transfer_count() > 0 => {
+                let chain = stored.chain;
                 let op = chain.current_operator();
                 Some(CurrentOperatorView {
                     did: op.did.clone(),
@@ -301,6 +302,7 @@ pub async fn registry_rollup_handler(
             submitted: c.submitted,
             registered: c.registered,
             rejected: c.rejected,
+            abandoned: c.abandoned,
             deactivated: c.deactivated,
             status_intents: c.status_intents,
             stalled: c.stalled,

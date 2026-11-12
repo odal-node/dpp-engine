@@ -76,6 +76,7 @@ pub use dpp_rules::bundle::{
     AcceptancePolicy, RulesetAcceptance, RulesetError, RulesetManifest, RulesetProvenance,
     SignedBundle, content_hash, verify_bundle,
 };
+use dpp_types::node_signal::{NodeSignals, Outcome, Signal};
 
 /// How often the poller re-reads the channel when `RULESET_POLL_INTERVAL_SECS`
 /// is unset. Five minutes: a regulatory ruleset changes on the order of
@@ -500,21 +501,33 @@ fn poll_interval_from_env() -> Option<Duration> {
 /// `at_boot` only changes the wording: at boot a refusal means the node is
 /// serving its baseline, later it means the node is still serving the last
 /// bundle that was good.
-pub async fn reload_and_report(active: &ActiveRuleset, at_boot: bool) {
-    match active.reload().await {
+///
+/// Every load on a configured channel is recorded on the `rulesetLoad` signal
+/// when `signals` is given, a quiet re-read as a success, so the node-health
+/// route can say whether the channel is failing now.
+pub async fn reload_and_report(
+    active: &ActiveRuleset,
+    at_boot: bool,
+    signals: Option<&dyn NodeSignals>,
+) {
+    let outcome = match active.reload().await {
         Ok(r) if r.changed => {
             metrics::counter!("ruleset_swaps_total").increment(1);
             tracing::info!(version = %r.ruleset_version, "compliance-current ruleset in force");
+            Outcome::Succeeded
         }
-        Ok(r) => tracing::debug!(
-            version = %r.ruleset_version,
-            "ruleset channel re-read; already in force"
-        ),
+        Ok(r) => {
+            tracing::debug!(
+                version = %r.ruleset_version,
+                "ruleset channel re-read; already in force"
+            );
+            Outcome::Succeeded
+        }
         // Not an error: the overwhelmingly common deployment has no channel, and
         // `from_env` has already said so once at boot.
-        Err(RulesetReloadError::NotConfigured) => {}
+        Err(RulesetReloadError::NotConfigured) => return,
         Err(e) => {
-            metrics::counter!("ruleset_load_failures_total").increment(1);
+            dpp_common::metrics::record_ruleset_load_failure();
             tracing::error!(
                 code = event_codes::RULESET_LOAD_FAILED,
                 error = %e,
@@ -525,7 +538,13 @@ pub async fn reload_and_report(active: &ActiveRuleset, at_boot: bool) {
                     "keeping the ruleset in force"
                 }
             );
+            Outcome::Failed
         }
+    };
+    if let Some(signals) = signals
+        && let Err(e) = signals.record(Signal::RulesetLoad, outcome).await
+    {
+        tracing::error!(error = %e, ?outcome, "ruleset load outcome could not be recorded");
     }
 }
 
@@ -899,6 +918,70 @@ mod tests {
         );
         assert_eq!(active.active_version(), "2026-Q3.2");
         assert_eq!(active.get().content()["textileFibreThreshold"], 7);
+    }
+
+    /// Remembers every outcome it is told to record.
+    #[derive(Default)]
+    struct Tally(std::sync::Mutex<Vec<(Signal, Outcome)>>);
+
+    #[async_trait]
+    impl NodeSignals for Tally {
+        async fn record(
+            &self,
+            signal: Signal,
+            outcome: Outcome,
+        ) -> Result<(), dpp_domain::DppError> {
+            self.0.lock().unwrap().push((signal, outcome));
+            Ok(())
+        }
+
+        async fn states(
+            &self,
+        ) -> Result<Vec<(Signal, dpp_types::node_signal::SignalState)>, dpp_domain::DppError>
+        {
+            unreachable!("only recorded here")
+        }
+    }
+
+    /// Each load the poller makes reaches the durable signal, an adopted bundle as
+    /// a success and a refused one as a failure, not only the Prometheus counter.
+    /// It is the path that runs with nobody watching.
+    #[tokio::test]
+    async fn each_load_the_poller_makes_is_recorded_durably() {
+        let (store, kid, pubkey, _dir) = publisher();
+        let drop = ChannelDrop::new();
+        drop.write(&bundle_at(
+            &store,
+            &kid,
+            "2026-Q3.2",
+            7,
+            Utc::now() - chrono::Duration::days(2),
+        ));
+        let active = ActiveRuleset::baseline().with_channel(drop.source(), &pubkey);
+        let tally = Tally::default();
+        reload_and_report(&active, false, Some(&tally)).await;
+        assert_eq!(
+            *tally.0.lock().unwrap(),
+            [(Signal::RulesetLoad, Outcome::Succeeded)],
+            "an adopted bundle is a success"
+        );
+
+        drop.write(&bundle_at(
+            &store,
+            &kid,
+            "2026-Q3.1",
+            5,
+            Utc::now() - chrono::Duration::days(9),
+        ));
+        reload_and_report(&active, false, Some(&tally)).await;
+        assert_eq!(
+            *tally.0.lock().unwrap(),
+            [
+                (Signal::RulesetLoad, Outcome::Succeeded),
+                (Signal::RulesetLoad, Outcome::Failed),
+            ],
+            "a rollback is a failure"
+        );
     }
 
     #[tokio::test]

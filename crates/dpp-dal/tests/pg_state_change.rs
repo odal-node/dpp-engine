@@ -13,19 +13,25 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use uuid::Uuid;
 
+use dpp_dal::pg::sqlx::Row;
 use dpp_dal::pg::{
     PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog,
-    PgWebhookRepo, sqlx,
+    PgTransferRepo, PgWebhookRepo, sqlx,
 };
-use dpp_dal::test_harness::{TestPg, start_pg};
+use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::DppError;
+use dpp_domain::compliance::{ComplianceResult, ComplianceStatus};
+use dpp_domain::operator::{OperatorRole, ResponsibleOperator};
 use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
 use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::status::PassportStatus;
+use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord, TransferStatus};
+use dpp_types::TransferStore;
 use dpp_types::audit::{AuditRepository, PassportAuditEntry, PassportVersionStore};
 use dpp_types::registry_sync::{RegistryStatusIntent, RegistrySyncOutbox};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent};
+use dpp_types::transfer::VersionedChain;
 use dpp_types::webhook::{CreateWebhookRequest, WebhookOutbox, WebhookSubscriptionStore};
 
 fn passport(status: PassportStatus) -> Passport {
@@ -251,17 +257,6 @@ async fn a_status_write_is_checked_against_the_locked_passport() {
         .expect("audit");
     assert_eq!(audit.len(), 1, "only the supersession was recorded");
     assert_eq!(pending_deliveries(&pg).await, 0);
-}
-
-/// Sessions on this test's database waiting for a lock.
-async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM pg_stat_activity
-         WHERE datname = current_database() AND wait_event_type = 'Lock'",
-    )
-    .fetch_one(pg.dal.pool())
-    .await
-    .expect("read pg_stat_activity")
 }
 
 /// Two changes that append to one passport's audit trail at once still leave
@@ -501,4 +496,646 @@ async fn a_refused_change_records_no_registry_status() {
     );
 
     assert_eq!(registry_intent(&pg, id).await, None);
+}
+
+fn operator(did: &str) -> ResponsibleOperator {
+    ResponsibleOperator {
+        did: did.to_owned(),
+        name: "Operator".to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        eu_operator_id_scheme: None,
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
+        country: "DE".to_owned(),
+        identifier: None,
+    }
+}
+
+/// A handover to `to`, pending, as an initiation builds it.
+fn handover(id: PassportId, to: &str) -> TransferRecord {
+    TransferRecord {
+        transfer_id: Uuid::now_v7(),
+        passport_id: id,
+        from_operator: operator("did:web:acme.example"),
+        to_operator: operator(to),
+        reason: TransferReason::Sale,
+        from_signature: Some("from-jws".to_owned()),
+        node_acceptance_attestation: None,
+        initiated_at: Utc::now(),
+        completed_at: None,
+        rejected_at: None,
+        cancelled_at: None,
+        notes: None,
+    }
+}
+
+/// A chain holding one pending handover to `to`.
+fn pending_to(id: PassportId, to: &str) -> TransferChain {
+    let mut chain = TransferChain::new(id, operator("did:web:acme.example"));
+    chain
+        .initiate_transfer(handover(id, to))
+        .expect("the first handover");
+    chain
+}
+
+/// A change that writes only `chain`, as a transfer step does.
+fn chain_change(id: PassportId, chain: VersionedChain) -> StateChange {
+    StateChange::new(PassportAuditEntry::new(
+        &id.to_string(),
+        "transferred",
+        "state-change-test",
+        None,
+        None,
+    ))
+    .with_transfer_chain(chain)
+}
+
+async fn audit_entries(pg: &TestPg, id: PassportId) -> usize {
+    PgAuditRepo::new(pg.dal.clone())
+        .list_by_passport(&id.to_string())
+        .await
+        .expect("audit")
+        .len()
+}
+
+/// Two initiations that both read "no chain yet": the second to write is
+/// refused rather than replacing the first, and its audit entry goes with it.
+///
+/// The upsert behind this had no `WHERE`, so the second chain overwrote the
+/// first and the first caller's handover had an audit entry and no place in the
+/// chain.
+#[tokio::test]
+async fn a_chain_first_written_after_this_one_was_read_is_not_replaced() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    assert!(store.get_chain(p.id).await.expect("read").is_none());
+
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("the first initiation");
+    let refused = log
+        .commit(chain_change(
+            p.id,
+            VersionedChain::unstored(pending_to(p.id, "did:web:b.example")),
+        ))
+        .await
+        .expect_err("the second read no chain either");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+
+    let stored = store.get_chain(p.id).await.expect("read").expect("a chain");
+    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(
+        stored.chain.transfers[0].to_operator.did,
+        "did:web:a.example"
+    );
+    assert_eq!(
+        audit_entries(&pg, p.id).await,
+        1,
+        "the refused entry stayed"
+    );
+}
+
+/// Two steps that both read a pending handover: whichever writes second is
+/// refused, and the chain says what the first did.
+#[tokio::test]
+async fn a_chain_changed_after_it_was_read_is_not_overwritten() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+
+    let mut cancel = store.get_chain(p.id).await.expect("read").expect("chain");
+    let mut reject = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_eq!(cancel.revision, reject.revision);
+    cancel.chain.transfers[0].cancel().expect("cancel");
+    reject.chain.transfers[0].reject().expect("reject");
+
+    log.commit(chain_change(p.id, cancel))
+        .await
+        .expect("the first step");
+    let refused = log
+        .commit(chain_change(p.id, reject))
+        .await
+        .expect_err("the second step read the chain before the first wrote it");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+
+    let stored = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_eq!(
+        stored.chain.transfers[0].status(),
+        TransferStatus::Cancelled
+    );
+
+    // A step that reads again is over the revision the first one left.
+    let mut again = stored;
+    again
+        .chain
+        .initiate_transfer(handover(p.id, "did:web:c.example"))
+        .expect("a cancelled handover frees the chain");
+    log.commit(chain_change(p.id, again))
+        .await
+        .expect("a step over the current revision");
+    assert_eq!(audit_entries(&pg, p.id).await, 3);
+}
+
+/// `save_chain` writes whatever is stored, but it moves the revision all the
+/// same: a step that read the chain before it is refused, not left to write over
+/// it.
+#[tokio::test]
+async fn an_unconditional_save_still_moves_the_revision() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+
+    let read = store.get_chain(p.id).await.expect("read").expect("chain");
+    store.save_chain(&read.chain).await.expect("save");
+
+    let refused = log
+        .commit(chain_change(p.id, read))
+        .await
+        .expect_err("the save came after the read");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+}
+
+/// The upsert the previous release ran never names the revision, and a node
+/// still running it beside this one must not be able to write a chain under a
+/// step that read the old one: the table moves the revision, not the writer.
+#[tokio::test]
+async fn a_write_that_never_names_the_revision_still_moves_it() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let log = PgStateChangeLog::new(pg.dal.clone());
+    let store = PgTransferRepo::new(pg.dal.clone());
+    log.commit(chain_change(
+        p.id,
+        VersionedChain::unstored(pending_to(p.id, "did:web:a.example")),
+    ))
+    .await
+    .expect("initiate");
+    let read = store.get_chain(p.id).await.expect("read").expect("chain");
+
+    sqlx::query(
+        r#"INSERT INTO odal.passport_transfer (passport_id, chain, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (passport_id)
+           DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
+    )
+    .bind(p.id.0)
+    .bind(serde_json::to_value(&read.chain).expect("serialise"))
+    .execute(pg.dal.pool())
+    .await
+    .expect("the previous release's upsert");
+
+    let moved = store.get_chain(p.id).await.expect("read").expect("chain");
+    assert_ne!(moved.revision, read.revision);
+    let refused = log
+        .commit(chain_change(p.id, read))
+        .await
+        .expect_err("the upsert came after the read");
+    assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
+}
+
+/// Several first initiations committed at once: exactly one stands.
+///
+/// The sequential tests above fix what a stale write is; this one is the
+/// database arbitrating between writers that are really in flight, the insert
+/// racing on the unique key. Without the check every writer succeeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_several_first_initiations_written_together_exactly_one_stands() {
+    let pg = start_pg().await;
+    let p = PgPassportRepo::new(pg.dal.clone())
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+
+    let writers: Vec<_> = (0..6)
+        .map(|n| {
+            let log = PgStateChangeLog::new(pg.dal.clone());
+            let change = chain_change(
+                p.id,
+                VersionedChain::unstored(pending_to(p.id, &format!("did:web:to{n}.example"))),
+            );
+            tokio::spawn(async move { log.commit(change).await })
+        })
+        .collect();
+    let mut won = Vec::new();
+    for (n, writer) in writers.into_iter().enumerate() {
+        match writer.await.expect("join") {
+            Ok(_) => won.push(n),
+            Err(e) => assert!(matches!(e, DppError::Validation(_)), "{e:?}"),
+        }
+    }
+    assert_eq!(won.len(), 1, "writers that succeeded: {won:?}");
+
+    let stored = PgTransferRepo::new(pg.dal.clone())
+        .get_chain(p.id)
+        .await
+        .expect("read")
+        .expect("chain");
+    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(
+        stored.chain.transfers[0].to_operator.did,
+        format!("did:web:to{}.example", won[0])
+    );
+    assert_eq!(audit_entries(&pg, p.id).await, 1);
+}
+
+// ── The compliance determination ─────────────────────────────────────────────
+//
+// A stored `complianceResult` is the determination of the content stored beside
+// it, and `assessed_at` and `ruleset_version` are projections of it. These read
+// the row itself, not the passport read back from it: the document merge omits a
+// determination a passport no longer carries, so a stored one would survive and
+// a struct read would show the same `None` either way.
+
+fn determination(co2e: f64, ruleset: Option<&str>) -> ComplianceResult {
+    use chrono::SubsecRound;
+    ComplianceResult {
+        co2e_score: Some(co2e),
+        compliance_status: ComplianceStatus::PassthroughNoValidation,
+        ruleset_version: ruleset.map(str::to_owned),
+        // To the microsecond, which is what the column keeps.
+        assessed_at: Some(Utc::now().trunc_subsecs(6)),
+        ..ComplianceResult::default()
+    }
+}
+
+fn determined(status: PassportStatus, result: ComplianceResult) -> Passport {
+    let mut p = passport(status);
+    p.compliance_result = Some(result);
+    p
+}
+
+/// What the row says about its determination.
+struct Stored {
+    /// Whether the document has a `complianceResult` key at all.
+    in_doc: bool,
+    co2e: Option<f64>,
+    assessed_at: Option<chrono::DateTime<Utc>>,
+    ruleset_version: Option<String>,
+}
+
+async fn stored(pg: &TestPg, id: PassportId) -> Stored {
+    let row = sqlx::query(
+        r#"SELECT jsonb_exists(doc, 'complianceResult') AS in_doc,
+                  (doc->'complianceResult'->>'co2eScore')::float8 AS co2e,
+                  assessed_at, ruleset_version
+           FROM odal.passport WHERE id = $1"#,
+    )
+    .bind(id.0)
+    .fetch_one(pg.dal.pool())
+    .await
+    .expect("read the row");
+    Stored {
+        in_doc: row.get("in_doc"),
+        co2e: row.get("co2e"),
+        assessed_at: row.get("assessed_at"),
+        ruleset_version: row.get("ruleset_version"),
+    }
+}
+
+fn change_to(write: PassportWrite, id: PassportId) -> StateChange {
+    StateChange::new(PassportAuditEntry::new(
+        &id.to_string(),
+        "updated",
+        "state-change-test",
+        None,
+        None,
+    ))
+    .with_passport(write)
+}
+
+/// 🚨 The `||` trap. `Passport` omits a `None` field and the update merges the
+/// document over the stored one, so a determination a publish could not make
+/// used to leave the earlier one in the row, to be signed. The columns kept
+/// their values too, being `COALESCE`d onto them.
+#[tokio::test]
+async fn a_replace_that_carries_no_determination_removes_the_stored_one() {
+    let pg = start_pg().await;
+    let draft = PgPassportRepo::new(pg.dal.clone())
+        .create(determined(
+            PassportStatus::Draft,
+            determination(12.5, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+    let before = stored(&pg, draft.id).await;
+    assert!(before.in_doc && before.assessed_at.is_some() && before.ruleset_version.is_some());
+
+    let mut next = draft.clone();
+    next.compliance_result = None;
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(change_to(PassportWrite::Replace(next), draft.id))
+        .await
+        .expect("replace");
+
+    let after = stored(&pg, draft.id).await;
+    assert!(!after.in_doc, "the key leaves the document");
+    assert_eq!(after.co2e, None);
+    assert_eq!(after.assessed_at, None);
+    assert_eq!(after.ruleset_version, None);
+}
+
+/// The registry outbox's publish and the repository's own `update` write the
+/// passport through the same statement, so the removal holds on each of the
+/// three ways a publish reaches the database.
+#[tokio::test]
+async fn the_removal_holds_through_the_outbox_and_the_repository_alike() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+
+    let through_outbox = repo
+        .create(determined(
+            PassportStatus::Draft,
+            determination(1.0, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+    let mut none = through_outbox.clone();
+    none.compliance_result = None;
+    PgRegistrySyncRepo::new(pg.dal.clone())
+        .commit_publish(&none, serde_json::json!({ "registration": "payload" }))
+        .await
+        .expect("commit publish");
+    let after = stored(&pg, through_outbox.id).await;
+    assert!(!after.in_doc && after.assessed_at.is_none() && after.ruleset_version.is_none());
+
+    let through_repo = repo
+        .create(determined(
+            PassportStatus::Draft,
+            determination(2.0, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+    let mut none = through_repo.clone();
+    none.compliance_result = None;
+    repo.update(none).await.expect("update");
+    let after = stored(&pg, through_repo.id).await;
+    assert!(!after.in_doc && after.assessed_at.is_none() && after.ruleset_version.is_none());
+}
+
+/// A determination with no ruleset version is stored as having none. The column
+/// was `COALESCE`d onto the stored one, so it kept the version of the
+/// determination before it.
+#[tokio::test]
+async fn a_replace_stores_the_determination_it_carries_and_no_other_columns() {
+    let pg = start_pg().await;
+    let draft = PgPassportRepo::new(pg.dal.clone())
+        .create(determined(
+            PassportStatus::Draft,
+            determination(1.0, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+
+    let next = determination(9.5, None);
+    let at = next.assessed_at;
+    let mut replaced = draft.clone();
+    replaced.compliance_result = Some(next);
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(change_to(PassportWrite::Replace(replaced), draft.id))
+        .await
+        .expect("replace");
+
+    let after = stored(&pg, draft.id).await;
+    assert!(after.in_doc);
+    assert_eq!(after.co2e, Some(9.5));
+    assert_eq!(after.ruleset_version, None, "not the version before it");
+    assert_eq!(after.assessed_at, at);
+}
+
+/// A draft edit stores the determination of the edited content in the same
+/// statement as the delta, and the version it archives is the record as it was:
+/// the determination before the edit, not the one the edit brings.
+#[tokio::test]
+async fn a_patch_stores_the_determination_beside_the_delta_and_archives_the_old_one() {
+    let pg = start_pg().await;
+    let draft = PgPassportRepo::new(pg.dal.clone())
+        .create(determined(
+            PassportStatus::Draft,
+            determination(1.0, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+
+    let written = PgStateChangeLog::new(pg.dal.clone())
+        .commit(change_to(
+            PassportWrite::Patch {
+                id: draft.id,
+                delta: serde_json::json!({ "productName": "Renamed" }),
+                determination: Some(determination(2.0, Some("ruleset@2"))),
+            },
+            draft.id,
+        ))
+        .await
+        .expect("patch")
+        .expect("a patch returns the passport");
+    assert_eq!(written.product_name, "Renamed");
+    assert_eq!(
+        written
+            .compliance_result
+            .as_ref()
+            .and_then(|r| r.co2e_score),
+        Some(2.0)
+    );
+
+    let after = stored(&pg, draft.id).await;
+    assert_eq!(after.co2e, Some(2.0));
+    assert_eq!(after.ruleset_version.as_deref(), Some("ruleset@2"));
+    assert!(after.assessed_at.is_some());
+
+    let versions = PgPassportVersionRepo::new(pg.dal.clone())
+        .versions(&draft.id.to_string())
+        .await
+        .expect("versions");
+    assert_eq!(versions.len(), 1, "one change, one archived version");
+    assert_eq!(
+        versions[0].doc["complianceResult"]["co2eScore"],
+        serde_json::json!(1.0),
+        "the version is the record as it was stored"
+    );
+}
+
+/// An edit that leaves nothing to assess removes the stored determination, and
+/// with it both columns.
+#[tokio::test]
+async fn a_patch_with_no_determination_removes_the_stored_one() {
+    let pg = start_pg().await;
+    let draft = PgPassportRepo::new(pg.dal.clone())
+        .create(determined(
+            PassportStatus::Draft,
+            determination(1.0, Some("ruleset@1")),
+        ))
+        .await
+        .expect("create");
+
+    let written = PgStateChangeLog::new(pg.dal.clone())
+        .commit(change_to(
+            PassportWrite::Patch {
+                id: draft.id,
+                delta: serde_json::json!({ "productName": "Renamed" }),
+                determination: None,
+            },
+            draft.id,
+        ))
+        .await
+        .expect("patch")
+        .expect("a patch returns the passport");
+    assert!(written.compliance_result.is_none());
+
+    let after = stored(&pg, draft.id).await;
+    assert!(!after.in_doc && after.assessed_at.is_none() && after.ruleset_version.is_none());
+}
+
+/// A status-only write through the repository reads the passport under the lock
+/// it writes with. Read before it, the write stores what the passport carried
+/// then, and an edit that stored a determination while the write waited would
+/// have it removed by a change that is about the status.
+#[tokio::test]
+async fn a_status_write_keeps_a_determination_stored_while_it_waited() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let draft = repo
+        .create(passport(PassportStatus::Draft))
+        .await
+        .expect("create");
+    assert!(!stored(&pg, draft.id).await.in_doc);
+    let patience = Duration::from_secs(10);
+
+    let mut hold = pg.dal.pool().begin().await.expect("begin");
+    sqlx::query("SELECT 1 FROM odal.passport WHERE id = $1 FOR UPDATE")
+        .bind(draft.id.0)
+        .execute(&mut *hold)
+        .await
+        .expect("lock the row");
+
+    let status = tokio::spawn({
+        let repo = PgPassportRepo::new(pg.dal.clone());
+        let id = draft.id;
+        async move { repo.update_status(id, PassportStatus::Retired).await }
+    });
+    let started = Instant::now();
+    while !status.is_finished() && sessions_waiting_for_a_lock(&pg).await < 1 {
+        assert!(
+            started.elapsed() < patience,
+            "the status write never waited"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!status.is_finished(), "the status write was not held");
+
+    // An edit stores its determination while the status write waits.
+    let result = determination(7.5, Some("ruleset@1"));
+    sqlx::query(
+        r#"UPDATE odal.passport SET
+             doc = jsonb_set(doc, '{complianceResult}', $2),
+             assessed_at = NULLIF($2->>'assessedAt','')::timestamptz,
+             ruleset_version = $2->>'rulesetVersion'
+           WHERE id = $1"#,
+    )
+    .bind(draft.id.0)
+    .bind(serde_json::to_value(&result).expect("serialise"))
+    .execute(&mut *hold)
+    .await
+    .expect("store the determination");
+    hold.commit().await.expect("release the row");
+
+    let written = status
+        .await
+        .expect("join")
+        .expect("the status write succeeds");
+    assert_eq!(written.status, PassportStatus::Retired);
+    assert_eq!(
+        written
+            .compliance_result
+            .as_ref()
+            .and_then(|r| r.co2e_score),
+        Some(7.5),
+        "it wrote the passport as it stood once the lock was its own"
+    );
+    let after = stored(&pg, draft.id).await;
+    assert!(after.in_doc && after.assessed_at.is_some());
+    assert_eq!(after.co2e, Some(7.5));
+    assert_eq!(after.ruleset_version.as_deref(), Some("ruleset@1"));
+}
+
+/// A published passport's determination is frozen with the rest of its content,
+/// and the retention guard does not list it among the mutable keys. A status
+/// change carries the stored one and writes nothing of it; a write that carries a
+/// different one, or none, is refused and leaves the row as it was. This is why a
+/// re-publish keeps the determination it was first published with.
+#[tokio::test]
+async fn a_locked_row_keeps_its_determination() {
+    let pg = start_pg().await;
+    let mut locked = determined(
+        PassportStatus::Published,
+        determination(5.0, Some("ruleset@1")),
+    );
+    locked.retention_locked = true;
+    locked.retention_until = Some(Utc::now() + chrono::Duration::days(3650));
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let locked = repo.create(locked).await.expect("create");
+    let before = stored(&pg, locked.id).await;
+    let log = PgStateChangeLog::new(pg.dal.clone());
+
+    log.commit(suspension(locked.id))
+        .await
+        .expect("a status change leaves the determination as it is");
+    let after = stored(&pg, locked.id).await;
+    assert!(after.in_doc);
+    assert_eq!(after.co2e, before.co2e);
+    assert_eq!(after.ruleset_version, before.ruleset_version);
+    assert_eq!(
+        after.assessed_at.map(|t| t.timestamp_micros()),
+        before.assessed_at.map(|t| t.timestamp_micros())
+    );
+
+    let current = repo
+        .find_by_id_any_status(locked.id)
+        .await
+        .expect("read")
+        .expect("exists");
+    for compliance_result in [Some(determination(6.0, Some("ruleset@2"))), None] {
+        let mut replaced = current.clone();
+        replaced.compliance_result = compliance_result;
+        let refused = log
+            .commit(change_to(PassportWrite::Replace(replaced), locked.id))
+            .await
+            .expect_err("a published passport's determination is frozen");
+        assert!(matches!(refused, DppError::RetentionLocked), "{refused:?}");
+    }
+    let unchanged = stored(&pg, locked.id).await;
+    assert!(unchanged.in_doc);
+    assert_eq!(unchanged.co2e, before.co2e);
 }

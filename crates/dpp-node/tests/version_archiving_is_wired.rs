@@ -1,61 +1,31 @@
-//! The shipped node archives every change, and serves what it archived.
+//! The shipped node serves the versions it archives.
 //!
-//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
-//! archived.
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — the version as it stood at a
+//! given point in time is retrievable.
 //!
 //! # Why this is a source check and not a behavioural one
 //!
-//! Both halves of clause 4.2 are decided in the composition root, which lives in
-//! the **binary** (`src/boot/db.rs`, `src/main.rs`) and so cannot be called from
-//! a test. Every behavioural suite therefore assembles its own service and wires
-//! its own repositories — including the smoke suite, which wires the decorator
-//! itself. That makes those suites prove the decorator works, and leaves them
-//! unable to prove the shipped node uses it.
+//! Archiving itself needs no wiring: `PgPassportRepo` archives every change it
+//! writes, in the change's own transaction, and `dpp-dal`'s Postgres suites test
+//! that. What the composition root still decides is whether the archive can be
+//! read, and it lives in the **binary** (`src/main.rs`), which a test cannot
+//! call. Every behavioural suite assembles its own service, so those suites
+//! prove the versions route works and cannot prove the shipped node wires it.
 //!
-//! The failure this guards is silent in exactly that way: unwrap `passport_repo`
-//! back to a bare `PgPassportRepo`, or drop `.with_versions(...)`, and
-//! everything still compiles, every test still passes, and the node quietly
-//! stops archiving — or archives into a table no route can read. Nothing would
-//! surface it until somebody asked for a version that was never taken, which is
-//! the one moment it cannot be fixed.
+//! The failure this guards is silent in exactly that way: drop
+//! `.with_versions(...)` and everything still compiles, every test still
+//! passes, and the node archives into a table no route can read. Nothing would
+//! surface it until somebody asked for a version, which is the moment it is
+//! needed.
 //!
 //! So this reads the composition root as text. It is a weaker check than
 //! running the binary and a stronger one than nothing, and it fails on precisely
 //! the edit that would do the damage.
 
-/// Where the two halves are decided.
-const BOOT_DB: &str = include_str!("../src/boot/db.rs");
+/// Where the read side is wired.
 const MAIN: &str = include_str!("../src/main.rs");
 
-/// The write half: every mutation the node performs goes through the decorator.
-///
-/// `passport_repo` is the single handle the whole vault mutates through, so
-/// wrapping it is what makes archiving unavoidable rather than opt-in. Handing
-/// out the bare repository is the one edit that undoes clause 4.2 without
-/// breaking anything.
-#[test]
-fn the_node_hands_out_a_passport_repository_that_archives() {
-    // From the struct literal `init_db` returns, not the `DbComponents` field
-    // declaration above it — the declaration says what the field *is*, and only
-    // the literal says what it was built from.
-    let built = BOOT_DB
-        .find("Ok(DbComponents {")
-        .expect("the composition root returns a DbComponents literal");
-    let at = built
-        + BOOT_DB[built..]
-            .find("passport_repo:")
-            .expect("that literal initialises a passport repository");
-    let initialiser = &BOOT_DB[at..(at + 200).min(BOOT_DB.len())];
-
-    assert!(
-        initialiser.contains("ArchivingPassportRepo::new"),
-        "the node's passport repository must be wrapped in the archiving decorator — \
-         EN 18221 clause 4.2 archives *all* changes, and a bare repository archives none. \
-         Found instead:\n{initialiser}"
-    );
-}
-
-/// The read half: what was archived is reachable.
+/// What was archived is reachable.
 ///
 /// A node that archives without wiring the store into the service has a route
 /// that reports nothing is there, which reads as "this passport never changed"

@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgOperatorConfigRepo, PgPassportRepo,
-    PgRegistryIdentityRepo, PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo,
-    PgSealOutboxRepo, PgTransferRepo, PgWebhookRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeSignalRepo,
+    PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
+    PgRegistrySyncRepo, PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo,
+    PgTransferRepo, PgWebhookRepo,
 };
 use dpp_domain::{
     DppError, GhostBackup, GhostRegistrySync, PassthroughRegistry,
@@ -281,6 +282,49 @@ impl IdentityPort for MockIdentity {
     }
 }
 
+/// A signer with a real key, and the verification key a reader resolves from its
+/// DID document.
+///
+/// For a test that has to show a proof *verifies*. [`MockIdentity`] signs nothing,
+/// so a test over it can say the payload matches the proof and not that anyone
+/// could check the proof against the operator.
+pub struct RealSigner {
+    pub identity: Arc<dpp_vc::LocalIdentityService>,
+    /// The key as a verifier gets it: resolved from the DID document by the
+    /// `kid` a token this signer made names, base64url.
+    pub public_key: String,
+    /// Returned and held, not dropped: the key store lives in it, and
+    /// `CLAUDE.md` asks that a test keystore's directory outlive the store.
+    _key_dir: tempfile::TempDir,
+}
+
+pub async fn real_signer() -> RealSigner {
+    let key_dir = tempfile::tempdir().expect("temp dir");
+    let store =
+        dpp_crypto::keystore::KeyStore::open(key_dir.path().join("keystore.json"), "test-pass")
+            .expect("open keystore");
+    store.generate_key("root").expect("generate key");
+    let did_document = dpp_vc::build_did_document(&store, "signer-test.example.com", "root")
+        .expect("build did document");
+    let identity = Arc::new(dpp_vc::LocalIdentityService::new(
+        Arc::new(store),
+        "root".to_owned(),
+        "signer-test.example.com".to_owned(),
+    ));
+    let probe = identity
+        .sign_passport(PassportId::new(), &serde_json::json!({}))
+        .await
+        .expect("sign probe")
+        .jws;
+    let public_key = dpp_crypto::jws::resolve_verification_key(&did_document, &probe)
+        .expect("did document carries the signing key");
+    RealSigner {
+        identity,
+        public_key,
+        _key_dir: key_dir,
+    }
+}
+
 /// [`MockIdentity`], taking its time over each signature.
 ///
 /// Signing sits between publish's last check and its write, so a slow signer
@@ -341,12 +385,51 @@ impl Default for SealWiring {
     }
 }
 
+/// How a harness wires the registry.
+///
+/// The port is optional because the ghost is the shipped default, and the queues
+/// are optional because a node with no Postgres outboxes reports the registry
+/// surface as unconfigured, which is the one node some routes' answers turn on.
+pub struct RegistryWiring {
+    /// The adapter that answers the registry. `None` is the ghost, which holds no
+    /// submission and confirms nothing.
+    pub port: Option<Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>>,
+    /// Whether the registration and transfer outboxes are wired. `false` is a node
+    /// with no registry queues, where nothing is queued and no registration is
+    /// owed or tracked.
+    pub queues: bool,
+}
+
+impl Default for RegistryWiring {
+    fn default() -> Self {
+        // Every node that publishes wires the queues, so the harness does.
+        Self {
+            port: None,
+            queues: true,
+        }
+    }
+}
+
 pub async fn start_vault(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None, SealWiring::default()).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
 }
 
 pub async fn start_vault_failing_signer(dal: PgDal) -> String {
-    start_vault_with_identity(dal, Arc::new(FailingIdentity), None, SealWiring::default()).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(FailingIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
 }
 
 /// A vault whose signer takes `delay` per signature — for requests that must
@@ -357,6 +440,20 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
         Arc::new(SlowIdentity(delay)),
         None,
         SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
+}
+
+/// A vault signing with `identity` — for a test that has to decide when each
+/// signature returns.
+pub async fn start_vault_with_signer(dal: PgDal, identity: Arc<dyn IdentityPort>) -> String {
+    start_vault_with_identity(
+        dal,
+        identity,
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
     )
     .await
 }
@@ -364,7 +461,50 @@ pub async fn start_vault_slow_signer(dal: PgDal, delay: std::time::Duration) -> 
 /// A vault whose seal ports are wired to order — for the routes whose answers
 /// turn on whether this node can read a seal, or buy one.
 pub async fn start_vault_with_seal(dal: PgDal, seal: SealWiring) -> String {
-    start_vault_with_identity(dal, Arc::new(MockIdentity), None, seal).await
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        seal,
+        RegistryWiring::default(),
+    )
+    .await
+}
+
+/// A vault whose registry port is the one given — for the routes whose answers turn
+/// on what the registry says, which the ghost never does.
+pub async fn start_vault_with_registry(
+    dal: PgDal,
+    registry: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort>,
+) -> String {
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring {
+            port: Some(registry),
+            ..RegistryWiring::default()
+        },
+    )
+    .await
+}
+
+/// A vault with no registry queues — the node the registry routes answer
+/// `configured: false` for, and the only one that can show what they refuse when
+/// there is nothing to record on.
+pub async fn start_vault_without_registry_queues(dal: PgDal) -> String {
+    start_vault_with_identity(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring {
+            queues: false,
+            ..RegistryWiring::default()
+        },
+    )
+    .await
 }
 
 /// A vault with the credential path **configured** — the audience-scoped route
@@ -379,6 +519,26 @@ pub async fn start_vault_with_credentials(
         Arc::new(MockIdentity),
         Some((directory, trust)),
         SealWiring::default(),
+        RegistryWiring::default(),
+    )
+    .await
+}
+
+/// [`start_vault_with_credentials`], signing with `identity` instead of
+/// [`MockIdentity`]: the proofs a test reads back can then be verified against
+/// the key that made them, which a mock's cannot.
+pub async fn start_vault_with_credentials_signed_by(
+    dal: PgDal,
+    identity: Arc<dyn IdentityPort>,
+    directory: Arc<dyn dpp_vault::middleware::credential::CredentialDirectory>,
+    trust: Arc<dyn dpp_vc::TrustedIssuerRegistry>,
+) -> String {
+    start_vault_with_identity(
+        dal,
+        identity,
+        Some((directory, trust)),
+        SealWiring::default(),
+        RegistryWiring::default(),
     )
     .await
 }
@@ -393,6 +553,7 @@ async fn start_vault_with_identity(
     identity: Arc<dyn IdentityPort>,
     credentials: Option<CredentialWiring>,
     seal: SealWiring,
+    registry: RegistryWiring,
 ) -> String {
     struct PgPing(PgDal);
     #[async_trait]
@@ -405,6 +566,11 @@ async fn start_vault_with_identity(
         }
     }
 
+    // The repository archives every change it writes, as `boot::db` wires it;
+    // the store is handed to the service so the versions a node would have
+    // taken are read back rather than answered from nothing.
+    let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
+        Arc::new(PgPassportVersionRepo::new(dal.clone()));
     let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
@@ -412,7 +578,7 @@ async fn start_vault_with_identity(
     let compliance = Arc::new(PassthroughRegistry::new());
     let event_bus: Arc<dyn dpp_common::event::EventBus> = Arc::new(dpp_common::event::NoOpEventBus);
     let registry_sync: Arc<dyn dpp_domain::ports::registry_sync::RegistrySyncPort> =
-        Arc::new(GhostRegistrySync);
+        registry.port.unwrap_or_else(|| Arc::new(GhostRegistrySync));
 
     // Mirror production: the registry reader stamps the default facility + primary
     // operator identifier onto new passports, read live from the operator config.
@@ -431,12 +597,6 @@ async fn start_vault_with_identity(
         "https://resolver.example.com".to_owned(),
     )
     .with_registry_reader(operator_repo.clone())
-    // Mirror production here too: the node wires both registry outboxes, so
-    // a harness without them exercises a publish path that does not exist in
-    // any real deployment — and reports the registry surface as
-    // unconfigured.
-    .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
-    .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())))
     // Same reasoning again, and it had already cost something: without a
     // transfer store the seal route's `responsibilityMayHaveTransferred`
     // took its `None => false` branch, so a test asserting the flag was
@@ -444,16 +604,27 @@ async fn start_vault_with_identity(
     // because nothing was.
     .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
     .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
+    .with_signals(Arc::new(PgNodeSignalRepo::new(dal.clone())))
     // The node commits every state change through the state-change log, so a
     // harness without it would write the parts one after another, a path no
     // real deployment takes.
-    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())));
+    .with_state_changes(Arc::new(dpp_dal::pg::PgStateChangeLog::new(dal.clone())))
+    .with_versions(version_store);
 
     // Wired after the chain rather than inside it, because unlike every port
     // above these two are what a test is *about* when it is about sealing: any
     // node with a seal provider selected wires the outbox, so a harness without
     // it reports the sealing surface as unconfigured and cannot exercise it at
     // all — which is exactly the node some of these tests need to talk to.
+    // Mirror production: the node wires both registry outboxes, so a harness
+    // without them exercises a publish path that does not exist in any real
+    // deployment — and reports the registry surface as unconfigured. A test
+    // that is about exactly that node asks for it with `queues: false`.
+    if registry.queues {
+        service = service
+            .with_registry_outbox(Arc::new(PgRegistrySyncRepo::new(dal.clone())))
+            .with_transfer_outbox(Arc::new(PgRegistryTransferRepo::new(dal.clone())));
+    }
     if seal.outbox {
         service = service.with_seal_outbox(Arc::new(PgSealOutboxRepo::new(dal.clone())));
     }

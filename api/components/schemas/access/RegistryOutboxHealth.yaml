@@ -1,0 +1,25 @@
+type: object
+required:
+  - pending
+  - submitted
+  - stalled
+  - rejected
+properties:
+  pending:
+    type: integer
+    format: int64
+    description: Rows awaiting a drain attempt.
+  submitted:
+    type: integer
+    format: int64
+    description: Rows accepted by the registry and awaiting its verdict.
+  stalled:
+    type: integer
+    format: int64
+    description: |
+      Pending and submitted rows that have reached the stall threshold. A row here
+      is not going to succeed without someone looking at it.
+  rejected:
+    type: integer
+    format: int64
+    description: Rows the registry terminally rejected.

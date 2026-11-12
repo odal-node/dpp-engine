@@ -59,33 +59,410 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   against an earlier version keeps its classes and the bytes its signatures
   cover; a new one is written against the new version. (#561)
 
+- **A calculated CO₂e or repairability figure is no longer copied into
+  `co2ePerUnit` or `repairabilityScore`.** *(Breaking for a client that read the
+  calculated figure from either field.)* Create and `PUT /dpp/{id}` copied
+  `complianceResult.co2eScore` and `repairabilityIndex` into the two fields
+  whenever they were unset. A copied `CarbonFootprint` carries no methodology or
+  provenance, so it could not be told from a declaration, and the AAS export
+  reads both fields as the passport's own values. They now hold only what the
+  operator declared, through create or `PUT`, and the calculated figures stay in
+  `complianceResult`. A battery's or a textile's `co2ePerUnitKg` declared in its
+  product group data is still carried to `co2ePerUnit` when a create states no
+  top-level value, as before.
+
+  **Migration:** read the calculated figures from `complianceResult.co2eScore`
+  and `complianceResult.repairabilityIndex`. (#598)
+
+### Added
+
+- **The resolver describes itself at `/.well-known/gs1resolver`, decompresses an
+  EPC binary link, and its record against the GS1 Conformant Resolver Standard is
+  written down.** The standard (release 1.2.1) asks for a description file served
+  from that path, valid against GS1's schema, that lists the primary keys the
+  resolver supports: it lists the GTIN (`01`) and no other. A compressed link
+  whose last segment is `eh` and hexadecimal, or `ex` and URI-safe base 64, holds
+  an EPC binary string; SGTIN-96 and SGTIN-198 are decoded and resolve like the
+  label they stand for, and the linkset names the uncompressed link. A trailing
+  slash on a Digital Link is tolerated, `OPTIONS` is answered, and every response
+  carries CORS headers. All 25 criteria of the standard's section 5 are assessed
+  in `docs/architecture/GS1_RESOLVER_CONFORMANCE.md`, with tests in
+  `crates/dpp-resolver/tests/gs1_conformance.rs` for every criterion except 3
+  (TLS, met by deployment), and the standards register has
+  its first row for a non-IETF standard. **Conformance is not claimed:** SGTIN+,
+  DSGTIN+, SGTIN++ and DSGTIN++, and every EPC scheme for a key the resolver does
+  not serve, are not decoded, and the register says so. (#477)
+
+- **An authenticated node health route reports what an operator pages on.**
+  `GET /vault/api/v1/node/health` returns `signals`, the outcomes of the node's
+  own work that leave no other trace, and the registry-sync outbox's pending,
+  submitted, stalled and rejected counts. Two signals so far: `signing` (signing
+  a passport at publish) and `rulesetLoad` (loading the ruleset from its
+  channel; a failure is a channel that could not be read or a bundle that was
+  refused). Each reports `failing`, whether its latest outcome was a failure,
+  which is the field to alarm on; `failures`, a count that never resets; and
+  `lastFailedAt` and `lastSucceededAt`. They are kept in the database
+  (`odal.node_signal`) and survive a restart; the Prometheus counters on
+  `/metrics` still reset on one. A monitor that cannot scrape `/metrics` can read
+  the route with an API key, and the unauthenticated `/health` still answers
+  liveness only. A load that fails through `POST /vault/api/v1/ruleset/reload` is
+  now counted on `ruleset_load_failures_total` too; before, only the boot load and
+  the poller counted one. (#138, #590)
+
+- **An authority or a person with a legitimate interest can read the passport
+  as it stood at a past moment.** EN 18221:2026 clause 4.2 expects the version of
+  a passport at a past moment to be retrievable by authenticated, authorised
+  actors, and the archive was read only through the operator's API key, which
+  these readers deliberately do not hold. `GET /vault/credential/dpp/{dppId}`
+  now takes `?asOf=<RFC 3339>` and serves the version that was current then, as
+  the payload that reader's audience's publish-time proof covers, with that proof
+  attached and `disclosureSet` naming the classes: byte for byte what the same
+  credential was given live before the change, and verifiable against the
+  operator's key. A published passport's views are frozen when it is signed, so
+  a version carries exactly the classes it was published with. A moment after the
+  last change is answered by the live record, one before the passport existed is
+  `404` and one in the future `422`; a moment it was a draft is `404` and one it
+  was suspended `410`, as on a live read. Every version served is recorded to the
+  audit trail with the instant asked for (`asOf`) and the archived version that
+  answered (`archivedVersionId`).
+
+  **Anonymous readers do not get a past version.** Without a credential, or with
+  one that grants nothing beyond the public view on that passport, `asOf` is
+  `401` and `403` rather than the public view the route answers everything else
+  with. The public proof is frozen at publish, so it is the same bytes for every
+  version of a published passport: serving it for a past instant would answer a
+  question about the past with the present passport, and open an unauthenticated
+  way to read when a record was published. A node that cannot verify credentials
+  answers `401` too, and says so.
+
+  **A moment is answered the same way whenever it is asked**, here and on the
+  operator's `GET /vault/api/v1/dpp/{dppId}/versions?asOf=`. A change stamps the
+  version it replaces inside its transaction, and the version is visible only
+  once that commits, so a moment between the two was answered with the record
+  before the change and, asked again, with the record after it; and the live
+  record and the version were two reads a change could fall between. Both are
+  now read together under the passport's lock, after any change in progress
+  commits, and "the future" is measured by the database's clock, which stamps
+  the versions: a moment past it is `422` on both routes, where the operator's
+  route answered it as covered by the live record. (#470)
+
+- **A lost submission handle is found again.** A replayed idempotency key is
+  answered with the conflict and not the submission, so a node whose first
+  attempt got through and whose record of the answer was lost, by a crash
+  between the `POST` and the row write or a failed write, held a `submitted` row
+  it could never poll. The drain now calls `dpp-core` 0.23.0's
+  `find_submission`, which reads the dashboard and matches the passport by the
+  unique product identifier it was submitted under, the one thing the registry
+  reports each passport against, and answers with the handle and the ruling
+  together, so a recovered passport is registered in the same pass. It does not
+  guess: an identifier is not unique to a passport, since a successor can be
+  submitted under its predecessor's, so more than one submission reporting it is
+  `Ambiguous`, listed for a person, and a task still being checked reports no
+  passport, so not finding one while any is on the list is never read as the
+  registry holding none, and a single match is taken only from a search that
+  read every task. A row that is not found is backed off and counted as an
+  attempt, so it reaches the stalled count instead of sorting to the head of the
+  queue, and so is one whose recovered handle could not be written down.
+  A finished task's result is kept in a bounded cache once it refuses or names
+  every registration, because the lookup repeats every pass; one that does not
+  yet is read again. A task the list shows twice is one candidate. (#484)
+
+- **A registration waiting for a person says why, and a person can settle it.**
+  The drain recovers a lost submission handle itself where it can, and leaves
+  three cases alone because choosing would give a passport another passport's
+  registration: several submissions report its identifier, none could be placed,
+  and an adapter that cannot look a submission up. Such a row stayed `submitted`
+  and said nothing: the candidates and the reason were in a log, and nothing
+  could record the right handle.
+
+  *The reason is on the row.* `message` now holds why the row is waiting, and
+  `GET /vault/api/v1/dpp/{dppId}/registry` shows it: the candidates of an
+  ambiguous lookup, that the handle was not found and whether all of the task list
+  was read, or a submission state this node has no name for.
+  `mark_submitted` still clears it; a new `mark_submitted_noting` backs the row off
+  and counts the attempt as it does, and keeps the message.
+
+  *A person can record the handle.* `POST /vault/api/v1/dpp/{dppId}/registry/handle`
+  (admin scope; `odal registry handle <passport-id> <correlation-id>`) takes the
+  correlation identifier read off the registry's own interface. It does not take
+  the operator's word for it: the submission it names is read back from the
+  registry through `dpp-core` 0.23.0's `confirm_submission`, and the request is
+  refused with `422` unless that submission reports the unique product identifier
+  this passport was submitted under. The refusal says what the registry did show:
+  another passport's identifier, none, a submission still being checked, or no
+  such handle among the tasks read. It writes only to a `submitted` row that
+  holds no handle, in one conditional statement, so a handle the registry gave is
+  never overwritten (`409`) and a row already ruled on is not touched. The
+  attempts start again, so the row stops reading as stalled while the new poll
+  runs. The ruling is not applied by the route: the drain applies it on its next
+  pass, which keeps what a registration, a refusal or an unnamed state does to a
+  row in one place. Recording the same handle again is a `200` that changes
+  nothing, so a retry after a lost response does not fail on its own success. The
+  write is audited as `registry_handle_recorded`, with who recorded which handle
+  and what the registry reported (migration `0045` admits the action). (#487)
+
+- **A registration the registry never accepted can be abandoned, once the
+  registry is shown to hold nothing for it.** A `pending` row is retried with
+  backoff for as long as the passport stays published, so a payload the registry
+  refuses every time, or a product withdrawn before it was ever registered, kept
+  the queue asking forever and left a database edit as the only way off it.
+  `POST /vault/api/v1/dpp/{dppId}/registry/abandon` (admin scope;
+  `odal registry abandon <passport-id> --reason "…"`) ends the row as the new
+  `abandoned` status.
+
+  *The danger is what it can be wrong about.* A `pending` row whose first attempt
+  got through and whose reply was lost looks exactly like one that never did, and
+  abandoning it would leave a registration the registry may grant that the node
+  believes it dropped. So the route does not take the operator's word for it: it
+  reads the registry's task list through `find_submission`, and refuses unless
+  **all** of it was read and none of it reports the unique product identifier the
+  passport was submitted under. A submission the registry does hold is a `409`
+  naming its correlation identifier or its candidates. A list too long to read in
+  full, a task still being checked, and an adapter that cannot look are each a
+  `422`, because none of them shows the registry to hold nothing.
+
+  *It cannot race the drain.* The write is one conditional statement that takes a
+  row only while it is `pending`, has been tried at least once, and is backed off
+  (`next_attempt_at` in the future). A row being attempted is still due, and only
+  a finished attempt pushes it out, so an abandon cannot land between the drain
+  reading a row and submitting it. And nothing the drain writes can move a row out
+  of `abandoned`: its updates carry `status <> 'abandoned'`, and the due set never
+  offered it.
+
+  *What it ends.* The queue row, not the passport: the passport stays published,
+  the rollup counts the registration as `abandoned` (and the
+  `registry_outbox_abandoned` gauge) so it is not read as still owed, and it
+  stops counting as stalled. Publishing the passport again, or re-activating a
+  suspended one, queues it afresh, as it does a rejected one. A reason is
+  required and kept on the row; the write is audited as `registry_abandoned` with
+  who, why, how many attempts, and what the row had been saying. Abandoning an
+  already-abandoned row is a `200` that changes nothing. Migration `0046` admits
+  the status and the action. (#489)
+
+- **This node issues category-scoped credentials.** `POST /api/v1/credentials`
+  accepts `productCategories`, so an operator that places both EV and LMT
+  batteries can vouch for a repairer of one and not the other. Until now every
+  credential minted here covered whole product groups. The read route already
+  enforced a category list; issuance never set one. A list that cannot work as
+  written is refused with `422` before anything is signed; minted, it would be
+  found by its holder, from reads that come back public. A list needs
+  `productGroups`. Each value must be one a named group's passports can state.
+  Each named group must admit at least one of the values. The legal values come
+  from `dpp-core` 0.23.0's `ProductGroup::product_category_values`, read from
+  each group's current schema, so this node lists no vocabulary of its own.
+  `odal credential issue` gains `--product-categories`. (#502)
+
+- **A credential served only the public view is told why.** `GET
+  /credential/dpp/{dppId}` answers a valid credential that does not cover the
+  passport with a `200` and the public view, and now adds
+  `X-DPP-Credential-Out-Of-Scope`: `product-group`, `product-category`, or
+  `no-product-category` when the credential names categories and the
+  passport's group states none. Until now a credential for the wrong group and
+  one for the wrong category looked the same to its holder. The reason is a
+  header because the body is the public view byte for byte, the payload its
+  proof signs. The group is checked first, so a credential missing both is
+  reported for the group. CORS exposes the header to browser clients. The
+  route's description now states the whole scope rule: both axes are checked,
+  out of scope is a `200` and never a `401`, and the read is still audited.
+  `VerifiedCredential::audience_for` returns `Result<Audience, OutOfScope>`.
+  (#502)
+
+### Changed
+
+- **A GS1 linkset now validates against GS1's linkset schema, and a redirect
+  hands the query string on.** *(Breaking for a reader of the linkset.)* The
+  linkset was a context with no `title` on any link and an `anchor` beside
+  `linkset` at the top, so it failed the schema the standard holds it to. It is now
+  one context, anchored at the request's uncompressed link, with a title on every
+  link, exactly one `gs1:defaultLink` (also described as `gs1:pip`), and the links
+  of every level from the one the label names up to the GTIN, nearest first. A
+  redirect carries the request's query string on to its target. A `linkType`
+  other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is now a `404` with a
+  problem document, where it redirected to the passport for six types (among
+  them `gs1:epil`, a patient leaflet, and `gs1:recyclingInfo`, which is not a GS1
+  link type) and answered an ad-hoc JSON body for the rest. The linkset no longer carries the
+  `predecessor` and `hasComponent` relations: GS1's schema matches a relation by a
+  pattern with no room for the hyphen in `ref.odal-node.io`, so a linkset holding
+  one is invalid. The lineage and the bill of materials are in the passport
+  itself. A GTIN is validated at the edge with the check digit and each qualifier
+  with the length and character set its Application Identifier allows, so a
+  malformed label is a `400` before the vault is asked. (#477)
+
+- **The vault's registry rollup counts a row as stalled at the node's threshold
+  of eight attempts, not five.** `GET /vault/api/v1/registry`, and the `stalled`
+  flags on a passport's registry view, reported a registration or a transfer
+  notification stalled from its fifth attempt, while the node's gauges and alarms
+  waited for the eighth. The two now agree on one constant. A row with five to
+  seven attempts is no longer reported as stalled, so the rollup's `stalled`
+  counts can fall. (#589)
+
+- **The registry's task list is asked for newest first, and read from the front
+  once the first page shows it came back that way.** The adapter read a long list
+  from both ends because the registry's order was not known: a task just
+  submitted is at the front of a newest-first list and at the back of an
+  oldest-first one. The registry's own client was read again on 2026-10-20 and
+  sends `sort` as `submittedAt,desc` on every read, so the adapter now sends the
+  same, `dpp-core` 0.23.0's `TASKS_SORT_NEWEST_FIRST`.
+
+  *What was asked for is not trusted.* The first page's `submittedAt` times are
+  read, and the list is treated as newest first only when at least two are
+  readable, none is newer than the one before it, and at least one is strictly
+  older. Then a long list is read from the front, all twenty pages, which reaches
+  twice as far into the recent past as splitting the budget with the back did,
+  and the back is never asked for. Anything else (a registry that ignored the
+  sort, a page too short to compare, equal times, a time that is not an RFC 3339
+  time, a run that is not monotonic) leaves the order unknown and the list is
+  read from both ends, as before. A list that fits the cap is read in full
+  whichever way it came.
+
+  Nothing about what a search *covers* changes: a long list is still never
+  reported as read in full. (#490)
+
 ### Fixed
+
+- **A published passport is signed with the compliance determination of the
+  content it is published with.** A draft was signed with the determination
+  computed when it was created: `PUT /dpp/{id}` recomputed one in memory and
+  never stored it, and publish computed one for its violation gate and dropped
+  it. So a draft created with one `productGroupData`, edited and then published
+  carried the violations, warnings and receipt of data it no longer had, and so
+  did one published after a ruleset reload. Publish now computes the
+  determination once, over the content it signs, and that one value is judged by
+  the gate, covered by the signatures and stored. Where the computation fails and
+  no obligation is live (nothing registered to evaluate the product group, or an
+  evaluator that cannot assess the data) the passport is published with no
+  determination, not the earlier one. A draft stores the determination of the
+  content it holds at every `PUT`, or none when it cannot be made, in the same
+  statement as the edit. A stored determination could not be replaced by none
+  before: the update merged the document over the stored one, which kept a key
+  the passport no longer carried, and `assessed_at` and `ruleset_version` were
+  kept on their old values; both now follow the passport. A re-publish keeps the
+  determination its first publish stored, since a published passport's content
+  is frozen and its determination with it. (#598)
+
+- **A draft retired without being published gives its carrier serial back.** A
+  draft holds the serial it was created with, so that two creates under one GTIN
+  cannot both attribute it. `retire` is how an operator gives up on a draft, but
+  one retired that way kept the serial for ever: creating a passport with the
+  same GTIN and `carrierSerial` answered `409`, and so did the dry run
+  (`POST /vault/api/v1/dpp/validate`), with advice a draft that never published
+  cannot follow, to declare a successor with `supersedesId`. Create, the dry run
+  and the publish-time check now count such a draft as holding nothing. A draft
+  still holds its serial, and so does a passport that was published and then
+  retired, since the product its label was printed on is still out there.
+  (#583)
+
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  0.15.0 refused a second published passport under one identification link or
+  DID only when it stated the same lot as the first, because the holder was
+  looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named. (#498)
+
+- **Two transfer steps that overlap no longer overwrite each other's chain.** A
+  passport's transfer chain was read, changed in memory and written back whole,
+  with a signature in between, and the write had no condition. Two initiations
+  started together on one published passport both found nothing pending and both
+  signed a handover; the second write replaced the first, so both callers got a
+  record, both left an audit entry and a `dpp.passport.transferred` event, and
+  the chain held one. An accept, a reject or a cancel racing another step on the
+  same chain lost an update the same way. Each write now names the revision of
+  the chain row it read (`odal.passport_transfer.revision`, migration `0047`) and
+  is refused when the row has moved on: the request that loses answers `422`,
+  writes nothing, and can be sent again, and the chain keeps the step that won. A
+  trigger moves the revision on every update, so a node still running the
+  previous release beside this one, whose upsert never names the column, cannot
+  write a chain under a step that read the old one. A chain stored before this
+  release starts at revision 0. (#535)
+
+- **A draft retired without ever being published answers `404` on its public
+  read, not `500`.** Core allows `Draft → Retired`, and `retire` applies the
+  retention guard only to a passport that has a `published_at`, so an operator
+  can close a draft that will never publish. `serves_publicly` decided from the
+  status alone and served every `Retired` passport, on the reasoning that the
+  status is reachable only after a publish's retention period. That draft has no
+  `publicJwsSignature`, so `GET /vault/public/dpp/{dppId}` failed closed on it
+  and answered `500`, where a draft that was never retired answers `404`; the
+  resolver's `/dpp/{dppId}` reads the same route. `serves_publicly` now takes
+  the passport, and a retired one with no `publishedAt` is not served. The
+  continuity tier's snapshot drain decides through it too, so it removes such a
+  snapshot instead of failing to build one on every pass.
+
+  `GET /vault/public/dpp/by-gtin/{gtin}` answered `500` for it as well, and a
+  closed draft broke more than its own label. Label resolution skipped drafts
+  but read a retired one as a current passport, so beside a live passport under
+  the same GTIN (which create allows) it made the label name two records that
+  are not one amendment chain, and the lookup refused to choose: the live
+  passport's label answered `500` for as long as the closed draft existed. A
+  record that was never published, a draft or a retired draft, now answers no
+  label. A retired passport that was published is unchanged and still serves its
+  signed view. (#570)
+
+- **`odal bootstrap` names the admin credential when the node refuses it.** A
+  wrong `ADMIN_USERNAME` or `ADMIN_PASSWORD` was reported as the node being
+  unreachable, with the refusal printed only under `Caused by:`. A `401` or
+  `403` from the node's state read now says to check both variables against the
+  node's, and a node that does not answer is still reported as unreachable.
+  (#572)
+
+- **An archived version is the passport as it was stored.** Every change to a
+  passport archives the version it replaces (EN 18221 clause 4.2), and the
+  archive was taken from a reading of the passport rather than the stored
+  record. Every read upcasts through `dpp-core`'s lens chain, which since core
+  0.22.0 reads a stored `productGroupData.gtin` as a `productIdentifier`, so a
+  version archived from a passport stored before that upgrade held a shape it
+  was never published in. The passport store now copies the stored document
+  into the archive under the row lock, in the transaction of the change, for
+  every writer: the repository, the state-change log, and the registry outbox's
+  publish, which a service with no state-change log uses and which archived
+  nothing. A refused change now leaves no version behind, where it used to leave
+  one identical to the live record. `GET /vault/api/v1/dpp/{dppId}/versions`
+  serves such a version in its stored shape. Its `supersededAt` is the
+  database's clock once the change holds the lock, where it was the clock of the
+  process that made the change, so versions order as their changes did whichever
+  process made them. (#571)
 
 - **An API key's idempotent replays belong to that key.** Every Bearer key used to
   share one replay namespace, so a read-scoped key could replay an administrator's
   cached response. Retries made with a rotated key now re-execute. (#576)
+
 - **The local admin credential is refused from another origin.** A state change
   arriving with a cross-origin `Origin` header and a Basic credential is refused
   before the credential is read. Bearer keys are unaffected. (#576)
+
 - **Imports need a write-scoped key.** A read-only key is refused with `403`
   before any job or report is recorded. (#576)
+
 - **Seal and trust checks.** A seal must cover the dossier's own full view, a CA
   path must pass through certificates that may sign certificates, the list of
   trusted lists is verified before its pointers are used, and a verified copy older
   than 14 days is reported unchecked. (#576)
+
 - **Guarded outbound requests** disable system proxies, refuse redirects for
   address literals, and refuse 198.18.0.0/15. Status lists are fetched through the
   pinned helper. (#576)
+
 - **Plugin artifacts** are verified and loaded from the same bytes, and a guest's
   log text is escaped in the host's log output. (#576)
+
 - **Dossier and tree verification** refuse a URI that is referenced with two
   different pins, and a node listing more than 256 children. (#576)
+
 - **Command-line and script hardening:** verify and import take only well-formed
   identifiers and keys, the credential file and exports are owner-only from creation,
   credentials are not sent over plain HTTP to a remote host, and terminal output is
   stripped of control characters. (#576)
+
 - **Pointing a profile at another node** clears the credential the previous node
   issued, so the next request does not send it to a node that never issued it. (#576)
+
 - **A workbook's namespace-prefixed cells** are measured with the same dense-range
   check as unprefixed ones, and a declared shared-string count is capped. (#576)
 
@@ -135,6 +512,23 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   product group's data when it expands the document. The context names withheld
   fields too, as terms; their values are not served, and the tests that scan the
   body for a withheld field now read it without its `@context`. (#561)
+
+- **A submission past the first thousand tasks on the dashboard is found.** The
+  dashboard's task list was read from the front for twenty pages, so once an
+  operator had more than a thousand tasks a new submission on an oldest-first
+  list was never found and was polled forever. The first page says how long the
+  list is (`totalElements`), and a longer one is now read from both ends,
+  interleaved, since the order is not recorded. A search that ran out says so
+  instead of reporting the registry as still working. (#484)
+
+- **An access credential that fails authentication is told which of seven
+  things to fix:** a token that is not a compact JWS, no key for its `kid`, a
+  signature that does not verify, a header or signature that cannot be read, a
+  token not typed as a VC-JWT, a payload that is not a credential, or an issuer
+  other than its document's. They read the same before, so an issuer whose
+  tooling had not yet set `typ` was sent to debug a sound signature. The
+  presenter's own `kid` and issuer are not echoed. A bad signature keeps its old
+  sentence. (#484)
 
 ## [0.15.0] - 2026-11-03
 

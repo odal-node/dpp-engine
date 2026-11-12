@@ -26,7 +26,11 @@ container="odal-shared-test-pg-$$"
 port="${ODAL_TEST_PG_PORT:-55432}"
 
 cleanup() {
-    docker rm -f "$container" > /dev/null 2>&1 || true
+    # `-v` as well as `-f`. `--rm` removes the anonymous volume only when the
+    # container stops by itself; a forced `docker rm` keeps it unless told
+    # otherwise. `postgres:17` declares its data directory a volume, so every
+    # run without `-v` left up to 4 GB of test database behind.
+    docker rm -f -v "$container" > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
 

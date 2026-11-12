@@ -244,7 +244,7 @@ asked before anyone runs a node.
 
 | Command | What it does | Scope |
 |---|---|---|
-| `odal credential issue <holder-did> --name --country [--role] [--product-groups] [--valid-for-days]` | Issue a credential the holder sends as `X-DPP-Credential` to read restricted fields | admin |
+| `odal credential issue <holder-did> --name --country [--role] [--product-groups] [--product-categories] [--valid-for-days]` | Issue a credential the holder sends as `X-DPP-Credential` to read restricted fields | admin |
 | `odal unsold-goods record --period --units --kg --category --reason --destination --country [--justification]` | Record one line of the ESPR Art. 24 disclosure of discarded unsold products | write |
 | `odal unsold-goods list [--period] [--json]` | List recorded lines, newest first | admin |
 

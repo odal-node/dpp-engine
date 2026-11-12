@@ -421,21 +421,16 @@ pub struct PassportVersion {
 /// not before. A node that archived on create would hold a "version" that was
 /// never superseded and would report it as the state at every time before the
 /// first change — which is true, and which the live record already says.
+///
+/// # Read-side only
+///
+/// A version is written by the passport store itself, in the transaction of the
+/// change that replaces it, because only there is the stored record at hand: a
+/// caller holding a `Passport` holds a reading of it, upcast through the lens
+/// chain, and a version taken from that would hold a shape the passport was
+/// never signed in. So this trait has no method that archives a document.
 #[async_trait]
 pub trait PassportVersionStore: Send + Sync {
-    /// Record `doc` as the version that stopped being current at
-    /// `superseded_at`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the store's own failure.
-    async fn archive(
-        &self,
-        passport_id: &str,
-        doc: &serde_json::Value,
-        superseded_at: DateTime<Utc>,
-    ) -> Result<(), DppError>;
-
     /// Every archived version of `passport_id`, oldest first.
     ///
     /// # Errors
@@ -443,19 +438,43 @@ pub trait PassportVersionStore: Send + Sync {
     /// Propagates the store's own failure.
     async fn versions(&self, passport_id: &str) -> Result<Vec<PassportVersion>, DppError>;
 
-    /// The version that was current at `at`, if one is archived.
+    /// The passport's stored record and the version that was current at `at`,
+    /// read together.
     ///
-    /// `None` means no archived version covers that moment — either the
-    /// passport had not changed by then, or `at` is after the most recent
-    /// change. In both cases the **live** record is the answer, and only the
-    /// caller holding it can say so.
+    /// # Read under the passport's lock
+    ///
+    /// A change archives the record it replaces, stamped with the moment it
+    /// takes the passport's lock, and the version is visible only once the change
+    /// commits. Read apart from that lock, a moment between the stamp and the
+    /// commit is answered with the record from before the change, and the same
+    /// moment asked again afterwards with the record from after it; and a live
+    /// record and a version read one after the other can each see a different
+    /// side of one change. So both are read in one transaction that first waits
+    /// for the passport's row: a change in progress commits before they are
+    /// read, and one that starts later waits for the read and stamps a moment
+    /// after [`StoredAt::read_at`]. A moment no later than that is answered the
+    /// same way whenever it is asked.
     ///
     /// # Errors
     ///
     /// Propagates the store's own failure.
-    async fn version_at(
-        &self,
-        passport_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<Option<PassportVersion>, DppError>;
+    async fn state_at(&self, passport_id: &str, at: DateTime<Utc>) -> Result<StoredAt, DppError>;
+}
+
+/// What [`PassportVersionStore::state_at`] read, in one transaction.
+#[derive(Debug, Clone)]
+pub struct StoredAt {
+    /// The passport's record as stored now, or `None` when there is no such
+    /// passport.
+    pub live: Option<serde_json::Value>,
+    /// The version that was current at the moment asked for, if one is archived.
+    ///
+    /// `None` means no archived version covers that moment: either the passport
+    /// had not changed by then, or the moment is after its most recent change.
+    /// In both cases [`Self::live`] is the answer.
+    pub version: Option<PassportVersion>,
+    /// The store's clock once it held the passport's row: the clock it stamps a
+    /// version's `superseded_at` by. A moment after it may still be stamped by a
+    /// change that has not happened, so it is not one this read can answer.
+    pub read_at: DateTime<Utc>,
 }

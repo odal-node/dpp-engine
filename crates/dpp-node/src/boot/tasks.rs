@@ -8,7 +8,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::ports::registry_sync::RegistrySyncPort;
 use dpp_domain::ports::seal::SealPort;
 use dpp_integrator::infra::job_store::JobStore;
-use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox};
+use dpp_types::registry_sync::{RegistrySyncCounts, RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_types::registry_transfer::{RegistryTransferCounts, RegistryTransferOutbox};
 use dpp_types::scan::ScanTelemetryRepository;
 use dpp_types::seal::{SealOutbox, SealOutboxCounts};
@@ -88,7 +88,6 @@ const DRAIN_BATCH: i64 = 50;
 /// (one statement, no object-storage work); the drain still paces the actual
 /// reconciles at its own batch size.
 const SWEEP_BATCH: i64 = 500;
-const STALL_THRESHOLD: i32 = 8;
 
 /// Reflect the registry-sync outbox's counts onto its gauges. Shared by the
 /// boot-time reconciliation log and every post-drain re-check so the two
@@ -100,6 +99,9 @@ fn set_registry_gauges(c: &RegistrySyncCounts) {
     metrics::gauge!("registry_outbox_submitted").set(c.submitted as f64);
     metrics::gauge!("registry_outbox_stalled").set(c.stalled as f64);
     metrics::gauge!("registry_outbox_rejected").set(c.rejected as f64);
+    // Given up on by a person, after the registry was shown to hold nothing for
+    // it: a published passport that will not be registered, kept visible.
+    metrics::gauge!("registry_outbox_abandoned").set(c.abandoned as f64);
     metrics::gauge!("registry_outbox_deactivated").set(c.deactivated as f64);
 }
 
@@ -122,6 +124,7 @@ pub async fn spawn_registry_drain(
                 submitted = c.submitted,
                 registered = c.registered,
                 rejected = c.rejected,
+                abandoned = c.abandoned,
                 deactivated = c.deactivated,
                 status_intents = c.status_intents,
                 stalled = c.stalled,
@@ -968,6 +971,7 @@ pub async fn spawn_snapshot_refresh(outbox: Arc<dyn SnapshotOutbox>) {
 pub fn spawn_ruleset_poll(
     active: Arc<dpp_node::infra::ruleset::ActiveRuleset>,
     interval: Option<std::time::Duration>,
+    signals: Arc<dyn dpp_types::node_signal::NodeSignals>,
 ) {
     let Some(interval) = interval.filter(|_| active.has_channel()) else {
         return;
@@ -979,7 +983,8 @@ pub fn spawn_ruleset_poll(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(interval).await;
-            dpp_node::infra::ruleset::reload_and_report(&active, false).await;
+            dpp_node::infra::ruleset::reload_and_report(&active, false, Some(signals.as_ref()))
+                .await;
         }
     });
 }

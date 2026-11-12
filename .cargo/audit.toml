@@ -67,7 +67,52 @@
 # expires:    2027-04-27
 # release-on: `x509-verify` moves to the 0.14 curve crates, or is replaced by
 #             a verifier that does not pull crypto-bigint 0.5.
+# --- RUSTSEC-2026-0440 --------------------------------------------------
+# crate:      astral-tokio-tar 0.6.4
+# path:       dpp-dal / dpp-vault / dpp-node [dev-dependencies] -> testcontainers
+#             0.27 -> astral-tokio-tar
+# class:      dev-only
+# rationale:  The advisory is "unmaintained", not a vulnerability: it names no
+#             flaw. The crate is a tar library that `testcontainers` depends on,
+#             and `testcontainers` is a dev-dependency of the crates above (the
+#             DAL reaches it through its `test-harness` feature, which is only
+#             ever enabled from `[dev-dependencies]`), so it is compiled into the
+#             Docker-backed test suites and into no shipped binary.
+#             `scripts/check-audit-register.sh` checks the second half of that:
+#             it fails if the crate appears in the normal dependency graph.
+#             `testcontainers` 0.28.0, the newest release, still depends on it,
+#             so a bump does not clear the advisory.
+# anchor:     crates/dpp-dal/Cargo.toml::test-harness
+# owner:      LKSNDRTMLKV
+# recorded:   2026-11-05
+# expires:    2027-02-05
+# release-on: `testcontainers` releases a version that no longer depends on
+#             `astral-tokio-tar`, or the crate is maintained again.
+# --- RUSTSEC-2026-0459 --------------------------------------------------
+# crate:      libsqlite3-sys 0.37.0
+# path:       sqlx 0.9 -> sqlx-sqlite (optional, never enabled) ->
+#             libsqlite3-sys
+# class:      not-in-graph
+# rationale:  The advisory is a flaw in the C SQLite that `libsqlite3-sys`
+#             bundles. This workspace uses no SQLite: every `sqlx` dependency
+#             turns its default features off and names `postgres` only, so
+#             `sqlx-sqlite` is never activated and neither crate is compiled.
+#             They are in Cargo.lock only because `sqlx` lists `sqlx-sqlite`
+#             as an optional dependency, and `cargo audit` reads the lockfile,
+#             not the build. `cargo tree -i libsqlite3-sys -e all --target all
+#             --all-features` prints nothing. `scripts/check-audit-register.sh`
+#             re-checks that on every run and fails the moment the crate enters
+#             the graph. A bump is not possible: `sqlx-sqlite` 0.9.0, the newest
+#             release, caps the crate below 0.38 and the fix is 0.39.
+# anchor:     crates/dpp-dal/Cargo.toml::sqlx
+# owner:      LKSNDRTMLKV
+# recorded:   2026-11-09
+# expires:    2027-02-09
+# release-on: `sqlx` releases a `sqlx-sqlite` that accepts `libsqlite3-sys`
+#             0.39, or the lockfile stops carrying the crate.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0387",
+    "RUSTSEC-2026-0440",
+    "RUSTSEC-2026-0459",
 ]

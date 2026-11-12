@@ -205,6 +205,16 @@ components:
       $ref: components/schemas/registry/RegistryRollupView.yaml
     RegistrationView:
       $ref: components/schemas/registry/RegistrationView.yaml
+    AbandonRegistrationRequest:
+      $ref: components/schemas/registry/AbandonRegistrationRequest.yaml
+    AbandonRegistrationResponse:
+      $ref: components/schemas/registry/AbandonRegistrationResponse.yaml
+    RecordRegistryHandleRequest:
+      $ref: components/schemas/registry/RecordRegistryHandleRequest.yaml
+    RecordRegistryHandleResponse:
+      $ref: components/schemas/registry/RecordRegistryHandleResponse.yaml
+    SubmissionReport:
+      $ref: components/schemas/registry/SubmissionReport.yaml
     RegistrationCounts:
       $ref: components/schemas/registry/RegistrationCounts.yaml
     TransferNotificationView:
@@ -277,6 +287,14 @@ components:
       $ref: components/schemas/access/InstalledPlugin.yaml
     NodeState:
       $ref: components/schemas/access/NodeState.yaml
+    NodeHealth:
+      $ref: components/schemas/access/NodeHealth.yaml
+    NodeSignals:
+      $ref: components/schemas/access/NodeSignals.yaml
+    NodeSignal:
+      $ref: components/schemas/access/NodeSignal.yaml
+    RegistryOutboxHealth:
+      $ref: components/schemas/access/RegistryOutboxHealth.yaml
     NodeProfile:
       $ref: components/schemas/access/NodeProfile.yaml
     WhoamiResponse:
@@ -285,6 +303,8 @@ components:
       $ref: components/schemas/access/VaultInfo.yaml
     DidDocument:
       $ref: components/schemas/identity/DidDocument.yaml
+    ResolverDescription:
+      $ref: components/schemas/resolver/ResolverDescription.yaml
     InternalSignRequest:
       $ref: components/schemas/identity/InternalSignRequest.yaml
     InternalSignResponse:
@@ -386,6 +406,10 @@ paths:
     $ref: paths/vault/vault_api_v1_evidence_verify.yaml
   /vault/api/v1/dpp/{dppId}/registry:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry.yaml
+  /vault/api/v1/dpp/{dppId}/registry/handle:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry_handle.yaml
+  /vault/api/v1/dpp/{dppId}/registry/abandon:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_registry_abandon.yaml
   /vault/api/v1/registry:
     $ref: paths/vault/vault_api_v1_registry.yaml
   /vault/api/v1/dpp/{dppId}/stats:
@@ -432,6 +456,8 @@ paths:
     $ref: paths/vault/vault_api_v1_ruleset_reload.yaml
   /vault/api/v1/node/state:
     $ref: paths/vault/vault_api_v1_node_state.yaml
+  /vault/api/v1/node/health:
+    $ref: paths/vault/vault_api_v1_node_health.yaml
   /vault/api/v1/whoami:
     $ref: paths/vault/vault_api_v1_whoami.yaml
   /vault/public/dpp/{dppId}:
@@ -490,6 +516,8 @@ paths:
     $ref: paths/resolver/01_{gtin}_22_{variant}_10_{batch}_21_{serial}.yaml
   /01/{gtin}/235/{extension}:
     $ref: paths/resolver/01_{gtin}_235_{extension}.yaml
+  /.well-known/gs1resolver:
+    $ref: paths/resolver/well-known_gs1resolver.yaml
   /vault/health:
     $ref: paths/health/vault_health.yaml
   /vault/ready:

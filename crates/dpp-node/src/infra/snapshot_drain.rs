@@ -126,7 +126,7 @@ pub async fn drain_once(
         // Both branches are idempotent.
         let started = std::time::Instant::now();
         let outcome = match &passport {
-            Some(p) if dpp_vault::public_view::serves_publicly(&p.status) => {
+            Some(p) if dpp_vault::public_view::serves_publicly(p) => {
                 store_published(store, identity, &dpp_id, p, resolver_base_url)
                     .await
                     .map(|()| Action::Stored)

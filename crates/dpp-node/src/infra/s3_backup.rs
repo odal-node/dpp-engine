@@ -7,8 +7,8 @@
 //! versions to be held by the back-up provider as well as by the main one. It
 //! is that this adapter implements a port with no series in it: one key per
 //! content hash, `retrieve` answering with one passport. This node's clause 4.2
-//! archiving is `ArchivingPassportRepo` in the DAL, and a provider's is the
-//! provider's to build.
+//! archiving is done by `PgPassportRepo`'s writes in the DAL, and a provider's is
+//! the provider's to build.
 //!
 //! Key scheme: `passports/{passport_id}/{sha256_hex}` — content-addressed, idempotent.
 //! Same content → same key. Different content (new version) → different key.

@@ -1,0 +1,13 @@
+type: object
+properties:
+  signals:
+    $ref: ./NodeSignals.yaml
+    description: |
+      Outcomes of the node's own work that leave no other trace, by signal name,
+      kept in the database across restarts. Absent on a deployment with no
+      signal store wired, such as a standalone vault.
+  registryOutbox:
+    $ref: ./RegistryOutboxHealth.yaml
+    description: |
+      The registry-sync outbox's counts. Absent on a deployment with no outbox
+      wired, such as a standalone vault.

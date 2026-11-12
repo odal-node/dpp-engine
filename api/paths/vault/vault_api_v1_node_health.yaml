@@ -1,0 +1,26 @@
+get:
+  operationId: getNodeHealth
+  summary: Node operational health
+  description: |
+    Reports what an operator pages on. `signals` are outcomes of the node's own
+    work that leave no other trace (signing at publish, loading the ruleset),
+    each with whether it is failing now, how often it has failed, and when it
+    last failed and last succeeded, kept across restarts. `registryOutbox` is
+    the registry-sync outbox's pending, submitted, stalled and rejected counts,
+    read live. Authenticated, so a monitor that cannot scrape `/metrics` can
+    read them with an API key. The unauthenticated `/health` answers liveness
+    only.
+  tags:
+    - Node
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  responses:
+    '200':
+      description: Node operational health counters.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/access/NodeHealth.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml

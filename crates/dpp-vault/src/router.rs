@@ -35,6 +35,7 @@ use crate::{
         info::info_handler,
         lint::lint_handler,
         list::list_handler,
+        node_health::node_health_handler,
         node_state::node_state_handler,
         operator::{operator_get_handler, operator_patch_handler},
         personal_data::personal_data_erase_handler,
@@ -43,6 +44,8 @@ use crate::{
         public_read_by_gtin::public_read_by_gtin_handler,
         publish::publish_handler,
         read::read_handler,
+        registry_abandon::abandon_registration_handler,
+        registry_handle::record_registry_handle_handler,
         registry_identity::{
             facilities_audit_handler, facilities_create_handler, facilities_delete_handler,
             facilities_list_handler, facilities_set_default_handler, operator_ids_audit_handler,
@@ -143,6 +146,14 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}/stats", get(passport_stats_handler))
         .route("/stats", get(operator_stats_handler))
         .route("/dpp/{dppId}/registry", get(passport_registry_handler))
+        .route(
+            "/dpp/{dppId}/registry/handle",
+            post(record_registry_handle_handler),
+        )
+        .route(
+            "/dpp/{dppId}/registry/abandon",
+            post(abandon_registration_handler),
+        )
         .route("/registry", get(registry_rollup_handler))
         .route(
             "/dpp/{dppId}/evidence",
@@ -153,6 +164,7 @@ pub fn build(state: AppState) -> Router {
         .route("/evidence/{id}/verify", post(verify_evidence_handler))
         // ── Node setup state ──────────────────────────────────────────
         .route("/node/state", get(node_state_handler))
+        .route("/node/health", get(node_health_handler))
         // ── Caller identity ───────────────────────────────────────────
         // Any scope: it reports only what the caller already presented, and a
         // read-only key needs it precisely to learn that it is read-only.
@@ -324,6 +336,10 @@ fn build_cors(allowed_origins: &[String]) -> CorsLayer {
             header::CONTENT_TYPE,
             crate::middleware::credential::credential_header_name(),
         ])
+        // Exposed for the same readers: a browser hides any response header
+        // CORS does not name, so without this a portal could not tell its
+        // holder why a credential was served only the public view.
+        .expose_headers([crate::middleware::credential::out_of_scope_header_name()])
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(86400))
 }
@@ -371,6 +387,43 @@ mod tests {
         assert!(
             allowed.contains("x-dpp-credential"),
             "preflight did not allow the credential header; got {allowed:?}"
+        );
+    }
+
+    /// The other direction: a browser hides a response header CORS does not
+    /// expose, so a portal could not read why its holder's credential was served
+    /// only the public view. Driven as a real cross-origin `GET` for the same
+    /// reason as the preflight test.
+    #[tokio::test]
+    async fn a_cross_origin_reader_can_read_why_a_credential_was_out_of_scope() {
+        use axum::{Router, body::Body, http::Request, routing::get};
+        use tower::ServiceExt as _;
+
+        let app = Router::new()
+            .route("/credential/dpp/{id}", get(|| async { "ok" }))
+            .layer(super::build_cors(&["https://portal.example".to_owned()]));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/credential/dpp/x")
+                    .header("origin", "https://portal.example")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        let exposed = resp
+            .headers()
+            .get("access-control-expose-headers")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        assert!(
+            exposed.contains("x-dpp-credential-out-of-scope"),
+            "the out-of-scope header is not exposed; got {exposed:?}"
         );
     }
 

@@ -18,7 +18,7 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use base64::Engine as _;
 use dpp_crypto::keystore::KeyStore;
 use dpp_dal::pg::{
-    ArchivingPassportRepo, PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgNodeSignalRepo,
     PgOperatorConfigRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistryIdentityRepo,
     PgScanTelemetryRepo, PgTransferRepo, PgWebhookRepo,
 };
@@ -30,6 +30,8 @@ use dpp_integrator::{infra::vault_client::VaultHttpClient, state::AppState as In
 use dpp_node::infra::credential_issuance::KeyStoreCredentialIssuer;
 use dpp_node::infra::pg_job_store::PgJobStore;
 use dpp_types::auth::{AuthContext, AuthError, AuthProvider};
+use dpp_types::node_signal::{NodeSignals, Outcome, Signal};
+use dpp_types::registry_sync::{RegistrySyncOutbox, STALL_THRESHOLD};
 use dpp_vault::domain::verify::{RefUnverifiable, RefVerification, verify_ref};
 use dpp_vault::{
     domain::{
@@ -120,16 +122,12 @@ async fn start_node_with_ruleset(
     let port = listener.local_addr().unwrap().port();
     let base_url = format!("http://127.0.0.1:{port}");
 
-    // Wrapped exactly as `boot::db` wraps it. A bare `PgPassportRepo` here would
-    // leave the EN 18221 clause 4.2 archive unwired, so the versions route would
-    // answer from an empty table and the smoke suite would agree with a node
-    // that archives nothing.
+    // As `boot::db` wires them. The repository archives every change it writes
+    // (EN 18221 clause 4.2), and the versions route reads that archive through
+    // the version store.
     let version_store: Arc<dyn dpp_types::audit::PassportVersionStore> =
         Arc::new(PgPassportVersionRepo::new(dal.clone()));
-    let passport_repo = Arc::new(ArchivingPassportRepo::new(
-        PgPassportRepo::new(dal.clone()),
-        version_store.clone(),
-    ));
+    let passport_repo = Arc::new(PgPassportRepo::new(dal.clone()));
     let audit_repo = Arc::new(PgAuditRepo::new(dal.clone()));
     let operator_repo = Arc::new(PgOperatorConfigRepo::new(dal.clone()));
     // Seed a complete operator so the publish-completeness gate passes. The node
@@ -190,6 +188,9 @@ async fn start_node_with_ruleset(
         .with_transfer_store(Arc::new(PgTransferRepo::new(dal.clone())))
         .with_evidence_store(Arc::new(PgEvidenceDossierRepo::new(dal.clone())))
         .with_registry_reader(operator_repo.clone())
+        // Wired as `boot::db` wires it, so the node-health route reads a real outbox.
+        .with_registry_outbox(Arc::new(dpp_dal::pg::PgRegistrySyncRepo::new(dal.clone())))
+        .with_signals(Arc::new(PgNodeSignalRepo::new(dal.clone())))
         .with_versions(version_store)
         // Wired as `boot::db` wires it, so the public-read branch that resolves
         // a superseded carrier on to its successor is actually exercised here.
@@ -357,6 +358,148 @@ async fn authenticated_node_state_reports_trust_modes() {
     assert_eq!(body["rulesetVersion"], "baseline");
 }
 
+/// The node-health route follows what the node did. A passport's registration
+/// row is stalled from the stall threshold and not one attempt before it, a
+/// publish that signed is a success on the `signing` signal, and a failure
+/// recorded after it leaves the signal failing.
+#[tokio::test(flavor = "multi_thread")]
+async fn node_health_follows_the_outbox_and_the_signals() {
+    let (base, pg) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000092");
+    let client = reqwest::Client::new();
+
+    // Battery is in force, so publish also needs a default facility and a primary
+    // operator identifier (Annex III / Art. 13), as the route-inventory test seeds.
+    let facility = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "Default Plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility seed request failed");
+    assert!(
+        facility.status().is_success(),
+        "facility seed failed: {}",
+        facility.status()
+    );
+    let operator_id = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "scheme": "lei", "value": "529900T8BM49AURSDO55", "isPrimary": true
+        }))
+        .send()
+        .await
+        .expect("operator-identifier seed request failed");
+    assert!(
+        operator_id.status().is_success(),
+        "operator-identifier seed failed: {}",
+        operator_id.status()
+    );
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Node Health Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+            "productGroupData": {
+                "productGroup": "battery",
+                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                "batteryChemistry": "LFP",
+                "batteryType": "portable",
+                "nominalVoltageV": 48.0,
+                "nominalCapacityAh": 100.0,
+                "expectedLifetimeCycles": 3000,
+                "co2ePerUnitKg": 45.2
+            }
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .expect("create response must be JSON");
+    let id = created["id"]
+        .as_str()
+        .expect("id in create response")
+        .to_owned();
+    let published = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let (publish_status, publish_body) = (
+        published.status(),
+        published.text().await.unwrap_or_default(),
+    );
+    assert!(
+        publish_status.is_success(),
+        "publish: {publish_status} {publish_body}"
+    );
+
+    // Publishing queued the registration. The drain is not running in this
+    // harness, so its attempts are driven here, one at a time.
+    let outbox = dpp_dal::pg::PgRegistrySyncRepo::new(pg.dal.clone());
+    let passport = dpp_domain::passport::PassportId(id.parse().expect("a uuid"));
+    for _ in 1..STALL_THRESHOLD {
+        outbox
+            .mark_submitted_noting(passport, "waiting for a person".into())
+            .await
+            .expect("attempt recorded");
+    }
+    let short = node_health(&base, &token).await;
+    assert_eq!(
+        short["registryOutbox"]["stalled"], 0,
+        "one attempt short of the threshold: {short}"
+    );
+
+    outbox
+        .mark_submitted_noting(passport, "waiting for a person".into())
+        .await
+        .expect("attempt recorded");
+    let at_threshold = node_health(&base, &token).await;
+    assert_eq!(
+        at_threshold["registryOutbox"]["stalled"], 1,
+        "at the threshold: {at_threshold}"
+    );
+
+    // The publish above signed, and the route says so.
+    let signed = &at_threshold["signals"]["signing"];
+    assert_eq!(signed["failing"], false, "{at_threshold}");
+    assert_eq!(signed["failures"], 0, "{at_threshold}");
+    assert!(signed["lastSucceededAt"].is_string(), "{at_threshold}");
+    assert!(signed.get("lastFailedAt").is_none(), "{at_threshold}");
+
+    // A later refusal is the latest outcome, so the signal is failing now.
+    PgNodeSignalRepo::new(pg.dal.clone())
+        .record(Signal::Signing, Outcome::Failed)
+        .await
+        .expect("failure recorded");
+    let after = node_health(&base, &token).await;
+    let refused = &after["signals"]["signing"];
+    assert_eq!(refused["failing"], true, "{after}");
+    assert_eq!(refused["failures"], 1, "{after}");
+    assert!(refused["lastFailedAt"].is_string(), "{after}");
+}
+
+async fn node_health(base: &str, token: &str) -> serde_json::Value {
+    let resp = reqwest::Client::new()
+        .get(format!("{base}/vault/api/v1/node/health"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("GET /vault/api/v1/node/health failed");
+    assert_eq!(resp.status(), 200);
+    resp.json().await.expect("node health is JSON")
+}
+
 /// The issue this route exists to close, end to end: a node that is up and
 /// serving adopts a newly published ruleset, and the version it reports moves.
 ///
@@ -405,7 +548,7 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         ActiveRuleset::baseline()
             .with_channel(Box::new(FileRulesetSource::new(&bundle_path)), &pubkey),
     );
-    dpp_node::infra::ruleset::reload_and_report(&ruleset, true).await;
+    dpp_node::infra::ruleset::reload_and_report(&ruleset, true, None).await;
 
     let pg = start_pg().await;
     let base = start_node_with_ruleset(pg.dal.clone(), ruleset).await;
@@ -460,6 +603,13 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
     assert_eq!(body["changed"], false);
     assert_eq!(body["rulesetVersion"], "2026-Q3.2");
 
+    // The operator's reloads, the quiet one included, are successes.
+    let quiet = node_health(&base, &token).await;
+    let loaded = &quiet["signals"]["rulesetLoad"];
+    assert_eq!(loaded["failing"], false, "{quiet}");
+    assert_eq!(loaded["failures"], 0, "{quiet}");
+    assert!(loaded["lastSucceededAt"].is_string(), "{quiet}");
+
     // An authentic but older bundle served on the channel is refused as a
     // rollback, and the node keeps the ruleset it had.
     publish("2026-Q3.0", 3, 30);
@@ -475,6 +625,14 @@ async fn a_running_node_adopts_a_newly_published_ruleset_without_a_restart() {
         "a rollback must be refused, not adopted"
     );
     assert_eq!(state_version().await, "2026-Q3.2");
+
+    // The refusal the operator's reload met is recorded where a restart cannot
+    // clear it, and is the latest outcome, so the signal is failing now.
+    let after = node_health(&base, &token).await;
+    let refused = &after["signals"]["rulesetLoad"];
+    assert_eq!(refused["failing"], true, "{after}");
+    assert_eq!(refused["failures"], 1, "{after}");
+    assert!(refused["lastFailedAt"].is_string(), "{after}");
 }
 
 /// A node with no channel says so, rather than reporting a verification failure
@@ -737,6 +895,7 @@ async fn route_inventory_matches_assembled_router() {
             format!("/vault/api/v1/dpp/{FAKE_ID}/verify-tree"),
         ),
         (reqwest::Method::GET, "/vault/api/v1/node/state".into()),
+        (reqwest::Method::GET, "/vault/api/v1/node/health".into()),
         (reqwest::Method::GET, "/vault/api/v1/operator".into()),
         (reqwest::Method::PATCH, "/vault/api/v1/operator".into()),
         (reqwest::Method::GET, "/vault/api/v1/api-keys".into()),
@@ -2227,6 +2386,101 @@ async fn a_self_issued_credential_stops_at_its_own_audience() {
     );
 }
 
+/// A category list is checked when the credential is issued and enforced when
+/// it is read.
+///
+/// The layered battery states `batteryType: "portable"`. A credential scoped to
+/// `portable` unlocks its individual-class data. One scoped to `ev` is valid,
+/// so the read is a `200` downgraded to the public view, not an error, and
+/// `X-DPP-Credential-Out-Of-Scope: product-category` says why. A value
+/// no battery can state is refused at issuance with a `422` naming it: minted,
+/// it could only ever come back public, and the holder would be the one to
+/// find out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_category_scoped_credential_is_checked_at_issuance_and_enforced_on_read() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let id = publish_layered_battery(&base, &token, &client).await;
+
+    let issue = |category: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/credentials"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "holderDid": "did:web:repairs.example",
+                    "holderName": "Nord Repair GmbH",
+                    "role": "authorised_repairer",
+                    "country": "DE",
+                    "productGroups": ["battery"],
+                    "productCategories": [category],
+                }))
+                .send()
+                .await
+                .expect("issue request failed")
+        }
+    };
+
+    let typo = issue("portabel").await;
+    assert_eq!(typo.status(), 422, "no battery can state 'portabel'");
+    let problem: serde_json::Value = typo.json().await.unwrap();
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("'portabel'")),
+        "the refusal must name the value, got {problem}"
+    );
+
+    for (category, unlocks) in [("portable", true), ("ev", false)] {
+        let resp = issue(category).await;
+        assert_eq!(resp.status(), 201, "{category} is a battery category");
+        let issued: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            issued["credential"]["credentialSubject"]["productCategories"],
+            serde_json::json!([category]),
+            "the credential must carry the list it was issued with"
+        );
+        let jws = issued["credentialJws"]
+            .as_str()
+            .expect("credentialJws must be a string");
+
+        let resp = client
+            .get(format!("{base}/vault/credential/dpp/{id}"))
+            .header("X-DPP-Credential", jws)
+            .send()
+            .await
+            .expect("credentialed read failed");
+        assert_eq!(
+            resp.status(),
+            200,
+            "{category}: out of scope is a downgrade, not an error"
+        );
+        assert_eq!(
+            resp.headers()
+                .get("x-dpp-credential-out-of-scope")
+                .and_then(|v| v.to_str().ok()),
+            (!unlocks).then_some("product-category"),
+            "{category}: a downgrade says which axis missed, and only a downgrade"
+        );
+        let view: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            view["productGroupData"].get("stateOfHealthPct").is_some(),
+            unlocks,
+            "{category}: individual-class data, got {view}"
+        );
+        assert_eq!(
+            view.get("disclosureSet").is_some(),
+            unlocks,
+            "{category}: only an elevated view names a disclosure set, got {view}"
+        );
+    }
+}
+
 /// A credential naming this node as issuer but signed by a key it does not
 /// publish unlocks nothing.
 ///
@@ -2272,10 +2526,10 @@ async fn a_credential_signed_by_a_key_this_node_does_not_publish_unlocks_nothing
         status, 401,
         "a forged signature must be refused, got {view}"
     );
-    assert!(
-        view["detail"]
-            .as_str()
-            .is_some_and(|d| d.starts_with("Credential signature did not verify.")),
+    // The forgery keeps the genuine header, so the `kid` resolves and the type is
+    // right: the signature is the one thing wrong, and that is what is said.
+    assert_eq!(
+        view["detail"], "Credential signature did not verify.",
         "the refusal must name the signature, not the holder or the passport, \
          got {view}"
     );
@@ -2389,24 +2643,35 @@ async fn publish_layered_battery(base: &str, token: &str, client: &reqwest::Clie
     id
 }
 
+/// "Now" by the database's clock: the one that stamps each version and that the
+/// versions route measures the future by. A moment the test asks about is read
+/// here and not from this process's clock, which can drift from it where Postgres
+/// runs in a VM.
+async fn db_now(pg: &TestPg) -> chrono::DateTime<chrono::Utc> {
+    dpp_dal::pg::sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(pg.dal.pool())
+        .await
+        .expect("the database's clock")
+}
+
 /// A change to a passport is retrievable afterwards, and the route tells its two
 /// empty-handed answers apart.
 ///
 /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — an authenticated, authorised
 /// reader can retrieve the passport as it stood at any given moment.
 ///
-/// 🚨 Nothing but an assembled node proves this. The decorator is wired in the
-/// composition root, so a suite that builds its own `PassportService` over a
-/// bare repository would pass while the shipped node archived nothing.
+/// 🚨 Nothing but an assembled node proves this. The version store is wired in
+/// the composition root, so a suite that builds its own `PassportService` without
+/// it would pass while the shipped node served no versions.
 ///
 /// The `404`/`422` pair is the one CLAUDE.md asks to be constructed rather than
-/// described: `422` means the `asOf` value is not a timestamp, and `404` means
-/// it is a perfectly good timestamp that no archived version covers. Both are
-/// reachable, so the contract gate is satisfied either way and only this can
-/// tell whether the sentences beside them are true.
+/// described: `422` means the `asOf` value is not a timestamp, or names the
+/// future, and `404` means it is a perfectly good past moment that no archived
+/// version covers. Both are reachable, so the contract gate is satisfied either
+/// way and only this can tell whether the sentences beside them are true.
 #[tokio::test]
 async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_uncovered_one() {
-    let (base, _container) = start_db_and_node().await;
+    let (base, pg) = start_db_and_node().await;
     let token = make_jwt("00000000-0000-0000-0000-000000000077");
     let client = reqwest::Client::new();
 
@@ -2451,7 +2716,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
         "a passport that has never changed has no archived versions"
     );
 
-    let before_the_change = chrono::Utc::now();
+    let before_the_change = db_now(&pg).await;
 
     let resp = client
         .put(format!("{base}/vault/api/v1/dpp/{id}"))
@@ -2463,6 +2728,7 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     assert_eq!(status, 200, "update failed: {body}");
+    let after_the_change = db_now(&pg).await;
 
     // The change archived what it replaced, and the route hands it back.
     let (status, body) = versions(String::new()).await;
@@ -2507,11 +2773,10 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     );
 
     // A good timestamp that nothing covers — the passport's most recent change
-    // is behind us, so the live record is the state then. `404`, not `422`.
+    // is behind it, so the live record is the state then. `404`, not `422`.
     let (status, after_the_last_change) = versions(format!(
         "?asOf={}",
-        (chrono::Utc::now() + chrono::Duration::days(365))
-            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+        after_the_change.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
     ))
     .await;
     assert_eq!(
@@ -2521,6 +2786,20 @@ async fn an_archived_version_is_retrievable_and_a_bad_as_of_is_told_from_an_unco
     assert!(
         after_the_last_change.contains("The live record is the state at that time"),
         "and it says so: {after_the_last_change}"
+    );
+
+    // The future is not a moment nothing covers but one nothing has reached: a
+    // change not yet made could still be its state, so it is refused, `422`.
+    let (status, in_the_future) = versions(format!(
+        "?asOf={}",
+        (chrono::Utc::now() + chrono::Duration::days(365))
+            .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    ))
+    .await;
+    assert_eq!(status, 422, "a moment in the future: {in_the_future}");
+    assert!(
+        in_the_future.contains("must not be in the future"),
+        "and it says why: {in_the_future}"
     );
 
     // 🚨 Before the passport existed. Also a `404`, and deliberately **not the

@@ -1,14 +1,17 @@
 //! Router for the public DPP resolver.
 
+use std::time::Duration;
+
 use axum::{
     Router,
     extract::{Path, Request, State},
-    http::HeaderValue,
+    http::{HeaderValue, Method, header},
     middleware,
     response::IntoResponse,
     routing::get,
 };
 use tower_http::{
+    cors::{Any, CorsLayer},
     request_id::{PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
@@ -22,16 +25,11 @@ use crate::{
     handlers::{
         health::{health_handler, ready_handler},
         resolve_aas::{AAS_MEDIA_TYPE, resolve_aas_handler},
-        resolve_by_gtin::{
-            resolve_by_gtin_batch_handler, resolve_by_gtin_batch_serial_handler,
-            resolve_by_gtin_extension_handler, resolve_by_gtin_handler,
-            resolve_by_gtin_serial_handler, resolve_by_gtin_variant_batch_handler,
-            resolve_by_gtin_variant_batch_serial_handler, resolve_by_gtin_variant_handler,
-            resolve_by_gtin_variant_serial_handler, unserved_path_handler,
-        },
+        resolve_by_gtin::{resolve_by_gtin_handler, unserved_path_handler},
         resolve_html::resolve_html_handler,
         resolve_json::resolve_json_handler,
         resolve_qr::resolve_qr_handler,
+        resolver_description::resolver_description_handler,
     },
     state::AppState,
 };
@@ -39,8 +37,8 @@ use crate::{
 /// Build the Axum router with all resolver routes and middleware layers.
 ///
 /// Mounts health probes, content-negotiated DPP resolution, QR PNG generation,
-/// and the GS1 Digital Link (`/01/{gtin}`) route. Attaches tracing, Prometheus
-/// metrics, and `x-request-id` propagation.
+/// the GS1 Digital Link (`/01/{gtin}`) routes and the resolver description file.
+/// Attaches tracing, Prometheus metrics, `x-request-id` propagation and CORS.
 pub fn build(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
@@ -48,39 +46,36 @@ pub fn build(state: AppState) -> Router {
         .route("/dpp/{dppId}", get(content_negotiation_handler))
         .route("/dpp/{dppId}/qr", get(resolve_qr_handler))
         // Every AI combination this node's carrier can print must resolve; all
-        // of them key on the GTIN. See `handlers::resolve_by_gtin`.
+        // of them key on the GTIN, and one handler reads the path. See
+        // `handlers::resolve_by_gtin`.
         .route("/01/{gtin}", get(resolve_by_gtin_handler))
-        .route(
-            "/01/{gtin}/21/{serial}",
-            get(resolve_by_gtin_serial_handler),
-        )
-        .route("/01/{gtin}/10/{batch}", get(resolve_by_gtin_batch_handler))
+        .route("/01/{gtin}/21/{serial}", get(resolve_by_gtin_handler))
+        .route("/01/{gtin}/10/{batch}", get(resolve_by_gtin_handler))
         .route(
             "/01/{gtin}/10/{batch}/21/{serial}",
-            get(resolve_by_gtin_batch_serial_handler),
+            get(resolve_by_gtin_handler),
         )
         // A consumer product variant (AI 22) and a third-party extension (AI 235)
         // are valid qualifiers of a GTIN that this node never prints. They are
-        // accepted and take no part in the lookup; see the handlers.
-        .route(
-            "/01/{gtin}/22/{variant}",
-            get(resolve_by_gtin_variant_handler),
-        )
+        // accepted and take no part in the lookup; see the handler.
+        .route("/01/{gtin}/22/{variant}", get(resolve_by_gtin_handler))
         .route(
             "/01/{gtin}/22/{variant}/21/{serial}",
-            get(resolve_by_gtin_variant_serial_handler),
+            get(resolve_by_gtin_handler),
         )
         .route(
             "/01/{gtin}/22/{variant}/10/{batch}",
-            get(resolve_by_gtin_variant_batch_handler),
+            get(resolve_by_gtin_handler),
         )
         .route(
             "/01/{gtin}/22/{variant}/10/{batch}/21/{serial}",
-            get(resolve_by_gtin_variant_batch_serial_handler),
+            get(resolve_by_gtin_handler),
         )
+        .route("/01/{gtin}/235/{extension}", get(resolve_by_gtin_handler))
+        // What makes this a GS1 resolver to a client that asks (GS1-CRSV1, 3).
         .route(
-            "/01/{gtin}/235/{extension}",
-            get(resolve_by_gtin_extension_handler),
+            "/.well-known/gs1resolver",
+            get(resolver_description_handler),
         )
         .fallback(unserved_path_handler)
         .layer(TraceLayer::new_for_http())
@@ -88,7 +83,25 @@ pub fn build(state: AppState) -> Router {
         .layer(middleware::from_fn(inject_request_id))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(SetRequestIdLayer::x_request_id(UuidRequestId))
+        .layer(cors())
         .with_state(state)
+}
+
+/// Cross-origin access for the whole resolver (GS1-CRSV1, 2.2).
+///
+/// The layer also answers every `OPTIONS` request, preflight or not, with the
+/// methods listed, which is the `OPTIONS` support the standard asks for there.
+/// Open to every origin, because everything it serves is public and it sets no
+/// cookie and reads no credential; `*` is therefore the right answer rather than
+/// an echo of the caller's origin. `Link` and `Location` are exposed so a browser
+/// application can read the context a linkset points at and a redirect's target.
+fn cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::HEAD, Method::OPTIONS])
+        .allow_headers(Any)
+        .expose_headers([header::LINK, header::LOCATION])
+        .max_age(Duration::from_secs(86_400))
 }
 
 /// Route to HTML, JSON-LD, or an AAS Environment based on the `Accept`
@@ -177,7 +190,7 @@ async fn content_negotiation_handler(
 ///
 /// Weights are used only to exclude. Ranking the survivors is `DppMediaType`'s
 /// job for the html/json split, and this route's third type is chosen by name.
-fn acceptable_ranges(accept: &str) -> Vec<String> {
+pub(crate) fn acceptable_ranges(accept: &str) -> Vec<String> {
     accept
         .split(',')
         .filter_map(|entry| {

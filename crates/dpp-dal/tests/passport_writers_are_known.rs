@@ -3,23 +3,24 @@
 //! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
 //! archived.
 //!
-//! [`ArchivingPassportRepo`](dpp_dal::pg::ArchivingPassportRepo) makes archiving
-//! unavoidable by wrapping [`PassportRepository`], and that argument holds for
-//! exactly as long as the port is the only way a passport changes. It is not an
-//! argument the type can make about itself: a new `sqlx::query` in a new module
-//! writing `odal.passport` directly would leave the decorator wrapping a door
-//! nobody uses any more, and nothing would fail.
+//! `repo_passport.rs` archives the stored record in the transaction of every
+//! change it writes, so a change made through its statements cannot skip the
+//! archive. That holds for exactly as long as those statements are the only way
+//! a passport changes, and it is not an argument the file can make about itself:
+//! a new `sqlx::query` in a new module writing `odal.passport` directly would
+//! change a passport with no version taken, and nothing would fail.
 //!
-//! So the set is enumerated here, and the test walks the DAL's own source to
-//! check it. Adding a writer is then a decision somebody has to record, in this
-//! file, next to the reason the existing exception is allowed.
+//! So two things are checked here by walking the DAL's own source: which files
+//! write the table, and that every `UPDATE` in `repo_passport.rs` archives first.
+//! Adding a writer is then a decision somebody has to record, in this file, next
+//! to the reason the existing exception is allowed.
 //!
-//! # 🚨 There is an exception, and the archive's own documentation got it wrong
+//! # 🚨 There is an exception
 //!
-//! `ArchivingPassportRepo` said *"every mutation in this workspace goes through
-//! `PassportRepository`"*. That was already false when it was written.
-//! `PgSealOutboxRepo::mark_sealed` sets `doc->seal` with `jsonb_set`, in the same
-//! transaction that closes the outbox row, and never touches the port.
+//! `PgSealOutboxRepo::mark_sealed` sets `doc->seal` with `jsonb_set`, in the
+//! same transaction that closes the outbox row, and archives nothing. An earlier
+//! statement of the rule said *"every mutation in this workspace goes through
+//! `PassportRepository`"*, and that was false when it was written.
 //!
 //! **That write is correctly outside the archive**, which is why this is a
 //! documentation fix and not a defect:
@@ -36,9 +37,8 @@
 //!   earlier would clobber any concurrent change to a mutable field, and the
 //!   seal write is one `jsonb_set` precisely so it cannot.
 //!
-//! The honest statement is therefore narrower than the one that shipped, and it
-//! is the one the archive's doc now makes: every change to passport **content**
-//! goes through the port.
+//! The honest statement is therefore the narrower one: every change to passport
+//! **content** goes through `repo_passport.rs`, and is archived there.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -49,9 +49,10 @@ use std::path::Path;
 const ALLOWED_WRITERS: &[(&str, &str)] = &[
     (
         "repo_passport.rs",
-        "the `PassportRepository` implementation itself — the door the archiving \
-         decorator wraps — and the in-transaction statements `PgStateChangeLog` \
-         uses, which archive the replaced version in the same transaction",
+        "the `PassportRepository` implementation itself and the in-transaction \
+         statements `PgStateChangeLog` and the registry outbox use. Each `UPDATE` \
+         archives the stored record in its own transaction first, which \
+         `every_update_in_the_repository_archives_first` holds",
     ),
     (
         "repo_seal.rs",
@@ -82,9 +83,9 @@ fn writes_to_passport(source: &str) -> bool {
 ///
 /// 🚨 If this fails, the question is **not** "how do I add the file to the
 /// list". It is: does that write change passport content, and if so, why is it
-/// not going through `PassportRepository`, where the EN 18221 clause 4.2 archive
-/// would see it? A write that changes content and skips the port is a version
-/// that is never taken, and nothing else in this workspace would notice.
+/// not going through `repo_passport.rs`, where the EN 18221 clause 4.2 archive is
+/// taken? A write that changes content and skips it is a version that is never
+/// taken, and nothing else in this workspace would notice.
 #[test]
 fn only_the_known_writers_touch_the_passport_table() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pg");
@@ -117,9 +118,9 @@ fn only_the_known_writers_touch_the_passport_table() {
         "these files write to `odal.passport` and are not in ALLOWED_WRITERS: {unexpected:?}\n\
          \n\
          Before adding one: does the write change passport content? If it does, it belongs \
-         behind `PassportRepository`, where `ArchivingPassportRepo` archives the version it \
-         replaces (EN 18221 clause 4.2). A content change that skips the port is a version \
-         that is never taken, and nothing else here would notice."
+         in `repo_passport.rs`, whose writes archive the record they replace (EN 18221 \
+         clause 4.2). A content change that skips them is a version that is never taken, \
+         and nothing else here would notice."
     );
 
     let vanished: Vec<_> = allowed.difference(&found).cloned().collect();
@@ -159,5 +160,81 @@ fn the_scan_recognises_a_write_and_ignores_a_read() {
     assert!(
         !writes_to_passport("UPDATE odal.passport_version SET doc = $1"),
         "including the archive's own"
+    );
+}
+
+/// The functions in `source` that update `odal.passport` without calling
+/// `archive_stored` first.
+///
+/// A function runs from one `fn` line to the next, which is coarse and enough:
+/// the statements here are built inline, so the `UPDATE` and the archive it needs
+/// sit in the same body. "First" is read in source order: an `UPDATE` above the
+/// archive would archive the record it had just written.
+fn updates_without_an_archive(source: &str) -> Vec<&str> {
+    const UPDATES: [&str; 2] = ["UPDATE odal.passport SET", "UPDATE odal.passport p SET"];
+    let mut found = Vec::new();
+    // The function, and whether it updated before it had archived.
+    let mut current: Option<(&str, bool)> = None;
+    let mut archived = false;
+    for line in source.lines() {
+        let line = line.trim_start();
+        let opens = ["pub(crate) ", "pub "]
+            .iter()
+            .fold(line, |rest, vis| rest.strip_prefix(vis).unwrap_or(rest));
+        let opens = opens.strip_prefix("async ").unwrap_or(opens);
+        if let Some(rest) = opens.strip_prefix("fn ") {
+            if let Some((name, true)) = current {
+                found.push(name);
+            }
+            current = Some((rest.split(['(', '<']).next().unwrap_or(rest), false));
+            archived = false;
+        }
+        if let Some((_, unarchived)) = current.as_mut() {
+            archived |= line.contains("archive_stored(");
+            *unarchived |= !archived && UPDATES.iter().any(|u| line.contains(u));
+        }
+    }
+    if let Some((name, true)) = current {
+        found.push(name);
+    }
+    found
+}
+
+/// Every statement in `repo_passport.rs` that changes a stored passport archives
+/// the record it replaces, in the same transaction.
+///
+/// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2. The list above keeps writes in
+/// this file; this keeps each write in it archiving. A new `UPDATE` that skipped
+/// it would change passports with no version kept, and every test of the
+/// existing writes would still pass.
+#[test]
+fn every_update_in_the_repository_archives_first() {
+    let source = include_str!("../src/pg/repo_passport.rs");
+    let unarchived = updates_without_an_archive(source);
+    assert!(
+        unarchived.is_empty(),
+        "these functions in repo_passport.rs update `odal.passport` without \
+         `archive_stored`: {unarchived:?}. Archive the stored record under the change's \
+         lock first, or the change keeps no version (EN 18221 clause 4.2)."
+    );
+}
+
+/// The check above can tell an archiving update from one that is not.
+#[test]
+fn the_archive_check_finds_an_update_that_skips_it() {
+    let skips = "async fn write(&self) {\n    sqlx::query(\"UPDATE odal.passport SET doc = $2\")\n}\n\
+                 fn read(&self) {\n    sqlx::query(\"SELECT doc FROM odal.passport\")\n}\n";
+    assert_eq!(updates_without_an_archive(skips), ["write"]);
+
+    let archives = "pub(crate) async fn write(&self) {\n    self.archive_stored(tx, id).await?;\n    \
+                    sqlx::query(\"UPDATE odal.passport SET doc = $2\")\n}\n";
+    assert!(updates_without_an_archive(archives).is_empty());
+
+    let too_late = "async fn write(&self) {\n    sqlx::query(\"UPDATE odal.passport SET doc = $2\")\n    \
+                    self.archive_stored(tx, id).await?;\n}\n";
+    assert_eq!(
+        updates_without_an_archive(too_late),
+        ["write"],
+        "an archive after the update keeps the record the update wrote"
     );
 }

@@ -6,13 +6,38 @@
 //! Design notes:
 //! - `patch_fields` is a row-locked read-merge-write inside one transaction —
 //!   real concurrent-write safety (no string-built SQL, no lowercasing quirks).
+//!
+//! # Every change archives the record it replaces
+//!
+//! ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2 — every change to a passport is
+//! archived, from the first change on.
+//!
+//! Both statements that change a stored passport, `update_in_tx` and
+//! `patch_doc_in_tx` (behind `patch_in_tx`), first copy the row's `doc` into
+//! `passport_version` under the
+//! row lock their change holds, in the change's own transaction
+//! (`archive_stored`), stamped by the database's clock once that lock is held.
+//! So the version is the record as it was stored, never this build's reading of
+//! it: every read upcasts through the lens chain, and a version archived from a
+//! reading holds a shape the passport was never signed in. And the version
+//! commits with its change or not at all: a refused change leaves none, and two
+//! concurrent changes each archive the record the other left.
+//!
+//! Every writer of passport content reaches one of the two: `update`,
+//! `patch_fields`, `update_status` and `update_batch` here, the state-change
+//! log, and the registry outbox's `commit_publish`. Create is not a change and
+//! archives nothing: archiving starts at the first change to the passport as
+//! first issued, and the live record already answers for the time before it.
+//! The one write elsewhere, `mark_sealed`'s seal, is not a change to content.
+//! `passport_writers_are_known` holds both: which files write the table, and
+//! that each statement here that changes a passport archives first.
 
 use async_trait::async_trait;
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use dpp_domain::{
-    ProductGroupData,
+    ComplianceResult, ProductGroupData,
     catalog::ProductGroupCatalog,
     error::DppError,
     identifier::ProductIdentifier,
@@ -23,6 +48,7 @@ use dpp_domain::{
     status::PassportStatus,
 };
 
+use super::repo_passport_version::insert_version;
 use super::{PgDal, db_err};
 
 /// A passport's product identifier as one string — the SQL twin of
@@ -139,6 +165,28 @@ pub struct PgPassportRepo {
     catalog: ProductGroupCatalog,
 }
 
+/// A passport row as stored, read under the lock of the change about to be made.
+struct Stored {
+    doc: serde_json::Value,
+    retention_locked: bool,
+}
+
+/// What a patch does to the stored compliance determination.
+///
+/// A caller's delta can never carry it: `complianceResult` is a protected patch
+/// field, refused before anything is read. The host's determination arrives here
+/// instead, so it reaches the document and its two projected columns in the same
+/// statement as the rest of the patch.
+enum Determination<'a> {
+    /// The delta decides nothing about it: the stored one, and both columns,
+    /// stay as they are.
+    Untouched,
+    /// This one replaces the stored one.
+    Store(&'a ComplianceResult),
+    /// None is stored: the key leaves the document and both columns go NULL.
+    Remove,
+}
+
 impl PgPassportRepo {
     /// Construct a repo sharing the given pool handle.
     pub fn new(dal: PgDal) -> Self {
@@ -189,11 +237,39 @@ impl PgPassportRepo {
             .transpose()
     }
 
+    /// The stored row of `id`, locked until `tx` ends and archived as the
+    /// version the change about to be made in `tx` replaces, or `None` when
+    /// there is none.
+    ///
+    /// ✅ COMPLIANCE-PIN: EN 18221:2026 clause 4.2. The column as stored, in the
+    /// change's own transaction: see this file's header.
+    async fn archive_stored(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+    ) -> Result<Option<Stored>, DppError> {
+        let Some(row) =
+            sqlx::query("SELECT doc, retention_locked FROM odal.passport WHERE id = $1 FOR UPDATE")
+                .bind(Self::uuid_of(id))
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db_err)?
+        else {
+            return Ok(None);
+        };
+        insert_version(&mut **tx, Self::uuid_of(id)).await?;
+        Ok(Some(Stored {
+            doc: row.get("doc"),
+            retention_locked: row.get("retention_locked"),
+        }))
+    }
+
     /// Apply a passport update (scalar columns + `doc`) inside a caller-supplied
     /// transaction. Shared by [`PassportRepository::update`], the state-change
     /// log, and the transactional outbox's `commit_publish`, so the publish-write
     /// and the outbox insert commit atomically without duplicating this SQL.
-    /// Errors `NotFound` if no row matched.
+    /// Archives the stored record first (`archive_stored`). Errors `NotFound` if
+    /// no row matched.
     ///
     /// # Why `doc || $2` rather than `doc = $2`
     ///
@@ -246,25 +322,58 @@ impl PgPassportRepo {
     /// a concurrent publish carries `retentionLocked: false`, and the guard lets
     /// that flag change, so it would otherwise unlock the row. The write is
     /// serialised as locked, which makes the flag an unchanged key.
+    ///
+    /// # The determination is the exception to the constraint above
+    ///
+    /// `complianceResult` is cleared when the passport carries none: the key
+    /// leaves the document and `assessed_at` and `ruleset_version`, which are
+    /// projections of it, go NULL. A stored determination is the one of the
+    /// content stored beside it, and a passport with no determination to carry
+    /// says there is none now, which an omission could not say. So a publish
+    /// that could not assess the content it signs stores no verdict, rather than
+    /// signing the verdict of an earlier edit.
+    ///
+    /// The two columns follow the passport exactly where they used to be
+    /// `COALESCE`d onto their stored values, so a determination with no ruleset
+    /// version no longer keeps the version of the one before it.
+    ///
+    /// A locked row's determination is frozen with the rest of its content, and
+    /// the retention guard does not list it among the mutable keys. A write that
+    /// carries the stored one has nothing to settle, as for any unchanged key. One
+    /// that carries a different one is sent, and refused by the guard.
     pub(crate) async fn update_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         passport: &Passport,
     ) -> Result<(), DppError> {
-        let stored = self.locked_reading(tx, passport.id).await?;
-        let mut doc = if stored.is_some() {
+        let stored = self
+            .archive_stored(tx, passport.id)
+            .await?
+            .ok_or_else(|| DppError::NotFound(passport.id.to_string()))?;
+        let reading = if stored.retention_locked {
+            Some(Self::to_doc(&self.read_doc(stored.doc)?)?)
+        } else {
+            None
+        };
+        let mut doc = if reading.is_some() {
             let mut locked = passport.clone();
             locked.retention_locked = true;
             Self::to_doc(&locked)?
         } else {
             Self::to_doc(passport)?
         };
-        if let Some(stored) = &stored
-            && let (Some(written), Some(stored)) = (doc.as_object_mut(), stored.as_object())
+        // Decided before the unchanged keys are dropped below, which would make
+        // a determination the passport shares with the stored row look absent.
+        let settles_determination = match &reading {
+            Some(reading) => reading.get("complianceResult") != doc.get("complianceResult"),
+            None => true,
+        };
+        if let Some(reading) = &reading
+            && let (Some(written), Some(reading)) = (doc.as_object_mut(), reading.as_object())
         {
-            written.retain(|key, value| stored.get(key) != Some(value));
+            written.retain(|key, value| reading.get(key) != Some(value));
         }
-        let res = sqlx::query(
+        sqlx::query(
             // The scalar columns re-projected from `$2`, each `COALESCE`d onto its
             // stored value for the reason the doc comment above gives: an omitted
             // key is absent, not null, so a column must keep what it has rather
@@ -273,8 +382,14 @@ impl PgPassportRepo {
             //
             // `retention_until` is the one that matters most here — it is sealed at
             // publish, so it is never present at create and would stay NULL forever
-            // if only the insert wrote it. `assessed_at` and `ruleset_version`
-            // change whenever the compliance determination is re-run.
+            // if only the insert wrote it.
+            //
+            // `assessed_at`, `ruleset_version` and the determination in `doc` are
+            // the exception, for the reason the doc comment above gives: `$3` says
+            // the write settles the determination, and then all three follow `$2`
+            // exactly, a missing `complianceResult` removing the key and nulling
+            // both columns. `jsonb_exists` rather than the `?` operator, which
+            // reads as a placeholder to some drivers.
             r#"UPDATE odal.passport SET
                  product_group    = COALESCE($2->>'productGroup', product_group),
                  status           = COALESCE($2->>'status', status),
@@ -283,39 +398,25 @@ impl PgPassportRepo {
                  granularity      = COALESCE($2->>'granularity', granularity),
                  retention_until  = COALESCE(NULLIF($2->>'retentionUntil','')::timestamptz, retention_until),
                  product_id       = COALESCE(NULLIF($2->>'productId','')::uuid, product_id),
-                 assessed_at      = COALESCE(NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz, assessed_at),
-                 ruleset_version  = COALESCE($2->'complianceResult'->>'rulesetVersion', ruleset_version),
+                 assessed_at      = CASE WHEN $3
+                                         THEN NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz
+                                         ELSE assessed_at END,
+                 ruleset_version  = CASE WHEN $3
+                                         THEN $2->'complianceResult'->>'rulesetVersion'
+                                         ELSE ruleset_version END,
                  published_at     = COALESCE(NULLIF($2->>'publishedAt','')::timestamptz, published_at),
-                 doc              = doc || $2
+                 doc              = CASE WHEN $3 AND NOT jsonb_exists($2, 'complianceResult')
+                                         THEN (doc || $2) - 'complianceResult'
+                                         ELSE doc || $2 END
                WHERE id = $1"#,
         )
         .bind(passport.id.0)
         .bind(&doc)
+        .bind(settles_determination)
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
-        if res.rows_affected() == 0 {
-            return Err(DppError::NotFound("record not found after update".into()));
-        }
         Ok(())
-    }
-
-    /// A fresh reading of the stored row, serialised, when it is retention-locked;
-    /// `None` for a draft or a missing row. Locks the row for the rest of `tx`.
-    async fn locked_reading(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        id: PassportId,
-    ) -> Result<Option<serde_json::Value>, DppError> {
-        let row = sqlx::query(
-            "SELECT doc FROM odal.passport WHERE id = $1 AND retention_locked FOR UPDATE",
-        )
-        .bind(Self::uuid_of(id))
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db_err)?;
-        row.map(|r| Self::to_doc(&self.read_doc(r.get::<serde_json::Value, _>("doc"))?))
-            .transpose()
     }
 
     /// Merge `delta` into the stored passport inside `tx`.
@@ -329,23 +430,55 @@ impl PgPassportRepo {
         id: PassportId,
         delta: serde_json::Value,
     ) -> Result<Passport, DppError> {
+        self.patch_doc_in_tx(tx, id, delta, Determination::Untouched)
+            .await
+    }
+
+    /// [`patch_in_tx`](Self::patch_in_tx) that also stores the determination of
+    /// the content it leaves: `determination` replaces the stored one, or
+    /// removes it when `None`.
+    ///
+    /// The host's own write, which is why it is not a field of `delta`: the
+    /// determination is protected against a caller's patch, and this path is
+    /// where the host writes it. The statement is the delta's, so the version
+    /// archived is the record as it was, and the document and the two columns
+    /// projected from the determination change together.
+    pub(crate) async fn patch_with_determination_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+        delta: serde_json::Value,
+        determination: Option<&ComplianceResult>,
+    ) -> Result<Passport, DppError> {
+        let determination = match determination {
+            Some(result) => Determination::Store(result),
+            None => Determination::Remove,
+        };
+        self.patch_doc_in_tx(tx, id, delta, determination).await
+    }
+
+    async fn patch_doc_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: PassportId,
+        delta: serde_json::Value,
+        determination: Determination<'_>,
+    ) -> Result<Passport, DppError> {
         // Reject protected/state-machine fields up front: they are set only via
         // the publish pipeline / update_status and back scalar columns this path
         // does not rewrite, so patching them would bypass the state machine and
         // desync the doc from its enforcing column. The rule itself lives in
         // `crate::protected_fields` so the in-memory backend answers with it too.
+        //
+        // Only the caller's delta is held to it. The determination is the host's
+        // and arrives beside the delta, never inside it.
         crate::protected_fields::refuse_protected(&delta)?;
 
         // Row lock makes concurrent patches serialise instead of clobbering.
-        let row = sqlx::query("SELECT doc FROM odal.passport WHERE id = $1 FOR UPDATE")
-            .bind(Self::uuid_of(id))
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db_err)?;
-        let Some(row) = row else {
+        let Some(stored) = self.archive_stored(tx, id).await? else {
             return Err(DppError::NotFound(id.to_string()));
         };
-        let mut doc: serde_json::Value = row.get("doc");
+        let mut doc = stored.doc;
         if let (serde_json::Value::Object(dm), serde_json::Value::Object(pm)) = (&delta, &mut doc) {
             for (k, v) in dm {
                 if v.is_null() {
@@ -355,15 +488,42 @@ impl PgPassportRepo {
                 }
             }
         }
+        let settles_determination = !matches!(determination, Determination::Untouched);
+        if let serde_json::Value::Object(pm) = &mut doc {
+            match determination {
+                Determination::Untouched => {}
+                Determination::Store(result) => {
+                    let value = serde_json::to_value(result)
+                        .map_err(|e| DppError::Internal(format!("serialize: {e}")))?;
+                    pm.insert("complianceResult".to_owned(), value);
+                }
+                Determination::Remove => {
+                    pm.remove("complianceResult");
+                }
+            }
+        }
         let passport = self.read_doc(doc.clone())?;
-        // Doc-only write: the scalar columns are all protected fields (rejected
-        // above), so they can never drift from the doc via this path.
-        sqlx::query("UPDATE odal.passport SET doc = $2 WHERE id = $1")
-            .bind(Self::uuid_of(id))
-            .bind(&doc)
-            .execute(&mut **tx)
-            .await
-            .map_err(db_err)?;
+        // The scalar columns are all protected fields (rejected above), so they
+        // can never drift from the doc via this path. The two the determination
+        // projects are the exception, and are written only when it is: `$3` says
+        // so, and then both follow the document exactly.
+        sqlx::query(
+            r#"UPDATE odal.passport SET
+                 doc             = $2,
+                 assessed_at     = CASE WHEN $3
+                                        THEN NULLIF($2->'complianceResult'->>'assessedAt','')::timestamptz
+                                        ELSE assessed_at END,
+                 ruleset_version = CASE WHEN $3
+                                        THEN $2->'complianceResult'->>'rulesetVersion'
+                                        ELSE ruleset_version END
+               WHERE id = $1"#,
+        )
+        .bind(Self::uuid_of(id))
+        .bind(&doc)
+        .bind(settles_determination)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
         Ok(passport)
     }
 }
@@ -519,6 +679,42 @@ impl PassportRepository for PgPassportRepo {
             .collect())
     }
 
+    /// Every passport carrying `identifier`, at any level and in any status —
+    /// the port's contract, answered from `idx_passport_identifier` rather than
+    /// the default `list()` scan.
+    ///
+    /// Filtered afterwards by the port's own rule, for the reason
+    /// [`find_by_identifier`](Self::find_by_identifier) gives.
+    ///
+    /// # A row that cannot be read fails the lookup
+    ///
+    /// Every row carrying the identifier is read, whatever its lot or status,
+    /// and one that does not decode fails the whole lookup rather than being
+    /// skipped. Publish asks this whether the identifier is already held, and a
+    /// row it cannot read is one it cannot rule out: skipped, it could be the
+    /// live holder, and two live holders of one identifier cannot be repaired,
+    /// where a publish refused for it can be retried once the row reads. The
+    /// two lookups above read their rows the same way.
+    async fn find_by_product_identifier(
+        &self,
+        identifier: &ProductIdentifier,
+    ) -> Result<Vec<Passport>, DppError> {
+        let rows = sqlx::query(concat!(
+            "SELECT doc FROM odal.passport WHERE ",
+            identifier_sql!(),
+            " = $1 ORDER BY created_at"
+        ))
+        .bind(identifier.as_str())
+        .fetch_all(self.dal.pool())
+        .await
+        .map_err(db_err)?;
+        Ok(self
+            .read_docs(rows)?
+            .into_iter()
+            .filter(|p| carries(p, identifier))
+            .collect())
+    }
+
     /// Find a passport by exact compound identity (product group, identifier,
     /// batch, serial), across `Draft` and `Published` — backs the import
     /// delta-matcher. Indexed by `0042_passport_identifier_index.sql`.
@@ -615,18 +811,27 @@ impl PassportRepository for PgPassportRepo {
         Ok(passport)
     }
 
-    /// Convenience wrapper: load, set status and `updated_at`, then call `update`.
+    /// Convenience wrapper: load, set status and `updated_at`, then write.
+    ///
+    /// The passport is read under the row lock the write holds, in the same
+    /// transaction, as the state-change log's status write reads it. A read
+    /// before the lock is a reading of a row that may change while the write
+    /// waits, and the write stores the passport's determination exactly: a
+    /// status-only change would then remove one an edit had just stored.
     async fn update_status(
         &self,
         id: PassportId,
         status: PassportStatus,
     ) -> Result<Passport, DppError> {
-        let Some(mut passport) = self.find_by_id(id).await? else {
+        let mut tx = self.dal.begin().await?;
+        let Some(mut passport) = self.current_for_update_in_tx(&mut tx, id).await? else {
             return Err(DppError::NotFound(id.to_string()));
         };
         passport.status = status;
         passport.updated_at = chrono::Utc::now();
-        self.update(passport).await
+        self.update_in_tx(&mut tx, &passport).await?;
+        tx.commit().await.map_err(db_err)?;
+        Ok(passport)
     }
 
     /// List passports with optional status filter, full-text ILIKE search, and

@@ -20,8 +20,8 @@ Source License 1.1.
   `serde`, with camelCase keys. The passport's component graph lives inside the
   passport document (`componentRefs`), not in relational tables.
 - **Append-only history.** The audit table is append-only (enforced by a database
-  trigger) and hash-chained. Superseded passport versions are kept by
-  `ArchivingPassportRepo` in `passport_version`.
+  trigger) and hash-chained. Every change to a passport archives the stored
+  record it replaces in `passport_version`, in the change's own transaction.
 
 The first API key, operator configuration and facilities are not seeded by a
 migration: `odal bootstrap` creates them through the API.
@@ -32,8 +32,9 @@ migration: `odal bootstrap` creates them through the API.
 src/
 ├── pg/
 │   ├── pool.rs                    PgDal: connect, migrate
-│   ├── repo_passport.rs           PgPassportRepo (dpp-domain's PassportRepository)
-│   ├── archiving_repo.rs          keeps every published version
+│   ├── repo_passport.rs           PgPassportRepo (dpp-domain's PassportRepository),
+│   │                              archiving every change it writes
+│   ├── repo_passport_version.rs   the archived versions, read by the versions route
 │   ├── repo_audit.rs              hash-chained audit trail
 │   ├── repo_api_key.rs, repo_operator_config.rs, repo_registry_identity.rs
 │   ├── repo_registry_sync.rs, repo_seal.rs, repo_snapshot.rs,

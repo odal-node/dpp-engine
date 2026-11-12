@@ -41,9 +41,11 @@ mod publish;
 /// and carrier URL with the function publish uses, rather than a copy of it.
 pub use publish::stamp_publish_obligations;
 mod query;
+pub mod registry_abandon;
+pub mod registry_handle;
 /// Public: the versions route has to tell apart the two ways of having no
 /// archived version, because only one of them is answered by the live record.
-pub use query::{LabelLevel, LabelResolution, VersionAt};
+pub use query::{LabelLevel, LabelResolution, StateAt, VersionAt, archived_passport};
 /// Public: the seal route and the evidence dossier both need `seal_digest` to
 /// state which digest a seal covers.
 pub mod seal;
@@ -62,13 +64,14 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::AuditRepository,
     evidence::EvidenceDossierRepository,
+    node_signal::NodeSignals,
     operator::OperatorConfigRepository,
     registry_sync::{RegistryStatusIntent, RegistrySyncOutbox},
     registry_transfer::RegistryTransferOutbox,
     seal::SealOutbox,
     snapshot::SnapshotOutbox,
     state_change::{PassportWrite, StateChange, StateChangeLog, WebhookEvent},
-    transfer::TransferStore,
+    transfer::{TransferStore, VersionedChain},
     webhook::WebhookOutbox,
 };
 
@@ -108,6 +111,11 @@ pub struct PassportService {
     /// `None` (test doubles / in-memory repo), publish falls back to the legacy
     /// inline path.
     pub registry_outbox: Option<Arc<dyn RegistrySyncOutbox>>,
+    /// Outcomes of the node's own work that leave no other trace: how signing
+    /// went at publish, and how an operator's ruleset reload went. Read by the
+    /// node-health route, so they survive a restart. `None` (test doubles) leaves
+    /// failures on the Prometheus counters alone, and the route omits the signals.
+    pub signals: Option<Arc<dyn NodeSignals>>,
     /// Archived versions of passports — EN 18221:2026 clause 4.2.
     ///
     /// This is now the only thing in this struct called an archive, and it is
@@ -124,8 +132,8 @@ pub struct PassportService {
     /// this field is the whole of our clause 4.2 read path.
     ///
     /// `None` disables the versions route. It does **not** disable archiving —
-    /// that happens in the repository decorator, which a node wires or does
-    /// not wire independently of this.
+    /// the passport store archives every change it writes, whatever is wired
+    /// here.
     pub versions: Option<Arc<dyn dpp_types::audit::PassportVersionStore>>,
     /// Finds the passport that replaced a superseded one, so a printed carrier
     /// keeps landing on the current record.
@@ -242,6 +250,7 @@ impl PassportService {
             registry_sync,
             backup,
             registry_outbox: None,
+            signals: None,
             versions: None,
             successors: None,
             transfer_store: None,
@@ -262,10 +271,9 @@ impl PassportService {
 
     /// Provide the archived-version store, enabling the versions route.
     ///
-    /// Read-side only. Whether versions are *written* is decided by whether the
-    /// composition root wrapped the repository in the archiving decorator, and
-    /// a node that wires one without the other gets a route with nothing behind
-    /// it or an archive nothing reads.
+    /// Read-side only. Versions are *written* by the passport store, in the
+    /// transaction of each change, so a node that leaves this out still archives
+    /// and has an archive nothing reads.
     #[must_use]
     pub fn with_versions(mut self, store: Arc<dyn dpp_types::audit::PassportVersionStore>) -> Self {
         self.versions = Some(store);
@@ -305,6 +313,14 @@ impl PassportService {
     #[must_use]
     pub fn with_registry_outbox(mut self, outbox: Arc<dyn RegistrySyncOutbox>) -> Self {
         self.registry_outbox = Some(outbox);
+        self
+    }
+
+    /// Record the outcomes this service sees in the database, so the node-health
+    /// route reports them across restarts.
+    #[must_use]
+    pub fn with_signals(mut self, signals: Arc<dyn NodeSignals>) -> Self {
+        self.signals = Some(signals);
         self
     }
 
@@ -488,14 +504,36 @@ impl PassportService {
             Some(PassportWrite::Status(id, status)) => {
                 Some(self.repo.update_status(id, status).await?)
             }
-            Some(PassportWrite::Patch(id, delta)) => Some(self.repo.patch_fields(id, delta).await?),
+            Some(PassportWrite::Patch {
+                id,
+                delta,
+                determination,
+            }) => {
+                let mut patched = self.repo.patch_fields(id, delta).await?;
+                // The port refuses `complianceResult` in a delta, so the
+                // determination goes through `update`, which stores a passport as
+                // it stands and removes a determination it no longer carries. Two
+                // writes where the log makes one, like every part of this path:
+                // both binaries wire the log, so this is the path of a service
+                // built on in-memory ports.
+                let as_json =
+                    |d: &Option<dpp_domain::ComplianceResult>| serde_json::to_value(d).ok();
+                if as_json(&patched.compliance_result) != as_json(&determination) {
+                    patched.compliance_result = determination;
+                    patched = self.repo.update(patched).await?;
+                }
+                Some(patched)
+            }
         };
         if let (Some(intent), Some(outbox), Some(p)) =
             (registry_intent, &self.registry_outbox, &written)
         {
             outbox.enqueue_status(p.id, intent).await?;
         }
-        if let Some(chain) = transfer_chain {
+        // The revision the chain was read at is not checked here: this path
+        // writes through ports that take the chain alone, and only the
+        // state-change log refuses a chain written since it was read.
+        if let Some(VersionedChain { chain, .. }) = transfer_chain {
             match (transfer_notice, &self.transfer_outbox) {
                 (Some((transfer_id, payload)), Some(outbox)) => {
                     outbox.commit_accept(&chain, transfer_id, payload).await?;

@@ -66,3 +66,8 @@ rand          = { workspace = true }
 # is handed and the suite stops compiling. Bumping the two apart disables the
 # only test that proves the label encodes the carrier URI.
 rqrr          = "0.11"
+# Checks the linkset and the description file against the schemas GS1 publishes
+# (`tests/fixtures/gs1/`), which is what the resolver standard says they must
+# validate against. The same version and features `dpp-domain` links, so this
+# adds no crate to the build.
+jsonschema    = { version = "0.60", features = ["idna"], default-features = false }

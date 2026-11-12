@@ -437,7 +437,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/info` | None | Build info |
 | GET | `/vault/public/dpp/{dppId}` | None | Public passport read |
 | GET | `/vault/public/dpp/by-gtin/{gtin}` | None | Public read of the passport a printed GS1 label names; `?batch=` / `?serial=` carry the label's AI 10 / AI 21 |
-| GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}` |
+| GET | `/vault/credential/dpp/{dppId}` | **None** — `X-DPP-Credential` only | Audience-scoped read. Deliberately outside both `/public` (a public URL whose body varies by caller breaks caching and the meaning of `publicJwsSignature`) and `/api/v1` (a repairer or authority holds a credential and no API key). **Unauthenticated and network-touching**: it resolves the credential issuer's `did:web` over the guarded outbound path before anything is verified, and a verified read appends to the passport's audit trail. No credential ⇒ the public view, byte-identical to `/public/dpp/{dppId}`. A valid credential that does not cover the passport (product group, then product category) ⇒ the same public view, a `200` never a `401`, plus `X-DPP-Credential-Out-Of-Scope` naming the axis that missed. **`?asOf=<RFC 3339>` is the one exception, and reads the passport as it stood then** (EN 18221 clause 4.2): it serves the archived version's own publish-time view for the caller's classes, with that proof, and only to a credential that grants more than the public view — none ⇒ `401`, one that does not cover the passport ⇒ `403`, never the public view, because that is the same bytes for every version and would answer a question about the past with the present passport. A draft's moment is `404`, a suspended one `410`, the future `422`, and the read is audited with `asOf` and `archivedVersionId` |
 | POST | `/vault/api/v1/dpp` | Bearer | Create passport |
 | POST | `/vault/api/v1/dpp/validate` | Bearer **(write)** | Dry-run a create body, persisting nothing. Runs the same `validate_create_request` the create route runs, so the preview cannot disagree with it, and returns the identical `422` on rejection. Reports `createValid` **and** `publishValid` separately — create is lenient about an unresolvable product group schema, publish fails closed on it |
 | GET | `/vault/api/v1/dpps` | Bearer | List passports |
@@ -540,6 +540,8 @@ The internal endpoints are mTLS-gated (`CN=odal-vault`).
 | GET | `/01/{gtin}/10/{batch}/21/{serial}` | None | Same, with both |
 | GET | `/01/{gtin}/22/{variant}[/10/{batch}][/21/{serial}]` | None | Four routes: a consumer product variant (AI 22), accepted and not looked up. The node never prints one |
 | GET | `/01/{gtin}/235/{extension}` | None | A third-party extension (AI 235), accepted and not looked up. Any other path under `/01/` is a `400` |
+| GET | `/eh{hex}`, `/ex{base64url}` | None | A compressed Digital Link holding an SGTIN-96 or SGTIN-198 EPC binary string, read like the label it decodes to. Any other scheme is a `404`, and a link that cannot be decompressed a `400` |
+| GET | `/.well-known/gs1resolver` | None | The resolver description file (GS1 resolver standard, section 3). Lists the GTIN (`01`) and no other primary key |
 
 > **Scan telemetry (privacy-safe aggregates).** When `SCAN_INGEST_URL` is set,
 > the resolver counts *terminal-view* resolutions (`/dpp/{dppId}` html + json)
@@ -632,7 +634,7 @@ Two things that bite:
 Not debt — rules that hold, stated once so they are not re-derived.
 
 - **"Archive" means EN 18221 clause 4.2 and nothing else.** Three things once wore the word and the collision hid a real compliance gap for months, because the name looked already taken. They are told apart by **shape**:
-  - **archive / archiving** — a *history*: every past version of a passport that is still live. `ArchivingPassportRepo`, `passport_version`, `GET /dpp/{id}/versions?asOf=`.
+  - **archive / archiving** — a *history*: every past version of a passport that is still live. `passport_version`, written by `PgPassportRepo`'s writes, `GET /dpp/{id}/versions?asOf=`.
   - **retire** — a *state*: the terminal lifecycle status, the record has stopped changing. `PassportStatus::Retired`, `POST /dpp/{id}/retire`. No legal anchor; it is our own word.
   - **back-up copy** — a *copy*, held by an independent third party so the passport survives its operator. ESPR **Art. 10(4)** + **Art. 2(32)** (*not* Art. 13, which is the registry). `BackupCopyPort`, `BACKUP_S3_*`.
 

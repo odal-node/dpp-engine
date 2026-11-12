@@ -5,30 +5,26 @@
 //! file holds no SQL of its own. Passport writes stay in `repo_passport.rs`,
 //! which keeps `passport_writers_are_known` meaningful.
 //!
-//! # The archive is written here, not by the decorator
+//! # The archive is written by the passport statements
 //!
-//! This is a second door onto `odal.passport` beside [`PassportRepository`],
-//! so [`ArchivingPassportRepo`](super::ArchivingPassportRepo) does not see it.
-//! It archives the same thing the decorator does, the stored passport as it
-//! was before the change, re-serialised from its typed form, and it does so in
-//! the transaction that makes the change. A write that creates a passport
-//! archives nothing, as the decorator's `create` archives nothing.
-//!
-//! [`PassportRepository`]: dpp_domain::ports::passport_repo::PassportRepository
+//! A change here writes the passport through `update_in_tx` or
+//! `patch_with_determination_in_tx`,
+//! which archive the stored record under the row lock in this transaction, as
+//! they do for the repository's own writes. So the version and the change
+//! commit together, and a write that creates a passport archives nothing.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Postgres, Transaction};
 
-use dpp_domain::{DppError, passport::Passport, passport::PassportId};
+use dpp_domain::{DppError, passport::Passport};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 
 use super::repo_audit::append_in_tx;
 use super::repo_passport::{PgPassportRepo, insert_passport_in_tx};
-use super::repo_passport_version::insert_version;
 use super::repo_registry_sync::{queue_registration_in_tx, record_status_intent};
 use super::repo_registry_transfer::queue_transfer_notice;
-use super::repo_transfer::upsert_chain;
+use super::repo_transfer::write_chain_over;
 use super::repo_webhook::fan_out;
 use super::{PgDal, db_err};
 
@@ -47,25 +43,6 @@ impl PgStateChangeLog {
         }
     }
 
-    /// The stored passport, locked for the rest of `tx`, and archived as the
-    /// version this change supersedes.
-    async fn archive_current(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        id: PassportId,
-    ) -> Result<Passport, DppError> {
-        let current = self
-            .passports
-            .current_for_update_in_tx(tx, id)
-            .await?
-            .ok_or_else(|| DppError::NotFound(id.to_string()))?;
-        let doc = serde_json::to_value(&current).map_err(|e| {
-            DppError::Serialisation(format!("cannot archive the passport version: {e}"))
-        })?;
-        insert_version(&mut **tx, id.0, &doc, Utc::now()).await?;
-        Ok(current)
-    }
-
     async fn write_passport(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -77,15 +54,18 @@ impl PgStateChangeLog {
                 Ok(passport)
             }
             PassportWrite::Replace(passport) => {
-                self.archive_current(tx, passport.id).await?;
                 self.passports.update_in_tx(tx, &passport).await?;
                 Ok(passport)
             }
             PassportWrite::Status(id, status) => {
-                let mut passport = self.archive_current(tx, id).await?;
+                let mut passport = self
+                    .passports
+                    .current_for_update_in_tx(tx, id)
+                    .await?
+                    .ok_or_else(|| DppError::NotFound(id.to_string()))?;
                 // The caller checked this transition on a read taken before the
                 // lock, and a change committed since may have moved the passport
-                // on. A refusal rolls the archived version back with the rest.
+                // on. A refusal writes nothing, the version included.
                 if !passport.status.can_transition_to(&status) {
                     return Err(DppError::InvalidTransition {
                         current: passport.status.to_string(),
@@ -97,9 +77,14 @@ impl PgStateChangeLog {
                 self.passports.update_in_tx(tx, &passport).await?;
                 Ok(passport)
             }
-            PassportWrite::Patch(id, delta) => {
-                self.archive_current(tx, id).await?;
-                self.passports.patch_in_tx(tx, id, delta).await
+            PassportWrite::Patch {
+                id,
+                delta,
+                determination,
+            } => {
+                self.passports
+                    .patch_with_determination_in_tx(tx, id, delta, determination.as_ref())
+                    .await
             }
         }
     }
@@ -124,8 +109,8 @@ impl StateChangeLog for PgStateChangeLog {
             Some(write) => Some(self.write_passport(&mut tx, write).await?),
             None => None,
         };
-        if let Some(chain) = &transfer_chain {
-            upsert_chain(&mut *tx, chain).await?;
+        if let Some(over) = &transfer_chain {
+            write_chain_over(&mut *tx, over).await?;
         }
         if let Some(payload) = &registration {
             let passport = written.as_ref().ok_or_else(|| {
@@ -141,7 +126,7 @@ impl StateChangeLog for PgStateChangeLog {
                     "a transfer notice is queued only with the chain that accepted it".into(),
                 )
             })?;
-            queue_transfer_notice(&mut *tx, *transfer_id, chain.passport_id, payload).await?;
+            queue_transfer_notice(&mut *tx, *transfer_id, chain.chain.passport_id, payload).await?;
         }
         if let Some(intent) = registry_intent {
             let passport = written.as_ref().ok_or_else(|| {

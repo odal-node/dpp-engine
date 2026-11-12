@@ -361,6 +361,27 @@ mod tests {
         ) -> Result<(), DppError> {
             unreachable!("the transfer drain never registers")
         }
+        async fn mark_submitted_noting(
+            &self,
+            _passport_id: PassportId,
+            _message: String,
+        ) -> Result<(), DppError> {
+            unreachable!("the transfer drain never registers")
+        }
+        async fn record_handle(
+            &self,
+            _passport_id: PassportId,
+            _correlation_id: &str,
+        ) -> Result<bool, DppError> {
+            unreachable!("the transfer drain never records a handle")
+        }
+        async fn abandon(
+            &self,
+            _passport_id: PassportId,
+            _message: String,
+        ) -> Result<bool, DppError> {
+            unreachable!("the transfer drain never abandons a registration")
+        }
         async fn mark_deactivated(
             &self,
             _passport_id: PassportId,

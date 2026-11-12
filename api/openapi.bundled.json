@@ -191,7 +191,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "409": {
-            "description": "One of two conflicts, told apart by the problem document.\n\n**An earlier attempt carrying this `Idempotency-Key` is still running.**\nReturned instead of letting a duplicate execute alongside it. Retry\nshortly with the same key and the same body; `Retry-After` carries the\nsuggested delay. A claim left behind by a process that died mid-request\nis reclaimed automatically after 60 seconds, so this can never wedge a\nkey permanently.\n\n**`carrierSerial` is already attributed to another passport under the\nsame GTIN.** `errors[0].field` is `/carrierSerial`. A label that names\ntwo passports resolves to neither: choose another serial, or declare\nthis passport as the successor of the one that holds it with\n`supersedesId`.\n",
+            "description": "One of two conflicts, told apart by the problem document.\n\n**An earlier attempt carrying this `Idempotency-Key` is still running.**\nReturned instead of letting a duplicate execute alongside it. Retry\nshortly with the same key and the same body; `Retry-After` carries the\nsuggested delay. A claim left behind by a process that died mid-request\nis reclaimed automatically after 60 seconds, so this can never wedge a\nkey permanently.\n\n**`carrierSerial` is already attributed to another passport under the\nsame GTIN.** `errors[0].field` is `/carrierSerial`. A label that names\ntwo passports resolves to neither: choose another serial, or declare\nthis passport as the successor of the one that holds it with\n`supersedesId`. A draft holds its serial, and so does a passport that\nwas published and then retired. A draft that was retired without ever\nbeing published holds none.\n",
             "headers": {
               "Retry-After": {
                 "description": "Seconds to wait before retrying. Sent for the idempotency conflict only.",
@@ -588,7 +588,7 @@
       "get": {
         "operationId": "getDppVersions",
         "summary": "List a DPP's archived versions, or reconstitute one",
-        "description": "Returns every archived version of a passport, oldest first, or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can\nretrieve the passport as it stood at any given moment.\n\n**Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word (historical versions of a passport that is\nstill live) and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n",
+        "description": "Returns every archived version of a passport, oldest first, or, with\n`asOf`, the single version that was current at that instant.\n\n✅ EN 18221:2026 clause 4.2: an authenticated, authorised reader can\nretrieve the passport as it stood at any given moment.\n\n**Not `POST /dpp/{dppId}/retire`.** That moves a passport to the terminal\n`retired` lifecycle status after its retention period has elapsed. This is\nthe standard's sense of the word (historical versions of a passport that is\nstill live) and the two are unrelated.\n\nArchiving begins at the **first change** to a passport, as the clause\nrequires, so a passport that has never changed has no archived versions and\nreturns an empty list. That is not a gap: the live record is the state at\nevery moment before the first change.\n\nEach version is the complete record, so a reader reconstitutes rather than\nreplays. Versions are append-only and are kept for the passport's lifetime.\n\n**This is the operator's own machine access.** An authority, a notified body\nor a person with a legitimate interest holds a credential and no API key, and\nreads a past version with `asOf` on `GET /vault/credential/dpp/{dppId}`\n(`readDppByCredential`), which serves it filtered to the credential's\naudience, with the proof for that audience.\n",
         "tags": [
           "DPP Management"
         ],
@@ -613,7 +613,7 @@
             "name": "asOf",
             "in": "query",
             "required": false,
-            "description": "An RFC 3339 instant. Returns the single version that was current then,\nrather than the whole list.\n\n`404` when no archived version covers that moment, in two distinct cases\nthat the response body tells apart:\n\n- the passport had not changed by then, or the moment is after its most\n  recent change. The **live** record is the state at that time, which\n  `GET /dpp/{dppId}` already serves; this route does not return it, so\n  that \"which version is this\" stays answerable.\n- the moment is **before the passport was created**, where nothing was\n  its state, not an archived version, and not the live record either.\n\nThe second case is a `404` rather than the initial version. Asking for\na version at a time before the record existed is a question with no true\nanswer, and answering with the initial one would assert that the passport\nexisted then.\n",
+            "description": "An RFC 3339 instant. Returns the single version that was current then,\nrather than the whole list.\n\n`404` when no archived version covers that moment, in two distinct cases\nthat the response body tells apart:\n\n- the passport had not changed by then, or the moment is after its most\n  recent change. The **live** record is the state at that time, which\n  `GET /dpp/{dppId}` already serves; this route does not return it, so\n  that \"which version is this\" stays answerable.\n- the moment is **before the passport was created**, where nothing was\n  its state, not an archived version, and not the live record either.\n\nThe second case is a `404` rather than the initial version. Asking for\na version at a time before the record existed is a question with no true\nanswer, and answering with the initial one would assert that the passport\nexisted then.\n\nA moment in the future is `422`, by the clock that stamps each version:\na change not yet made could still be the state then. Any other moment is\nanswered the same way whenever it is asked, since the version is read\nafter any change in progress on the passport has committed.\n",
             "schema": {
               "type": "string",
               "format": "date-time"
@@ -644,7 +644,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "422": {
-            "description": "`asOf` was given and is not an RFC 3339 timestamp.",
+            "description": "`asOf` was given and is not an RFC 3339 timestamp, or is in the future.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1309,7 +1309,7 @@
       "post": {
         "operationId": "initiateDppTransfer",
         "summary": "Initiate a transfer of responsibility",
-        "description": "The outgoing operator signs a pending handover onto the passport's\ntransfer chain. Only a `published` DPP can be transferred. In the\nmanaged single-node model the caller supplies both the outgoing and\nincoming operator; the node signs on the outgoing operator's behalf.\n",
+        "description": "The outgoing operator signs a pending handover onto the passport's\ntransfer chain. Only a `published` DPP can be transferred. In the\nmanaged single-node model the caller supplies both the outgoing and\nincoming operator; the node signs on the outgoing operator's behalf.\n\nA `422` also answers an initiation whose passport's transfer chain was\nchanged by another request while this one was running. Only one of two\nrequests started together is recorded; the other is refused, leaves nothing\nbehind, and can be sent again.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1430,7 +1430,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to accept, the pending record carries no\noutgoing signature, or that signature failed verification.\n",
+            "description": "There is no pending handover to accept, the pending record carries no\noutgoing signature, or that signature failed verification. Also a\ntransfer chain that another request changed while this one was running:\nnothing is written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1499,7 +1499,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to reject, or the record's state does not\npermit it. Core allows a reject only from `Initiated`.\n",
+            "description": "There is no pending handover to reject, or the record's state does not\npermit it. Core allows a reject only from `Initiated`. Also a transfer\nchain that another request changed while this one was running: nothing\nis written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1568,7 +1568,7 @@
             }
           },
           "422": {
-            "description": "There is no pending handover to cancel, or the record's state does not\npermit it. Core allows a cancel from `Initiated` or `Accepted`.\n",
+            "description": "There is no pending handover to cancel, or the record's state does not\npermit it. Core allows a cancel from `Initiated` or `Accepted`. Also a\ntransfer chain that another request changed while this one was running:\nnothing is written, and the request can be sent again.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1873,6 +1873,224 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/vault/api/v1/dpp/{dppId}/registry/handle": {
+      "post": {
+        "operationId": "recordDppRegistryHandle",
+        "summary": "Record the registry's handle for a submission this node lost it for",
+        "description": "Records the correlation identifier of a passport's registry submission, for a\nregistration that is waiting for a person.\n\nThe node's drain recovers a lost handle itself where it can, by the unique\nproduct identifier the passport was submitted under. It leaves three cases\nalone, because choosing would give a passport another passport's\nregistration: several submissions report the identifier, none could be\nplaced, and an adapter that cannot look a submission up. A row in one of them\nstays `submitted` and says why in `message` on\n`GET /vault/api/v1/dpp/{dppId}/registry`. Someone who has read the right\ncorrelation identifier off the registry's own interface gives it to the row\nhere.\n\n**The handle is checked, not taken on trust.** The submission it names is\nread back from the registry, and the request is refused unless that\nsubmission reports the unique product identifier this passport was submitted\nunder. A typo, or the handle of a neighbouring passport, is refused with\n`422` and nothing is recorded. An identifier is not unique to a passport — a\nsuccessor can be submitted under its predecessor's — so a match says the\nsubmission *reports* the identifier, which is all the registry says.\n\n**It records the handle and nothing else.** The node's drain polls the\nsubmission by it on its next pass and applies the registry's ruling then,\nwhich is the one place that decides what a registration or a refusal does to\na row. The row's attempts start again, so it stops reading as stalled while\nit is being polled. `registry` in the response is what the registry reported\nwhen the handle was checked, so the answer is known now without waiting for\nthat pass.\n\nThe write is recorded in the passport's audit trail as\n`registry_handle_recorded`, with who recorded which handle and what the\nregistry reported.\n\nNot idempotency-keyed, and does not need to be: a row that already holds this\nhandle answers `200` with `recorded: false` and changes nothing, so a retry\nafter a lost response does not fail on its own success. A row that holds a\n*different* handle is refused with `409`; one the registry gave is never\noverwritten.\n",
+        "tags": [
+          "Registry"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordRegistryHandleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The row holds the handle: this request recorded it, or the row already\nheld it.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordRegistryHandleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No passport with that id, or the passport has no registry registration —\nit owes one only once published. Distinct from `409` and `422`, which mean\na registration exists and is not in a state, or does not match, what this\nrecords.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The registration is not in a state that takes a handle. The detail says\nwhich: the registry has not accepted the submission yet, so there is no\nhandle to record; it has already ruled, so none is needed; or the row\nalready holds a different correlation identifier, which is never\noverwritten.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The handle was not recorded because it was not shown to be this\npassport's. The detail says which: the submission it names reports other\npassports' identifiers, or none; the registry has not finished checking\nit, so it reports no passport yet; no submission with that identifier was\nfound in the part of the registry's list this node read; this node's\nregistry connection cannot read a submission's contents; or the row's\nstored payload is unreadable, so there is nothing to check against. Also\nreturned for a `correlationId` that is empty, over 200 characters, or\ncontains whitespace or control characters.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This node has no registry queues, so there is no registration to record a handle on.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The registry could not be read, so the handle could not be checked and was\nnot recorded. Safe to retry.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/api/v1/dpp/{dppId}/registry/abandon": {
+      "post": {
+        "operationId": "abandonDppRegistration",
+        "summary": "Give up on a registration the registry never accepted",
+        "description": "Ends a passport's registry registration queue row as `abandoned`, for a\nregistration the registry never accepted. The node retries a `pending`\nregistration with backoff for as long as the passport is published; when the\nregistry refuses the payload on every attempt, or the product is withdrawn\nbefore it was ever registered, that is forever. This is how a person ends it.\n\n**The registry is checked, not taken on trust.** A `pending` registration\nwhose first attempt got through and whose reply was lost looks exactly like\none that never did: the registry holds a submission for the passport and this\nnode has no record that it does. Abandoning that one would leave a\nregistration the registry may grant that the node believes it dropped. So the\nregistry's task list is read, and the request is refused unless **all** of it\nwas read and none of it reports the unique product identifier the passport\nwas submitted under. A list too long to read in full, a task still being\nchecked, and a connection that cannot look a submission up are each refused\nwith `422`: none of them shows the registry to hold nothing. A submission the\nregistry does hold is a `409`, and names its correlation identifier.\n\n**Only after an attempt has failed.** The registration must be `pending`, must\nhave been tried at least once, and must be waiting for its next attempt. A row\nbeing attempted is still due, and only a finished attempt pushes it out, so\nthis cannot land between the node reading the row and submitting it. A\n`submitted` registration is one the registry holds and is never abandoned from\nhere.\n\n**It ends the queue row, not the passport.** The passport stays published, and\n`GET /vault/api/v1/registry` counts the registration as `abandoned` so it is\nnot read as still owed. Nothing the node's drain writes moves a row out of\n`abandoned`. Publishing the passport again queues it afresh.\n\nThe write is recorded in the passport's audit trail as `registry_abandoned`,\nwith who gave up on it, the reason, and what the row had been saying.\n\nNot idempotency-keyed, and does not need to be: a registration that is already\nabandoned answers `200` with `alreadyAbandoned: true` and changes nothing, asks\nthe registry nothing and writes the trail nothing, so a retry after a lost\nresponse does not fail on its own success.\n",
+        "tags": [
+          "Registry"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbandonRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The registration is abandoned: by this request, or already.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AbandonRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No passport with that id, or the passport has no registry registration —\nit owes one only once published. Distinct from `409` and `422`, which mean\na registration exists and cannot be abandoned as it stands.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The registration cannot be abandoned. The detail says which: the registry\nhas accepted the submission, so it holds a registration or is deciding one;\nthe registry has already ruled; the registry holds a submission for the\npassport's identifier (the detail names its correlation identifier, or the\ncandidates); or the node has not tried the registration yet, or is about to\nor is trying it now.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The registry could not be shown to hold nothing for the passport, so the\nregistration was not abandoned. The detail says which: part of the task list\nwas not read, or a task is still being checked; this node's registry\nconnection cannot look a submission up; or the registration's stored payload\nis unreadable, so there is nothing to look up by. Also returned for a\n`reason` that is empty, over 500 characters, or contains control characters.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "This node has no registry queues, so there is no registration to abandon.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The registry could not be read, so it could not be shown to hold nothing and\nthe registration was not abandoned. Safe to retry.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -2746,7 +2964,7 @@
       "post": {
         "operationId": "issueCredential",
         "summary": "Issue an access credential",
-        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can: membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n\n**Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the\nkeyed set: the node stores no record of what it signed and publishes no\nstatus list, so a duplicate cannot be found afterwards and could not be\nwithdrawn if it were. A retry under the same key replays the original\nresponse, including `credentialJws`, which is what stops the retry from\nminting a *second* live credential.\n\nRequires an admin-scoped key.\n",
+        "description": "Mints a DPP access credential signed with this node's own key, and returns\nit as a compact VC-JWT the holder presents in the `X-DPP-Credential` header\non `GET /vault/credential/dpp/{dppId}`.\n\n**Only a legitimate interest, never an authority.** An operator naming its\nown authorised repairer attests something no one else can: membership of\nthat network is a fact the operator alone holds, and no EU register of\nauthorised repairers exists to hold it instead. An operator naming itself a\nmarket surveillance authority attests nothing, because the standing being\nclaimed is conferred by a member state. The three authority roles are\nrefused with `422`.\n\n**Narrow by category as well as by group.** `productCategories` limits\nthe credential to passports that state one of the listed categories,\nwithin `productGroups`. An operator that places both EV and LMT batteries\ncan vouch for a repairer of one and not the other. A list that cannot work\nas written is refused rather than signed. Otherwise the holder, not the\noperator, would be the one to find out, from reads served the public view.\n\n**Issuing is not trusting.** A credential minted here is honoured by *this*\nnode only if the node also trusts its own DID (`CREDENTIAL_ISSUERS_SELF`).\nAn operator running more than one node ordinarily mints on one and honours\nit on another, so issuance is available regardless of that switch.\n\n**Revocation is expiry.** This node fetches W3C status lists but publishes\nnone, so a credential it mints carries no `credentialStatus` and cannot be\nwithdrawn before it lapses. `validForDays` is therefore capped rather than\nopen-ended, and defaults to less than the cap.\n\n**Retry with an `Idempotency-Key`.** Issuance is the sharpest case in the\nkeyed set: the node stores no record of what it signed and publishes no\nstatus list, so a duplicate cannot be found afterwards and could not be\nwithdrawn if it were. A retry under the same key replays the original\nresponse, including `credentialJws`, which is what stops the retry from\nminting a *second* live credential.\n\nRequires an admin-scoped key.\n",
         "tags": [
           "Access"
         ],
@@ -2797,7 +3015,7 @@
             "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
-            "description": "The request cannot produce a usable credential: an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, or a\n`validForDays` outside 1–90.\n",
+            "description": "The request cannot produce a usable credential: an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, a\n`validForDays` outside 1–90, or a `productCategories` list that cannot\nwork as written (one given without `productGroups`, one holding a value\nno named group's passports can state, or one that leaves a named group\nwith no passport the credential could read). For the last two, the\n`detail` names the values or groups at fault and what those groups'\npassports can state.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3358,6 +3576,39 @@
         }
       }
     },
+    "/vault/api/v1/node/health": {
+      "get": {
+        "operationId": "getNodeHealth",
+        "summary": "Node operational health",
+        "description": "Reports what an operator pages on. `signals` are outcomes of the node's own\nwork that leave no other trace (signing at publish, loading the ruleset),\neach with whether it is failing now, how often it has failed, and when it\nlast failed and last succeeded, kept across restarts. `registryOutbox` is\nthe registry-sync outbox's pending, submitted, stalled and rejected counts,\nread live. Authenticated, so a monitor that cannot scrape `/metrics` can\nread them with an API key. The unauthenticated `/health` answers liveness\nonly.\n",
+        "tags": [
+          "Node"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node operational health counters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeHealth"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/vault/api/v1/whoami": {
       "get": {
         "operationId": "whoami",
@@ -3561,7 +3812,7 @@
       "get": {
         "operationId": "readDppByCredential",
         "summary": "Audience-scoped read of a published DPP",
-        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n",
+        "description": "Reads a published passport filtered to the caller's audience. No\n`X-DPP-Credential` header returns the same signed public view as\n`/public/dpp/{dppId}`. A verified credential returns the passport\nfiltered to that audience's disclosure classes (ESPR Art. 77(2)),\ncarrying the proof computed over that view. Credentialed reads are\nrecorded to the passport's audit trail; anonymous reads are not.\n\n**A credential that does not cover this passport gets the public view,\nnot an error.** A credential may narrow itself to product groups and to\nproduct categories, and both are checked against the passport being read:\nthe group against its `productGroup`, the category against the one its\ndata states, such as a battery's `batteryType`. A credential naming\ncategories does not cover a passport whose group states none. Out of scope,\na valid credential gets a `200` with the public view, byte-identical to\n`/public/dpp/{dppId}`, so the body carries no `disclosureSet`; only an\nelevated view names one. Denying instead would make this route a probe for\nwhich group or category a passport is in. The read is still recorded to\nthe audit trail, with the public classes it was reduced to. `401` is for a\ncredential that fails verification, never for one out of scope.\n\n**Why a credential was out of scope is in the\n`X-DPP-Credential-Out-Of-Scope` header**, not the body, because the body\nis the public view exactly: the payload `publicJwsSignature` signs. The\ngroup is checked first, so a credential that misses both axes is reported\nfor the group. The header says nothing the public body does not: the group\nis in the body, and every group's category field is public.\n\nReturns the public view (not an error) when credential verification\nis not configured on this node.\n\n✅ **A past version: `asOf`.** EN 18221:2026 clause 4.2 expects the\nversion of a passport at a past moment to be retrievable by authenticated,\nauthorised actors. With `asOf` this route returns the version that was\ncurrent at that instant, to the readers who hold a credential and no API\nkey, which `GET /dpp/{dppId}/versions?asOf=` is not for. It is the same body\na live read gives the same credential: the payload that audience's\npublish-time proof covers, with that proof attached and `disclosureSet`\nnaming the classes. A published passport's views are frozen when it is\nsigned, so a version carries exactly the classes it was published with, and\nthe proof verifies against the operator's key as a live one does.\n\n**`asOf` needs a credential that grants more than the public view.** The\nclause speaks of *authenticated, authorised* actors, so the rule above does\nnot apply: without a credential the answer is `401`, and a credential that\ndoes not cover this passport gets `403` naming the axis in\n`X-DPP-Credential-Out-Of-Scope`. The public proof is frozen at publish, so it\nis the same bytes for every version of a published passport, and serving it\nfor a past instant would answer a question about the past with the present\npassport. A node that cannot verify credentials answers `401` too, and says\nso. Both are decided before any version is served, and a credential\npresented against a passport it does not cover is recorded like any other.\n\nA moment after the passport's last change is answered by the live record,\nwhich is the state at that time. A moment before the passport was created\nis `404`, and one in the future `422`: nothing was its state then. A version\nis served on the terms a live read is: a moment the passport was a draft is\n`404`, and one it was suspended `410`.\n\nThe same moment is answered the same way whenever it is asked. The live\nrecord and the version are read together, after any change in progress on\nthe passport has committed, and the future is measured by the clock that\nstamps each version, so no later change can land on a moment already\nanswered.\n\nA past version served is recorded to the audit trail with the instant\nasked for (`asOf`) and the archived version that answered it\n(`archivedVersionId`, `null` when the live record did), as is a credential\nrefused one for scope.\n",
         "tags": [
           "Credentialed Access"
         ],
@@ -3579,15 +3830,39 @@
             "name": "X-DPP-Credential",
             "in": "header",
             "required": false,
-            "description": "A verifiable access credential. Absent means public access.",
+            "description": "A verifiable access credential. Absent means public access, except with\n`asOf`, which is read only with one.\n",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "asOf",
+            "in": "query",
+            "required": false,
+            "description": "An RFC 3339 instant. Returns the passport as it stood then, filtered to\nthe credential's audience. Requires a credential that covers this\npassport: see the description above.\n\nNot before the passport was created (`404`), and not in the future\n(`422`). Write the offset as `Z`: a literal `+` in a query string is a\nspace.\n",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ],
         "responses": {
           "200": {
             "description": "Passport filtered to the resolved audience.",
+            "headers": {
+              "X-DPP-Credential-Out-Of-Scope": {
+                "description": "Present only when a verified credential was served the public view\nbecause it does not cover this passport, naming the axis that\nmissed:\n\n- `product-group`: the credential names product groups, and not\n  this passport's;\n- `product-category`: it names product categories, and not the one\n  this passport states;\n- `no-product-category`: it names product categories, and this\n  passport's group states none.\n\nAbsent on an anonymous read, on a read the credential covers, and\non a node with credential verification unconfigured.\n",
+                "required": false,
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "product-group",
+                    "product-category",
+                    "no-product-category"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3600,7 +3875,31 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "The presented credential failed verification.",
+            "description": "The presented credential failed verification. Also `asOf` without a\ncredential, which a past version is read only with, and `asOf` on a node\nthat cannot verify credentials, which says so.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`asOf` with a verified credential that grants nothing beyond the public\nview on this passport, so it cannot read a past version. Never returned\nwithout `asOf`, where such a credential is served the public view.\n",
+            "headers": {
+              "X-DPP-Credential-Out-Of-Scope": {
+                "description": "The axis the credential missed, as on a `200`: `product-group`,\n`product-category` or `no-product-category`. Absent when the\ncredential covers the passport and its audience is the public one.\n",
+                "required": false,
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "product-group",
+                    "product-category",
+                    "no-product-category"
+                  ]
+                }
+              }
+            },
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3610,7 +3909,7 @@
             }
           },
           "404": {
-            "description": "Not found or not published.",
+            "description": "Not found or not published. With `asOf`, also a moment before the\npassport was created, and a moment it was not yet published, where no\npublished version covers it.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3620,7 +3919,17 @@
             }
           },
           "410": {
-            "description": "This passport has been suspended.",
+            "description": "This passport has been suspended. With `asOf`, it was suspended at that\nmoment.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`asOf` was given and is not an RFC 3339 timestamp, or is in the future.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4545,7 +4854,7 @@
       "get": {
         "operationId": "resolveByGtin",
         "summary": "GS1 Digital Link resolver",
-        "description": "GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints\nfor a model-level passport. It has not been assessed against the GS1\nConformant Resolver Standard, and nothing here claims conformance. Behaviour\ndepends on the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip` / `gs1:dpp` (and related) → `307` redirect to the DPP\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n\nA GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a\nserial (AI 21), in that order and each optional, or a third-party\nextension (AI 235) on its own; each of those shapes is its own path below.\nAny other path under `/01/` cannot be a GS1 Digital Link, because its\nqualifiers are out of order, repeated, not ones a GTIN takes, or empty, and\nanswers `400` without a lookup.\n",
+        "description": "GS1 Digital Link resolution keyed by GTIN-14, the carrier this node prints\nfor a model-level passport. It was assessed against release 1.2.1 of the GS1\nConformant Resolver Standard, and this node does not claim to conform to it:\n`docs/architecture/GS1_RESOLVER_CONFORMANCE.md` in the engine repository\nlists, criterion by criterion, what is met and what is not.\n\nBehaviour depends on the `linkType` query / `Accept` header:\n- default → `307` redirect to the HTML DPP page\n- `?linkType=gs1:pip`, `gs1:dpp` or `gs1:defaultLink` → `307` redirect to\n  the DPP page. Any other link type → `404`: the linkset does not offer it\n- `?linkType=linkset` or `Accept: application/linkset+json` → `200`\n  RFC 9264 linkset\n\nA redirect carries the request's query string on to its target. A trailing\nslash is tolerated. A GTIN of fewer than 14 digits is read as its\n14-digit form, which is also how a linkset names it.\n\nA GTIN takes a consumer product variant (AI 22), a batch (AI 10) and a\nserial (AI 21), in that order and each optional, or a third-party\nextension (AI 235) on its own; each of those shapes is its own path below.\nAny other path under `/01/` cannot be a GS1 Digital Link, because its\nqualifiers are out of order, repeated, not ones a GTIN takes, or empty, and\nanswers `400` without a lookup.\n\nA compressed link that holds an EPC binary string is read too, at the root\nof this host: `/eh…` (hexadecimal) or `/ex…` (URI-safe base 64). Only the\nSGTIN-96 and SGTIN-198 schemes are decoded; a link of any other scheme\nanswers `404`, and one that cannot be decompressed answers `400`.\n",
         "tags": [
           "Public Resolver"
         ],
@@ -4572,7 +4881,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4582,13 +4899,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP for this GTIN, or unknown link type."
+            "description": "No published DPP for this GTIN, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -4645,7 +4962,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4655,13 +4980,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -4718,7 +5043,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4728,13 +5061,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -4800,7 +5133,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4810,13 +5151,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -4873,7 +5214,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4883,13 +5232,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -4955,7 +5304,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -4965,13 +5322,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -5037,7 +5394,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -5047,13 +5412,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -5128,7 +5493,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -5138,13 +5511,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -5201,7 +5574,15 @@
         ],
         "responses": {
           "200": {
-            "description": "RFC 9264 linkset (when a linkset is requested).",
+            "description": "RFC 9264 linkset (when a linkset is requested). It validates against GS1's linkset schema, is anchored at the uncompressed request URI, and holds the links of every level from the one the request names up to the GTIN.",
+            "headers": {
+              "Link": {
+                "description": "The JSON-LD context for the linkset, with relation `http://www.w3.org/ns/json-ld#context`.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/linkset+json": {
                 "schema": {
@@ -5211,13 +5592,13 @@
             }
           },
           "307": {
-            "description": "Redirect to the DPP page (`Location` header)."
+            "description": "Redirect to the DPP page (`Location` header), carrying the request's query string on."
           },
           "400": {
-            "description": "The GTIN in the path is not valid: not digits, the wrong length, or a wrong check digit."
+            "description": "The path is not a valid GS1 Digital Link: the GTIN is not digits, has the wrong length or a wrong check digit, or a qualifier is out of order, repeated, longer than its Application Identifier allows or outside GS1 character set 82, or `linkType` is given more than once."
           },
           "404": {
-            "description": "No published DPP at any level the label names, or unknown link type."
+            "description": "No published DPP at any level the label names, or a link type the linkset does not offer."
           },
           "409": {
             "$ref": "#/components/responses/PassportSignatureUnverified"
@@ -5230,6 +5611,29 @@
           },
           "503": {
             "$ref": "#/components/responses/PassportVerificationUnavailable"
+          }
+        }
+      }
+    },
+    "/.well-known/gs1resolver": {
+      "get": {
+        "operationId": "getResolverDescription",
+        "summary": "GS1 resolver description file",
+        "description": "The resolver description file that the GS1 Conformant Resolver Standard asks\na resolver to publish at this path (section 3). It names the root this\nresolver answers under and the GS1 primary keys it supports, which is the GTIN\n(AI 01) and no other. A client can read it to learn what a resolver at this\nhost resolves before asking it. Public, unauthenticated.\n\nThe document validates against the description-file schema GS1 publishes.\nPublishing it is not a claim of conformance to the standard; see\n`/01/{gtin}`.\n",
+        "tags": [
+          "Public Resolver"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The description file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolverDescription"
+                }
+              }
+            }
           }
         }
       }
@@ -5519,7 +5923,7 @@
             }
           },
           "co2ePerUnit": {
-            "description": "CO₂e per unit: manufacturer-supplied or engine-calculated. An object, not a bare number: a figure without its lifecycle stage and system boundary is not comparable to another product's.",
+            "description": "CO₂e per unit as the operator declared it, through create or `PUT`. It is never filled from a calculation: the calculated figure is `complianceResult.co2eScore`. An object, not a bare number: a figure without its lifecycle stage and system boundary is not comparable to another product's.",
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CarbonFootprint"
@@ -5546,7 +5950,7 @@
                 "$ref": "#/components/schemas/ComplianceResult"
               }
             ],
-            "description": "The computed compliance determination, attached at create/update. Part of the signed payload and immutable after retention lock. Absent until a determination has been computed."
+            "description": "The compliance determination of the content the passport holds: computed at create and at every update, and once more over the content signed at first publish, which is the determination the signatures cover. Part of the signed payload and immutable after retention lock, so a re-publish keeps it. Absent when none could be made: no product group data, nothing registered to evaluate the product group, or an evaluator that could not assess it. The calculated CO₂e and repairability figures are `co2eScore` and `repairabilityIndex` here, never in `co2ePerUnit` or `repairabilityScore`."
           },
           "lintResult": {
             "allOf": [
@@ -7816,6 +8220,7 @@
               "submitted",
               "registered",
               "rejected",
+              "abandoned",
               "deactivated"
             ]
           },
@@ -7825,7 +8230,7 @@
           },
           "message": {
             "type": "string",
-            "description": "The last thing the registry (or the drain) said about it."
+            "description": "The last thing the registry (or the drain) said about it. On a `submitted` row that is waiting for a person it is the reason: the candidate correlation identifiers of an ambiguous lookup, that the handle was not found, or a submission state this node has no name for. A person settles such a row with `POST /vault/api/v1/dpp/{dppId}/registry/handle`."
           },
           "attempts": {
             "type": "integer"
@@ -7840,6 +8245,122 @@
           }
         }
       },
+      "AbandonRegistrationRequest": {
+        "type": "object",
+        "description": "Why a registration the registry never accepted is being given up on.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Why the registration is being abandoned, for example that the product was withdrawn before it was registered. Required: the write ends an obligation the node was tracking, and the audit trail is the only account of why. Not empty, at most 500 characters, and without control characters."
+          }
+        }
+      },
+      "AbandonRegistrationResponse": {
+        "type": "object",
+        "description": "The result of giving up on a registration the registry never accepted.",
+        "required": [
+          "passportId",
+          "alreadyAbandoned",
+          "note"
+        ],
+        "properties": {
+          "passportId": {
+            "type": "string"
+          },
+          "alreadyAbandoned": {
+            "type": "boolean",
+            "description": "`true` when the registration was already abandoned, in which case nothing was read from the registry and nothing was written. `false` when this request abandoned it."
+          },
+          "note": {
+            "type": "string",
+            "description": "Stated rather than implied: the registration is abandoned, the passport stays published and is counted as abandoned, and publishing it again queues it afresh."
+          }
+        }
+      },
+      "RecordRegistryHandleRequest": {
+        "type": "object",
+        "description": "The correlation identifier of a passport's registry submission, as the registry's own interface lists it.",
+        "required": [
+          "correlationId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "correlationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^\\S+$",
+            "description": "The registry's identifier for the submission. Not empty, at most 200 characters, and without whitespace or control characters. It is checked against the registry before it is recorded."
+          }
+        }
+      },
+      "RecordRegistryHandleResponse": {
+        "type": "object",
+        "description": "The result of recording a registry submission's correlation identifier by hand.",
+        "required": [
+          "passportId",
+          "correlationId",
+          "recorded",
+          "note"
+        ],
+        "properties": {
+          "passportId": {
+            "type": "string"
+          },
+          "correlationId": {
+            "type": "string",
+            "description": "The correlation identifier the registration now holds."
+          },
+          "recorded": {
+            "type": "boolean",
+            "description": "`true` when this request recorded the handle. `false` when the registration already held it, in which case nothing was checked or written."
+          },
+          "registry": {
+            "$ref": "#/components/schemas/SubmissionReport"
+          },
+          "note": {
+            "type": "string",
+            "description": "Stated rather than implied: the handle is recorded and nothing else. The node's drain applies the registry's ruling on its next pass."
+          }
+        }
+      },
+      "SubmissionReport": {
+        "type": "object",
+        "description": "What the registry reported about a submission, read by its correlation identifier.",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "registered",
+              "refused",
+              "unrecognised"
+            ],
+            "description": "`processing`: the registry has not finished checking the submission.\n\n`registered`: the submission succeeded and the passport is registered; `registrationId` is the identifier the registry generated for it.\n\n`refused`: the submission was refused, as a whole, so a passport can be refused for another passport's fault; `reason` is what the registry said.\n\n`unrecognised`: the registry reported a state this node has no name for; `state` is that state exactly as reported. Not a verdict."
+          },
+          "registrationId": {
+            "type": "string",
+            "description": "The identifier the registry generated for the passport. Present only on `registered`."
+          },
+          "reason": {
+            "type": "string",
+            "description": "The registry's description of the refusal. Present only on `refused`."
+          },
+          "state": {
+            "type": "string",
+            "description": "The state exactly as the registry reported it. Present only on `unrecognised`."
+          }
+        }
+      },
       "RegistrationCounts": {
         "type": "object",
         "required": [
@@ -7847,6 +8368,7 @@
           "submitted",
           "registered",
           "rejected",
+          "abandoned",
           "deactivated",
           "statusIntents",
           "stalled",
@@ -7864,6 +8386,10 @@
           },
           "rejected": {
             "type": "integer"
+          },
+          "abandoned": {
+            "type": "integer",
+            "description": "Rows an operator gave up on after the registry was shown to hold nothing for them: published passports that will not be registered. Counted so they are not read as still owed."
           },
           "deactivated": {
             "type": "integer"
@@ -8730,6 +9256,16 @@
               "battery"
             ]
           },
+          "productCategories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Product categories the credential covers within `productGroups`. Omit or\nleave empty to cover every category.\n\nThe list is flat: it narrows every named group, and a read is admitted\nonly where the passport states one of the listed values. A value is\ncompared exactly with the category the passport's data states, such as a\nbattery's `batteryType`. The values a group allows are that property's\n`enum` in the group's current schema\n(`GET /integrator/api/v1/schemas/{productGroup}`), and some groups state\nno category at all. A refusal's `detail` lists what each named group's\npassports can state.\n\nA list that cannot work as written is refused with `422` rather than\nsigned: one given without `productGroups`, one holding a value no named\ngroup's passports can state, or one that leaves a named group with no\npassport the credential could read.\n",
+            "example": [
+              "ev"
+            ]
+          },
           "validForDays": {
             "type": "integer",
             "minimum": 1,
@@ -9087,6 +9623,99 @@
           }
         }
       },
+      "NodeHealth": {
+        "type": "object",
+        "properties": {
+          "signals": {
+            "$ref": "#/components/schemas/NodeSignals",
+            "description": "Outcomes of the node's own work that leave no other trace, by signal name,\nkept in the database across restarts. Absent on a deployment with no\nsignal store wired, such as a standalone vault.\n"
+          },
+          "registryOutbox": {
+            "$ref": "#/components/schemas/RegistryOutboxHealth",
+            "description": "The registry-sync outbox's counts. Absent on a deployment with no outbox\nwired, such as a standalone vault.\n"
+          }
+        }
+      },
+      "NodeSignals": {
+        "type": "object",
+        "description": "Every signal the node keeps, by name. Each is listed whether or not anything\nhas been recorded for it yet. A later release may add signals; alarm on each\none's `failing`.\n",
+        "required": [
+          "signing",
+          "rulesetLoad"
+        ],
+        "properties": {
+          "signing": {
+            "$ref": "#/components/schemas/NodeSignal",
+            "description": "Signing a passport at publish. A failure is a publish refused because the\npassport could not be signed.\n"
+          },
+          "rulesetLoad": {
+            "$ref": "#/components/schemas/NodeSignal",
+            "description": "Loading the Compliance Current ruleset from its channel, at boot, on each\npoll, or on an operator's reload. A failure is a channel that could not be\nread or a bundle it served that was refused; the node keeps the ruleset it\nhad. Recorded only when a channel is configured.\n"
+          }
+        }
+      },
+      "NodeSignal": {
+        "type": "object",
+        "required": [
+          "failing",
+          "failures"
+        ],
+        "properties": {
+          "failing": {
+            "type": "boolean",
+            "description": "Whether the latest recorded outcome is a failure. The field to alarm on:\nit clears on the next success.\n",
+            "example": false
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Failures since the node was first started. Kept in the database and never\nreset, so it says how often, not whether the node is failing now.\n",
+            "example": 0
+          },
+          "lastFailedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest failure was recorded, by the node's database clock. Absent\nuntil the first.\n"
+          },
+          "lastSucceededAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the latest success was recorded, by the node's database clock. Absent\nuntil the first.\n"
+          }
+        }
+      },
+      "RegistryOutboxHealth": {
+        "type": "object",
+        "required": [
+          "pending",
+          "submitted",
+          "stalled",
+          "rejected"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows awaiting a drain attempt."
+          },
+          "submitted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows accepted by the registry and awaiting its verdict."
+          },
+          "stalled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending and submitted rows that have reached the stall threshold. A row here\nis not going to succeed without someone looking at it.\n"
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows the registry terminally rejected."
+          }
+        }
+      },
       "NodeProfile": {
         "type": "string",
         "description": "The deployment profile a node was started under (`NODE_PROFILE`), which decides the trust tiers it will boot on. `development` boots on any tier, placeholders included, and is what an unset or unrecognised value means. `sandbox` is a real deployment against test authorities: it refuses a placeholder on a required trust port and accepts a sandbox tier. `production` accepts only live tiers on required ports.",
@@ -9189,6 +9818,53 @@
           "assertionMethod": [
             "did:web:id.odal-node.io#urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>"
           ]
+        }
+      },
+      "ResolverDescription": {
+        "type": "object",
+        "description": "The resolver description file that the GS1 Conformant Resolver Standard asks a\nresolver to publish at `/.well-known/gs1resolver` (section 3). It validates\nagainst the description-file schema GS1 publishes. Publishing it is not a claim\nthat this resolver conforms to the standard.\n",
+        "required": [
+          "name",
+          "resolverRoot",
+          "supportedPrimaryKeys",
+          "linkTypeDefaultCanBeLinkset",
+          "jsonLdContextLocation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A name for the resolver."
+          },
+          "resolverRoot": {
+            "type": "string",
+            "format": "uri",
+            "description": "This resolver's public root, with no trailing slash."
+          },
+          "supportedPrimaryKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The GS1 primary keys, by AI, that this resolver resolves."
+          },
+          "linkTypeDefaultCanBeLinkset": {
+            "type": "boolean",
+            "description": "Whether `linkset` may be made the default link type. It may not."
+          },
+          "jsonLdContextLocation": {
+            "type": "string",
+            "format": "uri",
+            "description": "The JSON-LD context a linkset's `Link` header points at."
+          }
+        },
+        "example": {
+          "name": "Odal Node resolver",
+          "resolverRoot": "https://id.odal-node.io",
+          "supportedPrimaryKeys": [
+            "01"
+          ],
+          "linkTypeDefaultCanBeLinkset": false,
+          "jsonLdContextLocation": "https://ref.gs1.org/standards/resolver/linkset-context"
         }
       },
       "InternalSignRequest": {
@@ -9743,12 +10419,12 @@
           },
           "doc": {
             "type": "object",
-            "description": "The complete record as it stood at the time, not a diff.\n\nWhole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for."
+            "description": "The complete record as it stood at the time, not a diff.\n\nAs it was stored, and never upcast: a version taken from a passport written under an earlier schema keeps that schema's shape, which can differ from the shape the live passport is read in. It is the record as the operator stored it then: a draft's own changes are archived too, so a version can be a draft that was never published.\n\nWhole rather than differential so that retrieval is a read rather than a replay: a chain of diffs makes every historical version depend on every one before it, and one corrupt link loses everything after it. The clause asks that the version be retrievable, and a stored version is retrievable where a derived one is computed and hoped for."
           },
           "supersededAt": {
             "type": "string",
             "format": "date-time",
-            "description": "When this version stopped being current: the instant the change that replaced it was applied.\n\nOne timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree."
+            "description": "When this version stopped being current: the instant the change that replaced it was applied, by the database's clock, so versions order as their changes did whichever process made them.\n\nOne timestamp rather than a validity range: the previous version's `supersededAt` is this one's start, and two fields that must agree are two fields that can disagree."
           }
         }
       },

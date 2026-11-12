@@ -589,6 +589,48 @@ async fn drain_retires_a_passport_that_left_the_public_tier() {
     }
 }
 
+/// A retired draft never entered the public tier, so there is nothing to keep.
+///
+/// Core allows `Draft → Retired`, and the status alone cannot say whether the
+/// record was ever published. Read as one that was, the drain would try to build
+/// a snapshot from a proof the draft never had, fail, and back off on every pass
+/// until the row was exhausted. It is removed instead, as a draft is.
+#[tokio::test]
+async fn drain_removes_a_retired_passport_that_was_never_published() {
+    let (outbox, repo, store) = (
+        FakeOutbox::default(),
+        InMemoryPassportRepo::default(),
+        InMemorySnapshotStore::default(),
+    );
+    let p = Passport {
+        published_at: None,
+        public_jws_signature: None,
+        jws_signature: None,
+        ..passport(PassportStatus::Retired)
+    };
+    repo.create(p.clone()).await.unwrap();
+    // A snapshot left by an earlier pass must not outlive the decision either.
+    store
+        .put_public_json(
+            &p.id.to_string(),
+            b"{\"status\":\"published\"}",
+            planted_meta(),
+        )
+        .await
+        .unwrap();
+    outbox.enqueue(p.id).await.unwrap();
+
+    let (o, r, s, i) = ports(&outbox, &repo, &store);
+    let stats = drain_once(&o, &r, &s, &i, TEST_RESOLVER_BASE, 50).await;
+
+    assert_eq!(stats.removed, 1, "a retired draft has no snapshot to keep");
+    assert_eq!(stats.stored, 0);
+    assert!(
+        store.get(&p.id.to_string()).is_none(),
+        "a retired draft must not be served from the static tier"
+    );
+}
+
 /// The two lists above cover every status this build models.
 ///
 /// The doc comments claim it; without this they only claim it. A status added
@@ -614,7 +656,7 @@ fn the_two_halves_account_for_every_status() {
         );
         assert_eq!(
             served,
-            dpp_vault::public_view::serves_publicly(status),
+            dpp_vault::public_view::serves_publicly(&passport(status.clone())),
             "{status:?} is listed on one side and treated as the other"
         );
     }

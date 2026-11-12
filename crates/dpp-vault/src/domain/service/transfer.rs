@@ -10,7 +10,10 @@ use dpp_domain::{
     status::PassportStatus,
     transfer::{TransferChain, TransferError, TransferReason, TransferRecord, TransferStatus},
 };
-use dpp_types::{audit::PassportAuditEntry, auth::AuthContext, state_change::StateChange};
+use dpp_types::{
+    audit::PassportAuditEntry, auth::AuthContext, state_change::StateChange,
+    transfer::VersionedChain,
+};
 use uuid::Uuid;
 
 use super::PassportService;
@@ -44,10 +47,17 @@ impl PassportService {
             .as_ref()
             .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?;
 
-        let mut chain = store
-            .get_chain(id)
-            .await?
-            .unwrap_or_else(|| TransferChain::new(id, from_operator.clone()));
+        // The revision read here is the one the commit below must still find: a
+        // second initiation that read the same chain commits first or second,
+        // never both, and the one that loses is refused rather than replacing
+        // the other's chain. The signature between the two is what widens the
+        // window.
+        let VersionedChain {
+            mut chain,
+            revision,
+        } = store.get_chain(id).await?.unwrap_or_else(|| {
+            VersionedChain::unstored(TransferChain::new(id, from_operator.clone()))
+        });
 
         let mut record = TransferRecord {
             transfer_id: Uuid::now_v7(),
@@ -87,8 +97,11 @@ impl PassportService {
                 "toOperator": record.to_operator.did,
             }),
         );
-        self.commit_change(StateChange::new(entry).with_transfer_chain(chain), event)
-            .await?;
+        self.commit_change(
+            StateChange::new(entry).with_transfer_chain(VersionedChain { chain, revision }),
+            event,
+        )
+        .await?;
 
         Ok(record)
     }
@@ -105,7 +118,10 @@ impl PassportService {
             .transfer_store
             .as_ref()
             .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?;
-        let mut chain = store
+        let VersionedChain {
+            mut chain,
+            revision,
+        } = store
             .get_chain(id)
             .await?
             .ok_or_else(|| DppError::NotFound(format!("no transfer chain for {id}")))?;
@@ -171,7 +187,8 @@ impl PassportService {
         // transfer can never exist without a queued notification — the same
         // guarantee publish gets for registration. Without one (in-memory test
         // doubles), the chain alone.
-        let mut change = StateChange::new(entry).with_transfer_chain(chain);
+        let mut change =
+            StateChange::new(entry).with_transfer_chain(VersionedChain { chain, revision });
         if self.transfer_outbox.is_some() {
             let payload = serde_json::to_value(&record)
                 .map_err(|e| DppError::Serialisation(e.to_string()))?;
@@ -272,7 +289,10 @@ impl PassportService {
             .transfer_store
             .as_ref()
             .ok_or_else(|| DppError::Internal("transfer store not configured".into()))?;
-        let mut chain = store
+        let VersionedChain {
+            mut chain,
+            revision,
+        } = store
             .get_chain(id)
             .await?
             .ok_or_else(|| DppError::NotFound(format!("no transfer chain for {id}")))?;
@@ -310,8 +330,11 @@ impl PassportService {
                 "toOperator": record.to_operator.did,
             }),
         );
-        self.commit_change(StateChange::new(entry).with_transfer_chain(chain), event)
-            .await?;
+        self.commit_change(
+            StateChange::new(entry).with_transfer_chain(VersionedChain { chain, revision }),
+            event,
+        )
+        .await?;
 
         Ok(record)
     }

@@ -10,7 +10,7 @@
 //! recorded here because it is a wire-format decision that binds every issuer:
 //!
 //! 1. It reuses the verification path core already has —
-//!    [`authenticate_access_credential`]: the `kid` names a verification method
+//!    [`authenticate_access_credential_with_reason`]: the `kid` names a verification method
 //!    in the issuer's DID document, the signature is checked against that key
 //!    with EdDSA pinned and `alg:none` rejected, and the token must be typed
 //!    `vc+jwt` so another signature of the same key cannot pass for a credential.
@@ -46,7 +46,7 @@ use dpp_common::http_problem;
 use dpp_domain::Audience;
 use dpp_vc::{
     DppAccessCredential, StatusList, TrustedIssuerRegistry,
-    credential::authenticate_access_credential,
+    credential::{AuthenticationFailure, authenticate_access_credential_with_reason},
 };
 
 /// The header a caller presents an access credential in.
@@ -64,6 +64,54 @@ pub const CREDENTIAL_HEADER: &str = "X-DPP-Credential";
 #[must_use]
 pub fn credential_header_name() -> axum::http::HeaderName {
     axum::http::HeaderName::from_static("x-dpp-credential")
+}
+
+/// The response header that says why a verified credential was served the
+/// public view. Its value is [`OutOfScope::header_value`].
+///
+/// A header and not a body field, because a downgraded body is the public view
+/// byte for byte: it is the payload `publicJwsSignature` signs, and a field
+/// added beside it would make an intact body look tampered to a verifier.
+pub const OUT_OF_SCOPE_HEADER: &str = "X-DPP-Credential-Out-Of-Scope";
+
+/// [`OUT_OF_SCOPE_HEADER`] in the typed, lowercase form the response and the
+/// CORS layer need. A browser client reads it only if CORS exposes it, so
+/// `out_of_scope_header_name_matches_the_header_sent` pins the two spellings
+/// together, as `header_name_matches_the_header_read` does for the request.
+#[must_use]
+pub fn out_of_scope_header_name() -> axum::http::HeaderName {
+    axum::http::HeaderName::from_static("x-dpp-credential-out-of-scope")
+}
+
+/// Why a verified credential grants nothing beyond the public view on one
+/// passport. The credential is still valid; it does not cover this product.
+///
+/// Sent in [`OUT_OF_SCOPE_HEADER`] so a holder can tell the cases apart. None
+/// of them says anything the public body does not: the group is in the body,
+/// every group's category field is public, and whether a group states a
+/// category at all follows from the group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutOfScope {
+    /// The credential names product groups, and not this passport's.
+    ProductGroup,
+    /// The credential names product categories, and not the one this passport
+    /// states.
+    ProductCategory,
+    /// The credential names product categories, and this passport's group
+    /// states none.
+    NoProductCategory,
+}
+
+impl OutOfScope {
+    /// The value sent in [`OUT_OF_SCOPE_HEADER`].
+    #[must_use]
+    pub const fn header_value(self) -> &'static str {
+        match self {
+            Self::ProductGroup => "product-group",
+            Self::ProductCategory => "product-category",
+            Self::NoProductCategory => "no-product-category",
+        }
+    }
 }
 
 /// The network lookups credential verification needs.
@@ -110,20 +158,25 @@ impl VerifiedCredential {
     }
 
     /// The audience this credential grants **over a passport in
-    /// `product_group_key` whose data states `passport_category`**.
+    /// `product_group_key` whose data states `passport_category`**, or the
+    /// reason it grants nothing beyond the public view there.
     ///
     /// A credential naming product groups or product categories grants nothing
-    /// extra outside them, so an out-of-scope credential resolves to
-    /// [`Audience::Public`] rather than an error: it is a valid credential that
-    /// simply does not cover this product, and public access is the baseline
-    /// every caller already has. Denying instead would also make the route a
-    /// probe for which product group or category a passport is in.
+    /// extra outside them, so an out-of-scope credential is served the public
+    /// view rather than an error: it is a valid credential that simply does not
+    /// cover this product, and public access is the baseline every caller
+    /// already has. Denying instead would also make the route a probe for which
+    /// product group or category a passport is in. The [`OutOfScope`] says
+    /// which axis missed, for the response header.
     ///
     /// The scope rule itself is core's — an empty list means unscoped on that
     /// axis, a populated one must contain the passport's value — applied by
-    /// re-running the pure claims check with both values now known. Nothing
-    /// here re-implements it, and nothing here touches the network:
-    /// authentication, issuer trust and revocation were all settled in
+    /// re-running the pure claims check with the passport's values now known.
+    /// Core reports a group miss and a category miss as one `OutOfScope`, so it
+    /// is asked about the group alone first and the category second: the order
+    /// of the questions tells the two apart, and its message is never parsed.
+    /// Nothing here re-implements the rule, and nothing here touches the
+    /// network: authentication, issuer trust and revocation were all settled in
     /// [`read_and_verify`] before the database was reached.
     ///
     /// ## A category the passport cannot state does not satisfy a category scope
@@ -139,34 +192,54 @@ impl VerifiedCredential {
     /// is not asking about category at all. Passed through for a passport that
     /// cannot answer, it would read an issuer's narrowing as its opposite: a
     /// credential scoped to one category would unlock every product in its
-    /// groups that states none. So a credential naming any category resolves
-    /// to [`Audience::Public`] on such a passport — the same downgrade a
-    /// category mismatch gets — decided here, before core is asked. Core still
-    /// sees a `None` when the credential names no category, where "no
-    /// requirement" is the truth.
-    #[must_use]
+    /// groups that states none. So a credential naming any category is out of
+    /// scope on such a passport, as [`OutOfScope::NoProductCategory`]: the same
+    /// downgrade a category mismatch gets, decided here before core is asked
+    /// about the category. Core is never handed the passport's `None`.
+    ///
+    /// ## Anything else core refuses here is a race, and gets the baseline
+    ///
+    /// Validity was settled in [`read_and_verify`]. The one thing that can
+    /// change between there and here is the clock, so a credential expiring in
+    /// between is refused by this re-check too. That is not a scope miss, and
+    /// it is answered `Ok(Audience::Public)`: the public view, with no reason.
     pub fn audience_for(
         &self,
         product_group_key: &str,
         passport_category: Option<&str>,
         trust: &dyn TrustedIssuerRegistry,
-    ) -> Audience {
-        if passport_category.is_none() && !self.0.credential_subject.product_categories.is_empty() {
-            return Audience::Public;
+    ) -> Result<Audience, OutOfScope> {
+        use dpp_vc::VerificationResult;
+
+        let now = chrono::Utc::now();
+        let claims = |category: Option<&str>| {
+            dpp_vc::verify_credential_claims_with_trust(
+                &self.0,
+                Some(product_group_key),
+                category,
+                now,
+                trust,
+            )
+        };
+
+        match claims(None) {
+            VerificationResult::OutOfScope { .. } => return Err(OutOfScope::ProductGroup),
+            result if !result.is_valid() => return Ok(Audience::Public),
+            _ => {}
         }
 
-        let scoped = dpp_vc::verify_credential_claims_with_trust(
-            &self.0,
-            Some(product_group_key),
-            passport_category,
-            chrono::Utc::now(),
-            trust,
-        );
-        if scoped.is_valid() {
-            self.audience()
-        } else {
-            Audience::Public
+        if !self.0.credential_subject.product_categories.is_empty() {
+            let Some(category) = passport_category else {
+                return Err(OutOfScope::NoProductCategory);
+            };
+            match claims(Some(category)) {
+                VerificationResult::OutOfScope { .. } => return Err(OutOfScope::ProductCategory),
+                result if !result.is_valid() => return Ok(Audience::Public),
+                _ => {}
+            }
         }
+
+        Ok(self.audience())
     }
 
     /// The underlying credential, for revocation checking and audit.
@@ -191,12 +264,25 @@ pub enum CredentialOutcome {
 /// Does not verify anything — the payload of an unverified JWS is attacker
 /// controlled. Separate from verification so the ordering is impossible to get
 /// wrong at a call site.
-fn decode_payload(jws: &str) -> Option<DppAccessCredential> {
-    let payload_b64 = jws.split('.').nth(1)?;
+///
+/// A token that cannot be decoded is refused here, before its issuer is looked
+/// up and so before core authenticates it. It is classified as core would
+/// classify it, so it gets the sentence [`authentication_detail`] gives the
+/// same failure: no payload segment is not a compact JWS, and a payload that is
+/// not base64url, or not a credential, is a malformed payload.
+fn decode_payload(jws: &str) -> Result<DppAccessCredential, AuthenticationFailure> {
+    let payload_b64 = jws
+        .split('.')
+        .nth(1)
+        .ok_or(AuthenticationFailure::NotACompactJws)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
+        .map_err(|e| AuthenticationFailure::MalformedPayload {
+            reason: format!("payload is not base64url: {e}"),
+        })?;
+    serde_json::from_slice(&bytes).map_err(|e| AuthenticationFailure::MalformedPayload {
+        reason: format!("payload is not a credential: {e}"),
+    })
 }
 
 /// Read, authenticate and authorise the credential on `request`.
@@ -218,10 +304,11 @@ pub async fn read_and_verify(
         return CredentialOutcome::Rejected(reject("Credential header is not valid UTF-8."));
     };
 
-    let Some(unverified) = decode_payload(jws) else {
-        return CredentialOutcome::Rejected(reject(
-            "Credential is not a compact JWS carrying a DPP access credential.",
-        ));
+    let unverified = match decode_payload(jws) {
+        Ok(credential) => credential,
+        Err(failure) => {
+            return CredentialOutcome::Rejected(reject(authentication_detail(&failure)));
+        }
     };
 
     // Authenticate before doing anything with the claims: until the signature
@@ -233,10 +320,15 @@ pub async fn read_and_verify(
     // Core's reading of the token: the key its `kid` names in the issuer's
     // document, the signature, the `vc+jwt` type that keeps another signature of
     // the same key from passing as a credential, and the issuer the document
-    // belongs to. A token with no `kid` names no key and is refused.
-    let credential = match authenticate_access_credential(jws, &did_doc) {
+    // belongs to. A token with no `kid` names no key and is refused. Asked for
+    // with the reason, as a type, so each refusal gets the sentence that says what
+    // its issuer would fix: matching core's prose would tie this to wording that
+    // names the presenter's own `kid` and document.
+    let credential = match authenticate_access_credential_with_reason(jws, &did_doc) {
         Ok(credential) => credential,
-        Err(result) => return CredentialOutcome::Rejected(reject(rejection_detail(&result))),
+        Err(failure) => {
+            return CredentialOutcome::Rejected(reject(authentication_detail(&failure)));
+        }
     };
 
     // Only now that the signature holds is it worth spending a network round
@@ -295,23 +387,65 @@ fn rejection_detail(result: &dpp_vc::VerificationResult) -> &'static str {
         V::Revoked => "Credential has been revoked, or its revocation status could not be checked.",
         V::UntrustedIssuer { .. } => "Credential issuer is not trusted by this node.",
         V::OutOfScope { .. } => "Credential does not cover the requested product.",
-        // The authentication step's refusal: no key matching the `kid`, a
-        // signature that does not verify, a token that is not typed as a
-        // credential, or an issuer other than the document's. Core's text names
-        // the `kid` and the document, which came from the caller, so one fixed
-        // sentence stands for all of them. It says which things to check, so an
-        // issuer whose tooling does not yet set the type, or names its key by a
-        // bare fingerprint, is not sent to debug a signature that is sound. It
-        // opens with the sentence this refusal has always said.
-        V::InvalidSignature(_) => {
-            "Credential signature did not verify. Check that its `kid` names a method in the \
-             issuer's DID document, that it is typed `typ: vc+jwt` with `cty: vc`, and that its \
-             issuer is the document's."
-        }
+        // Not reachable from here — authentication has its own sentence per
+        // failure, in `authentication_detail`, and the signature has been checked
+        // before core is called — but mapped rather than lumped in so a future
+        // reordering cannot silently produce a misleading detail.
+        V::InvalidSignature(_) => "Credential signature did not verify.",
         // `Valid` is unreachable — the caller checks `is_valid()` first — and
         // `MalformedCredential` carries text derived from the credential.
         V::MalformedCredential(_) | V::Valid { .. } => "Credential is not valid.",
     }
+}
+
+/// The sentence for a credential that could not be authenticated: one per thing
+/// its issuer would go and fix.
+///
+/// Authentication refuses for seven different reasons and they used to read the
+/// same, so an issuer whose tooling had not yet set the token's type was told its
+/// signature did not verify, and went to debug a key that was sound. Each of
+/// these is something the issuer already knows about its own token, so saying it
+/// reveals nothing they did not bring. And nothing the presenter supplied is
+/// echoed: the failures that carry the `kid`, the document or the issuer carry
+/// them in fields this function does not read.
+///
+/// A signature that does not verify keeps the sentence it has always had, so a
+/// client that matches it still does.
+fn authentication_detail(failure: &AuthenticationFailure) -> &'static str {
+    use AuthenticationFailure as A;
+    match failure {
+        A::NoMatchingKey { .. } => {
+            "Credential names no key that its issuer's DID document publishes. Its `kid` must be \
+             the absolute URL of a verification method in that document."
+        }
+        A::SignatureDoesNotVerify => "Credential signature did not verify.",
+        A::Unverifiable { .. } => {
+            "Credential could not be verified: its protected header or signature is malformed, \
+             or its algorithm is not accepted."
+        }
+        A::NotTypedAsCredential { .. } => {
+            "Credential is not typed as one. Its `typ` must be `vc+jwt` and its `cty`, when \
+             present, `vc`."
+        }
+        A::MalformedPayload { .. } => "Credential payload is not a DPP access credential.",
+        A::IssuerMismatch { .. } => {
+            "Credential names a different issuer than the DID document it was checked against."
+        }
+        A::NotACompactJws => "Credential is not a compact JWS.",
+        // The failure grows variants; one this does not name is still a refusal
+        // that says nothing about the presenter's own contents.
+        _ => "Credential could not be authenticated.",
+    }
+}
+
+/// The refusal for a read that only a credential can make, asked without one.
+///
+/// The same `401` and `WWW-Authenticate` a failed credential gets, because the
+/// remedy is the same: present one in [`CREDENTIAL_HEADER`]. `detail` says which
+/// of the two reasons there is none to present, since a node that cannot verify
+/// credentials must not tell its caller to go and fetch one.
+pub fn credential_required(detail: &str) -> Response {
+    reject(detail)
 }
 
 /// RFC 9457 rejection. 401 rather than 400: the request is well-formed HTTP; it
@@ -326,10 +460,10 @@ fn reject(detail: &str) -> Response {
             axum::http::header::WWW_AUTHENTICATE,
             CREDENTIAL_HEADER.to_ascii_lowercase(),
         )],
-        axum::Json(
-            http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                .with_detail(detail),
-        ),
+        // The `Problem` itself, not wrapped in `Json`, which would serve it as
+        // `application/json` where RFC 9457 and this route's contract say
+        // `application/problem+json`.
+        http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized").with_detail(detail),
     )
         .into_response()
 }
@@ -550,6 +684,170 @@ mod tests {
         assert!(matches!(out, CredentialOutcome::Rejected(_)));
     }
 
+    /// The `detail` a rejection answers with.
+    async fn detail_of(outcome: CredentialOutcome) -> String {
+        let CredentialOutcome::Rejected(response) = outcome else {
+            panic!("expected a rejection");
+        };
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let problem: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("a problem document");
+        problem["detail"].as_str().expect("a detail").to_owned()
+    }
+
+    /// 🚨 Each way authentication can refuse tells its issuer what to fix, in a
+    /// sentence of its own. They used to read the same, so an issuer whose tooling
+    /// had not yet set the token's type was told its signature did not verify and
+    /// went to debug a key that was sound. And nothing the presenter chose, the
+    /// `kid` or the issuer it names, is echoed back.
+    #[tokio::test]
+    async fn each_authentication_failure_says_what_its_issuer_would_fix() {
+        let (key, kid) = key_and_kid();
+        let directory = Directory::with(Some(did_doc(&key, &kid)));
+        let cred = credential(CredentialRole::Recycler, 30);
+        let detail = |jws: String| {
+            let directory = &directory;
+            async move {
+                detail_of(read_and_verify(&headers_with(Some(&jws)), directory, &trusting()).await)
+                    .await
+            }
+        };
+
+        // No `kid`: the token names no key.
+        let no_kid = sign_with_header(&key, r#"{"alg":"EdDSA","cty":"vc","typ":"vc+jwt"}"#, &cred);
+        let said = detail(no_kid).await;
+        assert!(said.contains("names no key"), "{said}");
+        assert!(
+            !said.contains("signature"),
+            "it is not a signature problem: {said}"
+        );
+
+        // A `kid` that names a method the document does not publish, as a token
+        // signed before keys were named by thumbprint does.
+        let stale = sign_with_header(
+            &key,
+            r#"{"alg":"EdDSA","cty":"vc","kid":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","typ":"vc+jwt"}"#,
+            &cred,
+        );
+        let said = detail(stale).await;
+        assert!(said.contains("names no key"), "{said}");
+        assert!(
+            !said.contains("9f86d081"),
+            "the presenter's own `kid` is not echoed: {said}"
+        );
+
+        // Typed as something else: the signature is sound.
+        let untyped = sign_with_header(
+            &key,
+            &format!(r#"{{"alg":"EdDSA","kid":"{ISSUER}#{kid}"}}"#),
+            &cred,
+        );
+        let said = detail(untyped).await;
+        assert!(
+            said.contains("not typed") && said.contains("vc+jwt"),
+            "{said}"
+        );
+        assert!(!said.contains("did not verify"), "{said}");
+
+        // The one thing wrong is the signature.
+        let genuine = sign_credential(&key, &kid, &cred);
+        let (signing_input, _) = genuine.rsplit_once('.').expect("a compact JWS");
+        let forged = format!("{signing_input}.{}", "A".repeat(86));
+        assert_eq!(detail(forged).await, "Credential signature did not verify.");
+
+        // Authentic, typed, and the credential names another issuer than the
+        // document it is checked against.
+        let mut claims_another = credential(CredentialRole::Recycler, 30);
+        claims_another.issuer = "did:web:someone-else.example".to_owned();
+        let mismatched = sign_credential(&key, &kid, &claims_another);
+        let said = detail(mismatched).await;
+        assert!(said.contains("different issuer"), "{said}");
+        assert!(
+            !said.contains("someone-else"),
+            "the issuer the presenter named is not echoed: {said}"
+        );
+    }
+
+    /// A token that cannot be decoded is refused before its issuer is looked up,
+    /// so core never sees it. It still gets the sentence core's reason would: one
+    /// that is not a compact JWS and one whose payload is not a credential need
+    /// different fixes, and used to share one sentence.
+    #[tokio::test]
+    async fn a_token_that_cannot_be_decoded_is_told_which_way() {
+        let directory = Directory::with(None);
+        let detail = |jws: String| {
+            let directory = &directory;
+            async move {
+                detail_of(read_and_verify(&headers_with(Some(&jws)), directory, &trusting()).await)
+                    .await
+            }
+        };
+        let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+
+        assert_eq!(
+            detail("not-a-token".into()).await,
+            "Credential is not a compact JWS."
+        );
+        assert_eq!(
+            detail(format!(
+                "{}.{}.c2ln",
+                b64(r#"{"alg":"EdDSA"}"#),
+                b64(r#"{"hello":"world"}"#)
+            ))
+            .await,
+            "Credential payload is not a DPP access credential."
+        );
+        assert_eq!(
+            detail("eyJ.%%%.c2ln".into()).await,
+            "Credential payload is not a DPP access credential.",
+            "a payload that is not base64url is not a credential either"
+        );
+    }
+
+    /// Every typed reason has a sentence, none of them reads the fields the
+    /// presenter chose, and one this crate has not heard of still gets an answer.
+    #[test]
+    fn no_authentication_sentence_carries_what_the_presenter_supplied() {
+        let failures = [
+            AuthenticationFailure::NotACompactJws,
+            AuthenticationFailure::NoMatchingKey {
+                document: Some("did:web:secret-document.example".into()),
+                kid: Some("secret-kid".into()),
+            },
+            AuthenticationFailure::SignatureDoesNotVerify,
+            AuthenticationFailure::Unverifiable {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::NotTypedAsCredential {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::MalformedPayload {
+                reason: "secret-reason".into(),
+            },
+            AuthenticationFailure::IssuerMismatch {
+                claimed: "did:web:secret-claim.example".into(),
+                document: "did:web:secret-document.example".into(),
+            },
+        ];
+        let sentences: Vec<&str> = failures.iter().map(authentication_detail).collect();
+        for sentence in &sentences {
+            assert!(
+                !sentence.contains("secret"),
+                "a presenter-supplied value reached the response: {sentence}"
+            );
+        }
+        let mut distinct = sentences.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            failures.len(),
+            "each failure has a sentence of its own: {sentences:?}"
+        );
+    }
+
     #[tokio::test]
     async fn an_unresolvable_issuer_fails_closed() {
         let (key, kid) = key_and_kid();
@@ -698,12 +996,12 @@ mod tests {
         };
         assert_eq!(
             c.audience_for("battery", Some("ev"), &trusting()),
-            Audience::LegitimateInterest,
+            Ok(Audience::LegitimateInterest),
             "in scope: the credential names battery"
         );
         assert_eq!(
             c.audience_for("textile", None, &trusting()),
-            Audience::Public,
+            Err(OutOfScope::ProductGroup),
             "out of scope: a battery credential must not unlock a textile passport"
         );
     }
@@ -731,7 +1029,7 @@ mod tests {
         assert_eq!(c.audience(), Audience::Authority);
         assert_eq!(
             c.audience_for("not-a-product_group", None, &trust),
-            Audience::Public
+            Err(OutOfScope::ProductGroup)
         );
     }
 
@@ -756,7 +1054,7 @@ mod tests {
         };
         assert_eq!(
             c.audience_for("textile", None, &trusting()),
-            Audience::LegitimateInterest
+            Ok(Audience::LegitimateInterest)
         );
     }
 
@@ -789,18 +1087,20 @@ mod tests {
 
         assert_eq!(
             c.audience_for("battery", Some("ev"), &trusting()),
-            Audience::LegitimateInterest,
+            Ok(Audience::LegitimateInterest),
             "in scope on both axes"
         );
         assert_eq!(
             c.audience_for("electronics", Some("ev"), &trusting()),
-            Audience::Public,
-            "a matching category does not stand in for a matching product group"
+            Err(OutOfScope::ProductGroup),
+            "a matching category does not stand in for a matching product group, \
+             and the group is the miss reported"
         );
     }
 
     /// A credential narrowed to EV batteries grants nothing extra on an LMT
-    /// battery. It stays valid, so the answer is a downgrade and not a 401.
+    /// battery. It stays valid, so the answer is a downgrade and not a 401, and
+    /// the reason names the category axis, not the group it does cover.
     #[tokio::test]
     async fn a_credential_naming_another_category_grants_only_public() {
         let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
@@ -810,7 +1110,7 @@ mod tests {
         assert_eq!(c.audience(), Audience::LegitimateInterest);
         assert_eq!(
             c.audience_for("battery", Some("lmt"), &trusting()),
-            Audience::Public
+            Err(OutOfScope::ProductCategory)
         );
     }
 
@@ -826,7 +1126,7 @@ mod tests {
         for passport_category in [Some("ev"), Some("lmt"), None] {
             assert_eq!(
                 c.audience_for("battery", passport_category, &trusting()),
-                Audience::LegitimateInterest,
+                Ok(Audience::LegitimateInterest),
                 "passport category {passport_category:?}"
             );
         }
@@ -836,8 +1136,9 @@ mod tests {
     /// narrowed to one. Core reads a `None` category as "no requirement", so
     /// handing it the passport's `None` would grant a textile-scoped,
     /// category-narrowed credential its full audience over every textile
-    /// passport — the restriction read as its opposite. It must land where a
-    /// mismatch lands, not where an unscoped credential does.
+    /// passport — the restriction read as its opposite. It must be downgraded
+    /// as a mismatch is, not granted as an unscoped credential is, and it says
+    /// which of the two category misses it was.
     #[tokio::test]
     async fn a_passport_stating_no_category_is_treated_as_a_mismatch() {
         let mut narrowed = credential(CredentialRole::AuthorisedRepairer, 30);
@@ -849,17 +1150,63 @@ mod tests {
         unscoped.credential_subject.product_groups = vec!["textile".into()];
         let unscoped = verified(&unscoped).await;
 
-        let cannot_answer = narrowed.audience_for("textile", None, &trusting());
-        assert_eq!(cannot_answer, Audience::Public);
         assert_eq!(
-            cannot_answer,
-            narrowed.audience_for("textile", Some("footwear"), &trusting()),
-            "same outcome as a category mismatch"
+            narrowed.audience_for("textile", None, &trusting()),
+            Err(OutOfScope::NoProductCategory)
         );
-        assert_ne!(
-            cannot_answer,
+        assert_eq!(
+            narrowed.audience_for("textile", Some("footwear"), &trusting()),
+            Err(OutOfScope::ProductCategory),
+            "a downgrade like a category mismatch, told apart from one"
+        );
+        assert_eq!(
             unscoped.audience_for("textile", None, &trusting()),
+            Ok(Audience::LegitimateInterest),
             "not the outcome of a credential that names no category"
+        );
+    }
+
+    /// Group is asked before category, so a credential that misses both is
+    /// reported for the group: the axis a holder has to fix first.
+    #[tokio::test]
+    async fn a_credential_missing_both_axes_is_reported_for_the_group() {
+        let mut cred = credential(CredentialRole::AuthorisedRepairer, 30);
+        cred.credential_subject.product_categories = vec!["ev".into()];
+        let c = verified(&cred).await;
+
+        assert_eq!(
+            c.audience_for("textile", None, &trusting()),
+            Err(OutOfScope::ProductGroup)
+        );
+        assert_eq!(
+            c.audience_for("steel", Some("flat"), &trusting()),
+            Err(OutOfScope::ProductGroup)
+        );
+    }
+
+    /// The header values are the wire contract the API description enumerates,
+    /// and nothing mechanical compares that YAML enum to this one.
+    #[test]
+    fn the_out_of_scope_reasons_are_sent_as_documented() {
+        assert_eq!(OutOfScope::ProductGroup.header_value(), "product-group");
+        assert_eq!(
+            OutOfScope::ProductCategory.header_value(),
+            "product-category"
+        );
+        assert_eq!(
+            OutOfScope::NoProductCategory.header_value(),
+            "no-product-category"
+        );
+    }
+
+    /// The typed response header name must be the lowercase form of the header
+    /// documented, for the same reason as the request header: CORS exposes the
+    /// typed form, and a drift would hide the header from browser clients.
+    #[test]
+    fn out_of_scope_header_name_matches_the_header_sent() {
+        assert_eq!(
+            out_of_scope_header_name().as_str(),
+            OUT_OF_SCOPE_HEADER.to_ascii_lowercase()
         );
     }
 

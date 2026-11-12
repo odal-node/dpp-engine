@@ -19,6 +19,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::PassportAuditEntry,
     auth::AuthContext,
+    node_signal::{Outcome, Signal},
     snapshot::snapshot_json_key,
     state_change::{PassportWrite, StateChange},
 };
@@ -138,6 +139,21 @@ fn gate_outcome(
 }
 
 impl PassportService {
+    /// Record how signing went, on the durable signal when one is wired; a failure
+    /// is also counted on the Prometheus counter. A record that cannot be written
+    /// is logged rather than returned: it must never change what the publish
+    /// answers.
+    async fn note_signing(&self, outcome: Outcome) {
+        if outcome == Outcome::Failed {
+            dpp_common::metrics::record_signing_failure();
+        }
+        if let Some(signals) = &self.signals
+            && let Err(e) = signals.record(Signal::Signing, outcome).await
+        {
+            tracing::error!(error = %e, ?outcome, "signing outcome could not be recorded");
+        }
+    }
+
     /// Sign and publish a draft passport with Ed25519 / JWS.
     ///
     /// Validates product group data, calls the identity service to sign, atomically
@@ -270,6 +286,10 @@ impl PassportService {
         // policy and is deferred separately; `validate_passport` already
         // no-ops that half when the field is absent, so the reason code below
         // still names what actually failed.
+        let first_publish = passport.published_at.is_none();
+        // The determination of the content about to be signed. Stays `None` when
+        // none is made, which for a first publish is what gets stored.
+        let mut determination: Option<ComplianceResult> = None;
         if let Some(product_group_data) = passport.product_group_data.as_ref() {
             dpp_domain::validate_passport(&passport)
                 .map_err(|e| reject(REASON_SECTOR_DATA_INVALID, e))?;
@@ -303,36 +323,61 @@ impl PassportService {
             // reached and did not answer, and the honest response to "the gate
             // could not run" is to refuse the publish, exactly as the schema
             // gate above does.
-            let determination = if super::passport_obligation_live(
-                product_group_data.product_group().catalog_key(),
-            ) {
-                let product_group = product_group_data.product_group();
-                let catalog_key = product_group.catalog_key();
-                gate_outcome(
+            //
+            // The determination is made over the content being signed, every
+            // time, and is the one stored below — not only where the gate judges
+            // it. Made once, so the verdict that gated this publish and the one
+            // the signatures cover are the same value by construction. Reading
+            // the stored one instead signed a publish with the verdict of the
+            // data the draft was created with, whatever it had been edited to
+            // since, and any ruleset reload in between.
+            //
+            // Not made for a re-publish where nothing is live: the content is
+            // frozen and so is its determination, so there is nothing to store
+            // and nothing to judge.
+            let product_group = product_group_data.product_group();
+            let catalog_key = product_group.catalog_key();
+            let live = super::passport_obligation_live(catalog_key);
+            if first_publish || live {
+                determination = match gate_outcome(
                     catalog_key,
                     self.compliance.compute(
                         catalog_key,
                         product_group_data,
                         passport.placed_on_market_date,
                     ),
-                )
-                .map_err(|e| {
-                    reject(
-                        REASON_COMPLIANCE_UNAVAILABLE,
-                        DppError::Validation(
-                            format!(
-                                "cannot publish: the compliance determination could not be made, \
-                                 so the violation gate could not run — {e}"
-                            )
-                            .into(),
-                        ),
-                    )
-                })?
-            } else {
-                None
-            };
+                ) {
+                    Ok(computed) => computed.map(super::create::stamp_assessed_at),
+                    Err(e) if live => {
+                        return Err(reject(
+                            REASON_COMPLIANCE_UNAVAILABLE,
+                            DppError::Validation(
+                                format!(
+                                    "cannot publish: the compliance determination could not be \
+                                     made, so the violation gate could not run — {e}"
+                                )
+                                .into(),
+                            ),
+                        ));
+                    }
+                    // No obligation is live, so nothing is judged and the publish
+                    // goes ahead — with no determination, which is what the
+                    // content has. An earlier one is the verdict of data it may
+                    // no longer hold.
+                    Err(e) => {
+                        tracing::warn!(
+                            passport_id = %id,
+                            error = %e,
+                            "compliance determination could not be computed; \
+                             publishing without one"
+                        );
+                        None
+                    }
+                };
+            }
 
-            if let Some(determination) = determination
+            if live
+                && let Some(determination) = &determination
                 && determination.has_violations()
             {
                 let summary = determination
@@ -361,6 +406,18 @@ impl PassportService {
             }
         }
 
+        // The determination the signatures cover is the one that gated this
+        // publish, attached here and not later: `transition_to` below is where
+        // core can bind a determination to the content it assessed, so the one
+        // on the passport by then has to be this one.
+        //
+        // A re-publish keeps the stored one. The content is retention-locked and
+        // the determination is frozen with it, so a fresh one — which would carry
+        // a new assessment time — could not be stored; the database refuses it.
+        if first_publish {
+            passport.compliance_result = determination;
+        }
+
         // Every publish-time field is set before the single serialize below,
         // so it captures everything both signatures need — avoiding the
         // second full struct→JSON walk this used to require just to pick up
@@ -376,7 +433,6 @@ impl PassportService {
         // private to `dpp-domain` and reachable no other way, deliberately: a
         // check a consumer can decline to call is a check the next consumer will
         // not call. Setting these three fields by hand, as this did, declined it.
-        let first_publish = passport.published_at.is_none();
         passport
             .transition_to(PassportStatus::Published)
             .map_err(|e| reject(REASON_MANDATORY_CONTENT, e))?;
@@ -390,21 +446,19 @@ impl PassportService {
         let payload =
             serde_json::to_value(&passport).map_err(|e| DppError::Serialisation(e.to_string()))?;
 
-        let jws = self
-            .identity
-            .sign_passport(passport.id, &payload)
-            .await
-            .map(|c| c.jws)
-            .map_err(|e| {
-                metrics::counter!("signing_failures_total").increment(1);
+        let jws = match self.identity.sign_passport(passport.id, &payload).await {
+            Ok(c) => c.jws,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
                     "publish aborted — signing failed; passport remains draft"
                 );
-                DppError::Signing(e.to_string())
-            })?;
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
         passport.jws_signature = Some(jws);
 
         // Public verifiability: also sign the *public (redacted) view* — the exact
@@ -418,21 +472,19 @@ impl PassportService {
         // over itself; the full-payload `jws_signature` above stays Confidential
         // for authenticated full-passport verification.
         let public_view = crate::public_view::public_view(&passport);
-        let public_jws = self
-            .identity
-            .sign_passport(passport.id, &public_view)
-            .await
-            .map(|c| c.jws)
-            .map_err(|e| {
-                metrics::counter!("signing_failures_total").increment(1);
+        let public_jws = match self.identity.sign_passport(passport.id, &public_view).await {
+            Ok(c) => c.jws,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
                 metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
                 tracing::error!(
                     code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
                     error = %e,
                     "publish aborted — public-view signing failed; passport remains draft"
                 );
-                DppError::Signing(e.to_string())
-            })?;
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
         passport.public_jws_signature = Some(public_jws);
 
         // Each non-public disclosure set gets its own proof over its own view.
@@ -443,22 +495,29 @@ impl PassportService {
         // siblings so all three describe the same moment, and keyed by
         // disclosure set so the artefact names the data it covers rather than
         // the actor vocabulary of one regulation.
-        passport.disclosure_signatures = crate::public_view::sign_disclosure_views(
+        let disclosure_signatures = match crate::public_view::sign_disclosure_views(
             self.identity.as_ref(),
             &passport,
         )
         .await
-        .map_err(|e| {
-            metrics::counter!("signing_failures_total").increment(1);
-            metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
-                .increment(1);
-            tracing::error!(
-                code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
-                error = %e,
-                "publish aborted — disclosure-view signing failed; passport remains draft"
-            );
-            DppError::Signing(e.to_string())
-        })?;
+        {
+            Ok(signatures) => signatures,
+            Err(e) => {
+                self.note_signing(Outcome::Failed).await;
+                metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED)
+                    .increment(1);
+                tracing::error!(
+                    code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
+                    error = %e,
+                    "publish aborted — disclosure-view signing failed; passport remains draft"
+                );
+                return Err(DppError::Signing(e.to_string()));
+            }
+        };
+        passport.disclosure_signatures = disclosure_signatures;
+        // Every signature this publish needs is made. What follows can still
+        // refuse it, but not for signing.
+        self.note_signing(Outcome::Succeeded).await;
 
         // The EU-registry registration this publish owes, if one can be built.
         //

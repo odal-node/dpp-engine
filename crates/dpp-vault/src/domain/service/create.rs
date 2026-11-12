@@ -1,13 +1,15 @@
 //! `create` and `update` — draft-passport writes, plus their private helpers
 //! `apply_patch` (validates and applies an update patch), `apply_compliance`
-//! (backfills compliance-derived fields from the registered `ComplianceRegistry`),
-//! and `apply_lint` (refreshes the non-binding plausibility findings).
+//! (sets the determination of the content the draft holds, from the registered
+//! `ComplianceRegistry`), and `apply_lint` (refreshes the non-binding
+//! plausibility findings).
 
 use chrono::Utc;
 use dpp_common::event;
 use std::collections::HashSet;
 
 use dpp_domain::{
+    ComplianceResult,
     error::DppError,
     graph::{ComponentEdges, DEFAULT_DEPTH_CAP, EdgeRejection, check_edge},
     passport::{ComponentRef, Passport, PassportId},
@@ -124,8 +126,9 @@ impl PassportService {
 
     /// Partial-update a draft passport.
     ///
-    /// Rejects updates to non-`Draft` passports. Validates the patch, enriches
-    /// compliance fields, writes only the changed fields to the DB (`patch_fields`),
+    /// Rejects updates to non-`Draft` passports. Validates the patch, recomputes
+    /// the determination of the edited content, writes only the changed fields to
+    /// the DB with that determination beside them (`PassportWrite::Patch`),
     /// appends an audit entry, and emits `dpp.passport.updated`.
     #[tracing::instrument(skip(self, patch), fields(passport_id = %id))]
     pub async fn update(
@@ -150,26 +153,15 @@ impl PassportService {
         guard_personal_data(&passport)?;
         self.guard_component_graph(id, &passport.component_refs)
             .await?;
-        let pre_compliance_co2e = passport.co2e_per_unit.clone();
-        let pre_compliance_repair = passport.repairability_score.clone();
+        // The determination of the content as edited, stored beside the delta
+        // below. It is not in the delta: the field is protected against a
+        // caller's patch, and the host writes it through the write's own slot.
         apply_compliance(&mut passport, &*self.compliance);
         apply_lint(&mut passport);
 
         let mut delta = delta_for(&passport, &applied);
-        // Compliance-enriched values, added only when enrichment changed them.
-        if passport.co2e_per_unit != pre_compliance_co2e
-            && let Some(ref v) = passport.co2e_per_unit
-        {
-            delta.insert("co2ePerUnit".into(), serde_json::json!(v));
-        }
-        if passport.repairability_score != pre_compliance_repair
-            && let Some(ref v) = passport.repairability_score
-        {
-            delta.insert("repairabilityScore".into(), serde_json::json!(v));
-        }
-        // Lint findings are cheap to recompute and always refreshed (unlike
-        // co2e/repairability above, which only backfill when the caller left
-        // them unset) — see PassportService::relint for the standalone re-check.
+        // Lint findings are cheap to recompute and always refreshed — see
+        // PassportService::relint for the standalone re-check.
         if let Some(ref lint) = passport.lint_result {
             delta.insert("lintResult".into(), serde_json::json!(lint));
         }
@@ -185,8 +177,11 @@ impl PassportService {
             }),
         );
         self.commit_passport_change(
-            StateChange::new(entry)
-                .with_passport(PassportWrite::Patch(id, serde_json::Value::Object(delta))),
+            StateChange::new(entry).with_passport(PassportWrite::Patch {
+                id,
+                delta: serde_json::Value::Object(delta),
+                determination: passport.compliance_result,
+            }),
             event,
         )
         .await
@@ -278,54 +273,73 @@ fn local_component_id(uri: &str) -> Option<PassportId> {
     Uuid::parse_str(tail).ok().map(PassportId)
 }
 
+/// Set `passport.compliance_result` to the determination of the content the
+/// passport holds now: the one [`determine`] makes, or none.
+///
+/// Assigned whatever the outcome. A determination left in place when none can be
+/// made is the verdict of content the passport no longer has, which is what a
+/// draft edited after create used to be signed with.
+///
+/// It no longer writes `co2e_per_unit` or `repairability_score`. Those hold what
+/// the operator declared, through create or `PUT`; the calculated figures stay in
+/// the determination (`co2eScore`, `repairabilityIndex`). A calculated value
+/// copied into the declared field has no methodology or provenance to tell it
+/// from a declaration, and an AAS export reads both as the passport's own.
 pub(super) fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
-    let Some(product_group_data) = passport.product_group_data.as_ref() else {
-        return;
-    };
+    passport.compliance_result = determine(passport, registry);
+}
+
+/// The compliance determination of `passport`'s product group data, with its
+/// assessment time stamped, or `None` when there is none to make: the passport
+/// carries no product group data, nothing is registered to evaluate its group,
+/// or the evaluator that is could not assess it.
+pub(super) fn determine(
+    passport: &Passport,
+    registry: &dyn ComplianceRegistry,
+) -> Option<ComplianceResult> {
+    let product_group_data = passport.product_group_data.as_ref()?;
     let product_group = product_group_data.product_group();
     // The date the governing law attached to this product, read from its own
     // record. Never `Utc::now()`: a determination made against today's date is
     // wrong for every product not placed on the market today, and would change
     // its own answer as phase dates pass.
     let law_in_force_on = passport.placed_on_market_date;
-    // A failure here is not fatal — a draft without a backfilled determination
-    // is still a valid draft, and publish re-runs the evaluation behind a gate
-    // that now refuses rather than shrugging. But it must not be *silent*: this
-    // was `if let Ok(..)`, so a plugin that had stopped understanding its own
-    // product group's data left `compliance_result` empty with nothing said,
-    // and the first visible symptom was an absent field nobody was looking at.
+    // A failure here is not fatal — a draft without a determination is still a
+    // valid draft, and publish runs the evaluation again over what it signs,
+    // behind a gate that refuses rather than shrugging. But it must not be
+    // *silent*: this was `if let Ok(..)`, so a plugin that had stopped
+    // understanding its own product group's data left `compliance_result` empty
+    // with nothing said, and the first visible symptom was an absent field
+    // nobody was looking at.
     let computed = registry.compute(
         product_group.catalog_key(),
         product_group_data,
         law_in_force_on,
     );
-    if let Err(ref e) = computed
-        && e.kind != dpp_domain::ComplianceErrorKind::UnknownProductGroup
-    {
-        tracing::warn!(
-            product_group = %product_group.catalog_key(),
-            error = %e,
-            "compliance determination could not be computed; the draft carries none"
-        );
+    match computed {
+        Ok(result) => Some(stamp_assessed_at(result)),
+        Err(e) => {
+            if e.kind != dpp_domain::ComplianceErrorKind::UnknownProductGroup {
+                tracing::warn!(
+                    product_group = %product_group.catalog_key(),
+                    error = %e,
+                    "compliance determination could not be computed; the draft carries none"
+                );
+            }
+            None
+        }
     }
-    if let Ok(mut result) = computed {
-        // Backfill the two display metrics only when the caller didn't supply them.
-        if passport.co2e_per_unit.is_none() {
-            passport.co2e_per_unit = result.co2e_score.map(CarbonFootprint::from_kg);
-        }
-        if passport.repairability_score.is_none() {
-            passport.repairability_score = result
-                .repairability_index
-                .map(RepairabilityScore::from_scalar);
-        }
-        // Persist the full determination (status, metrics, findings, receipt) on
-        // the passport so it is part of the signed payload and queryable. Stamp
-        // the assessment time if the registry didn't.
-        if result.assessed_at.is_none() {
-            result.assessed_at = Some(Utc::now());
-        }
-        passport.compliance_result = Some(result);
+}
+
+/// `result`, with the time it was assessed stamped if the registry left it out.
+///
+/// The full determination (status, metrics, findings, receipt) is persisted on
+/// the passport so it is part of the signed payload and queryable.
+pub(super) fn stamp_assessed_at(mut result: ComplianceResult) -> ComplianceResult {
+    if result.assessed_at.is_none() {
+        result.assessed_at = Some(Utc::now());
     }
+    result
 }
 
 /// Backfill `lint_result` from the plausibility lint.

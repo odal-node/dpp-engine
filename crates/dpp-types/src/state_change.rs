@@ -19,42 +19,67 @@
 //! leaves the database, so it cannot be part of the transaction, and a bus
 //! subscriber is not owed delivery the way a webhook subscriber is.
 //!
-//! # Archiving moves inside the transaction
+//! # Archiving is inside the transaction
 //!
-//! `ArchivingPassportRepo` archives the version a write replaces, but the
-//! `PassportRepository` port has no transaction, so it archives first and
-//! writes second, and a failure in between leaves a redundant version behind.
-//! A [`PassportWrite`] that replaces a stored passport archives it in the same
-//! transaction instead, so the version and the change commit together. EN 18221
-//! clause 4.2 asks that every change be archived; this keeps that true on a path
-//! that does not go through the decorator.
+//! A [`PassportWrite`] that changes a stored passport archives the record it
+//! replaces in the same transaction, as stored, so the version and the change
+//! commit together or not at all. EN 18221 clause 4.2 asks that every change be
+//! archived; the store's passport writes do it, here as for every other change.
 
 use async_trait::async_trait;
 use uuid::Uuid;
 
 use dpp_domain::{
-    DppError,
+    ComplianceResult, DppError,
     passport::{Passport, PassportId},
     status::PassportStatus,
-    transfer::TransferChain,
 };
 
 use crate::audit::PassportAuditEntry;
 use crate::registry_sync::RegistryStatusIntent;
+use crate::transfer::VersionedChain;
 
 /// The write a state change makes to the passport itself.
+///
+/// # The compliance determination is stored exactly as it is carried
+///
+/// A stored `complianceResult` is the determination of the content stored beside
+/// it. The two writes that change content therefore state the determination
+/// outright, `None` included, rather than leave a stored one to survive an
+/// omission: [`Replace`](Self::Replace) stores the one its passport carries, and
+/// [`Patch`](Self::Patch) takes it beside the delta. Both land in the statement
+/// that writes the rest of the change, under the same row lock.
 #[derive(Debug, Clone)]
 pub enum PassportWrite {
     /// A new passport. Nothing is archived: archiving starts at the first change.
     Insert(Passport),
-    /// The stored passport replaced by this one, as publish does.
+    /// The stored passport replaced by this one, as publish does. Its
+    /// `compliance_result` is stored as it stands: `None` removes a stored
+    /// determination and clears the two columns projected from it.
     Replace(Passport),
     /// The stored passport's status set, and nothing else.
     Status(PassportId, PassportStatus),
-    /// A partial update merged into the stored passport. A `null` removes the
-    /// key. Protected fields are refused, as `PassportRepository::patch_fields`
-    /// refuses them.
-    Patch(PassportId, serde_json::Value),
+    /// A draft edited by its caller.
+    ///
+    /// `delta` is merged into the stored passport. A `null` removes the key.
+    /// Protected fields are refused, as `PassportRepository::patch_fields`
+    /// refuses them, and `complianceResult` is among them: the determination is
+    /// the host's to write, never a caller's, so it travels in its own field
+    /// and does not pass through that refusal.
+    ///
+    /// `determination` is that of the edited content, stored beside the delta in
+    /// the same statement. `None` removes a stored one, for an edit that leaves
+    /// nothing to assess. It cannot be a write of its own after the delta: the
+    /// first statement archives the stored record, and a second would archive a
+    /// version that never existed.
+    Patch {
+        /// The passport edited.
+        id: PassportId,
+        /// The caller's fields.
+        delta: serde_json::Value,
+        /// The determination of the content as edited, or `None` for none.
+        determination: Option<ComplianceResult>,
+    },
 }
 
 /// An event every matching webhook subscription is sent.
@@ -71,8 +96,9 @@ pub struct WebhookEvent {
 pub struct StateChange {
     /// The passport write, if the change touches the passport row.
     pub passport: Option<PassportWrite>,
-    /// The passport's transfer chain, written whole, if the change touches it.
-    pub transfer_chain: Option<TransferChain>,
+    /// The passport's transfer chain, written whole over the revision it was
+    /// read at, if the change touches it.
+    pub transfer_chain: Option<VersionedChain>,
     /// The EU registry registration a publish owes: the serialised
     /// `RegistrationRequest`. Queued as `registry_sync` rows are by publish.
     pub registration: Option<serde_json::Value>,
@@ -112,9 +138,9 @@ impl StateChange {
         self
     }
 
-    /// Write the passport's transfer chain.
+    /// Write the passport's transfer chain over the revision it was read at.
     #[must_use]
-    pub fn with_transfer_chain(mut self, chain: TransferChain) -> Self {
+    pub fn with_transfer_chain(mut self, chain: VersionedChain) -> Self {
         self.transfer_chain = Some(chain);
         self
     }
@@ -157,7 +183,10 @@ pub trait StateChangeLog: Send + Sync {
     ///
     /// # Errors
     /// [`DppError::NotFound`] when a write that replaces, patches or sets the
-    /// status of a passport finds none; otherwise whatever the storage reports.
-    /// Nothing is written in either case.
+    /// status of a passport finds none; [`stale_chain`] when the transfer chain
+    /// has been written since the revision this change read; otherwise whatever
+    /// the storage reports. Nothing is written in any case.
+    ///
+    /// [`stale_chain`]: crate::transfer::stale_chain
     async fn commit(&self, change: StateChange) -> Result<Option<Passport>, DppError>;
 }

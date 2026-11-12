@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 
 use dpp_domain::DppError;
-use dpp_types::audit::{PassportVersion, PassportVersionStore};
+use dpp_types::audit::{PassportVersion, PassportVersionStore, StoredAt};
 
 use super::{PgDal, db_err};
 
@@ -36,29 +36,41 @@ fn row_to_version(row: &sqlx::postgres::PgRow) -> Result<PassportVersion, DppErr
     })
 }
 
-/// Archive `doc` as a version of `passport_id`, superseded at `superseded_at`.
+/// Archive the stored record of `passport_id` as a version, superseded now.
 ///
-/// One statement for both callers: the store's own [`archive`] on the pool, and
-/// the state-change log inside the transaction that makes the change.
+/// The one statement that writes the archive. Its caller is the passport store,
+/// under the lock of the change that replaces the record and in its transaction:
+/// see `repo_passport.rs`.
 ///
-/// [`archive`]: PassportVersionStore::archive
+/// The record is copied inside the database rather than passed in, so the
+/// version is the column exactly as stored: a document decoded into a
+/// `serde_json::Value` and encoded again is only as exact as that type's numbers.
+/// And `superseded_at` is the database's clock when the statement runs, after the
+/// change took the row's lock, rather than the clock of whichever process made
+/// the change: one clock for every writer, so versions order as their changes
+/// did, and a reader holding the row knows no later change stamps a moment
+/// before it.
 pub(crate) async fn insert_version<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     passport_id: uuid::Uuid,
-    doc: &serde_json::Value,
-    superseded_at: DateTime<Utc>,
 ) -> Result<(), DppError> {
-    sqlx::query(
+    let archived = sqlx::query(
         "INSERT INTO odal.passport_version (id, passport_id, doc, superseded_at)
-         VALUES ($1, $2, $3, $4)",
+         SELECT $1, id, doc, clock_timestamp() FROM odal.passport WHERE id = $2",
     )
     .bind(uuid::Uuid::now_v7())
     .bind(passport_id)
-    .bind(doc)
-    .bind(superseded_at)
     .execute(executor)
     .await
-    .map_err(db_err)?;
+    .map_err(db_err)?
+    .rows_affected();
+    // The caller holds the row's lock, so it cannot have gone; a change that
+    // archived nothing would still be written, so it is refused instead.
+    if archived != 1 {
+        return Err(DppError::Internal(format!(
+            "archived {archived} versions of passport {passport_id}, not 1"
+        )));
+    }
     Ok(())
 }
 
@@ -69,21 +81,6 @@ fn passport_uuid(passport_id: &str) -> Result<uuid::Uuid, DppError> {
 
 #[async_trait]
 impl PassportVersionStore for PgPassportVersionRepo {
-    async fn archive(
-        &self,
-        passport_id: &str,
-        doc: &serde_json::Value,
-        superseded_at: DateTime<Utc>,
-    ) -> Result<(), DppError> {
-        insert_version(
-            self.dal.pool(),
-            passport_uuid(passport_id)?,
-            doc,
-            superseded_at,
-        )
-        .await
-    }
-
     async fn versions(&self, passport_id: &str) -> Result<Vec<PassportVersion>, DppError> {
         let rows = sqlx::query(
             "SELECT id, passport_id, doc, superseded_at
@@ -98,30 +95,59 @@ impl PassportVersionStore for PgPassportVersionRepo {
         rows.iter().map(row_to_version).collect()
     }
 
-    async fn version_at(
-        &self,
-        passport_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<Option<PassportVersion>, DppError> {
-        // The earliest version that was still current at `at` — that is, the
-        // first one to stop being current *after* it.
-        //
-        // `>` rather than `>=` deliberately. `superseded_at` is the instant the
-        // replacement was applied, so at exactly that instant the new version is
-        // the current one. Asking "as of the moment of a change" should answer
-        // with what the change produced, not with what it replaced.
-        let row = sqlx::query(
-            "SELECT id, passport_id, doc, superseded_at
-               FROM odal.passport_version
-              WHERE passport_id = $1 AND superseded_at > $2
-              ORDER BY superseded_at ASC, id ASC
-              LIMIT 1",
-        )
-        .bind(passport_uuid(passport_id)?)
-        .bind(at)
-        .fetch_optional(self.dal.pool())
-        .await
-        .map_err(db_err)?;
-        row.as_ref().map(row_to_version).transpose()
+    async fn state_at(&self, passport_id: &str, at: DateTime<Utc>) -> Result<StoredAt, DppError> {
+        let id = passport_uuid(passport_id)?;
+        let mut tx = self.dal.pool().begin().await.map_err(db_err)?;
+
+        // `FOR SHARE` waits for a change that holds the row, and holds off the
+        // next one until this transaction ends: see the trait's "Read under the
+        // passport's lock". Each statement after it reads what was committed
+        // when it ran, so the version below sees the change it waited for.
+        let live: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT doc FROM odal.passport WHERE id = $1 FOR SHARE")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        // Read once the row is held, so a change that waited for this read
+        // stamps a later moment.
+        let read_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+        let version = match live {
+            None => None,
+            // The earliest version that was still current at `at` — that is, the
+            // first one to stop being current *after* it.
+            //
+            // `>` rather than `>=` deliberately. `superseded_at` is the instant
+            // the replacement was applied, so at exactly that instant the new
+            // version is the current one. Asking "as of the moment of a change"
+            // should answer with what the change produced, not with what it
+            // replaced.
+            Some(_) => sqlx::query(
+                "SELECT id, passport_id, doc, superseded_at
+                   FROM odal.passport_version
+                  WHERE passport_id = $1 AND superseded_at > $2
+                  ORDER BY superseded_at ASC, id ASC
+                  LIMIT 1",
+            )
+            .bind(id)
+            .bind(at)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?
+            .as_ref()
+            .map(row_to_version)
+            .transpose()?,
+        };
+        tx.commit().await.map_err(db_err)?;
+
+        Ok(StoredAt {
+            live,
+            version,
+            read_at,
+        })
     }
 }

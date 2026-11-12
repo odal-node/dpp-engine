@@ -7,7 +7,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 
 use dpp_dal::pg::{
-    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgIdempotencyRepo,
+    PgApiKeyRepo, PgAuditRepo, PgDal, PgEvidenceDossierRepo, PgIdempotencyRepo, PgNodeSignalRepo,
     PgOperatorConfigRepo, PgPassportRepo, PgRegistryIdentityRepo, PgRegistrySyncRepo,
     PgRegistryTransferRepo, PgScanTelemetryRepo, PgSealOutboxRepo, PgSnapshotOutboxRepo,
     PgTransferRepo, PgWebhookRepo,
@@ -45,6 +45,9 @@ pub struct DbComponents {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub registry_repo: Arc<dyn RegistryIdentityRepository>,
     pub registry_outbox: Arc<dyn RegistrySyncOutbox>,
+    /// Outcomes of the node's own work the node-health route reports across
+    /// restarts.
+    pub signals: Arc<dyn dpp_types::node_signal::NodeSignals>,
     pub transfer_store: Arc<dyn TransferStore>,
     pub transfer_outbox: Arc<dyn RegistryTransferOutbox>,
     pub evidence_store: Arc<dyn EvidenceDossierRepository>,
@@ -120,19 +123,15 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         Arc::new(dpp_dal::pg::PgPassportVersionRepo::new(dal.clone()));
 
     Ok(DbComponents {
-        // Wrapped, not bare, and the wrapping is the point: EN 18221 clause 4.2
-        // says **all** changes are archived, and a rule of that shape cannot be
-        // left to each write path to remember. Every change to passport content
-        // reaches the database through here, so archiving is something a write
-        // path cannot avoid rather than something it opts into.
+        // Archives as it writes: EN 18221 clause 4.2 says **all** changes are
+        // archived, and every change this repository makes copies the stored
+        // record into `passport_version` in its own transaction, so archiving is
+        // something a write path cannot avoid rather than something it opts into.
         //
-        // "Content", because one write does not: `mark_sealed` sets `doc->seal`
-        // by key and is correctly outside the archive. The set of direct writers
-        // is gated — see `dpp-dal/tests/passport_writers_are_known.rs`.
-        passport_repo: Arc::new(dpp_dal::pg::ArchivingPassportRepo::new(
-            PgPassportRepo::new(dal.clone()),
-            version_store.clone(),
-        )),
+        // One write is outside it: `mark_sealed` sets `doc->seal` by key and is
+        // not a change to content. The set of direct writers is gated — see
+        // `dpp-dal/tests/passport_writers_are_known.rs`.
+        passport_repo: Arc::new(PgPassportRepo::new(dal.clone())),
         version_store,
         successors: Arc::new(dpp_dal::pg::PgSuccessorRepo::new(dal.clone())),
         trusted_lists: Arc::new(dpp_dal::pg::PgTrustedListRepo::new(dal.clone())),
@@ -145,6 +144,7 @@ pub async fn init_db(cfg: &NodeConfig) -> anyhow::Result<DbComponents> {
         api_key_repo: Arc::new(PgApiKeyRepo::new(dal.clone())),
         registry_repo: Arc::new(PgRegistryIdentityRepo::new(dal.clone())),
         registry_outbox: Arc::new(PgRegistrySyncRepo::new(dal.clone())),
+        signals: Arc::new(PgNodeSignalRepo::new(dal.clone())),
         transfer_store: Arc::new(PgTransferRepo::new(dal.clone())),
         transfer_outbox: Arc::new(PgRegistryTransferRepo::new(dal.clone())),
         evidence_store: Arc::new(PgEvidenceDossierRepo::new(dal.clone())),
