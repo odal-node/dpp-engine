@@ -69,7 +69,19 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-if ! curl -sSf -o "$tmp/schema.json" "$schema_url"; then
+# The URL comes from the config document under review, which is the file this
+# gate is about to judge. It must be an HTTPS URL, and it goes to curl as the
+# URL, so no value can be read as an option: curl reads a bare argument as a
+# URL too, but `--url` makes that explicit and survives a leading dash.
+case "$schema_url" in
+    https://*) ;;
+    *)
+        echo "ERROR: the schema URL in $config is not an https:// URL: $schema_url" >&2
+        exit 1
+        ;;
+esac
+
+if ! curl -sSf --proto '=https' --proto-redir '=https' -o "$tmp/schema.json" --url "$schema_url"; then
     cat >&2 <<EOF
 
 ERROR: could not fetch the CodeRabbit schema from

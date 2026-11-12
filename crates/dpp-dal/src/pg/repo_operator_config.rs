@@ -126,6 +126,18 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
             .product_categories
             .as_ref()
             .map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null));
+        // The column is INTEGER. A value outside its range would wrap to a number
+        // that can be below the retention floor the API enforced, so it is refused
+        // here rather than narrowed.
+        let retention_days = i32::try_from(config.retention_policy_days).map_err(|_| {
+            DppError::Validation(
+                format!(
+                    "retention_policy_days {} is outside the storable range",
+                    config.retention_policy_days
+                )
+                .into(),
+            )
+        })?;
         let row = sqlx::query(
             r#"INSERT INTO odal.operator_config
                  (operator_id, legal_name, trade_name, address, country, contact_email,
@@ -169,7 +181,7 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
         .bind(&config.brand_logo_url)
         .bind(&config.custom_domain)
         .bind(&config.data_residency)
-        .bind(config.retention_policy_days as i32)
+        .bind(retention_days)
         .bind(&config.feature_flags)
         .bind(config.registry_verified_at)
         .fetch_one(self.dal.pool())

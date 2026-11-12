@@ -72,9 +72,8 @@ impl CredentialsFile {
             })?;
         }
         let content = toml::to_string_pretty(self).context("Failed to serialise credentials")?;
-        fs::write(&path, content)
+        write_private(&path, content.as_bytes())
             .with_context(|| format!("Failed to write credentials: {}", path.display()))?;
-        restrict_permissions(&path)?;
         Ok(())
     }
 }
@@ -177,23 +176,59 @@ fn parse_stdin_secret(raw: &str) -> Result<String> {
     Ok(secret)
 }
 
+/// Write the credentials so that no other account can read them, not even while
+/// the secret is being written. On Unix the file is opened owner-only. `mode`
+/// applies only when the file is created, so an existing file is tightened
+/// through the open handle before anything is written to it.
+///
+/// It is emptied only after that succeeds. Truncating on open would leave an
+/// existing file empty whenever the permission change then fails, for one owned
+/// by another account, say, where the write would otherwise have been refused
+/// with its contents intact.
 #[cfg(unix)]
-fn restrict_permissions(path: &std::path::Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("Failed to set permissions on {}", path.display()))
+pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.set_len(0)?;
+    file.write_all(content)
 }
 
 #[cfg(not(unix))]
-fn restrict_permissions(_path: &std::path::Path) -> Result<()> {
+pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
     // Windows: the file lives under %USERPROFILE%\.config\odal, which carries a
     // per-user ACL by default. No portable chmod equivalent is applied here.
-    Ok(())
+    fs::write(path, content)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The secret must never sit in a file another account can open, not even
+    /// between the create and a later chmod.
+    #[cfg(unix)]
+    #[test]
+    fn a_credentials_file_is_owner_only_from_the_moment_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.toml");
+        write_private(&path, b"secret").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        // An existing, world-readable file is tightened before the secret goes in.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"rotated").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 
     #[test]
     fn credentials_round_trip_toml() {

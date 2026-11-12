@@ -276,6 +276,19 @@ pub(super) fn revocation_from(signed: &Signed) -> RevocationStanding {
     // stale list while a later one carries the revocation. A revocation found
     // anywhere ends the search; nothing else can.
     let mut clean: Option<DateTime<Utc>> = None;
+    // Every CRL below is from this certificate's issuer, so the issuer's key is
+    // resolved once, not once per CRL. The CRL must be signed by that issuer,
+    // checked against a certificate the seal carries. Without that, a revocation
+    // list is a list of numbers anybody could have written — and an attacker able
+    // to add one could *unrevoke* a certificate by shipping an empty CRL.
+    let issuer_key = signed
+        .chain
+        .iter()
+        .find(|c| &c.tbs_certificate.subject == issuer)
+        .ok_or_else(|| "the CRL's issuer certificate is not in the seal".to_owned())
+        .and_then(|cert| {
+            verifying_key(cert).map_err(|e| format!("no verifier for the CRL issuer's key: {e}"))
+        });
     for crl in &signed.crls {
         if &crl.tbs_cert_list.issuer != issuer {
             // Not a problem, just not about this certificate: a seal may carry
@@ -283,22 +296,10 @@ pub(super) fn revocation_from(signed: &Signed) -> RevocationStanding {
             continue;
         }
 
-        // The CRL must be signed by the same issuer, checked against a
-        // certificate the seal carries. Without that, a revocation list is a
-        // list of numbers anybody could have written — and an attacker able to
-        // add one could *unrevoke* a certificate by shipping an empty CRL.
-        let Some(issuer_cert) = signed
-            .chain
-            .iter()
-            .find(|c| &c.tbs_certificate.subject == issuer)
-        else {
-            last_problem = Some("the CRL's issuer certificate is not in the seal".to_owned());
-            continue;
-        };
-        let key = match verifying_key(issuer_cert) {
-            Ok(k) => k,
-            Err(e) => {
-                last_problem = Some(format!("no verifier for the CRL issuer's key: {e}"));
+        let key = match &issuer_key {
+            Ok(key) => key,
+            Err(problem) => {
+                last_problem = Some(problem.clone());
                 continue;
             }
         };

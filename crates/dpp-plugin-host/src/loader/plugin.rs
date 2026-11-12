@@ -11,7 +11,7 @@ use wasmtime::{Engine, Instance, Linker, Module, Store};
 use dpp_domain::compliance::ComplianceResult;
 use dpp_plugin_traits::{AbiResult, PluginCapabilities, PluginResult, check_compatibility};
 
-use super::signing::verify_plugin_signature;
+use super::signing::verify_plugin_signature_over;
 use crate::host::plugin_result_to_compliance;
 use crate::runtime::{DEFAULT_FUEL, DEFAULT_MEMORY_CAP_BYTES, HostState, build_store};
 
@@ -88,8 +88,12 @@ impl LoadedPlugin {
         product_group_key: &str,
         trusted_key: Option<&VerifyingKey>,
     ) -> Result<Self> {
+        // Read the artifact once. The bytes that are verified are the bytes that are
+        // loaded: a second read of the path could return a file written in between.
+        let artifact = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
         let signature_verified = if let Some(key) = trusted_key {
-            if let Err(e) = verify_plugin_signature(path, key) {
+            if let Err(e) = verify_plugin_signature_over(path, &artifact, key) {
                 tracing::warn!(
                     code = event_codes::PLUGIN_REFUSED,
                     path = %path.display(),
@@ -153,11 +157,9 @@ impl LoadedPlugin {
 
         let module = if is_precompiled {
             tracing::info!(path = %path.display(), product_group = product_group_key, "loading precompiled plugin (.cwasm)");
-            // Read the bytes and deserialize from memory rather than
-            // `deserialize_file` (which mmaps and would keep the file open — on
-            // Windows that blocks the install's promote-by-rename step).
-            let bytes = std::fs::read(path)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            // Deserialize from the verified bytes rather than `deserialize_file`,
+            // which mmaps and would keep the file open — on Windows that blocks the
+            // install's promote-by-rename step.
             // SAFETY: the artifact's signature was verified against the pinned
             // publisher key above — unconditionally, because the guard directly
             // above refuses a precompiled artifact when no key is configured, so
@@ -168,13 +170,13 @@ impl LoadedPlugin {
             // embedded engine/target/config header and returns an error, not UB,
             // when this node's engine cannot load it.
             unsafe {
-                Module::deserialize(engine, &bytes).map_err(|e| {
+                Module::deserialize(engine, &artifact).map_err(|e| {
                     anyhow::anyhow!("incompatible precompiled artifact {}: {e}", path.display())
                 })?
             }
         } else {
             tracing::info!(path = %path.display(), product_group = product_group_key, "compiling Wasm plugin");
-            Module::from_file(engine, path)
+            Module::new(engine, &artifact)
                 .map_err(|e| anyhow::anyhow!("failed to compile {}: {e}", path.display()))?
         };
 

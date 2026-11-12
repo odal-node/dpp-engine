@@ -358,13 +358,16 @@ pub fn render_validation_report(report: &ValidationReport) {
 
 /// Render an evidence dossier verification report (`odal verify`).
 pub fn render_verification_report(report: &VerificationReport, target: &str) {
-    println!("Verifying: {target}");
-    println!("Trust anchor: {}\n", report.trust_anchor_note);
+    // Every field here came from a dossier or a remote node, and a dossier can name
+    // anything (its issuer, a failure reason) — so each one passes through `plain`.
+    println!("Verifying: {}", plain(target));
+    println!("Trust anchor: {}\n", plain(&report.trust_anchor_note));
     for check in &report.checks {
+        let name = plain(&check.name);
         match &check.status {
-            CheckStatus::Pass => println!("  [PASS] {}", check.name),
-            CheckStatus::Fail(reason) => println!("  [FAIL] {} — {reason}", check.name),
-            CheckStatus::Absent(reason) => println!("  [N/A ] {} — {reason}", check.name),
+            CheckStatus::Pass => println!("  [PASS] {name}"),
+            CheckStatus::Fail(reason) => println!("  [FAIL] {name} — {}", plain(reason)),
+            CheckStatus::Absent(reason) => println!("  [N/A ] {name} — {}", plain(reason)),
         }
     }
     println!();
@@ -586,7 +589,7 @@ fn field(value: &serde_json::Value, key: &str) -> Option<String> {
 /// change — this is that change. Where a renderer reads or prints through a
 /// shared helper, the helper sanitises, so a field added later inherits it
 /// instead of needing to remember.
-fn plain(s: &str) -> String {
+pub(crate) fn plain(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
@@ -683,7 +686,9 @@ pub fn render_export(result: &ExportResult, output: Option<&str>) -> Result<()> 
     match output {
         Some(path) => {
             let target = crate::config::export_target(path)?;
-            std::fs::write(&target, &result.data)
+            // An export holds nonpublic passport data, so it is written owner-only
+            // from the moment it exists, whatever the process umask says.
+            crate::credentials::write_private(&target, result.data.as_bytes())
                 .map_err(|e| anyhow::anyhow!("Failed to write to {}: {e}", target.display()))?;
             println!("Exported to {}", target.display());
         }
