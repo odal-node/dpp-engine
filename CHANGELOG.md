@@ -269,6 +269,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **The node and resolver images are hardened.** No file in either image keeps a
+  setuid or setgid bit, `apt` and `dpkg` are removed (`/var/lib/dpkg/status`
+  stays, so a vulnerability scan still lists the Debian packages), the `odal`
+  service user's home is `/nonexistent`, and the binaries are built without a
+  symbol table: the resolver's shrinks from 18.9 MB to 14.6 MB, and its
+  `cargo auditable` dependency graph survives. A panic still prints its message
+  and source location; a backtrace no longer names the functions. The hardened
+  node image was checked healthy as uid 1000 with a read-only root filesystem.
+  CI's image job now fails if any of these is lost. (#602)
+
 - **A GS1 linkset now validates against GS1's linkset schema, and a redirect
   hands the query string on.** *(Breaking for a reader of the linkset.)* The
   linkset was a context with no `title` on any link and an `anchor` beside
