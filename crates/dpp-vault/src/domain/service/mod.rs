@@ -504,7 +504,26 @@ impl PassportService {
             Some(PassportWrite::Status(id, status)) => {
                 Some(self.repo.update_status(id, status).await?)
             }
-            Some(PassportWrite::Patch(id, delta)) => Some(self.repo.patch_fields(id, delta).await?),
+            Some(PassportWrite::Patch {
+                id,
+                delta,
+                determination,
+            }) => {
+                let mut patched = self.repo.patch_fields(id, delta).await?;
+                // The port refuses `complianceResult` in a delta, so the
+                // determination goes through `update`, which stores a passport as
+                // it stands and removes a determination it no longer carries. Two
+                // writes where the log makes one, like every part of this path:
+                // both binaries wire the log, so this is the path of a service
+                // built on in-memory ports.
+                let as_json =
+                    |d: &Option<dpp_domain::ComplianceResult>| serde_json::to_value(d).ok();
+                if as_json(&patched.compliance_result) != as_json(&determination) {
+                    patched.compliance_result = determination;
+                    patched = self.repo.update(patched).await?;
+                }
+                Some(patched)
+            }
         };
         if let (Some(intent), Some(outbox), Some(p)) =
             (registry_intent, &self.registry_outbox, &written)

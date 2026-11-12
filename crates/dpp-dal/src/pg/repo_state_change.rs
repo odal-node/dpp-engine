@@ -7,7 +7,8 @@
 //!
 //! # The archive is written by the passport statements
 //!
-//! A change here writes the passport through `update_in_tx` or `patch_in_tx`,
+//! A change here writes the passport through `update_in_tx` or
+//! `patch_with_determination_in_tx`,
 //! which archive the stored record under the row lock in this transaction, as
 //! they do for the repository's own writes. So the version and the change
 //! commit together, and a write that creates a passport archives nothing.
@@ -76,7 +77,15 @@ impl PgStateChangeLog {
                 self.passports.update_in_tx(tx, &passport).await?;
                 Ok(passport)
             }
-            PassportWrite::Patch(id, delta) => self.passports.patch_in_tx(tx, id, delta).await,
+            PassportWrite::Patch {
+                id,
+                delta,
+                determination,
+            } => {
+                self.passports
+                    .patch_with_determination_in_tx(tx, id, delta, determination.as_ref())
+                    .await
+            }
         }
     }
 }

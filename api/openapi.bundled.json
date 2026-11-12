@@ -5923,7 +5923,7 @@
             }
           },
           "co2ePerUnit": {
-            "description": "CO₂e per unit: manufacturer-supplied or engine-calculated. An object, not a bare number: a figure without its lifecycle stage and system boundary is not comparable to another product's.",
+            "description": "CO₂e per unit as the operator declared it, through create or `PUT`. It is never filled from a calculation: the calculated figure is `complianceResult.co2eScore`. An object, not a bare number: a figure without its lifecycle stage and system boundary is not comparable to another product's.",
             "anyOf": [
               {
                 "$ref": "#/components/schemas/CarbonFootprint"
@@ -5950,7 +5950,7 @@
                 "$ref": "#/components/schemas/ComplianceResult"
               }
             ],
-            "description": "The computed compliance determination, attached at create/update. Part of the signed payload and immutable after retention lock. Absent until a determination has been computed."
+            "description": "The compliance determination of the content the passport holds: computed at create and at every update, and once more over the content signed at first publish, which is the determination the signatures cover. Part of the signed payload and immutable after retention lock, so a re-publish keeps it. Absent when none could be made: no product group data, nothing registered to evaluate the product group, or an evaluator that could not assess it. The calculated CO₂e and repairability figures are `co2eScore` and `repairabilityIndex` here, never in `co2ePerUnit` or `repairabilityScore`."
           },
           "lintResult": {
             "allOf": [

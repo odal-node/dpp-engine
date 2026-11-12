@@ -30,7 +30,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use dpp_domain::{
-    DppError,
+    ComplianceResult, DppError,
     passport::{Passport, PassportId},
     status::PassportStatus,
 };
@@ -40,18 +40,46 @@ use crate::registry_sync::RegistryStatusIntent;
 use crate::transfer::VersionedChain;
 
 /// The write a state change makes to the passport itself.
+///
+/// # The compliance determination is stored exactly as it is carried
+///
+/// A stored `complianceResult` is the determination of the content stored beside
+/// it. The two writes that change content therefore state the determination
+/// outright, `None` included, rather than leave a stored one to survive an
+/// omission: [`Replace`](Self::Replace) stores the one its passport carries, and
+/// [`Patch`](Self::Patch) takes it beside the delta. Both land in the statement
+/// that writes the rest of the change, under the same row lock.
 #[derive(Debug, Clone)]
 pub enum PassportWrite {
     /// A new passport. Nothing is archived: archiving starts at the first change.
     Insert(Passport),
-    /// The stored passport replaced by this one, as publish does.
+    /// The stored passport replaced by this one, as publish does. Its
+    /// `compliance_result` is stored as it stands: `None` removes a stored
+    /// determination and clears the two columns projected from it.
     Replace(Passport),
     /// The stored passport's status set, and nothing else.
     Status(PassportId, PassportStatus),
-    /// A partial update merged into the stored passport. A `null` removes the
-    /// key. Protected fields are refused, as `PassportRepository::patch_fields`
-    /// refuses them.
-    Patch(PassportId, serde_json::Value),
+    /// A draft edited by its caller.
+    ///
+    /// `delta` is merged into the stored passport. A `null` removes the key.
+    /// Protected fields are refused, as `PassportRepository::patch_fields`
+    /// refuses them, and `complianceResult` is among them: the determination is
+    /// the host's to write, never a caller's, so it travels in its own field
+    /// and does not pass through that refusal.
+    ///
+    /// `determination` is that of the edited content, stored beside the delta in
+    /// the same statement. `None` removes a stored one, for an edit that leaves
+    /// nothing to assess. It cannot be a write of its own after the delta: the
+    /// first statement archives the stored record, and a second would archive a
+    /// version that never existed.
+    Patch {
+        /// The passport edited.
+        id: PassportId,
+        /// The caller's fields.
+        delta: serde_json::Value,
+        /// The determination of the content as edited, or `None` for none.
+        determination: Option<ComplianceResult>,
+    },
 }
 
 /// An event every matching webhook subscription is sent.
