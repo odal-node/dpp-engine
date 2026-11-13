@@ -623,7 +623,9 @@ mod tests {
     }
 
     /// A header row of `width` cells, all naming `shared[index]`, and no data
-    /// rows at all.
+    /// rows at all. Linux-only like its one caller, so another platform's build
+    /// of the tests has no unused function to fail `-D warnings`.
+    #[cfg(target_os = "linux")]
     fn header_row_workbook(shared: &[&str], width: usize, index: usize) -> Vec<u8> {
         let cells: String = (1..=width)
             .map(|column| {
