@@ -51,7 +51,7 @@ fn indexed_idempotency_key(index: usize) -> Option<String> {
 #[derive(Debug)]
 pub struct NodeUnreachable {
     origin: String,
-    reason: &'static str,
+    reason: String,
     /// Whether the node is on this machine, which decides what is worth
     /// suggesting.
     local: bool,
@@ -94,27 +94,56 @@ impl std::fmt::Display for NodeUnreachable {
 impl std::error::Error for NodeUnreachable {}
 
 /// Why there was no answer, in a few words, read from the error's cause chain.
-fn transport_reason(e: &reqwest::Error) -> &'static str {
+fn transport_reason(e: &reqwest::Error) -> String {
     if e.is_timeout() {
-        return "timed out";
+        return "timed out".to_owned();
     }
-    let mut chain = String::new();
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(e);
-    while let Some(err) = source {
-        if err
-            .downcast_ref::<std::io::Error>()
+    let refused = std::iter::successors(Some(e as &(dyn std::error::Error + 'static)), |err| {
+        err.source()
+    })
+    .any(|err| {
+        err.downcast_ref::<std::io::Error>()
             .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
-        {
-            return "connection refused";
-        }
-        chain.push_str(&err.to_string().to_ascii_lowercase());
-        chain.push(' ');
-        source = err.source();
+    });
+    if refused {
+        return "connection refused".to_owned();
     }
-    if chain.contains("dns") || chain.contains("lookup") {
-        "DNS lookup failed"
+    // The outermost message is reqwest's own, and it appends the request URL, so
+    // a host name such as `tls.example.com` would match the keywords below. Only
+    // the sources under it are read for the reason.
+    let causes: Vec<String> =
+        std::iter::successors(std::error::Error::source(e), |err| err.source())
+            .map(|err| err.to_string())
+            .collect();
+    reason_from_causes(&causes)
+}
+
+/// The reason for [`transport_reason`], from the messages of the error's causes,
+/// outermost first.
+///
+/// A TLS handshake failure (expired, untrusted or wrong-host certificate) is a
+/// connect error, and the TLS library's cause ("invalid peer certificate:
+/// Expired") is the one part an operator can act on, so it is kept. Matching is
+/// on the lowercased text; the message shown keeps its original case.
+fn reason_from_causes(causes: &[String]) -> String {
+    let lowered: Vec<String> = causes.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let mentions = |words: &[&str]| {
+        lowered
+            .iter()
+            .any(|cause| words.iter().any(|word| cause.contains(word)))
+    };
+    let innermost = causes.last().map(|c| c.trim()).unwrap_or_default();
+
+    if mentions(&["certificate"]) {
+        format!("TLS certificate rejected: {innermost}")
+    } else if mentions(&["tls", "handshake"]) {
+        format!("TLS handshake failed: {innermost}")
+    } else if mentions(&["dns", "lookup"]) {
+        "DNS lookup failed".to_owned()
+    } else if innermost.is_empty() {
+        "connection failed".to_owned()
     } else {
-        "connection failed"
+        format!("connection failed: {innermost}")
     }
 }
 
@@ -783,5 +812,76 @@ mod tests {
             msg.len()
         );
         assert!(msg.ends_with('…'));
+    }
+
+    fn causes(messages: &[&str]) -> Vec<String> {
+        messages.iter().map(|m| (*m).to_owned()).collect()
+    }
+
+    #[test]
+    fn an_expired_certificate_keeps_the_cause_the_operator_needs() {
+        let chain = causes(&[
+            "error trying to connect",
+            "tls handshake eof",
+            "invalid peer certificate: Expired",
+        ]);
+        assert_eq!(
+            reason_from_causes(&chain),
+            "TLS certificate rejected: invalid peer certificate: Expired"
+        );
+    }
+
+    #[test]
+    fn an_untrusted_issuer_and_a_wrong_host_name_are_named_the_same_way() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "invalid peer certificate: UnknownIssuer",
+            ])),
+            "TLS certificate rejected: invalid peer certificate: UnknownIssuer"
+        );
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "invalid peer certificate: NotValidForName",
+            ])),
+            "TLS certificate rejected: invalid peer certificate: NotValidForName"
+        );
+    }
+
+    #[test]
+    fn a_handshake_failure_without_a_certificate_is_called_one() {
+        assert_eq!(
+            reason_from_causes(&causes(&["error trying to connect", "tls handshake eof"])),
+            "TLS handshake failed: tls handshake eof"
+        );
+    }
+
+    #[test]
+    fn a_name_that_does_not_resolve_stays_a_dns_failure() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "dns error",
+                "failed to lookup address information"
+            ])),
+            "DNS lookup failed"
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_chain_keeps_its_innermost_message() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "socket closed early",
+                "  peer reset the stream  ",
+            ])),
+            "connection failed: peer reset the stream"
+        );
+    }
+
+    #[test]
+    fn an_empty_chain_is_a_plain_connection_failure() {
+        assert_eq!(reason_from_causes(&[]), "connection failed");
     }
 }
