@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
-use super::error::{conflict_error, internal_error, not_found_error, parse_passport_id};
+use super::error::{
+    conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+};
 use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
 
@@ -20,7 +22,9 @@ use crate::middleware::scope::RequireWrite;
 #[serde(rename_all = "camelCase")]
 pub struct EolRequest {
     /// Why the passport is being deactivated (recycled / destroyed / exported / lost).
-    /// Destruction must carry a derogation (enforced by the type).
+    /// Destruction must carry a derogation: the type enforces that one is
+    /// present, and the node that its category is a point of Art. 2 of
+    /// Delegated Regulation (EU) 2026/296 (`422` otherwise).
     pub reason: DeactivationReason,
     /// DID of the declaring operator; defaults to the authenticated actor.
     #[serde(default)]
@@ -60,6 +64,7 @@ pub async fn eol_handler(
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {
             conflict_error("DPP cannot be deactivated from its current state.")
         }
+        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
         Err(e) => internal_error(e),
     }
 }

@@ -6,7 +6,11 @@ post:
     (terminal). The record is retained, never deleted: the passport
     outlives the product. Destruction (`reason.kind: destroyed`) is only
     lawful with a recognised derogation from the unsold-goods destruction
-    ban (ESPR Art. 25 delegated act).
+    ban (ESPR Art. 25 delegated act), so the derogation's `category` must be
+    one of the points of Art. 2 of Commission Delegated Regulation (EU)
+    2026/296. Any other category is refused with `422` before anything is
+    written, naming the points. The status is terminal, so a lawful basis that
+    does not exist would otherwise stay on the record.
   tags:
     - DPP Lifecycle
   security:
@@ -41,3 +45,13 @@ post:
       $ref: ../../components/responses/BadRequest.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
+    '422':
+      description: |
+        A destruction that cites a derogation category which is not a point of
+        Art. 2 of Delegated Regulation (EU) 2026/296. The `errors` member names
+        `/reason/derogation/category` and the points accepted. The passport is
+        not changed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

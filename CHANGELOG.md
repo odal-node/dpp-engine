@@ -330,6 +330,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The node no longer issues an authority role under another spelling, and no
+  longer accepts any category as the lawful basis of a destruction.**
+  `POST /credentials` refused the three authority roles by their typed names and
+  issued `{"custom": "market-surveillance"}`, a role that reads like one, as a
+  legitimate-interest credential. A custom role whose name is an authority
+  role's, or the start of one's, is now refused with `422`; case, `-`, `_` and
+  spaces are ignored, and a name that merely shares a word (`customs-broker`)
+  still issues. `POST /dpp/{id}/eol` accepted any derogation category on a
+  destruction and left the passport `Deactivated`, which is terminal, with that
+  string as its lawful basis. The category must now be a point of Art. 2 of
+  Delegated Regulation (EU) 2026/296, by the names core gives them (for example
+  `dangerousProduct`), or the request is refused with `422` before anything is
+  written. A caller that sent another category will now be refused. (#604)
+
 - **An XLSX import no longer copies a shared string into every cell before its
   byte budget is checked.** The importer read the first worksheet with calamine's
   `worksheet_range`, which gives every cell its own copy of a shared string and
