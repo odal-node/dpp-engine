@@ -2,10 +2,11 @@
 //! Includes zip-bomb, dimension-bomb, and pathological-attribute pre-scan
 //! guards before delegating to calamine.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{BufRead, Cursor, Read};
 
-use calamine::{Data, Reader, Xlsx};
+use calamine::{Data, DataRef, Reader, ReaderRef, Xlsx};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use zip::ZipArchive;
@@ -58,8 +59,13 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
     let sheet_names = wb.sheet_names().to_vec();
     let first_sheet = sheet_names.first().ok_or(ParseError::Empty)?.clone();
 
+    // The borrowed range, not `worksheet_range`: that one gives every cell its own
+    // `String`, so a shared string named by 100,000 cells was copied 100,000 times
+    // before the retained-bytes budget below was looked at, and 32 KiB of text
+    // became 3 GiB. Here a shared string is a `&str` into the workbook's own
+    // table, and is copied only once the budget has accepted it.
     let range = wb
-        .worksheet_range(&first_sheet)
+        .worksheet_range_ref(&first_sheet)
         .map_err(|e| ParseError::Csv(format!("XLSX range error: {e}")))?;
 
     let mut rows_iter = range.rows();
@@ -91,7 +97,7 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
                         "the workbook's parsed content exceeds {MAX_RETAINED_BYTES} bytes"
                     )));
                 }
-                map.insert(key.clone(), value);
+                map.insert(key.clone(), value.into_owned());
             }
         }
         if !map.is_empty() {
@@ -107,26 +113,30 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
     Ok(result)
 }
 
-fn cell_to_string(cell: &Data) -> String {
+/// A cell's text. A string cell is **borrowed** (trimmed), not copied, so its
+/// length can be counted against the retained-bytes budget before any copy of it
+/// is made.
+fn cell_to_string<'a>(cell: &'a DataRef<'_>) -> Cow<'a, str> {
     match cell {
-        Data::Empty => String::new(),
-        Data::Error(_) => String::new(),
-        Data::Bool(b) => b.to_string(),
-        Data::Int(i) => i.to_string(),
-        Data::Float(f) => {
+        DataRef::Empty | DataRef::Error(_) => Cow::Borrowed(""),
+        DataRef::Bool(b) => Cow::Owned(b.to_string()),
+        DataRef::Int(i) => Cow::Owned(i.to_string()),
+        DataRef::Float(f) => {
             // Avoid scientific notation for whole numbers (e.g. GTINs stored as floats)
             if f.fract() == 0.0 && f.abs() < 1e15_f64 {
-                format!("{:.0}", f)
+                Cow::Owned(format!("{:.0}", f))
             } else {
-                f.to_string()
+                Cow::Owned(f.to_string())
             }
         }
-        Data::String(s) => s.trim().to_owned(),
-        other => other.to_string(),
+        DataRef::SharedString(s) => Cow::Borrowed(s.trim()),
+        DataRef::String(s) => Cow::Borrowed(s.trim()),
+        // Dates and durations: a few bytes each, formatted as they always were.
+        other => Cow::Owned(Data::from(other.clone()).to_string()),
     }
 }
 
-fn cell_to_header(cell: &Data) -> String {
+fn cell_to_header(cell: &DataRef<'_>) -> String {
     normalize_header(&cell_to_string(cell))
 }
 
@@ -533,6 +543,137 @@ mod tests {
         assert!(
             precheck_xlsx(&zip).is_ok(),
             "a small archive must be accepted"
+        );
+    }
+
+    /// A workbook calamine opens: one sheet, one column of text cells, each cell
+    /// naming an entry of the shared-string table by index (`column[0]` is the
+    /// header row).
+    fn workbook(shared: &[&str], column: &[usize]) -> Vec<u8> {
+        const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const DOC: &str = "http://schemas.openxmlformats.org/officeDocument/2006";
+
+        let content_types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>"#;
+        let root_rels = format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC}/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<workbook xmlns="{MAIN}" xmlns:r="{DOC}/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+        );
+        let workbook_rels = format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC}/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="{DOC}/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#
+        );
+        let strings: String = shared
+            .iter()
+            .map(|s| format!("<si><t>{s}</t></si>"))
+            .collect();
+        let shared_strings = format!(
+            r#"<sst xmlns="{MAIN}" count="{}" uniqueCount="{}">{strings}</sst>"#,
+            column.len(),
+            shared.len()
+        );
+        let rows: String = column
+            .iter()
+            .enumerate()
+            .map(|(i, index)| {
+                let r = i + 1;
+                format!(r#"<row r="{r}"><c r="A{r}" t="s"><v>{index}</v></c></row>"#)
+            })
+            .collect();
+        let sheet =
+            format!(r#"<worksheet xmlns="{MAIN}"><sheetData>{rows}</sheetData></worksheet>"#);
+
+        zip_with(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", root_rels.as_bytes()),
+            ("xl/workbook.xml", workbook.as_bytes()),
+            ("xl/_rels/workbook.xml.rels", workbook_rels.as_bytes()),
+            ("xl/sharedStrings.xml", shared_strings.as_bytes()),
+            ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+        ])
+    }
+
+    /// A workbook of the size the import supports still parses: many rows naming
+    /// a few shared strings, which is what a real catalogue export looks like.
+    #[test]
+    fn a_workbook_of_many_rows_naming_few_strings_still_parses() {
+        const ROWS: usize = 20_000;
+        let names: Vec<String> = (0..50).map(|i| format!("Product {i:02}")).collect();
+        let mut shared: Vec<&str> = vec!["productName"];
+        shared.extend(names.iter().map(String::as_str));
+        let mut column = vec![0];
+        column.extend((0..ROWS).map(|row| 1 + row % names.len()));
+        let bytes = workbook(&shared, &column);
+
+        let rows = parse_xlsx(&bytes).expect("a workbook of the supported size parses");
+
+        assert_eq!(rows.len(), ROWS);
+        assert_eq!(rows[0]["productName"], "Product 00");
+        assert_eq!(rows[ROWS - 1]["productName"], "Product 49");
+    }
+
+    /// A workbook of the size the import supports still parses, text trimmed as
+    /// before and a string shared by two cells read for each of them.
+    #[test]
+    fn an_ordinary_workbook_still_parses() {
+        let bytes = workbook(
+            &["productName", "Cotton Tee", "  Wool Hat  "],
+            &[0, 1, 2, 1],
+        );
+
+        let rows = parse_xlsx(&bytes).expect("an ordinary workbook parses");
+
+        let names: Vec<&str> = rows.iter().map(|r| r["productName"].as_str()).collect();
+        assert_eq!(names, ["Cotton Tee", "Wool Hat", "Cotton Tee"]);
+    }
+
+    /// The process's peak resident memory, in KiB. `VmHWM` is a high-water mark,
+    /// so a test sees growth past what the process had already reached: it can
+    /// miss an allocation a sibling test made first, and cannot invent one. Each
+    /// test runs in its own process under nextest, which is what `just test`
+    /// uses.
+    #[cfg(target_os = "linux")]
+    fn peak_resident_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .expect("procfs is readable")
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))
+            .and_then(|value| value.trim().trim_end_matches("kB").trim().parse().ok())
+            .expect("VmHWM is reported")
+    }
+
+    /// One shared string repeated down a column was copied into every cell before
+    /// the retained-bytes budget was looked at: `worksheet_range` gives each cell
+    /// its own `String`, and the whole range is built first. A workbook can pass
+    /// every pre-scan check and still ask for gigabytes: 100,000 cells naming one
+    /// 32 KiB string is about 3 GiB. This is the same shape at a size a test can
+    /// afford, about 1 GiB if each cell is copied.
+    ///
+    /// What is asserted is the refusal, and that it was reached without the
+    /// copies: the process grew by a fraction of what they would take.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_large_shared_string_repeated_down_a_column_is_refused_before_it_is_copied() {
+        const CELLS: usize = 30_000;
+        let big = "x".repeat(32 * 1024);
+        let mut column = vec![0];
+        column.extend(std::iter::repeat_n(1, CELLS));
+        let bytes = workbook(&["productName", &big], &column);
+        drop(big);
+
+        let before = peak_resident_kib();
+        let refused = parse_xlsx(&bytes).expect_err("past the retained-bytes budget");
+        let grown_mib = peak_resident_kib().saturating_sub(before) / 1024;
+
+        assert!(
+            matches!(&refused, ParseError::Csv(m) if m.contains("exceeds")),
+            "refused for the budget: {refused:?}"
+        );
+        assert!(
+            grown_mib < 256,
+            "refusing it took {grown_mib} MiB more than the process had used: the cells were \
+             copied before the budget was checked"
         );
     }
 }
