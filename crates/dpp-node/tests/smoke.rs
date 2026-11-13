@@ -1535,6 +1535,102 @@ async fn eol_declaration_deactivates_and_records_reason() {
     assert_eq!(eol_entry["metadata"]["materialRecovery"]["lithiumKg"], 0.4);
 }
 
+// A destruction must cite a point of the delegated act, and one that cites
+// anything else is refused before anything is written.
+//
+// `Deactivated` is terminal: a passport declared destroyed under a derogation
+// that does not exist cannot be revived, and the string was recorded as its
+// lawful basis. The route accepted any category because the type only enforces
+// that one is present.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000055");
+    let client = reqwest::Client::new();
+
+    let publish_one = |name: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            let created: serde_json::Value = client
+                .post(format!("{base}/vault/api/v1/dpp"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "productName": name,
+                    "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+                    "materials": [],
+                }))
+                .send()
+                .await
+                .expect("create request failed")
+                .json()
+                .await
+                .unwrap();
+            let id = created["id"].as_str().expect("id").to_owned();
+            let resp = client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .expect("publish request failed");
+            assert_eq!(resp.status(), 200);
+            id
+        }
+    };
+    let declare = |id: String, category: &'static str| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "reason": {"kind": "destroyed", "derogation": {"category": category}},
+                }))
+                .send()
+                .await
+                .expect("eol request failed")
+        }
+    };
+
+    let id = publish_one("Destroyed Battery").await;
+
+    let refused = declare(id.clone(), "bogus-category").await;
+    assert_eq!(refused.status(), 422, "an unknown category must be refused");
+    let problem: serde_json::Value = refused.json().await.unwrap();
+    assert!(
+        problem.to_string().contains("dangerousProduct"),
+        "the refusal should say what is accepted: {problem}"
+    );
+
+    // Nothing was written: the passport is as it was, and can still be declared.
+    let fetched: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        fetched["status"], "active",
+        "a refused declaration changed it"
+    );
+
+    let accepted = declare(id.clone(), "dangerousProduct").await;
+    assert_eq!(
+        accepted.status(),
+        200,
+        "a point of the act must be accepted"
+    );
+    let deactivated: serde_json::Value = accepted.json().await.unwrap();
+    assert_eq!(deactivated["status"], "deactivated");
+}
+
 // Full lifecycle close — publish → transfer initiate (outgoing signs) →
 // accept (incoming countersigns, verified) → EOL. The dual-signed handover is
 // persisted on the passport's transfer chain.
@@ -2202,6 +2298,58 @@ async fn the_node_refuses_to_issue_itself_an_authority_credential() {
             .expect("issue request failed");
         assert_eq!(resp.status(), 422, "{role} must be refused");
     }
+}
+
+/// An authority role is not issued under another spelling either.
+///
+/// `custom` is the open-ended role, and the gate above reads only the audience
+/// of a typed one. `market-surveillance` with a hyphen went through as a custom
+/// legitimate-interest role that reads like an authority credential to anyone
+/// who looks at its name, while `market_surveillance_authority` was refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_node_refuses_an_authority_role_under_another_spelling() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000099");
+    let client = reqwest::Client::new();
+
+    let issue = |role: serde_json::Value| {
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/vault/api/v1/credentials"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "holderDid": "did:web:holder.example",
+                    "holderName": "Holder AG",
+                    "role": role,
+                    "country": "DE",
+                }))
+                .send()
+                .await
+                .expect("issue request failed")
+        }
+    };
+
+    for name in [
+        "market-surveillance",
+        "Market Surveillance",
+        "MARKET_SURVEILLANCE_AUTHORITY",
+        "customs",
+        "notified body",
+    ] {
+        let resp = issue(serde_json::json!({ "custom": name })).await;
+        assert_eq!(resp.status(), 422, "`{name}` must be refused");
+    }
+
+    // A custom role that names no authority is still issuable.
+    let resp = issue(serde_json::json!({ "custom": "scrap-dealer" })).await;
+    assert_eq!(
+        resp.status(),
+        201,
+        "a custom role of no authority stays issuable"
+    );
 }
 
 /// The lifetime cap is enforced, and it is the only control there is.

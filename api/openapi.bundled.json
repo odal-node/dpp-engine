@@ -1244,7 +1244,7 @@
       "post": {
         "operationId": "declareDppEol",
         "summary": "Declare a DPP end-of-life",
-        "description": "Transition a `published` or `suspended` DPP to `deactivated`\n(terminal). The record is retained, never deleted: the passport\noutlives the product. Destruction (`reason.kind: destroyed`) is only\nlawful with a recognised derogation from the unsold-goods destruction\nban (ESPR Art. 25 delegated act).\n",
+        "description": "Transition a `published` or `suspended` DPP to `deactivated`\n(terminal). The record is retained, never deleted: the passport\noutlives the product. Destruction (`reason.kind: destroyed`) is only\nlawful with a recognised derogation from the unsold-goods destruction\nban (ESPR Art. 25 delegated act), so the derogation's `category` must be\none of the points of Art. 2 of Commission Delegated Regulation (EU)\n2026/296. Any other category is refused with `422` before anything is\nwritten, naming the points. The status is terminal, so a lawful basis that\ndoes not exist would otherwise stay on the record.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -1301,6 +1301,16 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "A destruction that cites a derogation category which is not a point of\nArt. 2 of Delegated Regulation (EU) 2026/296. The `errors` member names\n`/reason/derogation/category` and the points accepted. The passport is\nnot changed.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -3015,7 +3025,7 @@
             "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
-            "description": "The request cannot produce a usable credential: an authority role, a\n`holderDid` that is not a DID, a `country` that is not alpha-2, a\n`validForDays` outside 1–90, or a `productCategories` list that cannot\nwork as written (one given without `productGroups`, one holding a value\nno named group's passports can state, or one that leaves a named group\nwith no passport the credential could read). For the last two, the\n`detail` names the values or groups at fault and what those groups'\npassports can state.\n",
+            "description": "The request cannot produce a usable credential: an authority role, or a\ncustom role named like one, a `holderDid` that is not a DID, a `country` that is not alpha-2, a\n`validForDays` outside 1–90, or a `productCategories` list that cannot\nwork as written (one given without `productGroups`, one holding a value\nno named group's passports can state, or one that leaves a named group\nwith no passport the credential could read). For the last two, the\n`detail` names the values or groups at fault and what those groups'\npassports can state.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7039,8 +7049,8 @@
         "properties": {
           "category": {
             "type": "string",
-            "description": "The derogation category as named by the delegated act.",
-            "example": "health-and-safety"
+            "description": "One of the points of Art. 2 of Commission Delegated Regulation (EU)\n2026/296, spelled as the unsold-goods disclosure spells a discard reason\n(camelCase), such as `dangerousProduct` for point (a). Any other value is\nrefused with `422`, and the refusal lists them all.\n",
+            "example": "dangerousProduct"
           },
           "actCitation": {
             "type": [
@@ -9187,7 +9197,7 @@
         }
       },
       "CredentialRole": {
-        "description": "The access role granted.\n\nOnly roles carrying a **legitimate interest** may be issued here.\n`market_surveillance_authority`, `customs_authority` and `notified_body` map\nto the authority audience under Art. 77(2)(b) and are refused with `422`:\nauthority status is conferred by a member state, so an operator signing itself\none has attested nothing. An authority presents a credential from its own\nissuer, named in `CREDENTIAL_ISSUERS_AUTHORITY`.\n\nA product-group-specific role that none of the named ones fit uses the object\nform: the variant is externally tagged, so it is an object where the rest are\nstrings. It carries a legitimate interest like the others.\n",
+        "description": "The access role granted.\n\nOnly roles carrying a **legitimate interest** may be issued here.\n`market_surveillance_authority`, `customs_authority` and `notified_body` map\nto the authority audience under Art. 77(2)(b) and are refused with `422`:\nauthority status is conferred by a member state, so an operator signing itself\none has attested nothing. An authority presents a credential from its own\nissuer, named in `CREDENTIAL_ISSUERS_AUTHORITY`.\n\nA product-group-specific role that none of the named ones fit uses the object\nform: the variant is externally tagged, so it is an object where the rest are\nstrings. It carries a legitimate interest like the others, so a custom label\nthat is an authority role's name, or the start of one's, is refused with `422`\nas well. Case, `-`, `_` and spaces do not matter: `market-surveillance`,\n`Market Surveillance` and `customs` are refused, and `customs-broker` is not.\n",
         "oneOf": [
           {
             "type": "string",
