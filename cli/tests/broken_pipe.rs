@@ -12,7 +12,7 @@ mod helpers;
 
 use std::process::{Command, Stdio};
 
-use helpers::{closed_origin, home_with_node, recording_server};
+use helpers::{closed_origin, home_with_node, odal_env, recording_server};
 
 #[test]
 fn a_closed_pipe_ends_the_command_quietly() {
@@ -100,5 +100,40 @@ fn a_key_minted_into_a_closed_pipe_is_still_saved_as_the_active_key() {
     assert!(
         saved.contains("odal_sk_minted_into_a_closed_pipe"),
         "the minted key was not saved before the closed pipe ended the command: {saved}"
+    );
+}
+
+#[test]
+fn a_minted_key_is_printed_even_when_it_cannot_be_saved() {
+    let (origin, _requests) = recording_server(
+        "201 Created",
+        r#"{"secret":"odal_sk_printed_though_unsaved","name":"ci","scope":"admin"}"#,
+    );
+    let home = home_with_node(&origin);
+    // A directory where the credentials file belongs makes the save fail, and
+    // unlike a permission change it fails for root too.
+    let store = home
+        .path()
+        .join(".config")
+        .join("odal")
+        .join("credentials.toml");
+    std::fs::create_dir_all(&store).expect("make the store a directory");
+
+    let run = odal_env(
+        home.path(),
+        &["key", "create", "ci", "--use"],
+        &[("ODAL_API_KEY", "odal_sk_test")],
+    );
+
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert!(
+        run.stdout.contains("odal_sk_printed_though_unsaved"),
+        "the secret is shown once and cannot be fetched again, so it must print: {}",
+        run.output()
+    );
+    assert!(
+        run.stderr.contains("could not be saved"),
+        "the failed save should be named: {}",
+        run.output()
     );
 }

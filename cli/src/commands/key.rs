@@ -27,10 +27,17 @@ pub async fn run_key_create(name: &str, scope: &str, activate: bool) -> Result<(
     // Without it, `key create` only prints the secret — it does not switch the
     // CLI over, which is the footgun that makes self-lockout easy. The save comes
     // before the print: a closed pipe ends the process at the first `println!`,
-    // and a minted key must not be left unsaved behind it.
+    // and a minted key must not be left unsaved behind it. When the save fails,
+    // the secret is still printed before the error is returned, because the node
+    // keeps the key and this one-time output is the only copy the operator gets.
     if activate {
         cfg.api_key = result.secret.clone();
-        cfg.save()?;
+        if let Err(e) = cfg.save() {
+            render_key_create(&result);
+            return Err(e.context(
+                "the key was created and its secret is shown above, but it could not be saved as this profile's active key",
+            ));
+        }
     }
     render_key_create(&result);
     if activate {
