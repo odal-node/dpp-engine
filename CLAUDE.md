@@ -200,6 +200,20 @@ rulesets, webhook targets, resolver requests); and a branch open long enough
 that `main` has moved underneath it. Not worth one: a single-crate mechanical
 change, a doc typo, a version bump, a dependency bump.
 
+**Greptile reviews only when the maintainer asks for it by name.** CodeRabbit is
+the default review, and the `review-ready` label means CodeRabbit alone. Each
+Greptile review has a cost, so it is a second opinion the maintainer approves for
+one pull request at a time, by commenting `@greptileai` on it. It never runs on
+its own: `.greptile/config.json` sets `autoReview` to `[]`, and no label triggers
+it. It reviews against the same rules, because `.greptile/rules.md` sends it to
+`.coderabbit.yaml` and keeps no rules of its own. Two lists cannot be shared and
+are kept by hand. `.greptile/files.json` names the standards documents one by
+one, because Greptile takes no globs there: a standards document added under
+`docs/` is added to that list too, while a release's verification record under
+`docs/governance/releases/` is a record and stays out. `ignorePatterns` in
+`.greptile/config.json` repeats `reviews.path_filters`, so a path added to one is
+added to the other.
+
 ## Overview
 
 **dpp-engine** is the self-hostable engine (BSL-1.1) for the Odal Node Digital Product Passport system. It consumes the pure core library (`dpp-core`, Apache-2.0) and adds HTTP services, database persistence, auth, event bus, Wasm plugin hosting, and operator management.

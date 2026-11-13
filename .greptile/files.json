@@ -1,0 +1,155 @@
+{
+  "files": [
+    {
+      "path": ".coderabbit.yaml",
+      "description": "The review rules for this repository: path-scoped instructions, pre-merge checks, and the standards documents they rely on. .greptile/rules.md says how to apply them."
+    },
+    {
+      "path": "CLAUDE.md",
+      "description": "How work is done here: the publication boundaries, commit rules, when a review is asked for, the crate and port layout, the routes, serde conventions and the test tiers."
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "description": "Contribution rules: tests, changelog entries, documentation and pull request conventions."
+    },
+    {
+      "path": "SECURITY.md",
+      "description": "Security policy: untrusted input, keys and secrets, and how vulnerabilities are handled."
+    },
+    {
+      "path": "README.md",
+      "description": "The node's public description and its crate list.",
+      "scope": ["README.md", "**/Cargo.toml", "docs/**"]
+    },
+    {
+      "path": "GOVERNANCE.md",
+      "description": "Who decides what, and how decisions are recorded.",
+      "scope": ["GOVERNANCE.md", "CONTRIBUTING.md", ".github/**"]
+    },
+    {
+      "path": "docs/README.md",
+      "description": "The index of this repository's documentation.",
+      "scope": ["docs/**"]
+    },
+    {
+      "path": "docs/architecture/ARCHITECTURE.md",
+      "description": "The crates, the ports they implement, and the boundaries between them.",
+      "scope": ["crates/**", "cli/**", "**/Cargo.toml"]
+    },
+    {
+      "path": "docs/architecture/OVERVIEW.md",
+      "description": "What each part of the node is for.",
+      "scope": ["crates/**", "cli/**"]
+    },
+    {
+      "path": "docs/architecture/DESIGN-PATTERNS.md",
+      "description": "The patterns this codebase uses and why.",
+      "scope": ["crates/**", "cli/**"]
+    },
+    {
+      "path": "docs/architecture/AUTH.md",
+      "description": "Authentication and authorisation: API keys, roles, credentials and the auth middleware.",
+      "scope": ["crates/dpp-vault/**", "crates/dpp-node/**", "crates/dpp-identity/**", "crates/dpp-types/**", "api/**", "cli/**"]
+    },
+    {
+      "path": "docs/architecture/DATA-MODEL.md",
+      "description": "How passports and their records are stored and served.",
+      "scope": ["crates/dpp-dal/**", "crates/dpp-types/**", "crates/dpp-vault/**", "ops/pg/**", "api/**"]
+    },
+    {
+      "path": "docs/architecture/DATABASE.md",
+      "description": "The database, its migrations and the app role.",
+      "scope": ["crates/dpp-dal/**", "ops/pg/**"]
+    },
+    {
+      "path": "docs/architecture/EVENT-BUS.md",
+      "description": "The event bus and the job store.",
+      "scope": ["crates/dpp-node/**", "crates/dpp-vault/**", "crates/dpp-dal/**", "crates/dpp-integrator/**", "crates/dpp-common/**"]
+    },
+    {
+      "path": "docs/architecture/EVIDENCE-DOSSIER.md",
+      "description": "The evidence dossier: what it carries and how it is verified.",
+      "scope": ["crates/dpp-vault/**", "crates/dpp-seal/**", "cli/**", "api/**"]
+    },
+    {
+      "path": "docs/architecture/GS1_RESOLVER_CONFORMANCE.md",
+      "description": "The GS1 resolver's conformance to the GS1 Digital Link resolver standard.",
+      "scope": ["crates/dpp-resolver/**"]
+    },
+    {
+      "path": "docs/architecture/STANDARDS.md",
+      "description": "The standards register: every standard the code cites, its status and the evidence for each conformance claim.",
+      "scope": ["crates/**", "cli/**", "api/**", "docs/**"]
+    },
+    {
+      "path": "docs/governance/GIT-STRATEGY.md",
+      "description": "Branches, pull requests and how changes land on main.",
+      "scope": [".github/**"]
+    },
+    {
+      "path": "docs/governance/RELEASE.md",
+      "description": "The release checklist and how images are published.",
+      "scope": ["CHANGELOG.md", "docs/governance/**", "justfile", ".github/workflows/**", "docker/**"]
+    },
+    {
+      "path": "docs/governance/VERSIONING.md",
+      "description": "The versioning rules, and the CHANGELOG convention: every breaking change under a Breaking heading with a migration note.",
+      "scope": ["CHANGELOG.md", "**/Cargo.toml"]
+    },
+    {
+      "path": "docs/guides/DEVELOPER-GUIDE.md",
+      "description": "Local development, the just recipes, the test tiers and the guard scripts.",
+      "scope": ["justfile", "scripts/**", ".github/**", "docker/**", "docs/guides/**"]
+    },
+    {
+      "path": "docs/guides/OPERATOR-SETUP.md",
+      "description": "How an operator configures and runs a node.",
+      "scope": ["crates/dpp-node/**", "cli/**", "docker/**", "ops/**", ".env.example", "docs/guides/**"]
+    },
+    {
+      "path": "docs/guides/DEMO-RUNBOOK.md",
+      "description": "How the demo is run.",
+      "scope": ["ops/**", "cli/**", "docker/**", "docs/guides/**"]
+    },
+    {
+      "path": "docs/guides/WEBHOOKS.md",
+      "description": "Webhooks: delivery, signing and target rules.",
+      "scope": ["crates/dpp-vault/**", "crates/dpp-node/**", "crates/dpp-dal/**", "api/**", "docs/guides/**"]
+    },
+    {
+      "path": "docs/legal/DPP-RETENTION.md",
+      "description": "How long passport data is kept, and why.",
+      "scope": ["crates/dpp-dal/**", "crates/dpp-vault/**", "ops/pg/**", "docs/legal/**"]
+    },
+    {
+      "path": "docs/legal/LICENSING.md",
+      "description": "Licensing of this repository and its dependencies.",
+      "scope": ["**/Cargo.toml", "deny.toml", "docs/legal/**"]
+    },
+    {
+      "path": "docs/ops/METRICS-PLAN.md",
+      "description": "Which metrics the node exposes, and what they are for.",
+      "scope": ["crates/**", "ops/**", "docs/ops/**"]
+    },
+    {
+      "path": "docs/ops/PRODUCTION-RUNBOOK.md",
+      "description": "How a production node is operated and recovered.",
+      "scope": ["crates/dpp-node/**", "ops/**", "docker/**", ".github/workflows/**", "docs/ops/**"]
+    },
+    {
+      "path": "docs/project/BLUEPRINT.md",
+      "description": "The project's intended shape.",
+      "scope": ["docs/**", "README.md"]
+    },
+    {
+      "path": "docs/project/ENDPOINTS.md",
+      "description": "The node's endpoints.",
+      "scope": ["api/**", "crates/dpp-node/**", "crates/dpp-vault/**", "crates/dpp-resolver/**", "docs/project/**"]
+    },
+    {
+      "path": "ops/pg/README.md",
+      "description": "The one home for the app role's DELETE set and the grants that `just grants-check` gates against.",
+      "scope": ["ops/pg/**", "crates/dpp-dal/**"]
+    }
+  ]
+}
