@@ -1134,7 +1134,11 @@ paths:
         (terminal). The record is retained, never deleted: the passport
         outlives the product. Destruction (`reason.kind: destroyed`) is only
         lawful with a recognised derogation from the unsold-goods destruction
-        ban (ESPR Art. 25 delegated act).
+        ban (ESPR Art. 25 delegated act), so the derogation's `category` must be
+        one of the points of Art. 2 of Commission Delegated Regulation (EU)
+        2026/296. Any other category is refused with `422` before anything is
+        written, naming the points. The status is terminal, so a lawful basis that
+        does not exist would otherwise stay on the record.
       tags:
         - DPP Lifecycle
       security:
@@ -1169,6 +1173,16 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          description: |
+            A destruction that cites a derogation category which is not a point of
+            Art. 2 of Delegated Regulation (EU) 2026/296. The `errors` member names
+            `/reason/derogation/category` and the points accepted. The passport is
+            not changed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/transfer/initiate:
     post:
       operationId: initiateDppTransfer
@@ -2522,8 +2536,8 @@ paths:
           $ref: '#/components/responses/IdempotentRequestInFlight'
         '422':
           description: |
-            The request cannot produce a usable credential: an authority role, a
-            `holderDid` that is not a DID, a `country` that is not alpha-2, a
+            The request cannot produce a usable credential: an authority role, or a
+            custom role named like one, a `holderDid` that is not a DID, a `country` that is not alpha-2, a
             `validForDays` outside 1–90, or a `productCategories` list that cannot
             work as written (one given without `productGroups`, one holding a value
             no named group's passports can state, or one that leaves a named group
@@ -6157,8 +6171,12 @@ components:
       properties:
         category:
           type: string
-          description: The derogation category as named by the delegated act.
-          example: health-and-safety
+          description: |
+            One of the points of Art. 2 of Commission Delegated Regulation (EU)
+            2026/296, spelled as the unsold-goods disclosure spells a discard reason
+            (camelCase), such as `dangerousProduct` for point (a). Any other value is
+            refused with `422`, and the refusal lists them all.
+          example: dangerousProduct
         actCitation:
           type:
             - string
@@ -7922,7 +7940,10 @@ components:
 
         A product-group-specific role that none of the named ones fit uses the object
         form: the variant is externally tagged, so it is an object where the rest are
-        strings. It carries a legitimate interest like the others.
+        strings. It carries a legitimate interest like the others, so a custom label
+        that is an authority role's name, or the start of one's, is refused with `422`
+        as well. Case, `-`, `_` and spaces do not matter: `market-surveillance`,
+        `Market Surveillance` and `customs` are refused, and `customs-broker` is not.
       oneOf:
         - type: string
           title: Named role
