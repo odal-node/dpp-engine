@@ -534,8 +534,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   credentials are not sent over plain HTTP to a remote host, and terminal output is
   stripped of control characters. (#576)
 
-- **Pointing a profile at another node** clears the credential the previous node
-  issued, so the next request does not send it to a node that never issued it. (#576)
+- **The guided setup, pointing a profile at this machine's node,** clears the
+  credential the previous node issued, so the next request does not send it to a
+  node that never issued it. (#576)
 
 - **A workbook's namespace-prefixed cells** are measured with the same dense-range
   check as unprefixed ones, and a declared shared-string count is capped. (#576)
