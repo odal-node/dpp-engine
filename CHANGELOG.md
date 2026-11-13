@@ -338,8 +338,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   string, a small decompressed size) and still allocate about 3 GiB before the
   budget refused it, for any caller holding a write-scoped key. Cells are now read
   through the borrowed range, so a string is counted before it is copied, and that
-  workbook is refused having allocated a fraction of that. A normal workbook
-  parses as before. (#605)
+  workbook is refused having allocated a fraction of that. The header row is
+  counted the same way: a row of header cells naming one large string was copied
+  per cell before any count, and a workbook with no data rows was never checked at
+  all. A normal workbook parses as before. (#605)
 
 - **A published passport is signed with the compliance determination of the
   content it is published with.** A draft was signed with the determination
