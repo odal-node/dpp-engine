@@ -2,15 +2,16 @@
 //! Includes zip-bomb, dimension-bomb, and pathological-attribute pre-scan
 //! guards before delegating to calamine.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{BufRead, Cursor, Read};
 
-use calamine::{Data, Reader, Xlsx};
+use calamine::{Data, DataRef, Reader, ReaderRef, Xlsx};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
 use zip::ZipArchive;
 
-use crate::domain::csv_parser::{MAX_ROWS, ParseError, normalize_header};
+use crate::domain::csv_parser::{MAX_RETAINED_BYTES, MAX_ROWS, ParseError, normalize_header};
 
 /// Maximum implied dense-range size (cols × rows) for any worksheet. calamine
 /// materialises a dense `vec![_; rows*cols]` from the *actual* min/max cell
@@ -36,6 +37,11 @@ const MAX_DECOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
 /// declarations top out around a dozen).
 const MAX_ATTRS_PER_TAG: usize = 64;
 
+/// Most unique shared strings a workbook may declare. The reader reserves room
+/// for the declared `uniqueCount` before it reads a single string, so that count
+/// is capped first. `count`, the total number of references, sizes nothing.
+const MAX_SHARED_STRINGS: u64 = 1_000_000;
+
 /// Parse XLSX bytes into a list of rows.
 ///
 /// Reads the first worksheet. The first row is treated as the header.
@@ -53,15 +59,32 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
     let sheet_names = wb.sheet_names().to_vec();
     let first_sheet = sheet_names.first().ok_or(ParseError::Empty)?.clone();
 
+    // The borrowed range, not `worksheet_range`: that one gives every cell its own
+    // `String`, so a shared string named by 100,000 cells was copied 100,000 times
+    // before the retained-bytes budget below was looked at, and 32 KiB of text
+    // became 3 GiB. Here a shared string is a `&str` into the workbook's own
+    // table, and is copied only once the budget has accepted it.
     let range = wb
-        .worksheet_range(&first_sheet)
+        .worksheet_range_ref(&first_sheet)
         .map_err(|e| ParseError::Csv(format!("XLSX range error: {e}")))?;
 
     let mut rows_iter = range.rows();
 
-    // First row → headers
+    // First row → headers. They are retained like any other text, so they are
+    // counted against the budget too, and before each is copied: a header row can
+    // name one large shared string from every column, and with no data rows the
+    // loop below would never have looked at the budget at all.
     let header_row = rows_iter.next().ok_or(ParseError::Empty)?;
-    let headers: Vec<String> = header_row.iter().map(cell_to_header).collect();
+    let mut retained = 0usize;
+    let mut headers: Vec<String> = Vec::with_capacity(header_row.len());
+    for cell in header_row {
+        let text = cell_to_string(cell);
+        retained = retained.saturating_add(text.len());
+        if retained > MAX_RETAINED_BYTES {
+            return Err(over_budget());
+        }
+        headers.push(normalize_header(&text));
+    }
 
     if headers.iter().all(|h| h.is_empty()) {
         return Err(ParseError::Empty);
@@ -79,7 +102,11 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
             }
             let value = cell_to_string(cell);
             if !value.is_empty() {
-                map.insert(key.clone(), value);
+                retained = retained.saturating_add(key.len() + value.len());
+                if retained > MAX_RETAINED_BYTES {
+                    return Err(over_budget());
+                }
+                map.insert(key.clone(), value.into_owned());
             }
         }
         if !map.is_empty() {
@@ -95,27 +122,33 @@ pub fn parse_xlsx(bytes: &[u8]) -> Result<Vec<HashMap<String, String>>, ParseErr
     Ok(result)
 }
 
-fn cell_to_string(cell: &Data) -> String {
+/// A cell's text. A string cell is **borrowed** (trimmed), not copied, so its
+/// length can be counted against the retained-bytes budget before any copy of it
+/// is made.
+fn cell_to_string<'a>(cell: &'a DataRef<'_>) -> Cow<'a, str> {
     match cell {
-        Data::Empty => String::new(),
-        Data::Error(_) => String::new(),
-        Data::Bool(b) => b.to_string(),
-        Data::Int(i) => i.to_string(),
-        Data::Float(f) => {
+        DataRef::Empty | DataRef::Error(_) => Cow::Borrowed(""),
+        DataRef::Bool(b) => Cow::Owned(b.to_string()),
+        DataRef::Int(i) => Cow::Owned(i.to_string()),
+        DataRef::Float(f) => {
             // Avoid scientific notation for whole numbers (e.g. GTINs stored as floats)
             if f.fract() == 0.0 && f.abs() < 1e15_f64 {
-                format!("{:.0}", f)
+                Cow::Owned(format!("{:.0}", f))
             } else {
-                f.to_string()
+                Cow::Owned(f.to_string())
             }
         }
-        Data::String(s) => s.trim().to_owned(),
-        other => other.to_string(),
+        DataRef::SharedString(s) => Cow::Borrowed(s.trim()),
+        DataRef::String(s) => Cow::Borrowed(s.trim()),
+        // Dates and durations: a few bytes each, formatted as they always were.
+        other => Cow::Owned(Data::from(other.clone()).to_string()),
     }
 }
 
-fn cell_to_header(cell: &Data) -> String {
-    normalize_header(&cell_to_string(cell))
+fn over_budget() -> ParseError {
+    ParseError::Csv(format!(
+        "the workbook's parsed content exceeds {MAX_RETAINED_BYTES} bytes"
+    ))
 }
 
 // ─── Bomb pre-scan ──────────────────────────────────────────────────────────────
@@ -163,14 +196,23 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
         let name = entry
             .name()
             .map_err(|e| ParseError::Csv(format!("XLSX entry name error: {e}")))?;
+        // The reader finds a part by its name case-insensitively and with `\` read
+        // as `/`, so the checks name parts the same way: otherwise a part named
+        // `xl/SharedStrings.xml` is read as the shared strings and escapes their cap.
+        let name = name.replace('\\', "/").to_ascii_lowercase();
         let is_worksheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
+        let is_shared_strings = name == "sharedstrings.xml" || name.ends_with("/sharedstrings.xml");
         let is_xml = name.ends_with(".xml") || name.ends_with(".rels");
         let mut limited = LimitedReader {
             inner: entry,
             remaining: &mut budget,
         };
         if is_xml {
-            scan_xml_entry(std::io::BufReader::new(limited), is_worksheet)?;
+            scan_xml_entry(
+                std::io::BufReader::new(limited),
+                is_worksheet,
+                is_shared_strings,
+            )?;
         } else {
             // Non-XML entries (rare in an XLSX; e.g. embedded media): decompress
             // to a sink only to enforce the byte budget against zip-bombs.
@@ -192,7 +234,11 @@ fn precheck_xlsx(bytes: &[u8]) -> Result<(), ParseError> {
 /// scan over every attribute, so counting attributes with them would do the
 /// very work this guard exists to bound. Keep it unchecked here regardless of
 /// what the parser costs — a guard that scales with its input is not a guard.
-fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), ParseError> {
+fn scan_xml_entry<R: BufRead>(
+    reader: R,
+    track_dimensions: bool,
+    track_shared_strings: bool,
+) -> Result<(), ParseError> {
     let mut xml = XmlReader::from_reader(reader);
     let mut buf = Vec::new();
     let (mut max_col, mut max_row): (u64, u64) = (0, 0);
@@ -200,7 +246,11 @@ fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), P
         match xml.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                let is_cell = track_dimensions && e.name().as_ref() == "c";
+                // The reader resolves a prefixed element (`x:c`) to the same cell as
+                // an unprefixed one, so the check matches local names, as it does.
+                let is_cell = track_dimensions && e.local_name().as_ref() == "c";
+                let is_shared_strings_root =
+                    track_shared_strings && e.local_name().as_ref() == "sst";
                 let mut attr_count = 0usize;
                 let mut r_value: Option<String> = None;
                 for attr in e.attributes().with_checks(false) {
@@ -211,11 +261,24 @@ fn scan_xml_entry<R: BufRead>(reader: R, track_dimensions: bool) -> Result<(), P
                                  maximum is {MAX_ATTRS_PER_TAG}"
                         )));
                     }
-                    if is_cell
-                        && let Ok(attr) = attr
-                        && attr.key.as_ref() == "r"
-                    {
-                        r_value = Some(attr.value.into_owned());
+                    if let Ok(attr) = attr {
+                        if is_cell && attr.key.local_name().as_ref() == "r" {
+                            r_value = Some(attr.value.into_owned());
+                        } else if is_shared_strings_root
+                            && attr.key.local_name().as_ref() == "uniqueCount"
+                        {
+                            // The reader reserves room for this many strings before
+                            // reading any, so the declared `uniqueCount` is bounded
+                            // here. `count` totals the references to them and sizes
+                            // nothing; an ordinary large workbook exceeds the cap by it.
+                            let declared = attr.value.trim().parse::<u64>().unwrap_or(0);
+                            if declared > MAX_SHARED_STRINGS {
+                                return Err(ParseError::Csv(format!(
+                                    "XLSX declares {declared} shared strings; \
+                                     maximum is {MAX_SHARED_STRINGS}"
+                                )));
+                            }
+                        }
                     }
                 }
                 if let Some(r) = r_value
@@ -301,7 +364,7 @@ mod tests {
             <row r="1"><c r="A1"><v>1</v></c></row>
             <row r="1048576"><c r="XFD1048576"><v>1</v></c></row>
         </sheetData></worksheet>"#;
-        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true, false);
         assert!(
             res.is_err(),
             "far-apart cells (dimension bomb) must be rejected"
@@ -314,7 +377,7 @@ mod tests {
             <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>2</v></c></row>
             <row r="2"><c r="A2"><v>3</v></c></row>
         </sheetData></worksheet>"#;
-        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true, false);
         assert!(res.is_ok(), "a small contiguous sheet must be accepted");
     }
 
@@ -395,7 +458,7 @@ mod tests {
     #[test]
     fn scan_rejects_attribute_bomb_in_worksheet() {
         let xml = attr_bomb_xml(MAX_ATTRS_PER_TAG + 1);
-        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true, false);
         assert!(
             res.is_err(),
             "a tag exceeding MAX_ATTRS_PER_TAG must be rejected"
@@ -405,8 +468,60 @@ mod tests {
     #[test]
     fn scan_accepts_tag_at_attribute_cap() {
         let xml = attr_bomb_xml(MAX_ATTRS_PER_TAG);
-        let res = scan_xml_entry(Cursor::new(&xml[..]), true);
+        let res = scan_xml_entry(Cursor::new(&xml[..]), true, false);
         assert!(res.is_ok(), "a tag exactly at the cap must be accepted");
+    }
+
+    /// A prefixed cell is measured like an unprefixed one. The reader resolves
+    /// `x:c` to the same cell, so a guard that matched only the bare name let a
+    /// far-away cell past the dense-range check.
+    #[test]
+    fn a_namespace_prefixed_cell_is_measured_too() {
+        let xml = br#"<worksheet><sheetData>
+            <x:row xmlns:x="urn:x"><x:c r="A1"/><x:c r="XFD1048576"/></x:row>
+        </sheetData></worksheet>"#;
+        assert!(scan_xml_entry(Cursor::new(&xml[..]), true, false).is_err());
+    }
+
+    /// The reader reserves room for a declared shared-string count before reading
+    /// any strings, so a count past the cap is refused before that reservation.
+    #[test]
+    fn a_shared_string_count_past_the_cap_is_refused() {
+        let declared = format!(
+            r#"<sst xmlns="urn:s" count="1" uniqueCount="{}"/>"#,
+            MAX_SHARED_STRINGS + 1
+        );
+        assert!(scan_xml_entry(Cursor::new(declared.as_bytes()), false, true).is_err());
+        let small = br#"<sst xmlns="urn:s" count="1" uniqueCount="1"/>"#;
+        assert!(scan_xml_entry(Cursor::new(&small[..]), false, true).is_ok());
+    }
+
+    /// `count` totals the references to shared strings, and 100,000 rows of eleven
+    /// text columns already pass the cap by it. Only `uniqueCount` sizes the
+    /// reader's reservation, so only it is capped.
+    #[test]
+    fn a_large_total_reference_count_is_accepted() {
+        let declared = format!(
+            r#"<sst xmlns="urn:s" count="{}" uniqueCount="1"/>"#,
+            MAX_SHARED_STRINGS + 1
+        );
+        assert!(scan_xml_entry(Cursor::new(declared.as_bytes()), false, true).is_ok());
+    }
+
+    /// The reader finds the shared strings under any letter case, so a part named
+    /// with other case is capped like the usual one.
+    #[test]
+    fn a_shared_strings_part_named_in_other_case_is_still_capped() {
+        let declared = format!(
+            r#"<sst xmlns="urn:s" count="1" uniqueCount="{}"/>"#,
+            MAX_SHARED_STRINGS + 1
+        );
+        let sheet = br#"<worksheet><sheetData><c r="A1"/></sheetData></worksheet>"#;
+        let zip = zip_with(&[
+            ("xl/worksheets/sheet1.xml", sheet),
+            ("xl/SharedStrings.xml", declared.as_bytes()),
+        ]);
+        assert!(precheck_xlsx(&zip).is_err());
     }
 
     /// The attribute-count guard must also cover non-worksheet XML parts
@@ -439,6 +554,206 @@ mod tests {
         assert!(
             precheck_xlsx(&zip).is_ok(),
             "a small archive must be accepted"
+        );
+    }
+
+    /// A workbook calamine opens: one sheet whose `<row>` elements are `rows`,
+    /// over the shared-string table `shared`. `references` is the `count` the
+    /// table declares, the total number of cells that name one of its strings.
+    fn package(shared: &[&str], rows: &str, references: usize) -> Vec<u8> {
+        const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+        const DOC: &str = "http://schemas.openxmlformats.org/officeDocument/2006";
+
+        let content_types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>"#;
+        let root_rels = format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC}/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+        );
+        let workbook = format!(
+            r#"<workbook xmlns="{MAIN}" xmlns:r="{DOC}/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+        );
+        let workbook_rels = format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC}/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="{DOC}/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#
+        );
+        let strings: String = shared
+            .iter()
+            .map(|s| format!("<si><t>{s}</t></si>"))
+            .collect();
+        let shared_strings = format!(
+            r#"<sst xmlns="{MAIN}" count="{references}" uniqueCount="{}">{strings}</sst>"#,
+            shared.len()
+        );
+        let sheet =
+            format!(r#"<worksheet xmlns="{MAIN}"><sheetData>{rows}</sheetData></worksheet>"#);
+
+        zip_with(&[
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", root_rels.as_bytes()),
+            ("xl/workbook.xml", workbook.as_bytes()),
+            ("xl/_rels/workbook.xml.rels", workbook_rels.as_bytes()),
+            ("xl/sharedStrings.xml", shared_strings.as_bytes()),
+            ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+        ])
+    }
+
+    /// One column of text cells, each naming an entry of the shared-string table
+    /// by index (`column[0]` is the header row).
+    fn workbook(shared: &[&str], column: &[usize]) -> Vec<u8> {
+        let rows: String = column
+            .iter()
+            .enumerate()
+            .map(|(i, index)| {
+                let r = i + 1;
+                format!(r#"<row r="{r}"><c r="A{r}" t="s"><v>{index}</v></c></row>"#)
+            })
+            .collect();
+        package(shared, &rows, column.len())
+    }
+
+    /// The A1-style letters of a 1-based column: 1 is `A`, 27 is `AA`.
+    fn column_letters(mut column: usize) -> String {
+        let mut letters = Vec::new();
+        while column > 0 {
+            column -= 1;
+            letters.push(b'A' + (column % 26) as u8);
+            column /= 26;
+        }
+        letters.reverse();
+        String::from_utf8(letters).expect("ASCII letters")
+    }
+
+    /// A header row of `width` cells, all naming `shared[index]`, and no data
+    /// rows at all. Linux-only like its one caller, so another platform's build
+    /// of the tests has no unused function to fail `-D warnings`.
+    #[cfg(target_os = "linux")]
+    fn header_row_workbook(shared: &[&str], width: usize, index: usize) -> Vec<u8> {
+        let cells: String = (1..=width)
+            .map(|column| {
+                format!(
+                    r#"<c r="{}1" t="s"><v>{index}</v></c>"#,
+                    column_letters(column)
+                )
+            })
+            .collect();
+        package(shared, &format!(r#"<row r="1">{cells}</row>"#), width)
+    }
+
+    #[test]
+    fn column_letters_follow_the_a1_scheme() {
+        assert_eq!(column_letters(1), "A");
+        assert_eq!(column_letters(26), "Z");
+        assert_eq!(column_letters(27), "AA");
+        assert_eq!(column_letters(16_384), "XFD");
+    }
+
+    /// A workbook of the size the import supports still parses: many rows naming
+    /// a few shared strings, which is what a real catalogue export looks like.
+    #[test]
+    fn a_workbook_of_many_rows_naming_few_strings_still_parses() {
+        const ROWS: usize = 20_000;
+        let names: Vec<String> = (0..50).map(|i| format!("Product {i:02}")).collect();
+        let mut shared: Vec<&str> = vec!["productName"];
+        shared.extend(names.iter().map(String::as_str));
+        let mut column = vec![0];
+        column.extend((0..ROWS).map(|row| 1 + row % names.len()));
+        let bytes = workbook(&shared, &column);
+
+        let rows = parse_xlsx(&bytes).expect("a workbook of the supported size parses");
+
+        assert_eq!(rows.len(), ROWS);
+        assert_eq!(rows[0]["productName"], "Product 00");
+        assert_eq!(rows[ROWS - 1]["productName"], "Product 49");
+    }
+
+    /// A workbook of the size the import supports still parses, text trimmed as
+    /// before and a string shared by two cells read for each of them.
+    #[test]
+    fn an_ordinary_workbook_still_parses() {
+        let bytes = workbook(
+            &["productName", "Cotton Tee", "  Wool Hat  "],
+            &[0, 1, 2, 1],
+        );
+
+        let rows = parse_xlsx(&bytes).expect("an ordinary workbook parses");
+
+        let names: Vec<&str> = rows.iter().map(|r| r["productName"].as_str()).collect();
+        assert_eq!(names, ["Cotton Tee", "Wool Hat", "Cotton Tee"]);
+    }
+
+    /// The process's peak resident memory, in KiB. `VmHWM` is a high-water mark,
+    /// so a test sees growth past what the process had already reached: it can
+    /// miss an allocation a sibling test made first, and cannot invent one. Each
+    /// test runs in its own process under nextest, which is what `just test`
+    /// uses.
+    #[cfg(target_os = "linux")]
+    fn peak_resident_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .expect("procfs is readable")
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))
+            .and_then(|value| value.trim().trim_end_matches("kB").trim().parse().ok())
+            .expect("VmHWM is reported")
+    }
+
+    /// One shared string repeated down a column was copied into every cell before
+    /// the retained-bytes budget was looked at: `worksheet_range` gives each cell
+    /// its own `String`, and the whole range is built first. A workbook can pass
+    /// every pre-scan check and still ask for gigabytes: 100,000 cells naming one
+    /// 32 KiB string is about 3 GiB. This is the same shape at a size a test can
+    /// afford, about 1 GiB if each cell is copied.
+    ///
+    /// What is asserted is the refusal, and that it was reached without the
+    /// copies: the process grew by a fraction of what they would take.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_large_shared_string_repeated_down_a_column_is_refused_before_it_is_copied() {
+        const CELLS: usize = 30_000;
+        let big = "x".repeat(32 * 1024);
+        let mut column = vec![0];
+        column.extend(std::iter::repeat_n(1, CELLS));
+        let bytes = workbook(&["productName", &big], &column);
+        drop(big);
+
+        let before = peak_resident_kib();
+        let refused = parse_xlsx(&bytes).expect_err("past the retained-bytes budget");
+        let grown_mib = peak_resident_kib().saturating_sub(before) / 1024;
+
+        assert!(
+            matches!(&refused, ParseError::Csv(m) if m.contains("exceeds")),
+            "refused for the budget: {refused:?}"
+        );
+        assert!(
+            grown_mib < 256,
+            "refusing it took {grown_mib} MiB more than the process had used: the cells were \
+             copied before the budget was checked"
+        );
+    }
+
+    /// The header row is read before any data row, and was copied into `String`s
+    /// before the budget was started, so a row of header cells naming one large
+    /// shared string kept a copy of it for each cell. With no data rows the budget
+    /// was never consulted at all. 16,000 cells is under the 16,384 columns a
+    /// worksheet has, and about 500 MiB if each header is copied.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_header_row_naming_one_large_string_is_refused_before_it_is_copied() {
+        const WIDTH: usize = 16_000;
+        let big = "x".repeat(32 * 1024);
+        let bytes = header_row_workbook(&[&big], WIDTH, 0);
+        drop(big);
+
+        let before = peak_resident_kib();
+        let refused = parse_xlsx(&bytes).expect_err("past the retained-bytes budget");
+        let grown_mib = peak_resident_kib().saturating_sub(before) / 1024;
+
+        assert!(
+            matches!(&refused, ParseError::Csv(m) if m.contains("exceeds")),
+            "refused for the budget: {refused:?}"
+        );
+        assert!(
+            grown_mib < 200,
+            "refusing it took {grown_mib} MiB more than the process had used: the headers were \
+             copied before the budget was checked"
         );
     }
 }

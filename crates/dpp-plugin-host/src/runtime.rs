@@ -25,6 +25,11 @@ pub fn build_engine() -> wasmtime::Result<Engine> {
     cfg.cranelift_opt_level(wasmtime::OptLevel::Speed);
     cfg.consume_fuel(true);
     cfg.wasm_component_model(true);
+    // The memory limiter approves each linear memory against one per-instance
+    // allowance, so a module with several memories would take that allowance once
+    // per memory. The plugin ABI needs one memory, so a module that declares more
+    // is refused at compile time.
+    cfg.wasm_multi_memory(false);
     Engine::new(&cfg)
 }
 

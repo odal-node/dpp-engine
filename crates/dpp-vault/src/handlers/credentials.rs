@@ -147,6 +147,17 @@ pub async fn issue_credential_handler(
         );
     }
 
+    if let CredentialRole::Custom(name) = &body.role
+        && custom_role_spells_an_authority(name)
+    {
+        return validation_error(&format!(
+            "This node cannot issue a role named '{name}': it reads as an authority role, and \
+             authority status is conferred by a member state, not asserted by an operator. Name \
+             the holder's function instead, or have the authority present a credential from its \
+             own issuer."
+        ));
+    }
+
     if body.holder_did.trim().is_empty() || !body.holder_did.starts_with("did:") {
         return validation_error(
             "holderDid must be a DID. The credential is bound to it and a verifier matches it \
@@ -299,9 +310,122 @@ fn category_scope_problem(groups: &[String], categories: &[String]) -> Option<St
     None
 }
 
+/// Every role core names apart from the open-ended `Custom`. The authority ones
+/// are found by asking core which they are ([`CredentialRole::audience`]), so
+/// nothing here says which side a role is on.
+fn named_roles() -> [CredentialRole; 8] {
+    [
+        CredentialRole::AuthorisedRepairer,
+        CredentialRole::Recycler,
+        CredentialRole::Remanufacturer,
+        CredentialRole::PreparerForReuse,
+        CredentialRole::Distributor,
+        CredentialRole::MarketSurveillanceAuthority,
+        CredentialRole::CustomsAuthority,
+        CredentialRole::NotifiedBody,
+    ]
+}
+
+/// A role name with its case and its separators removed, so that
+/// `Market-Surveillance`, `market_surveillance` and `market surveillance` are
+/// one name.
+fn role_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '-' | '_') && !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether a custom role is an authority role under another spelling.
+///
+/// The audience gate reads the audience of a **typed** role, and `Custom` is the
+/// open-ended one, so `{"custom": "market-surveillance"}` was issued while
+/// `market_surveillance_authority` was refused. A name that is an authority
+/// role's, or the start of one's (`market surveillance`, `customs`), claims the
+/// same standing, and is refused on the same ground.
+///
+/// Only a name that is a **prefix** of an authority role's counts, so a role that
+/// shares a word without claiming the standing stays issuable: a customs broker
+/// acts for a company, and an operator may vouch for one. A name that goes on
+/// past an authority role's whole name is not caught, and is the operator's
+/// own label.
+fn custom_role_spells_an_authority(name: &str) -> bool {
+    let key = role_key(name);
+    !key.is_empty()
+        && named_roles()
+            .iter()
+            .filter(|role| role.audience() == Audience::Authority)
+            .filter_map(|role| serde_json::to_value(role).ok())
+            .filter_map(|wire| wire.as_str().map(role_key))
+            .any(|authority| authority.starts_with(&key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same role under another spelling is the same claim. `market-surveillance`
+    /// with a hyphen was issued, as a custom role, while
+    /// `market_surveillance_authority` spelled exactly was refused.
+    #[test]
+    fn a_custom_role_spelled_like_an_authority_role_is_refused() {
+        for name in [
+            "market-surveillance",
+            "Market Surveillance",
+            "MARKET_SURVEILLANCE_AUTHORITY",
+            "market-surveillance-authority",
+            "customs",
+            "Customs-Authority",
+            "notified body",
+            "Notified_Body",
+            "  market   surveillance ",
+        ] {
+            assert!(
+                custom_role_spells_an_authority(name),
+                "`{name}` reads as an authority role and must be refused"
+            );
+        }
+    }
+
+    /// A role that merely shares a word with an authority is not one. A customs
+    /// broker acts for a company, and an operator may well vouch for one.
+    #[test]
+    fn a_custom_role_that_only_shares_a_word_is_issuable() {
+        for name in [
+            "scrap-dealer",
+            "customs-broker",
+            "market-analyst",
+            "notified-body-liaison",
+            "authorised-repairer-network",
+            "",
+            "---",
+        ] {
+            assert!(
+                !custom_role_spells_an_authority(name),
+                "`{name}` names no authority and must stay issuable"
+            );
+        }
+    }
+
+    /// A match with no wildcard arm: a role added to core stops this compiling
+    /// until it is considered here, and in [`named_roles`], which is what finds
+    /// the authority roles.
+    #[test]
+    fn every_role_core_names_has_been_considered() {
+        for role in named_roles() {
+            match role {
+                CredentialRole::AuthorisedRepairer
+                | CredentialRole::Recycler
+                | CredentialRole::Remanufacturer
+                | CredentialRole::PreparerForReuse
+                | CredentialRole::Distributor
+                | CredentialRole::MarketSurveillanceAuthority
+                | CredentialRole::CustomsAuthority
+                | CredentialRole::NotifiedBody
+                | CredentialRole::Custom(_) => {}
+            }
+        }
+    }
 
     /// The audience split this route is built on, stated as a test so a role
     /// added to core lands on a side deliberately rather than by default.

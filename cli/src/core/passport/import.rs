@@ -17,6 +17,13 @@ pub async fn action_import(
 ) -> Result<ImportSummary> {
     // JSON files are posted record-by-record to the vault create endpoint.
     if params.file.to_ascii_lowercase().ends_with(".json") {
+        // Every record states its own product group, so a flag would be ignored.
+        // Said now, not left to look as though it had been honoured.
+        anyhow::ensure!(
+            params.product_group.is_none(),
+            "--product-group applies to a CSV file; each record in {} states its own",
+            params.file
+        );
         let content = std::fs::read_to_string(&params.file)
             .with_context(|| format!("Cannot read file: {}", params.file))?;
         let payloads = parse_json_payloads(&content)
@@ -27,8 +34,8 @@ pub async fn action_import(
     // CSV/XLSX go through the integrator's bulk endpoint — the single validated
     // path that maps every column (Annex XIII fields, materials) and runs the
     // compliance determination server-side via the vault create handler. The
-    // product group is detected from the file's `productGroup` (or the legacy
-    // `productCategory`) column.
+    // product group is the one `--product-group` names, or the one the file's
+    // `productGroup` (or the legacy `productCategory`) column states.
     let bytes = std::fs::read(&params.file)
         .with_context(|| format!("Cannot read file: {}", params.file))?;
     let filename = std::path::Path::new(&params.file)
@@ -36,13 +43,17 @@ pub async fn action_import(
         .and_then(|s| s.to_str())
         .unwrap_or("upload.csv")
         .to_owned();
-    let product_group = detect_product_group(&bytes).with_context(|| {
-        format!(
-            "Could not determine the product group for {}. Add a `productGroup` column \
-             holding the product group's key, as `odal product-group list` prints it.",
-            params.file
-        )
-    })?;
+    let product_group =
+        resolve_product_group(params.product_group.as_deref(), &bytes, &params.file)?;
+
+    // The value is read from the file and becomes a path segment of a request sent
+    // with the operator's credential. A product-group key is lowercase letters,
+    // digits and hyphens. Anything else would send the upload to another route.
+    anyhow::ensure!(
+        is_product_group_key(&product_group),
+        "`{product_group}` in {} is not a product group key",
+        params.file
+    );
 
     if let Some(f) = progress {
         f(ProgressEvent::Started { total: None });
@@ -123,6 +134,29 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
     }
 }
 
+/// The product group a CSV/XLSX file is imported under: the one `--product-group`
+/// names, or else the one the file's own column states.
+///
+/// A flag and a column that disagree are refused rather than one of them chosen.
+/// The column is the operator's data and the flag is the operator's intent, and
+/// importing a battery file under `textile` sends every row through the wrong
+/// schema.
+fn resolve_product_group(flag: Option<&str>, bytes: &[u8], file: &str) -> Result<String> {
+    let flag = flag.map(|f| f.trim().to_ascii_lowercase());
+    match (flag, detect_product_group(bytes)) {
+        (Some(flag), Some(column)) if flag != column => anyhow::bail!(
+            "{file} names product group `{column}` in its productGroup column, but \
+             --product-group says `{flag}`. Drop the flag, or correct the column."
+        ),
+        (Some(group), _) | (None, Some(group)) => Ok(group),
+        (None, None) => anyhow::bail!(
+            "Could not determine the product group for {file}. Pass --product-group <key>, \
+             or add a `productGroup` column holding it. The key is the one `odal \
+             product-group list` prints (`battery` for every `battery-*` template)."
+        ),
+    }
+}
+
 /// Detect the import product group from a CSV's `productGroup` column, or the
 /// legacy `productCategory` / `product_category` spellings.
 ///
@@ -132,6 +166,15 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
 /// Uses a real CSV reader so a quoted field containing the delimiter (e.g. an
 /// address `"Street 1, City, DE"`) does not shift the column positions — a naive
 /// `split` would mis-locate the product group value.
+/// Whether `key` is a product-group key as the catalog spells one: non-empty,
+/// lowercase letters, digits and hyphens only.
+fn is_product_group_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 pub fn detect_product_group(bytes: &[u8]) -> Option<String> {
     let first_line = bytes.split(|&b| b == b'\n').next().unwrap_or(bytes);
     let delim = if first_line.contains(&b'\t') {
@@ -259,6 +302,18 @@ fn error_entries(errors: Option<&serde_json::Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The product group read from a file becomes a path segment of an
+    /// authenticated request, so only a plain key may pass.
+    #[test]
+    fn a_file_cannot_name_a_route_through_its_product_group() {
+        assert!(is_product_group_key("battery"));
+        assert!(is_product_group_key("unsold-goods"));
+        assert!(!is_product_group_key(""));
+        assert!(!is_product_group_key("battery/publish"));
+        assert!(!is_product_group_key("battery?x=1"));
+        assert!(!is_product_group_key("Battery"));
+    }
 
     #[test]
     fn detect_product_group_reads_product_group_column() {

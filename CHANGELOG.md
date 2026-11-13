@@ -269,6 +269,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **The node and resolver images are hardened.** No file in either image keeps a
+  setuid or setgid bit, `apt` and `dpkg` are removed (`/var/lib/dpkg/status`
+  stays, so a vulnerability scan still lists the Debian packages), the `odal`
+  service user's home is `/nonexistent`, and the binaries are built without a
+  symbol table: the resolver's shrinks from 18.9 MB to 14.6 MB, and its
+  `cargo auditable` dependency graph survives. A panic still prints its message
+  and source location; a backtrace no longer names the functions. The hardened
+  node image was checked healthy as uid 1000 with a read-only root filesystem.
+  CI's image job now fails if any of these is lost. (#602)
+
 - **A GS1 linkset now validates against GS1's linkset schema, and a redirect
   hands the query string on.** *(Breaking for a reader of the linkset.)* The
   linkset was a context with no `title` on any link and an `anchor` beside
@@ -319,6 +329,65 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   reported as read in full. (#490)
 
 ### Fixed
+
+- **The node no longer issues an authority role under another spelling, and no
+  longer accepts any category as the lawful basis of a destruction.**
+  `POST /credentials` refused the three authority roles by their typed names and
+  issued `{"custom": "market-surveillance"}`, a role that reads like one, as a
+  legitimate-interest credential. A custom role whose name is an authority
+  role's, or the start of one's, is now refused with `422`; case, `-`, `_` and
+  spaces are ignored, and a name that merely shares a word (`customs-broker`)
+  still issues. `POST /dpp/{id}/eol` accepted any derogation category on a
+  destruction and left the passport `Deactivated`, which is terminal, with that
+  string as its lawful basis. The category must now be a point of Art. 2 of
+  Delegated Regulation (EU) 2026/296, by the names core gives them (for example
+  `dangerousProduct`), or the request is refused with `422` before anything is
+  written. A caller that sent another category will now be refused. (#604)
+
+- **An XLSX import no longer copies a shared string into every cell before its
+  byte budget is checked.** The importer read the first worksheet with calamine's
+  `worksheet_range`, which gives every cell its own copy of a shared string and
+  builds the whole range before the retained-bytes budget is counted. A workbook
+  could pass every pre-scan check (100,000 cells in one column, one 32 KiB shared
+  string, a small decompressed size) and still allocate about 3 GiB before the
+  budget refused it, for any caller holding a write-scoped key. Cells are now read
+  through the borrowed range, so a string is counted before it is copied, and that
+  workbook is refused having allocated a fraction of that. The header row is
+  counted the same way: a row of header cells naming one large string was copied
+  per cell before any count, and a workbook with no data rows was never checked at
+  all. A normal workbook parses as before. (#605)
+
+- **CLI: seven defects an end-to-end run found, and five documentation gaps.**
+  - `odal verify` reads the file `odal passport evidence -o` writes: it was the
+    stored record, which the node's verify route refused ("unknown field
+    `actor`"). A file holding the record is now verified as the dossier in it.
+  - `odal passport validate` takes its verdict on a stored draft's
+    product-group data from core's `validate_product_group_data`, the first
+    step of the publish gate, instead of its own list of required fields. The
+    list demanded `co2ePerUnitKg` of a battery, which the node does not, so a
+    draft that publishes exited 1.
+  - `odal passport import --product-group <key>` imports a CSV that has no
+    `productGroup` column, which is what `odal template` writes. A flag that
+    disagrees with the file's own column is refused.
+  - A node that does not answer is reported one way by every command: `could
+    not reach the node at <origin> (<reason>)`, in place of the HTTP library's
+    own error from `whoami` and a bare "unreachable" from `status`. It suggests
+    `odal up` only when the profile names a node on this machine.
+  - `odal passport list | head -n 1` exits quietly when the reader closes the
+    pipe, with status 141 as a writer whose reader has gone does, instead of
+    panicking with exit code 101. A command cut short that way never exits 0.
+    `key create --use` saves the new key before it prints the secret.
+  - Registering a facility under a GLN with a wrong check digit is refused in
+    words (the node's `422`), not as `InvalidCheckDigit { .. }`.
+  - `odal key create --scope read|write|admin` mints the scope asked for. Without
+    it the key is still an admin key, now stated in `--help`, and the request
+    carries the scope instead of leaving it to the node.
+  - Documented: `publish` publishes a suspended passport again; `webhook remove`
+    leaves the subscription listed as inactive; `retire` is refused until the
+    product group's retention period has passed, which `--retention-policy-days`
+    does not change; `verify` proves consistency with the dossier's embedded DID
+    document, not that it is the issuer's current one; `--status` lists all six
+    statuses. (#603)
 
 - **A published passport is signed with the compliance determination of the
   content it is published with.** A draft was signed with the determination
@@ -428,6 +497,48 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   database's clock once the change holds the lock, where it was the clock of the
   process that made the change, so versions order as their changes did whichever
   process made them. (#571)
+
+- **An API key's idempotent replays belong to that key.** Every Bearer key used to
+  share one replay namespace, so a read-scoped key could replay an administrator's
+  cached response. Retries made with a rotated key now re-execute. A retry, sent
+  after the upgrade, of a request that completed before it also runs again once,
+  whether it was made with an API key or with the local admin credential: replays
+  are now keyed `key:<id>` or `user:<id>`, the earlier record sits under the bare
+  user id, and it is not consulted, so that no credential can be answered with
+  another's response. Such records expire 24 hours after they were written. (#576)
+
+- **The local admin credential is refused from another origin.** A state change
+  arriving with a cross-origin `Origin` header and a Basic credential is refused
+  before the credential is read. Bearer keys are unaffected. (#576)
+
+- **Imports need a write-scoped key.** A read-only key is refused with `403`
+  before any job or report is recorded. (#576)
+
+- **Seal and trust checks.** A seal must cover the dossier's own full view, a CA
+  path must pass through certificates that may sign certificates, the list of
+  trusted lists is verified before its pointers are used, and a verified copy older
+  than 14 days is reported unchecked. (#576)
+
+- **Guarded outbound requests** disable system proxies, refuse redirects for
+  address literals, and refuse 198.18.0.0/15. Status lists are fetched through the
+  pinned helper. (#576)
+
+- **Plugin artifacts** are verified and loaded from the same bytes, and a guest's
+  log text is escaped in the host's log output. (#576)
+
+- **Dossier and tree verification** refuse a URI that is referenced with two
+  different pins, and a node listing more than 256 children. (#576)
+
+- **Command-line and script hardening:** verify and import take only well-formed
+  identifiers and keys, the credential file and exports are owner-only from creation,
+  credentials are not sent over plain HTTP to a remote host, and terminal output is
+  stripped of control characters. (#576)
+
+- **Pointing a profile at another node** clears the credential the previous node
+  issued, so the next request does not send it to a node that never issued it. (#576)
+
+- **A workbook's namespace-prefixed cells** are measured with the same dense-range
+  check as unprefixed ones, and a declared shared-string count is capped. (#576)
 
 - **A draft is published under the operator's primary identifier as it stands
   at publish.** It kept the one stamped when it was created, and an amendment's

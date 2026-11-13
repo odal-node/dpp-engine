@@ -19,6 +19,7 @@ use crate::{
         },
     },
     http::OdalClient,
+    stateless::render::plain,
     stateless::render::{
         render_export, render_history, render_import_result, render_operator_stats,
         render_passport_details, render_passport_stats, render_publish_summary,
@@ -68,7 +69,10 @@ pub(super) async fn passports() -> Result<()> {
                         Some(f) => f,
                         None => continue,
                     };
-                    let params = ImportParams { file: file.clone() };
+                    let params = ImportParams {
+                        file: file.clone(),
+                        product_group: None,
+                    };
                     let pb = ProgressBar::new(0);
                     pb.set_style(
                         ProgressStyle::with_template(
@@ -390,14 +394,16 @@ enum BrowseChoice {
 impl std::fmt::Display for BrowseChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // Every field is stored text from another operator's draft, so each one
+            // passes through the terminal-safe filter before it reaches the menu.
             BrowseChoice::Passport(p) => write!(
                 f,
                 "{} {:<9} {:<30} {:<9} {}",
                 status_dot(&p.status),
-                p.status,
-                truncate_label(&p.product_name, 30),
-                p.product_group,
-                p.batch.as_deref().unwrap_or("—"),
+                plain(&p.status),
+                truncate_label(&plain(&p.product_name), 30),
+                plain(&p.product_group),
+                plain(p.batch.as_deref().unwrap_or("—")),
             ),
             BrowseChoice::NextPage => write!(f, "{}", style("→ Next page").cyan()),
             BrowseChoice::Back => write!(f, "← Back"),

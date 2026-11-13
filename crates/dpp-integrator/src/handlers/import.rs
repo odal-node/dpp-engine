@@ -958,6 +958,9 @@ mod tests {
             /// Whether the vault accepts the token it is asked to verify. Open by
             /// default; `false` makes it answer `401`.
             pub(super) accepts_tokens: AtomicBool,
+            /// The scope `whoami` reports for an accepted token. `admin` by
+            /// default.
+            pub(super) scope: Mutex<&'static str>,
             pub(super) create_hits: AtomicUsize,
             pub(super) update_hits: AtomicUsize,
             /// `pub(super)` so tests can flip a created passport to `active`
@@ -972,6 +975,7 @@ mod tests {
             fn default() -> Self {
                 Self {
                     accepts_tokens: AtomicBool::new(true),
+                    scope: Mutex::new("admin"),
                     create_hits: AtomicUsize::default(),
                     update_hits: AtomicUsize::default(),
                     passports: Mutex::default(),
@@ -985,6 +989,19 @@ mod tests {
                 return StatusCode::UNAUTHORIZED.into_response();
             }
             (StatusCode::OK, Json(serde_json::json!({"items": []}))).into_response()
+        }
+
+        /// The scope the mock grants: admission asks for it to decide write access.
+        async fn whoami_handler(State(state): State<Arc<State_>>) -> Response {
+            if !state.accepts_tokens.load(Ordering::SeqCst) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            let scope = *state.scope.lock().unwrap();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"userId": "api-key", "scope": scope})),
+            )
+                .into_response()
         }
 
         async fn create_handler(
@@ -1077,6 +1094,7 @@ mod tests {
             let state = Arc::new(State_::default());
             let app = Router::new()
                 .route("/api/v1/dpps", get(verify_handler))
+                .route("/api/v1/whoami", get(whoami_handler))
                 .route("/api/v1/dpp", post(create_handler))
                 .route("/api/v1/dpp/by-identity", get(find_by_identity_handler))
                 .route("/api/v1/dpp/{id}", put(update_handler))
@@ -2079,6 +2097,25 @@ mod tests {
 
         assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
         assert!(!polled.load(Ordering::SeqCst), "the body was read");
+        assert_eq!(store.claims.load(Ordering::SeqCst), 0);
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A valid key without write scope is refused for what it is. The row-level
+    /// message used to be "Not authorised — check your Bearer token", which sent
+    /// an operator to a credential that was fine; the refusal names the scope.
+    #[tokio::test]
+    async fn a_valid_key_without_write_scope_is_refused_by_saying_so() {
+        let (app, _slots, store, mock) = keyed_node(1).await;
+        *mock.scope.lock().unwrap() = "read";
+
+        let resp = app.oneshot(keyed_csv_request("k-1", 1)).await.unwrap();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+        let body = response_json(resp).await;
+        let detail = body["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains("read-only"), "{body}");
+        assert!(!detail.contains("Bearer token"), "{body}");
         assert_eq!(store.claims.load(Ordering::SeqCst), 0);
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
     }

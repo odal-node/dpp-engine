@@ -229,9 +229,15 @@ impl PassportService {
         parent: PassportId,
         component_refs: &[ComponentRef],
     ) -> Result<(), DppError> {
+        // A child named twice is walked once. Each walk covers the child's whole
+        // subtree, so repeating a reference multiplies the work for nothing. The
+        // set keeps the check linear: the size limit applies only further down, so
+        // a scan of the list here would be quadratic in whatever a request sends.
+        let mut seen = HashSet::new();
         let local_children: Vec<PassportId> = component_refs
             .iter()
             .filter_map(|r| local_component_id(&r.reference.uri))
+            .filter(|id| seen.insert(*id))
             .collect();
         if local_children.is_empty() {
             return Ok(());

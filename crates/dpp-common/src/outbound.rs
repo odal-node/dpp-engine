@@ -119,6 +119,9 @@ impl std::error::Error for FetchError {}
 pub fn build_guarded_client() -> Client {
     Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        // A system or environment proxy would connect to a host the guard never
+        // approved, so it is never used for these requests.
+        .no_proxy()
         .timeout(DEFAULT_TIMEOUT)
         .build()
         // A builder failure here means no TLS backend, which is a broken build
@@ -129,6 +132,7 @@ pub fn build_guarded_client() -> Client {
         .unwrap_or_else(|_| {
             Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .build()
                 .expect("reqwest client cannot be constructed")
         })
@@ -209,6 +213,7 @@ pub async fn pinned_client_for(shared: &Client, url: &str) -> Result<Client, Fet
 fn pinned_client(target: &url_guard::CheckedTarget) -> Result<Client, FetchError> {
     let mut builder = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .timeout(DEFAULT_TIMEOUT);
     for addr in &target.addrs {
         builder = builder.resolve(&target.host, *addr);
@@ -283,16 +288,22 @@ pub async fn fetch_text(
 /// guard-then-pin sequence has one implementation: the whole point of pinning is
 /// that the address checked is the address connected to, and a second copy of
 /// that sequence is a second chance to get it subtly wrong.
-async fn guarded_get(client: &Client, url: &str) -> Result<reqwest::Response, FetchError> {
+async fn guarded_get(_client: &Client, url: &str) -> Result<reqwest::Response, FetchError> {
     // Guard before the request, not after — and before any DNS the client would
     // do, so a refusal costs nothing.
     let target = url_guard::resolve_public_target(url)
         .await
         .map_err(FetchError::Refused)?;
 
+    // Neither branch uses the caller's client. A named host gets one pinned to the
+    // approved addresses, and an address literal gets the shared client. Both refuse
+    // redirects. A caller's client may follow them, and a redirect would send the
+    // request to a destination the guard never checked.
     let pinned;
+    let shared;
     let client = if target.is_literal() {
-        client
+        shared = guarded_client();
+        &shared
     } else {
         pinned = pinned_client(&target)?;
         &pinned

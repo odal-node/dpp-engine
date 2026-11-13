@@ -92,3 +92,31 @@ fn status_omits_the_trust_posture_it_cannot_read() {
         run.output()
     );
 }
+
+/// `odal bootstrap` sends the node's admin password, so it refuses plain HTTP to a
+/// remote node before it sends anything. Without the check it would try the host
+/// and report it unreachable; the refusal names the transport instead.
+#[test]
+fn bootstrap_refuses_plain_http_to_a_remote_node_before_sending_the_password() {
+    let home = TempDir::new().unwrap();
+    let run = helpers::odal_env(
+        home.path(),
+        &["bootstrap"],
+        &[
+            ("ODAL_VAULT_URL", "http://node.example/vault"),
+            ("ADMIN_USERNAME", "admin"),
+            ("ADMIN_PASSWORD", "not-a-real-password"),
+        ],
+    );
+    assert_ne!(run.code, 0, "bootstrap must fail:\n{}", run.output());
+    assert!(
+        run.output().contains("refusing to send a credential"),
+        "the refusal must name the transport:\n{}",
+        run.output()
+    );
+    assert!(
+        !run.output().contains("could not reach"),
+        "no request may have been attempted:\n{}",
+        run.output()
+    );
+}

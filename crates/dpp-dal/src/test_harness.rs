@@ -199,13 +199,31 @@ pub async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
     .expect("read pg_stat_activity")
 }
 
-/// Swap the database name in a Postgres URL.
+/// Swap the database name in a Postgres URL, keeping its TLS settings. `sslmode`
+/// and the certificate settings must survive: dropping them would connect without
+/// the verification the caller asked for. Nothing else in the query does: a
+/// `dbname`, `user`, `host` or `port` there overrides the URL's own, so keeping it
+/// would point the derived connection back at the admin database.
 fn with_database(url: &str, database: &str) -> String {
-    let base = url.split('?').next().unwrap_or(url);
+    const TLS_KEYS: [&str; 4] = ["sslmode", "sslrootcert", "sslcert", "sslkey"];
+    let (base, query) = match url.split_once('?') {
+        Some((base, query)) => {
+            let tls: Vec<&str> = query
+                .split('&')
+                .filter(|pair| TLS_KEYS.contains(&pair.split('=').next().unwrap_or("")))
+                .collect();
+            (base, (!tls.is_empty()).then(|| tls.join("&")))
+        }
+        None => (url, None),
+    };
     let trimmed = base.trim_end_matches('/');
-    match trimmed.rfind('/') {
+    let swapped = match trimmed.rfind('/') {
         Some(i) => format!("{}/{database}", &trimmed[..i]),
         None => format!("{trimmed}/{database}"),
+    };
+    match query {
+        Some(query) => format!("{swapped}?{query}"),
+        None => swapped,
     }
 }
 
@@ -429,4 +447,41 @@ pub async fn start_pg_before(stop_before: &str) -> RawPg {
     );
 
     raw
+}
+
+#[cfg(test)]
+mod with_database_tests {
+    use super::with_database;
+
+    #[test]
+    fn the_derived_url_keeps_the_tls_settings_of_the_admin_url() {
+        let admin = "postgres://u:p@db.internal:5432/admin?sslmode=verify-full&sslrootcert=/ca.pem";
+        assert_eq!(
+            with_database(admin, "odal_test_x"),
+            "postgres://u:p@db.internal:5432/odal_test_x?sslmode=verify-full&sslrootcert=/ca.pem"
+        );
+    }
+
+    /// A `dbname` (or `user`, `host`, `port`) in the query overrides the path, so
+    /// keeping it would connect the test to the admin database again.
+    #[test]
+    fn only_the_tls_settings_survive_from_the_query() {
+        let admin = "postgres://u:p@h:5432/admin?dbname=admin&sslmode=require&user=root&port=1";
+        assert_eq!(
+            with_database(admin, "odal_test_x"),
+            "postgres://u:p@h:5432/odal_test_x?sslmode=require"
+        );
+        assert_eq!(
+            with_database("postgres://u:p@h:5432/admin?dbname=admin", "x"),
+            "postgres://u:p@h:5432/x"
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_query_is_swapped_as_before() {
+        assert_eq!(
+            with_database("postgres://u:p@h:5432/admin/", "x"),
+            "postgres://u:p@h:5432/x"
+        );
+    }
 }

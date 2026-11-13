@@ -199,23 +199,9 @@ impl CredentialDirectory for HttpCredentialDirectory {
     async fn status_list(&self, credential: &DppAccessCredential) -> Option<StatusList> {
         // Weaker exposure than the DID fetch — by this point the credential's
         // signature has verified against a trusted issuer, so the URL is
-        // issuer-chosen rather than stranger-chosen. Guarded anyway: a trusted
-        // issuer is still not this operator, and `None` here fails closed to
-        // "revoked", so the guard cannot turn a denial into a grant.
-        if let Some(url) = credential
-            .credential_status
-            .as_ref()
-            .and_then(|s| s.status_list_credential.as_ref())
-            && let Err(reason) = dpp_common::url_guard::assert_public_target(url).await
-        {
-            tracing::debug!(
-                url = url.as_str(),
-                reason,
-                "refusing status list fetch: target is not a public https host \
-                 (credential treated as revoked)"
-            );
-            return None;
-        }
+        // issuer-chosen rather than stranger-chosen. The fetch itself is guarded,
+        // and a refusal there fails closed to "revoked", so the guard cannot turn a
+        // denial into a grant.
         super::status_list::fetch_status_list_for(&self.http, credential).await
     }
 }

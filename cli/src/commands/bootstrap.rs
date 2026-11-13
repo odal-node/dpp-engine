@@ -12,7 +12,7 @@ use crate::{
         onboarding::{NodeStateRejected, action_bootstrap, action_node_state},
         types::BootstrapParams,
     },
-    http::OdalClient,
+    http::{NodeUnreachable, local_admin_client},
     stateless::render::render_bootstrap_result,
 };
 
@@ -33,7 +33,7 @@ pub async fn run_bootstrap(
     // `--admin-pass -` reads the password from stdin; a literal value warns.
     let admin_pass = crate::credentials::resolve_secret_arg(admin_pass, "set `$ADMIN_PASSWORD`")?;
     let pass = from_flag_or_env(admin_pass, "ADMIN_PASSWORD", "Admin password")?;
-    let admin = OdalClient::with_local_admin(&user, &pass);
+    let admin = local_admin_client(&cfg.vault_url, &user, &pass)?;
 
     // Idempotency guard: refuse to re-bootstrap a node that is already claimed.
     let state = action_node_state(&admin, &cfg).await.map_err(|err| {
@@ -41,8 +41,11 @@ pub async fn run_bootstrap(
             err.context(
                 "the node refused the admin credential — check ADMIN_USERNAME and ADMIN_PASSWORD against the node's",
             )
+        } else if err.downcast_ref::<NodeUnreachable>().is_some() {
+            // Already says so, and says what to do about it for this profile.
+            err
         } else {
-            err.context("could not reach the node to check its setup state — is it running? (`odal up`)")
+            err.context("could not read the node's setup state")
         }
     })?;
     if state.bootstrapped && !force {

@@ -17,13 +17,17 @@
 //! node reappearing among its own ancestors is a cycle, but a shared
 //! sub-assembly reached by two distinct paths (a diamond) is not.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use dpp_domain::passport::{ComponentRef, PassportRef};
 use serde::Serialize;
 use serde_json::Value;
 
 use super::reference::{RefUnverifiable, public_jws_hash};
+
+/// Most `componentRefs` one node may list. Each child is queued with a copy of its
+/// ancestry, so this bounds the work a single response can cause.
+const MAX_CHILDREN_PER_NODE: usize = 256;
 
 /// The default cap on total nodes fetched per [`verify_tree`] call.
 pub const DEFAULT_NODE_CAP: usize = 256;
@@ -65,7 +69,8 @@ where
     Fut: std::future::Future<Output = Result<Value, ()>>,
 {
     let mut nodes = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    // The pin each URI was first referenced with.
+    let mut pins: HashMap<String, String> = HashMap::new();
     // Only the reference is walked: `quantity` and `role` qualify an edge, and
     // neither changes which node is fetched or what its pin must match.
     let mut queue: VecDeque<(PassportRef, Vec<String>)> = root_refs
@@ -88,8 +93,18 @@ where
             nodes.push(fail(path, RefUnverifiable::Cycle));
             continue;
         }
-        if !seen.insert(reference.uri.clone()) {
-            continue;
+        // A URI reached again is the same node, but only the pin it was first
+        // checked against is the one the graph states. A second reference that pins
+        // something else is an integrity failure, not a duplicate to skip.
+        match pins.get(&reference.uri) {
+            Some(pinned) if *pinned == reference.public_jws_hash => continue,
+            Some(_) => {
+                nodes.push(fail(path, RefUnverifiable::HashMismatch));
+                continue;
+            }
+            None => {
+                pins.insert(reference.uri.clone(), reference.public_jws_hash.clone());
+            }
         }
         if fetched >= node_cap {
             nodes.push(fail(path, RefUnverifiable::NodeCapExceeded));
@@ -158,6 +173,12 @@ where
     let mut children = Vec::new();
     let mut malformed = Vec::new();
     if let Some(arr) = json.get("componentRefs").and_then(Value::as_array) {
+        // Every child is copied with its whole ancestry and queued, so a peer's
+        // array is bounded before any of it is copied. A node with more children
+        // than a real bill of materials has is refused, and fails closed.
+        if arr.len() > MAX_CHILDREN_PER_NODE {
+            return Err(RefUnverifiable::NodeCapExceeded);
+        }
         for (i, c) in arr.iter().enumerate() {
             // Read as `ComponentRef`, whose `Deserialize` accepts both the
             // qualified shape and the bare `PassportRef` it replaced. Reading
@@ -379,6 +400,54 @@ mod tests {
                 .iter()
                 .any(|n| n.reason == Some(RefUnverifiable::NodeCapExceeded))
         );
+    }
+
+    /// A URI reached a second time is skipped only when it carries the same pin.
+    /// One that pins something else is a claim the first fetch contradicts, so it
+    /// is an integrity failure, not a duplicate.
+    #[tokio::test]
+    async fn a_uri_referenced_with_two_different_pins_is_a_hash_mismatch() {
+        let map = HashMap::from([("u://c".into(), node_json("csig", &[]))]);
+        let roots = [r("u://c", "csig"), r("u://c", "another-signature")];
+        let report = verify_tree(&roots, fetcher(map), 6, DEFAULT_NODE_CAP).await;
+        assert!(!report.verified);
+        assert_eq!(report.nodes.len(), 2, "{:?}", report.nodes);
+        assert_eq!(report.nodes[1].reason, Some(RefUnverifiable::HashMismatch));
+    }
+
+    /// A node listing more children than `MAX_CHILDREN_PER_NODE` is refused before
+    /// any child is copied or queued; one listing exactly that many is walked.
+    #[tokio::test]
+    async fn a_node_with_more_than_256_children_is_refused_and_256_are_walked() {
+        fn wide(count: usize) -> (HashMap<String, Value>, Vec<ComponentRef>) {
+            let children: Vec<(String, String)> = (0..count)
+                .map(|i| (format!("u://leaf{i}"), format!("leaf{i}sig")))
+                .collect();
+            let refs: Vec<(&str, &str)> = children
+                .iter()
+                .map(|(uri, sig)| (uri.as_str(), sig.as_str()))
+                .collect();
+            let mut map: HashMap<String, Value> = children
+                .iter()
+                .map(|(uri, sig)| (uri.clone(), node_json(sig, &[])))
+                .collect();
+            map.insert("u://root".into(), node_json("rootsig", &refs));
+            (map, vec![r("u://root", "rootsig")])
+        }
+
+        let (map, roots) = wide(MAX_CHILDREN_PER_NODE + 1);
+        let report = verify_tree(&roots, fetcher(map), 6, 10_000).await;
+        assert!(!report.verified);
+        assert_eq!(report.nodes.len(), 1, "no child may be queued");
+        assert_eq!(
+            report.nodes[0].reason,
+            Some(RefUnverifiable::NodeCapExceeded)
+        );
+
+        let (map, roots) = wide(MAX_CHILDREN_PER_NODE);
+        let report = verify_tree(&roots, fetcher(map), 6, 10_000).await;
+        assert!(report.verified, "{:?}", report.nodes.first());
+        assert_eq!(report.nodes.len(), MAX_CHILDREN_PER_NODE + 1);
     }
 
     #[tokio::test]
