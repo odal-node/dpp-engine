@@ -29,14 +29,25 @@ fn is_closed_pipe_message(message: &str) -> bool {
             .any(|code| message.contains(code))
 }
 
+/// Exit status for a write that stopped because its reader went away: 128 plus
+/// SIGPIPE (13), which is what a Unix writer killed by SIGPIPE reports.
+///
+/// It is not 0. A command cut short by a closed pipe may have stopped part-way
+/// through its work, and must not claim it finished. Without `pipefail`, a
+/// shell pipeline reports the last command's status, so `odal ... | head -n 1`
+/// still exits with head's status; this code is what shows when the writer
+/// itself is inspected.
+const CLOSED_PIPE_EXIT_CODE: i32 = 141;
+
 /// End quietly when whatever reads our output goes away.
 ///
 /// `println!` panics when stdout is a pipe that has been closed, so
-/// `odal passport list | head -n 1` ended in a panic message and exit code 101.
-/// A reader that has all it wanted is not a failure of ours. Any other panic,
-/// including a failed write to a file or a full disk, still goes to the default
-/// hook.
-fn exit_quietly_when_the_reader_goes_away() {
+/// `odal passport list | head -n 1` used to end in a panic message and exit code
+/// 101. A reader that has all it wanted is not a failure of ours, but the command
+/// was still cut short, so it exits with [`CLOSED_PIPE_EXIT_CODE`]. Any other
+/// panic, including a failed write to a file or a full disk, still goes to the
+/// default hook.
+fn end_quietly_when_the_reader_goes_away() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let payload = info.payload();
@@ -46,7 +57,7 @@ fn exit_quietly_when_the_reader_goes_away() {
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or_default();
         if is_closed_pipe_message(message) {
-            std::process::exit(0);
+            std::process::exit(CLOSED_PIPE_EXIT_CODE);
         }
         default_hook(info);
     }));
@@ -54,7 +65,7 @@ fn exit_quietly_when_the_reader_goes_away() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    exit_quietly_when_the_reader_goes_away();
+    end_quietly_when_the_reader_goes_away();
     let cli = Cli::parse();
     config::set_active_profile_override(cli.profile.clone());
     http::set_idempotency_key(cli.idempotency_key.clone());

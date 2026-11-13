@@ -23,13 +23,17 @@ pub async fn run_key_create(name: &str, scope: &str, activate: bool) -> Result<(
         &cfg,
     )
     .await?;
-    render_key_create(&result);
     // `--use`: adopt the freshly minted key as this profile's active credential.
     // Without it, `key create` only prints the secret — it does not switch the
-    // CLI over, which is the footgun that makes self-lockout easy.
+    // CLI over, which is the footgun that makes self-lockout easy. The save comes
+    // before the print: a closed pipe ends the process at the first `println!`,
+    // and a minted key must not be left unsaved behind it.
     if activate {
         cfg.api_key = result.secret.clone();
         cfg.save()?;
+    }
+    render_key_create(&result);
+    if activate {
         println!("\nSaved as the active key for the '{}' profile.", cfg.name);
     }
     Ok(())

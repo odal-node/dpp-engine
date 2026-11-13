@@ -361,7 +361,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     own error from `whoami` and a bare "unreachable" from `status`. It suggests
     `odal up` only when the profile names a node on this machine.
   - `odal passport list | head -n 1` exits quietly when the reader closes the
-    pipe, instead of panicking with exit code 101.
+    pipe, with status 141 as a writer whose reader has gone does, instead of
+    panicking with exit code 101. A command cut short that way never exits 0.
+    `key create --use` saves the new key before it prints the secret.
   - Registering a facility under a GLN with a wrong check digit is refused in
     words (the node's `422`), not as `InvalidCheckDigit { .. }`.
   - `odal key create --scope read|write|admin` mints the scope asked for. Without
