@@ -62,6 +62,9 @@ impl ServiceStatus {
 
 pub struct ImportParams {
     pub file: String,
+    /// The product group a CSV/XLSX file is imported under, when the file does
+    /// not say. `None` reads it from the file's own `productGroup` column.
+    pub product_group: Option<String>,
 }
 
 pub struct ImportSummary {
@@ -416,11 +419,14 @@ impl OperatorUpdateParams {
 
 pub struct KeyCreateParams {
     pub name: String,
+    /// `read`, `write` or `admin`, as the node spells them.
+    pub scope: String,
 }
 
 pub struct KeyCreateResult {
     pub secret: String,
     pub name: String,
+    pub scope: String,
 }
 
 pub struct KeyEntry {

@@ -40,6 +40,130 @@ fn indexed_idempotency_key(index: usize) -> Option<String> {
     idempotency_key().map(|k| format!("{k}#{index}"))
 }
 
+/// A request that got no answer: nothing is listening, the name did not
+/// resolve, or the node took too long.
+///
+/// One type so every command says the same thing. Before it, `bootstrap` said
+/// "could not reach the node", `whoami` printed the HTTP library's own
+/// `error sending request for url` with its cause chain, and `status` printed a
+/// bare "unreachable". Each also suggested `odal up`, which starts a **local**
+/// stack, whether or not the profile named a local node.
+#[derive(Debug)]
+pub struct NodeUnreachable {
+    origin: String,
+    reason: String,
+    /// Whether the node is on this machine, which decides what is worth
+    /// suggesting.
+    local: bool,
+}
+
+impl NodeUnreachable {
+    /// `None` for a transport error that is not "no answer" — a body that would
+    /// not decode, a redirect loop — which is reported as it came.
+    fn from_transport(e: &reqwest::Error) -> Option<Self> {
+        if !(e.is_connect() || e.is_timeout()) {
+            return None;
+        }
+        let url = e.url()?;
+        Some(Self {
+            origin: url.origin().ascii_serialization(),
+            reason: transport_reason(e),
+            local: is_loopback(url),
+        })
+    }
+}
+
+impl std::fmt::Display for NodeUnreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "could not reach the node at {} ({}). ",
+            self.origin, self.reason
+        )?;
+        if self.local {
+            write!(f, "Is it running? Start the local stack with `odal up`.")
+        } else {
+            write!(
+                f,
+                "Check the node URL in this profile (`odal profile show`) and that this machine can reach it."
+            )
+        }
+    }
+}
+
+impl std::error::Error for NodeUnreachable {}
+
+/// Why there was no answer, in a few words, read from the error's cause chain.
+fn transport_reason(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return "timed out".to_owned();
+    }
+    let refused = std::iter::successors(Some(e as &(dyn std::error::Error + 'static)), |err| {
+        err.source()
+    })
+    .any(|err| {
+        err.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+    });
+    if refused {
+        return "connection refused".to_owned();
+    }
+    // The outermost message is reqwest's own, and it appends the request URL, so
+    // a host name such as `tls.example.com` would match the keywords below. Only
+    // the sources under it are read for the reason.
+    let causes: Vec<String> =
+        std::iter::successors(std::error::Error::source(e), |err| err.source())
+            .map(|err| err.to_string())
+            .collect();
+    reason_from_causes(&causes)
+}
+
+/// The reason for [`transport_reason`], from the messages of the error's causes,
+/// outermost first.
+///
+/// A TLS handshake failure (expired, untrusted or wrong-host certificate) is a
+/// connect error, and the TLS library's cause ("invalid peer certificate:
+/// Expired") is the one part an operator can act on, so it is kept. Matching is
+/// on the lowercased text; the message shown keeps its original case.
+fn reason_from_causes(causes: &[String]) -> String {
+    let lowered: Vec<String> = causes.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let mentions = |words: &[&str]| {
+        lowered
+            .iter()
+            .any(|cause| words.iter().any(|word| cause.contains(word)))
+    };
+    let innermost = causes.last().map(|c| c.trim()).unwrap_or_default();
+
+    if mentions(&["certificate"]) {
+        format!("TLS certificate rejected: {innermost}")
+    } else if mentions(&["tls", "handshake"]) {
+        format!("TLS handshake failed: {innermost}")
+    } else if mentions(&["dns", "lookup"]) {
+        "DNS lookup failed".to_owned()
+    } else if innermost.is_empty() {
+        "connection failed".to_owned()
+    } else {
+        format!("connection failed: {innermost}")
+    }
+}
+
+/// `send`, reporting a request that got no answer as [`NodeUnreachable`]
+/// instead of the HTTP library's own error.
+trait SendToNode {
+    async fn send_to_node(self) -> Result<reqwest::Response>;
+}
+
+impl SendToNode for reqwest::RequestBuilder {
+    async fn send_to_node(self) -> Result<reqwest::Response> {
+        self.send()
+            .await
+            .map_err(|e| match NodeUnreachable::from_transport(&e) {
+                Some(unreachable) => anyhow::Error::new(unreachable),
+                None => anyhow::Error::new(e),
+            })
+    }
+}
+
 /// Shared HTTP client wrapper that authenticates with the vault via an
 /// `Authorization` header.
 ///
@@ -88,7 +212,7 @@ impl OdalClient {
             .inner
             .get(url)
             .header(AUTHORIZATION, &self.authorization)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -106,7 +230,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .json(payload)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -156,7 +280,7 @@ impl OdalClient {
         if let Some(key) = key {
             request = request.header("Idempotency-Key", key);
         }
-        let resp = request.send().await?;
+        let resp = request.send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -172,7 +296,7 @@ impl OdalClient {
             .header(AUTHORIZATION, &self.authorization)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(bytes)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -216,7 +340,7 @@ impl OdalClient {
         if let Some(key) = key {
             request = request.header("Idempotency-Key", key);
         }
-        let resp = request.send().await?;
+        let resp = request.send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -233,7 +357,7 @@ impl OdalClient {
             .patch(url)
             .header(AUTHORIZATION, &self.authorization)
             .json(payload)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -246,7 +370,7 @@ impl OdalClient {
             .inner
             .delete(url)
             .header(AUTHORIZATION, &self.authorization)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -282,7 +406,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -322,7 +446,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -331,7 +455,7 @@ impl OdalClient {
 
     /// GET `url` without auth (used for public health endpoints).
     pub async fn get_public(&self, url: &str) -> Result<(StatusCode, String)> {
-        let resp = self.inner.get(url).send().await?;
+        let resp = self.inner.get(url).send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -364,12 +488,18 @@ pub fn require_secure_transport(url: &str) -> Result<()> {
         reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("`{url}` is not a URL: {e}"))?;
     match parsed.scheme() {
         "https" => Ok(()),
-        "http" if matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) => Ok(()),
+        "http" if is_loopback(&parsed) => Ok(()),
         _ => anyhow::bail!(
             "refusing to send a credential to {url} over plain HTTP; use https, \
              or plain HTTP to localhost only"
         ),
     }
+}
+
+/// Whether `url` names this machine: the host is `localhost` or a loopback
+/// address, as opposed to a host that merely contains one of those words.
+fn is_loopback(url: &reqwest::Url) -> bool {
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
 }
 
 /// The local-admin client for the vault at `vault_url`, refused over plain HTTP
@@ -682,5 +812,76 @@ mod tests {
             msg.len()
         );
         assert!(msg.ends_with('…'));
+    }
+
+    fn causes(messages: &[&str]) -> Vec<String> {
+        messages.iter().map(|m| (*m).to_owned()).collect()
+    }
+
+    #[test]
+    fn an_expired_certificate_keeps_the_cause_the_operator_needs() {
+        let chain = causes(&[
+            "error trying to connect",
+            "tls handshake eof",
+            "invalid peer certificate: Expired",
+        ]);
+        assert_eq!(
+            reason_from_causes(&chain),
+            "TLS certificate rejected: invalid peer certificate: Expired"
+        );
+    }
+
+    #[test]
+    fn an_untrusted_issuer_and_a_wrong_host_name_are_named_the_same_way() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "invalid peer certificate: UnknownIssuer",
+            ])),
+            "TLS certificate rejected: invalid peer certificate: UnknownIssuer"
+        );
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "invalid peer certificate: NotValidForName",
+            ])),
+            "TLS certificate rejected: invalid peer certificate: NotValidForName"
+        );
+    }
+
+    #[test]
+    fn a_handshake_failure_without_a_certificate_is_called_one() {
+        assert_eq!(
+            reason_from_causes(&causes(&["error trying to connect", "tls handshake eof"])),
+            "TLS handshake failed: tls handshake eof"
+        );
+    }
+
+    #[test]
+    fn a_name_that_does_not_resolve_stays_a_dns_failure() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "dns error",
+                "failed to lookup address information"
+            ])),
+            "DNS lookup failed"
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_chain_keeps_its_innermost_message() {
+        assert_eq!(
+            reason_from_causes(&causes(&[
+                "error trying to connect",
+                "socket closed early",
+                "  peer reset the stream  ",
+            ])),
+            "connection failed: peer reset the stream"
+        );
+    }
+
+    #[test]
+    fn an_empty_chain_is_a_plain_connection_failure() {
+        assert_eq!(reason_from_causes(&[]), "connection failed");
     }
 }

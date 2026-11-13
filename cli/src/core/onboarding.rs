@@ -219,7 +219,7 @@ pub async fn action_key_create(
 ) -> Result<KeyCreateResult> {
     let url = format!("{}/api/v1/api-keys", cfg.vault_url);
     let (status, body) = client
-        .post_json_creating(&url, &json!({ "name": params.name }))
+        .post_json_creating(&url, &json!({ "name": params.name, "scope": params.scope }))
         .await?;
     if !status.is_success() {
         bail!("key creation failed: {}", describe_error(status, &body));
@@ -234,6 +234,7 @@ pub async fn action_key_create(
     Ok(KeyCreateResult {
         secret,
         name: params.name.clone(),
+        scope: params.scope.clone(),
     })
 }
 

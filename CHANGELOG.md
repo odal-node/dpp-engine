@@ -357,6 +357,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   per cell before any count, and a workbook with no data rows was never checked at
   all. A normal workbook parses as before. (#605)
 
+- **CLI: seven defects an end-to-end run found, and five documentation gaps.**
+  - `odal verify` reads the file `odal passport evidence -o` writes: it was the
+    stored record, which the node's verify route refused ("unknown field
+    `actor`"). A file holding the record is now verified as the dossier in it.
+  - `odal passport validate` takes its verdict on a stored draft's
+    product-group data from core's `validate_product_group_data`, the first
+    step of the publish gate, instead of its own list of required fields. The
+    list demanded `co2ePerUnitKg` of a battery, which the node does not, so a
+    draft that publishes exited 1.
+  - `odal passport import --product-group <key>` imports a CSV that has no
+    `productGroup` column, which is what `odal template` writes. A flag that
+    disagrees with the file's own column is refused.
+  - A node that does not answer is reported one way by every command: `could
+    not reach the node at <origin> (<reason>)`, in place of the HTTP library's
+    own error from `whoami` and a bare "unreachable" from `status`. It suggests
+    `odal up` only when the profile names a node on this machine.
+  - `odal passport list | head -n 1` exits quietly when the reader closes the
+    pipe, with status 141 as a writer whose reader has gone does, instead of
+    panicking with exit code 101. A command cut short that way never exits 0.
+    `key create --use` saves the new key before it prints the secret.
+  - Registering a facility under a GLN with a wrong check digit is refused in
+    words (the node's `422`), not as `InvalidCheckDigit { .. }`.
+  - `odal key create --scope read|write|admin` mints the scope asked for. Without
+    it the key is still an admin key, now stated in `--help`, and the request
+    carries the scope instead of leaving it to the node.
+  - Documented: `publish` publishes a suspended passport again; `webhook remove`
+    leaves the subscription listed as inactive; `retire` is refused until the
+    product group's retention period has passed, which `--retention-policy-days`
+    does not change; `verify` proves consistency with the dossier's embedded DID
+    document, not that it is the issuer's current one; `--status` lists all six
+    statuses. (#603)
+
 - **A published passport is signed with the compliance determination of the
   content it is published with.** A draft was signed with the determination
   computed when it was created: `PUT /dpp/{id}` recomputed one in memory and

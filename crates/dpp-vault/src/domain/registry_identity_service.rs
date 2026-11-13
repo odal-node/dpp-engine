@@ -298,7 +298,22 @@ fn validate_facility(req: &CreateFacilityRequest) -> Result<(), DppError> {
         address: req.address.clone(),
     };
     fid.validate()
-        .map_err(|e| DppError::Validation(e.to_string().into()))
+        .map_err(|e| DppError::Validation(facility_refusal(&e).into()))
+}
+
+/// Why a facility identifier was refused, in words.
+///
+/// `dpp-registry` reports a GLN that fails to parse by the parse error's `Debug`
+/// form, so the refusal read `invalid GLN '..': InvalidCheckDigit { gln: ..,
+/// expected: 6, actual: 7 }` — a Rust value in an operator's terminal. The parse
+/// error has a sentence of its own, so it is asked for that.
+fn facility_refusal(e: &dpp_registry::RegistryValidationError) -> String {
+    if let dpp_registry::RegistryValidationError::InvalidGln { value, .. } = e
+        && let Err(cause) = dpp_domain::Gln::parse(value)
+    {
+        return cause.to_string();
+    }
+    e.to_string()
 }
 
 /// Validate an operator identifier via the `dpp-registry` scheme check
@@ -327,4 +342,53 @@ fn validate_operator_identifier(
     };
     oid.validate()
         .map_err(|e| DppError::Validation(e.to_string().into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gln_facility(value: &str) -> CreateFacilityRequest {
+        CreateFacilityRequest {
+            name: "Main plant".into(),
+            identifier_scheme: "gln".into(),
+            identifier_value: value.into(),
+            country: "DE".into(),
+            address: None,
+            is_default: false,
+        }
+    }
+
+    fn refusal(value: &str) -> String {
+        validate_facility(&gln_facility(value))
+            .expect_err("the GLN is invalid")
+            .to_string()
+    }
+
+    /// The registry crate reports a GLN failure as the parse error's `Debug`
+    /// form, so an operator read `InvalidCheckDigit { gln: .., expected: 6,
+    /// actual: 7 }` — a Rust value, not a sentence. The node words it from the
+    /// parse error's `Display` instead.
+    #[test]
+    fn a_gln_with_a_wrong_check_digit_is_refused_in_words() {
+        let message = refusal("4012345000017");
+
+        assert!(message.contains("4012345000017"), "{message}");
+        assert!(message.contains("check digit"), "{message}");
+        assert!(message.contains("expected 6"), "{message}");
+        assert!(!message.contains("InvalidCheckDigit"), "{message}");
+    }
+
+    #[test]
+    fn a_gln_of_the_wrong_length_is_refused_in_words() {
+        let message = refusal("12345");
+
+        assert!(message.contains("13"), "{message}");
+        assert!(!message.contains("InvalidFormat"), "{message}");
+    }
+
+    #[test]
+    fn a_valid_gln_is_accepted() {
+        assert!(validate_facility(&gln_facility("4012345000009")).is_ok());
+    }
 }

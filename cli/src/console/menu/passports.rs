@@ -69,7 +69,10 @@ pub(super) async fn passports() -> Result<()> {
                         Some(f) => f,
                         None => continue,
                     };
-                    let params = ImportParams { file: file.clone() };
+                    let params = ImportParams {
+                        file: file.clone(),
+                        product_group: None,
+                    };
                     let pb = ProgressBar::new(0);
                     pb.set_style(
                         ProgressStyle::with_template(

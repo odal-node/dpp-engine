@@ -12,7 +12,7 @@ use crate::{
         onboarding::{NodeStateRejected, action_bootstrap, action_node_state},
         types::BootstrapParams,
     },
-    http::local_admin_client,
+    http::{NodeUnreachable, local_admin_client},
     stateless::render::render_bootstrap_result,
 };
 
@@ -41,8 +41,11 @@ pub async fn run_bootstrap(
             err.context(
                 "the node refused the admin credential — check ADMIN_USERNAME and ADMIN_PASSWORD against the node's",
             )
+        } else if err.downcast_ref::<NodeUnreachable>().is_some() {
+            // Already says so, and says what to do about it for this profile.
+            err
         } else {
-            err.context("could not reach the node to check its setup state — is it running? (`odal up`)")
+            err.context("could not read the node's setup state")
         }
     })?;
     if state.bootstrapped && !force {
