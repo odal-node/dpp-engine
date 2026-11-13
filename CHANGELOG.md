@@ -344,6 +344,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `dangerousProduct`), or the request is refused with `422` before anything is
   written. A caller that sent another category will now be refused. (#604)
 
+- **An XLSX import no longer copies a shared string into every cell before its
+  byte budget is checked.** The importer read the first worksheet with calamine's
+  `worksheet_range`, which gives every cell its own copy of a shared string and
+  builds the whole range before the retained-bytes budget is counted. A workbook
+  could pass every pre-scan check (100,000 cells in one column, one 32 KiB shared
+  string, a small decompressed size) and still allocate about 3 GiB before the
+  budget refused it, for any caller holding a write-scoped key. Cells are now read
+  through the borrowed range, so a string is counted before it is copied, and that
+  workbook is refused having allocated a fraction of that. The header row is
+  counted the same way: a row of header cells naming one large string was copied
+  per cell before any count, and a workbook with no data rows was never checked at
+  all. A normal workbook parses as before. (#605)
+
 - **CLI: seven defects an end-to-end run found, and five documentation gaps.**
   - `odal verify` reads the file `odal passport evidence -o` writes: it was the
     stored record, which the node's verify route refused ("unknown field
