@@ -16,8 +16,45 @@ use cli_args::Cli;
 use console::setup::run_setup;
 use dispatch::{dispatch, should_enter_interactive};
 
+/// Whether a panic message is `println!` reporting that the pipe it writes to
+/// has been closed, as `head` does once it has its lines.
+///
+/// Matched on the message because that is all a panic carries: the I/O error
+/// inside it is formatted away before the hook sees it. Unix says "Broken pipe"
+/// (error 32); Windows says the pipe is closing (232) or ended (109).
+fn is_closed_pipe_message(message: &str) -> bool {
+    message.starts_with("failed printing to std")
+        && ["os error 32", "os error 232", "os error 109"]
+            .iter()
+            .any(|code| message.contains(code))
+}
+
+/// End quietly when whatever reads our output goes away.
+///
+/// `println!` panics when stdout is a pipe that has been closed, so
+/// `odal passport list | head -n 1` ended in a panic message and exit code 101.
+/// A reader that has all it wanted is not a failure of ours. Any other panic,
+/// including a failed write to a file or a full disk, still goes to the default
+/// hook.
+fn exit_quietly_when_the_reader_goes_away() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if is_closed_pipe_message(message) {
+            std::process::exit(0);
+        }
+        default_hook(info);
+    }));
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    exit_quietly_when_the_reader_goes_away();
     let cli = Cli::parse();
     config::set_active_profile_override(cli.profile.clone());
     http::set_idempotency_key(cli.idempotency_key.clone());
@@ -68,6 +105,63 @@ mod tests {
         );
     }
 
+    fn long_help(path: &[&str]) -> String {
+        let mut command = Cli::command();
+        let mut current = &mut command;
+        for name in path {
+            current = current
+                .find_subcommand_mut(name)
+                .unwrap_or_else(|| panic!("`odal {}` has no `{name}`", path.join(" ")));
+        }
+        current.render_long_help().to_string()
+    }
+
+    /// The help named four statuses and the node accepts six. Each one listed is
+    /// also one the node's own status type reads, so the list cannot name a status
+    /// that does not exist.
+    #[test]
+    fn the_status_filters_list_every_status_the_node_accepts() {
+        let statuses = [
+            "draft",
+            "active",
+            "suspended",
+            "superseded",
+            "retired",
+            "deactivated",
+        ];
+        for status in statuses {
+            assert!(
+                serde_json::from_value::<dpp_domain::PassportStatus>(serde_json::json!(status))
+                    .is_ok(),
+                "the node does not read `{status}` as a status"
+            );
+        }
+        for path in [["passport", "list"], ["passport", "export"]] {
+            let help = long_help(&path);
+            for status in statuses {
+                assert!(help.contains(status), "`{status}` missing from:\n{help}");
+            }
+        }
+    }
+
+    /// Behaviour a command's name does not say, and its help once did not: each
+    /// of these was learned by running it.
+    #[test]
+    fn help_states_what_the_command_does_beyond_what_its_name_says() {
+        let publish = long_help(&["passport", "publish"]);
+        assert!(publish.contains("suspended"), "{publish}");
+
+        let retire = long_help(&["passport", "retire"]);
+        assert!(retire.contains("retention period"), "{retire}");
+
+        let remove = long_help(&["webhook", "remove"]);
+        assert!(remove.contains("inactive"), "{remove}");
+
+        let verify = long_help(&["verify"]);
+        assert!(verify.contains("embedded"), "{verify}");
+        assert!(verify.contains("current DID document"), "{verify}");
+    }
+
     /// A field's `///` doc comment is its help text, so a 🚨 note written for
     /// the next reader of the code is printed to an operator. The note on
     /// `snapshot verify --key` was. Walks every command, so the next one fails
@@ -92,6 +186,23 @@ mod tests {
             "help text carries a maintainers' note:\n{}",
             leaks.join("\n\n")
         );
+    }
+
+    #[test]
+    fn only_a_write_to_a_closed_pipe_is_treated_as_the_reader_leaving() {
+        assert!(is_closed_pipe_message(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(is_closed_pipe_message(
+            "failed printing to stdout: The pipe is being closed. (os error 232)"
+        ));
+        // A full disk is a real failure of ours and must still be reported.
+        assert!(!is_closed_pipe_message(
+            "failed printing to stdout: No space left on device (os error 28)"
+        ));
+        assert!(!is_closed_pipe_message(
+            "called `Option::unwrap()` on a `None` value"
+        ));
     }
 
     #[test]
@@ -380,10 +491,15 @@ mod tests {
     fn parse_passport_import() {
         let cli = Cli::parse_from(["odal", "passport", "import", "data.csv"]);
         if let Some(Commands::Passport {
-            command: PassportCommands::Import { file },
+            command:
+                PassportCommands::Import {
+                    file,
+                    product_group,
+                },
         }) = cli.command
         {
             assert_eq!(file, "data.csv");
+            assert!(product_group.is_none());
         } else {
             panic!("expected Passport::Import");
         }

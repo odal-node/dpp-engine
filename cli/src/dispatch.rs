@@ -146,8 +146,13 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             .await
         }
         Commands::Key {
-            command: KeyCommands::Create { name, use_key },
-        } => run_key_create(&name, use_key).await,
+            command:
+                KeyCommands::Create {
+                    name,
+                    scope,
+                    use_key,
+                },
+        } => run_key_create(&name, scope.as_str(), use_key).await,
         Commands::Key {
             command: KeyCommands::List,
         } => run_key_list().await,
@@ -321,8 +326,12 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             .await
         }
         Commands::Passport {
-            command: PassportCommands::Import { file },
-        } => run_import(&file).await,
+            command:
+                PassportCommands::Import {
+                    file,
+                    product_group,
+                },
+        } => run_import(&file, product_group).await,
         Commands::Passport {
             command: PassportCommands::Validate { file },
         } => run_validate(file).await,

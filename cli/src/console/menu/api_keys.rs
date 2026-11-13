@@ -56,6 +56,8 @@ pub(super) async fn api_keys() -> Result<()> {
                             match action_key_create(
                                 &KeyCreateParams {
                                     name: name.trim().to_owned(),
+                                    // The menu has always made admin keys.
+                                    scope: "admin".to_owned(),
                                 },
                                 &client,
                                 &cfg,

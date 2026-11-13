@@ -40,6 +40,101 @@ fn indexed_idempotency_key(index: usize) -> Option<String> {
     idempotency_key().map(|k| format!("{k}#{index}"))
 }
 
+/// A request that got no answer: nothing is listening, the name did not
+/// resolve, or the node took too long.
+///
+/// One type so every command says the same thing. Before it, `bootstrap` said
+/// "could not reach the node", `whoami` printed the HTTP library's own
+/// `error sending request for url` with its cause chain, and `status` printed a
+/// bare "unreachable". Each also suggested `odal up`, which starts a **local**
+/// stack, whether or not the profile named a local node.
+#[derive(Debug)]
+pub struct NodeUnreachable {
+    origin: String,
+    reason: &'static str,
+    /// Whether the node is on this machine, which decides what is worth
+    /// suggesting.
+    local: bool,
+}
+
+impl NodeUnreachable {
+    /// `None` for a transport error that is not "no answer" — a body that would
+    /// not decode, a redirect loop — which is reported as it came.
+    fn from_transport(e: &reqwest::Error) -> Option<Self> {
+        if !(e.is_connect() || e.is_timeout()) {
+            return None;
+        }
+        let url = e.url()?;
+        Some(Self {
+            origin: url.origin().ascii_serialization(),
+            reason: transport_reason(e),
+            local: is_loopback(url),
+        })
+    }
+}
+
+impl std::fmt::Display for NodeUnreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "could not reach the node at {} ({}). ",
+            self.origin, self.reason
+        )?;
+        if self.local {
+            write!(f, "Is it running? Start the local stack with `odal up`.")
+        } else {
+            write!(
+                f,
+                "Check the node URL in this profile (`odal profile show`) and that this machine can reach it."
+            )
+        }
+    }
+}
+
+impl std::error::Error for NodeUnreachable {}
+
+/// Why there was no answer, in a few words, read from the error's cause chain.
+fn transport_reason(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        return "timed out";
+    }
+    let mut chain = String::new();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(err) = source {
+        if err
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+        {
+            return "connection refused";
+        }
+        chain.push_str(&err.to_string().to_ascii_lowercase());
+        chain.push(' ');
+        source = err.source();
+    }
+    if chain.contains("dns") || chain.contains("lookup") {
+        "DNS lookup failed"
+    } else {
+        "connection failed"
+    }
+}
+
+/// `send`, reporting a request that got no answer as [`NodeUnreachable`]
+/// instead of the HTTP library's own error.
+trait SendToNode {
+    async fn send_to_node(self) -> Result<reqwest::Response>;
+}
+
+impl SendToNode for reqwest::RequestBuilder {
+    async fn send_to_node(self) -> Result<reqwest::Response> {
+        self.send()
+            .await
+            .map_err(|e| match NodeUnreachable::from_transport(&e) {
+                Some(unreachable) => anyhow::Error::new(unreachable),
+                None => anyhow::Error::new(e),
+            })
+    }
+}
+
 /// Shared HTTP client wrapper that authenticates with the vault via an
 /// `Authorization` header.
 ///
@@ -88,7 +183,7 @@ impl OdalClient {
             .inner
             .get(url)
             .header(AUTHORIZATION, &self.authorization)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -106,7 +201,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .json(payload)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -156,7 +251,7 @@ impl OdalClient {
         if let Some(key) = key {
             request = request.header("Idempotency-Key", key);
         }
-        let resp = request.send().await?;
+        let resp = request.send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -172,7 +267,7 @@ impl OdalClient {
             .header(AUTHORIZATION, &self.authorization)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(bytes)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -216,7 +311,7 @@ impl OdalClient {
         if let Some(key) = key {
             request = request.header("Idempotency-Key", key);
         }
-        let resp = request.send().await?;
+        let resp = request.send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -233,7 +328,7 @@ impl OdalClient {
             .patch(url)
             .header(AUTHORIZATION, &self.authorization)
             .json(payload)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -246,7 +341,7 @@ impl OdalClient {
             .inner
             .delete(url)
             .header(AUTHORIZATION, &self.authorization)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -282,7 +377,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -322,7 +417,7 @@ impl OdalClient {
             .post(url)
             .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
-            .send()
+            .send_to_node()
             .await?;
         let status = resp.status();
         let body = resp.text().await?;
@@ -331,7 +426,7 @@ impl OdalClient {
 
     /// GET `url` without auth (used for public health endpoints).
     pub async fn get_public(&self, url: &str) -> Result<(StatusCode, String)> {
-        let resp = self.inner.get(url).send().await?;
+        let resp = self.inner.get(url).send_to_node().await?;
         let status = resp.status();
         let body = resp.text().await?;
         Ok((status, body))
@@ -364,12 +459,18 @@ pub fn require_secure_transport(url: &str) -> Result<()> {
         reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("`{url}` is not a URL: {e}"))?;
     match parsed.scheme() {
         "https" => Ok(()),
-        "http" if matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) => Ok(()),
+        "http" if is_loopback(&parsed) => Ok(()),
         _ => anyhow::bail!(
             "refusing to send a credential to {url} over plain HTTP; use https, \
              or plain HTTP to localhost only"
         ),
     }
+}
+
+/// Whether `url` names this machine: the host is `localhost` or a loopback
+/// address, as opposed to a host that merely contains one of those words.
+fn is_loopback(url: &reqwest::Url) -> bool {
+    matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
 }
 
 /// The local-admin client for the vault at `vault_url`, refused over plain HTTP

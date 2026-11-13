@@ -17,6 +17,13 @@ pub async fn action_import(
 ) -> Result<ImportSummary> {
     // JSON files are posted record-by-record to the vault create endpoint.
     if params.file.to_ascii_lowercase().ends_with(".json") {
+        // Every record states its own product group, so a flag would be ignored.
+        // Said now, not left to look as though it had been honoured.
+        anyhow::ensure!(
+            params.product_group.is_none(),
+            "--product-group applies to a CSV file; each record in {} states its own",
+            params.file
+        );
         let content = std::fs::read_to_string(&params.file)
             .with_context(|| format!("Cannot read file: {}", params.file))?;
         let payloads = parse_json_payloads(&content)
@@ -27,8 +34,8 @@ pub async fn action_import(
     // CSV/XLSX go through the integrator's bulk endpoint — the single validated
     // path that maps every column (Annex XIII fields, materials) and runs the
     // compliance determination server-side via the vault create handler. The
-    // product group is detected from the file's `productGroup` (or the legacy
-    // `productCategory`) column.
+    // product group is the one `--product-group` names, or the one the file's
+    // `productGroup` (or the legacy `productCategory`) column states.
     let bytes = std::fs::read(&params.file)
         .with_context(|| format!("Cannot read file: {}", params.file))?;
     let filename = std::path::Path::new(&params.file)
@@ -36,13 +43,8 @@ pub async fn action_import(
         .and_then(|s| s.to_str())
         .unwrap_or("upload.csv")
         .to_owned();
-    let product_group = detect_product_group(&bytes).with_context(|| {
-        format!(
-            "Could not determine the product group for {}. Add a `productGroup` column \
-             holding the product group's key, as `odal product-group list` prints it.",
-            params.file
-        )
-    })?;
+    let product_group =
+        resolve_product_group(params.product_group.as_deref(), &bytes, &params.file)?;
 
     // The value is read from the file and becomes a path segment of a request sent
     // with the operator's credential. A product-group key is lowercase letters,
@@ -129,6 +131,29 @@ pub fn parse_json_payloads(content: &str) -> Result<Vec<serde_json::Value>> {
         serde_json::Value::Array(items) => Ok(items),
         obj @ serde_json::Value::Object(_) => Ok(vec![obj]),
         _ => anyhow::bail!("JSON must be a DPP object or an array of DPP objects"),
+    }
+}
+
+/// The product group a CSV/XLSX file is imported under: the one `--product-group`
+/// names, or else the one the file's own column states.
+///
+/// A flag and a column that disagree are refused rather than one of them chosen.
+/// The column is the operator's data and the flag is the operator's intent, and
+/// importing a battery file under `textile` sends every row through the wrong
+/// schema.
+fn resolve_product_group(flag: Option<&str>, bytes: &[u8], file: &str) -> Result<String> {
+    let flag = flag.map(|f| f.trim().to_ascii_lowercase());
+    match (flag, detect_product_group(bytes)) {
+        (Some(flag), Some(column)) if flag != column => anyhow::bail!(
+            "{file} names product group `{column}` in its productGroup column, but \
+             --product-group says `{flag}`. Drop the flag, or correct the column."
+        ),
+        (Some(group), _) | (None, Some(group)) => Ok(group),
+        (None, None) => anyhow::bail!(
+            "Could not determine the product group for {file}. Pass --product-group <key>, \
+             or add a `productGroup` column holding it. The key is the one `odal \
+             product-group list` prints (`battery` for every `battery-*` template)."
+        ),
     }
 }
 

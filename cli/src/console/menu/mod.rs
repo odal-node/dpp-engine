@@ -82,9 +82,12 @@ fn print_header() {
 pub(super) fn print_err(e: impl std::fmt::Display) {
     let msg = e.to_string();
     let lower = msg.to_lowercase();
-    let remedy: Option<&str> = if lower.contains("connection refused")
-        || lower.contains("actively refused")
-    {
+    let remedy: Option<&str> = if lower.contains("could not reach the node") {
+        // The message already says what to try for this profile. The remedies
+        // below are for errors that carry no advice of their own, and the first
+        // of them would send a remote node's operator to `odal up`.
+        None
+    } else if lower.contains("connection refused") || lower.contains("actively refused") {
         Some("Vault isn't running — choose Infrastructure › Start, or run `odal up`.")
     } else if lower.contains("timed out") || lower.contains("timeout") {
         Some("Request timed out — check that the node is reachable at the configured vault URL.")

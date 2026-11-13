@@ -161,8 +161,13 @@ pub enum Commands {
     // ── Evidence verification ────────────────────────────────────────────────
     /// Verify an evidence dossier against the node (see `odal passport
     /// evidence` to generate one)
+    ///
+    /// VERIFIED means the dossier is consistent with the DID document snapshot
+    /// embedded in it. It does not show that snapshot is the issuer's current DID
+    /// document.
     Verify {
-        /// Stored dossier id, or path to a dossier JSON file
+        /// Stored dossier id, or path to a file holding a dossier or the record
+        /// `odal passport evidence -o` wrote
         target: String,
     },
     // ── Continuity snapshots ─────────────────────────────────────────────────
@@ -186,7 +191,7 @@ pub enum Commands {
         command: ProductGroupCommands,
     },
     /// Download the CSV import template for a product group (the header row
-    /// `odal passport import` expects)
+    /// `odal passport import` expects; import it with `--product-group`)
     Template {
         /// Template key: the product group, or for a battery the group and its
         /// category (`battery-ev`). A key this node does not serve is refused
@@ -227,7 +232,8 @@ pub enum Commands {
 pub enum PassportCommands {
     /// List or search passports (id, name, status) — no ID needed
     List {
-        /// Filter by status (draft, active, suspended, retired)
+        /// Filter by status (draft, active, suspended, superseded, retired,
+        /// deactivated)
         #[arg(long)]
         status: Option<String>,
         /// Free-text search across product name, batch, and manufacturer
@@ -248,6 +254,12 @@ pub enum PassportCommands {
     Import {
         /// Path to the CSV/TSV/JSON file
         file: String,
+        /// The product group a CSV file is imported under, as `odal
+        /// product-group list` prints it (`battery` for every `battery-*`
+        /// template). Needed for a file with no `productGroup` column, which is
+        /// what `odal template` writes. A JSON file states its own.
+        #[arg(long = "product-group")]
+        product_group: Option<String>,
     },
     /// Validate draft passports, or dry-run a passport body from a file
     Validate {
@@ -256,8 +268,11 @@ pub enum PassportCommands {
         file: Option<String>,
     },
     /// Sign and publish draft passports (all drafts, or a specific ID)
+    ///
+    /// Given the ID of a suspended passport, it publishes that passport again.
     Publish {
-        /// Specific passport ID to publish (publishes all drafts if omitted)
+        /// Specific passport ID to publish: a draft, or a suspended passport to
+        /// publish again (publishes all drafts if omitted)
         id: Option<String>,
     },
     /// Suspend a published passport (serves 410 Gone)
@@ -266,6 +281,10 @@ pub enum PassportCommands {
         id: String,
     },
     /// Retire a passport (terminal state)
+    ///
+    /// Refused until the product group's retention period, counted from
+    /// publication, has passed; the refusal names the date. The operator's
+    /// `--retention-policy-days` setting does not change it.
     Retire {
         /// Passport ID
         id: String,
@@ -300,7 +319,8 @@ pub enum PassportCommands {
         /// Output format
         #[arg(long, default_value = "json")]
         format: String,
-        /// Filter by status (draft, active, suspended, retired)
+        /// Filter by status (draft, active, suspended, superseded, retired,
+        /// deactivated)
         #[arg(long)]
         status: Option<String>,
         /// Output file (stdout if omitted)
@@ -625,9 +645,18 @@ pub enum ProfileCommands {
 #[derive(Subcommand)]
 pub enum KeyCommands {
     /// Create a new API key (prints the secret once)
+    ///
+    /// Without --scope the key is an admin key, which can do everything,
+    /// including creating more keys. Give an integration the narrowest scope it
+    /// needs.
     Create {
         /// A label for the key
         name: String,
+        /// What the key may do: `read` (read only), `write` (also create and
+        /// change passports) or `admin` (also manage keys, webhooks and the
+        /// operator)
+        #[arg(long, value_enum, default_value_t = KeyScope::Admin)]
+        scope: KeyScope,
         /// Adopt the new key as this profile's active credential
         #[arg(long = "use")]
         use_key: bool,
@@ -651,6 +680,24 @@ pub enum KeyCommands {
         /// visible in shell history and the process table.
         secret: Option<String>,
     },
+}
+
+/// The scope an API key is created with. Spelled as the node spells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum KeyScope {
+    Read,
+    Write,
+    Admin,
+}
+
+impl KeyScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Admin => "admin",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -868,7 +915,10 @@ pub enum WebhookCommands {
         /// Webhook subscription id
         id: String,
     },
-    /// Remove a subscription by id
+    /// Deactivate a subscription by id
+    ///
+    /// No new events are sent to it. It stays in `webhook list` as inactive, and
+    /// deliveries already queued still go out.
     Remove {
         /// Webhook subscription id
         id: String,

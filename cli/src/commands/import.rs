@@ -11,10 +11,11 @@ use crate::{
     stateless::render::render_import_result,
 };
 
-pub async fn run_import(file: &str) -> Result<()> {
+pub async fn run_import(file: &str, product_group: Option<String>) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let params = ImportParams {
         file: file.to_owned(),
+        product_group,
     };
 
     let pb = ProgressBar::new(0);

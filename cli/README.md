@@ -144,7 +144,7 @@ directory and each parent, so they work from anywhere inside the deployment.
 | `odal bootstrap [--legal-name …] [--force]` | Mint the first API key with the local admin credential (HTTP Basic, from `ADMIN_USERNAME` / `ADMIN_PASSWORD`) | local admin |
 | `odal operator show` | Print the operator configuration | read |
 | `odal operator set [--legal-name …] [--retention-policy-days …]` | Update operator fields | admin |
-| `odal key create <name> [--use]` | Mint an API key. The secret is printed once | admin |
+| `odal key create <name> [--scope read\|write\|admin] [--use]` | Mint an API key. The secret is printed once. Without `--scope` the key is an admin key | admin |
 | `odal key list` | List API keys by prefix | admin |
 | `odal key revoke <id>` | Revoke an API key | admin |
 | `odal key use [<secret> \| -]` | Save an existing `odal_sk_…` secret as this profile's key. Reads stdin for `-`, else `ODAL_API_SECRET`, else prompts | none |
@@ -174,12 +174,12 @@ keeps an append-only history.
 | Command | What it does | Scope |
 |---|---|---|
 | `odal passport list [--status] [--q] [--facility-id] [--limit] [--json]` | List or search passports | read |
-| `odal passport import <file>` | Create drafts from CSV, TSV or JSON. Results are reported per row | write |
-| `odal passport validate` | Check the stored drafts for missing required fields | read |
+| `odal passport import <file> [--product-group]` | Create drafts from CSV, TSV or JSON. Results are reported per row. A CSV is imported under the product group in its `productGroup` column, or under `--product-group` when it has none, as a file from `odal template` does. A JSON record states its own | write |
+| `odal passport validate` | Check the stored drafts' product-group data against the same rule the node's publish applies first. It does not check everything publish does | read |
 | `odal passport validate <file>` | Dry-run one JSON body through the create and publish checks. Creates nothing | write |
-| `odal passport publish [id]` | Sign and publish one draft, or every draft | write |
+| `odal passport publish [id]` | Sign and publish one draft, or every draft. Given the id of a suspended passport, it publishes that passport again | write |
 | `odal passport suspend <id>` | Suspend a published passport. Its public URL answers `410 Gone` | write |
-| `odal passport retire <id>` | Move a passport to the terminal `retired` state. The public page keeps serving | write |
+| `odal passport retire <id>` | Move a passport to the terminal `retired` state. The public page keeps serving. Refused until the product group's retention period, counted from publication, has passed; the refusal names the date. The operator's `--retention-policy-days` setting does not change it | write |
 | `odal passport eol <id> --reason [--derogation …]` | Declare end of life (terminal). `--reason destroyed` requires a `--derogation`, because ESPR Art. 25 otherwise bans destruction | write |
 | `odal passport amend <id> --patch <file> [--reason]` | Correct a published passport by issuing a successor. Returns the successor, which has a new id; the original moves to `superseded` | write |
 | `odal passport supersede <id> --superseded-by <id>` | Supersede a passport with one that already exists and already names it in `supersedesId` | write |
@@ -188,8 +188,8 @@ keeps an append-only history.
 | `odal passport stats <id> [--days 30]` | Scan and QR-render counts for one passport | read |
 | `odal passport tree <id>` | Walk the component (BOM) tree and check each node against the hash its parent pinned. An integrity check, not a signature check | read |
 | `odal passport find --product-group --identifier [--batch]` | Look a passport up by product identifier (GTIN-14, identification link or DID) and batch | read |
-| `odal passport export [--format json\|csv] [--status] [-o]` | Export every matching passport | read |
-| `odal passport evidence <id> [-o]` | Generate and store a signed evidence dossier | write |
+| `odal passport export [--format json\|csv] [--status] [-o]` | Export every matching passport. `--status` takes `draft`, `active`, `suspended`, `superseded`, `retired` or `deactivated` | read |
+| `odal passport evidence <id> [-o]` | Generate and store a signed evidence dossier. The output is the stored record: the dossier, with the id and hash the node stored it under. `odal verify` takes it as it is | write |
 
 `export` neutralises spreadsheet formulas in CSV cells. A bare file name
 (`-o report.csv`) is written to `~/.config/odal/exports/`; a path with a directory
@@ -211,7 +211,7 @@ be transferred.
 
 | Command | What it does | Scope |
 |---|---|---|
-| `odal verify <dossier-id \| file>` | Verify an evidence dossier's signatures and hash chains. Exit 0 verified, 1 a check failed, 2 the dossier could not be read | read |
+| `odal verify <dossier-id \| file>` | Verify an evidence dossier's signatures and hash chains. The file is a dossier, or the record `odal passport evidence -o` wrote. Exit 0 verified, 1 a check failed, 2 the dossier could not be read. VERIFIED means the dossier is consistent with the DID document snapshot embedded in it; it does not show that snapshot is the issuer's current DID document | read |
 | `odal snapshot verify <path \| url> (--key <base64> \| --did-url <url>)` | Check a continuity snapshot's signed freshness bound. Needs no node and no key. Exit 0 proven and current, 1 expired, stripped or unproven, 2 the check could not be made | none |
 | `odal seal status [id]` | Sealing state, operator-wide or for one passport | read |
 | `odal seal repair <id>` | Queue a replacement for a stored seal that no longer verifies. Refused unless the seal is broken, because a replacement costs a seal | admin |
@@ -235,7 +235,7 @@ separate check.
 | `odal schema list` | Product groups with a schema, the current version, and the older versions still readable | none |
 | `odal schema show <group> [version] [-o]` | Print a product group's JSON Schema | none |
 | `odal schema check` | The node build, `dpp-core` version and ruleset in force | none |
-| `odal template <key> [-o]` | The CSV header row `odal passport import` expects. Batteries are served per category (`battery-ev`, `battery-lmt`, `battery-industrial`). An unknown key returns `404` with the list of valid keys | none |
+| `odal template <key> [-o]` | The CSV header row `odal passport import` expects, with example rows. It has no `productGroup` column, so import it with `--product-group` (`textile`, or `battery` for every battery template). Batteries are served per category (`battery-ev`, `battery-lmt`, `battery-industrial`). An unknown key returns `404` with the list of valid keys | none |
 
 The catalog commands need no key because "does my product need a passport?" is
 asked before anyone runs a node.
@@ -266,7 +266,7 @@ refuses one.
 | `odal webhook add <https-url> [--events a,b] [--description]` | Subscribe a receiver to passport events; all events when `--events` is omitted. The signing secret is printed once | admin |
 | `odal webhook list` | List subscriptions | admin |
 | `odal webhook test <id>` | Send a signed test delivery | admin |
-| `odal webhook remove <id>` | Remove a subscription | admin |
+| `odal webhook remove <id>` | Deactivate a subscription. No new events are sent to it; it stays in `webhook list` as inactive, and deliveries already queued still go out | admin |
 | `odal plugin install <file>` | Upload a product group plugin and the detached signature beside it (`plugin.wasm` needs `plugin.wasm.sig`). The node checks the signature against its pinned publisher key, checks the ABI, stores it and swaps it in without a restart | admin |
 | `odal ruleset reload` | Re-read the signed ruleset channel now instead of waiting for the next poll | admin |
 

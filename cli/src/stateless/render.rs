@@ -707,7 +707,10 @@ pub fn render_operator(v: &serde_json::Value) -> Result<()> {
 }
 
 pub fn render_key_create(result: &KeyCreateResult) {
-    println!("API key '{}' created (shown once):", result.name);
+    println!(
+        "API key '{}' created with {} scope (shown once):",
+        result.name, result.scope
+    );
     println!("  {}", result.secret);
 }
 

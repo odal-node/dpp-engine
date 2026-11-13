@@ -1,6 +1,6 @@
 //! `odal key create | list | revoke | use` — manage API keys via the node API.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 use crate::{
     config::Config,
@@ -12,11 +12,12 @@ use crate::{
     stateless::render::{render_key_create, render_key_list},
 };
 
-pub async fn run_key_create(name: &str, activate: bool) -> Result<()> {
+pub async fn run_key_create(name: &str, scope: &str, activate: bool) -> Result<()> {
     let (client, mut cfg) = crate::http::load_client()?;
     let result = action_key_create(
         &KeyCreateParams {
             name: name.to_owned(),
+            scope: scope.to_owned(),
         },
         &client,
         &cfg,
@@ -63,10 +64,7 @@ pub async fn run_key_use(secret: &str) -> Result<()> {
     // even least-privilege — can list passports; only a bad key gets a 401.
     let client = OdalClient::new(secret);
     let url = format!("{}/api/v1/dpps?limit=1", cfg.vault_url);
-    let (status, _) = client
-        .get(&url)
-        .await
-        .context("could not reach the node to verify the key")?;
+    let (status, _) = client.get(&url).await?;
     if status.as_u16() == 401 {
         bail!("the node rejected that key (401) — it may be revoked, expired, or mistyped");
     }

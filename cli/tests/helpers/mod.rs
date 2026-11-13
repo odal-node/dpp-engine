@@ -221,3 +221,120 @@ pub fn problem_server(status_line: &'static str, body: &'static str) -> String {
 
     format!("http://127.0.0.1:{port}")
 }
+
+/// One request a [`recording_server`] received.
+pub struct Recorded {
+    pub method: String,
+    pub path: String,
+    pub body: Vec<u8>,
+}
+
+/// Start a server that answers every request with one canned JSON body, and
+/// hands back what each request carried.
+///
+/// For the suites that pin what the CLI **sends** rather than how it renders
+/// what comes back: which route, and which bytes. Returns its origin and the
+/// receiving end of the requests, in arrival order. The thread runs until the
+/// test process exits.
+pub fn recording_server(
+    status_line: &'static str,
+    body: &'static str,
+) -> (String, std::sync::mpsc::Receiver<Recorded>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");
+    let port = listener.local_addr().expect("read the bound port").port();
+    let (sent, received) = std::sync::mpsc::channel();
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let recorded = read_request(&mut stream);
+            let _ = sent.send(recorded);
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    (format!("http://127.0.0.1:{port}"), received)
+}
+
+/// Read one whole HTTP/1.1 request: the head, then as much body as it declares
+/// by `Content-Length`, or until the terminating chunk when it is chunked.
+fn read_request(stream: &mut std::net::TcpStream) -> Recorded {
+    let mut raw: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    let find =
+        |haystack: &[u8], needle: &[u8]| haystack.windows(needle.len()).position(|w| w == needle);
+
+    let head_end = loop {
+        if let Some(i) = find(&raw, b"\r\n\r\n") {
+            break i;
+        }
+        let n = stream.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break raw.len();
+        }
+        raw.extend_from_slice(&buf[..n]);
+    };
+
+    let head = String::from_utf8_lossy(&raw[..head_end]).into_owned();
+    let mut request_line = head.lines().next().unwrap_or_default().split_whitespace();
+    let method = request_line.next().unwrap_or_default().to_owned();
+    let path = request_line.next().unwrap_or_default().to_owned();
+    let header = |name: &str| {
+        head.lines().skip(1).find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.trim()
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim().to_owned())
+        })
+    };
+    let chunked = header("transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
+    let declared = header("content-length").and_then(|v| v.parse::<usize>().ok());
+
+    let mut body: Vec<u8> = raw.get(head_end + 4..).unwrap_or_default().to_vec();
+    if chunked {
+        while find(&body, b"0\r\n\r\n").is_none() {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&buf[..n]);
+        }
+    } else if let Some(len) = declared {
+        while body.len() < len {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&buf[..n]);
+        }
+    }
+
+    Recorded { method, path, body }
+}
+
+/// An origin nothing listens on: bound to learn a free port, then released.
+pub fn closed_origin() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");
+    let port = listener.local_addr().expect("read the bound port").port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A home directory whose active profile points at `origin`.
+pub fn home_with_node(origin: &str) -> tempfile::TempDir {
+    let home = tempfile::TempDir::new().expect("temp dir");
+    let run = odal(
+        home.path(),
+        &["profile", "create", "stub", "--node-url", origin],
+    );
+    assert_eq!(run.code, 0, "{}", run.output());
+    home
+}

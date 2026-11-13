@@ -18,7 +18,7 @@ retrieved later; store it with the receiver.
 ```bash
 odal webhook list
 odal webhook test <id>      # queue a signed dpp.webhook.test delivery
-odal webhook remove <id>    # stop new deliveries; queued ones still go out
+odal webhook remove <id>    # stop new deliveries; queued ones still go out; stays listed as inactive
 ```
 
 The same operations over the API need an `admin` key:

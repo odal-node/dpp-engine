@@ -1,6 +1,7 @@
 //! Validate: fetch drafts and flag rows missing required product group-data fields.
 
 use anyhow::{Context, Result};
+use dpp_domain::product_group::ProductGroupData;
 
 use super::super::types::{DryRunVerdict, ValidationRecord, ValidationReport};
 use crate::{
@@ -100,42 +101,37 @@ pub fn find_issues(rec: &serde_json::Value) -> Vec<String> {
         }
     }
 
-    if let Some(sd) = rec.get("productGroupData").and_then(|v| v.as_object()) {
-        match sd.get("productGroup").and_then(|s| s.as_str()) {
-            Some("battery") => {
-                for f in &[
-                    "productIdentifier",
-                    "batteryChemistry",
-                    "nominalVoltageV",
-                    "nominalCapacityAh",
-                    "expectedLifetimeCycles",
-                    "co2ePerUnitKg",
-                ] {
-                    if sd.get(*f).is_none() {
-                        issues.push(format!("productGroupData.{f} missing"));
-                    }
-                }
-            }
-            Some("textile") => {
-                for f in &[
-                    "productIdentifier",
-                    "fibreComposition",
-                    "countryOfOrigin",
-                    "careInstructions",
-                    "chemicalComplianceStandard",
-                ] {
-                    if sd.get(*f).is_none() {
-                        issues.push(format!("productGroupData.{f} missing"));
-                    }
-                }
-            }
-            _ => {
-                issues.push("unknown product_group".into());
-            }
-        }
+    if let Some(data) = rec.get("productGroupData").filter(|d| !d.is_null()) {
+        issues.extend(product_group_data_issues(data));
     }
 
     issues
+}
+
+/// What a draft's `productGroupData` fails, asked of the function the node asks.
+///
+/// This check kept its own list of the fields each product group requires, and
+/// the list was wrong the day it was written: it demanded `co2ePerUnitKg` of a
+/// battery, which the node's rule treats as optional, so `validate` exited 1 on
+/// a draft the same node publishes. A second copy of a rule agrees with the first
+/// until somebody edits one of them. Core's `validate_product_group_data` is the
+/// first step of the node's publish gate, so the verdict comes from there and
+/// there is nothing here to edit when a product group's requirements change.
+fn product_group_data_issues(data: &serde_json::Value) -> Vec<String> {
+    // The node stored this through the same type, so a draft it holds always
+    // reads back. A body that does not is reported, not skipped.
+    let parsed: ProductGroupData = match serde_json::from_value(data.clone()) {
+        Ok(parsed) => parsed,
+        Err(e) => return vec![format!("productGroupData: {e}")],
+    };
+    match dpp_domain::validate_product_group_data(&parsed) {
+        Ok(()) => Vec::new(),
+        Err(rejected) => rejected
+            .errors
+            .into_iter()
+            .map(|e| format!("productGroupData{}: {}", e.field, e.message))
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -143,54 +139,45 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn no_issues_for_complete_textile() {
-        let rec = json!({
-            "productName": "T-Shirt",
-            "productGroupData": {
-                "productGroup": "textile",
-                "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
-                "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
-                "countryOfOrigin": "DE",
-                "careInstructions": "Machine wash 30°C",
-                "chemicalComplianceStandard": "OEKO-TEX 100"
-            }
-        });
-        assert!(find_issues(&rec).is_empty());
+    /// The reference passports the demo loads, which the node publishes.
+    fn reference_battery() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../../../ops/demo/samples/battery-full.json"
+        ))
+        .expect("the reference battery is JSON")
+    }
+
+    fn reference_textile() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../../../ops/demo/samples/textile-full.json"
+        ))
+        .expect("the reference textile is JSON")
+    }
+
+    fn without(mut rec: serde_json::Value, field: &str) -> serde_json::Value {
+        rec["productGroupData"]
+            .as_object_mut()
+            .expect("group data is an object")
+            .remove(field);
+        rec
     }
 
     #[test]
-    fn no_issues_for_complete_battery() {
-        let rec = json!({
-            "productName": "EV Battery",
-            "productGroupData": {
-                "productGroup": "battery",
-                "productIdentifier": { "scheme": "gs1", "gtin": "09876543210123" },
-                "batteryChemistry": "NMC",
-                "nominalVoltageV": 3.7,
-                "nominalCapacityAh": 50.0,
-                "expectedLifetimeCycles": 2000,
-                "co2ePerUnitKg": 120.5
-            }
-        });
-        assert!(find_issues(&rec).is_empty(), "got: {:?}", find_issues(&rec));
+    fn no_issues_for_a_complete_textile() {
+        let issues = find_issues(&reference_textile());
+        assert!(issues.is_empty(), "got: {issues:?}");
+    }
+
+    #[test]
+    fn no_issues_for_a_complete_battery() {
+        let issues = find_issues(&reference_battery());
+        assert!(issues.is_empty(), "got: {issues:?}");
     }
 
     #[test]
     fn missing_product_name() {
         let rec = json!({ "productGroupData": { "productGroup": "textile" } });
         assert!(find_issues(&rec).iter().any(|i| i.contains("productName")));
-    }
-
-    #[test]
-    fn missing_product_identifier() {
-        let rec =
-            json!({ "productName": "Widget", "productGroupData": { "productGroup": "battery" } });
-        assert!(
-            find_issues(&rec)
-                .iter()
-                .any(|i| i.contains("productIdentifier"))
-        );
     }
 
     #[test]
@@ -204,70 +191,76 @@ mod tests {
     }
 
     #[test]
-    fn textile_missing_product_identifier() {
-        let rec = json!({
-            "productName": "T-Shirt",
-            "productGroupData": {
-                "productGroup": "textile",
-                "fibreComposition": [{"fibre": "cotton", "pct": 100.0}],
-                "countryOfOrigin": "DE",
-                "careInstructions": "wash",
-                "chemicalComplianceStandard": "REACH"
-            }
-        });
+    fn a_battery_missing_its_product_identifier_is_flagged_by_name() {
+        let issues = find_issues(&without(reference_battery(), "productIdentifier"));
         assert!(
-            find_issues(&rec)
-                .iter()
-                .any(|i| i.contains("productIdentifier"))
+            issues.iter().any(|i| i.contains("productIdentifier")),
+            "got: {issues:?}"
         );
     }
 
     #[test]
-    fn textile_missing_fibre_composition() {
-        let rec = json!({
-            "productName": "T-Shirt",
-            "productGroupData": {
-                "productGroup": "textile",
-                "countryOfOrigin": "DE",
-                "careInstructions": "wash",
-                "chemicalComplianceStandard": "REACH"
-            }
-        });
+    fn a_textile_missing_its_product_identifier_is_flagged_by_name() {
+        let issues = find_issues(&without(reference_textile(), "productIdentifier"));
         assert!(
-            find_issues(&rec)
-                .iter()
-                .any(|i| i.contains("fibreComposition"))
+            issues.iter().any(|i| i.contains("productIdentifier")),
+            "got: {issues:?}"
         );
     }
 
     #[test]
-    fn battery_missing_chemistry() {
-        let rec = json!({
-            "productName": "Battery",
-            "productGroupData": {
-                "productGroup": "battery",
-                "nominalVoltageV": 3.7,
-                "nominalCapacityAh": 50.0,
-                "expectedLifetimeCycles": 2000,
-                "co2ePerUnitKg": 120.5
-            }
-        });
+    fn a_textile_missing_its_fibre_composition_is_flagged_by_name() {
+        let issues = find_issues(&without(reference_textile(), "fibreComposition"));
         assert!(
-            find_issues(&rec)
-                .iter()
-                .any(|i| i.contains("batteryChemistry"))
+            issues.iter().any(|i| i.contains("fibreComposition")),
+            "got: {issues:?}"
+        );
+    }
+
+    /// The node's battery rules treat `co2ePerUnitKg` as optional, and a draft
+    /// without it publishes. The list this check kept of its own required a field
+    /// the node does not, so `odal passport validate` exited 1 on a passport the
+    /// same node would publish.
+    #[test]
+    fn a_battery_draft_without_co2e_per_unit_kg_is_not_flagged() {
+        let issues = find_issues(&without(reference_battery(), "co2ePerUnitKg"));
+
+        assert!(issues.is_empty(), "got: {issues:?}");
+    }
+
+    /// What the node requires is still reported, by name — from its rule.
+    #[test]
+    fn a_battery_draft_missing_a_required_field_is_flagged_by_name() {
+        let issues = find_issues(&without(reference_battery(), "batteryChemistry"));
+
+        assert!(
+            issues.iter().any(|i| i.contains("batteryChemistry")),
+            "got: {issues:?}"
+        );
+    }
+
+    /// A value the node refuses is refused here too. A list of field names can
+    /// say a field is present and cannot say it is wrong; the node's rule can.
+    #[test]
+    fn a_value_the_nodes_rule_refuses_is_flagged_though_the_field_is_present() {
+        let mut rec = reference_textile();
+        rec["productGroupData"]["fibreComposition"] =
+            json!([{ "fibre": "organic cotton", "pct": 55.0 }]);
+
+        let issues = find_issues(&rec);
+
+        assert!(
+            issues.iter().any(|i| i.contains("fibreComposition")),
+            "got: {issues:?}"
         );
     }
 
     #[test]
-    fn unknown_product_group_flagged() {
+    fn an_unknown_product_group_is_flagged() {
         let rec =
             json!({ "productName": "Widget", "productGroupData": { "productGroup": "alien" } });
-        assert!(
-            find_issues(&rec)
-                .iter()
-                .any(|i| i.contains("unknown product_group"))
-        );
+        let issues = find_issues(&rec);
+        assert!(!issues.is_empty(), "an unknown product group passed");
     }
 
     #[test]

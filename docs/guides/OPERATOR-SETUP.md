@@ -97,7 +97,7 @@ It is the one route a `read`-scoped key can use to learn its own scope.
 
 ```bash
 odal template battery-industrial -o battery.csv   # the columns the importer expects
-odal --profile prod passport import battery.csv
+odal --profile prod passport import battery.csv --product-group battery
 odal --profile prod passport validate
 odal --profile prod passport publish
 ```
@@ -120,9 +120,11 @@ category.
   ✗ Row 1 [gtin]: GTIN check digit invalid for '03801234567890': expected 8, got 0
   ```
 
-- **One file, one product group.** `odal passport import` reads the product group
-  from the `productGroup` column of the first data row and applies it to the whole
-  file. Split mixed files.
+- **One file, one product group.** `odal passport import` applies one product group
+  to the whole file: the one `--product-group` names, or else the one in the
+  `productGroup` column of the first data row. A template has no such column, so
+  import it with `--product-group` (`battery` for every battery template). A flag
+  that disagrees with the column is refused. Split mixed files.
 - **Dry-run a body first** with `odal passport validate <file.json>`:
 
   ```text

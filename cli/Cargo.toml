@@ -15,6 +15,10 @@ path = "src/main.rs"
 
 [dependencies]
 dpp-types   = { workspace = true }
+# `odal passport validate` asks the same function the node's publish asks, so it
+# cannot keep a second list of what a product group requires. Already linked:
+# `dpp-types` carries it.
+dpp-domain  = { workspace = true }
 # `odal snapshot verify` checks a continuity snapshot with no node: `dpp-vc`
 # for the bound verifier, `dpp-crypto` for reading a key out of a DID document.
 # Both are already workspace pins consumed elsewhere here.

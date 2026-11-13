@@ -2198,6 +2198,7 @@ dependencies = [
  "csv",
  "dirs",
  "dpp-crypto",
+ "dpp-domain",
  "dpp-types",
  "dpp-vc",
  "futures",
