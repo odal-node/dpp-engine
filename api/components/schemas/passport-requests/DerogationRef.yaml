@@ -8,8 +8,12 @@ description: >-
 properties:
   category:
     type: string
-    description: The derogation category as named by the delegated act.
-    example: health-and-safety
+    description: |
+      One of the points of Art. 2 of Commission Delegated Regulation (EU)
+      2026/296, spelled as the unsold-goods disclosure spells a discard reason
+      (camelCase), such as `dangerousProduct` for point (a). Any other value is
+      refused with `422`, and the refusal lists them all.
+    example: dangerousProduct
   actCitation:
     type:
       - string

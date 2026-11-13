@@ -3117,7 +3117,7 @@ mod fixtures {
 
     pub fn derogation_ref() -> DerogationRef {
         DerogationRef {
-            category: "safety".into(),
+            category: "dangerousProduct".into(),
             act_citation: Some("Regulation (EU) 2024/1781, Art. 25(3)".into()),
         }
     }
