@@ -226,6 +226,9 @@ pub fn problem_server(status_line: &'static str, body: &'static str) -> String {
 pub struct Recorded {
     pub method: String,
     pub path: String,
+    /// The `Authorization` header, for the suites that pin which credential
+    /// reaches which node.
+    pub authorization: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -317,7 +320,12 @@ fn read_request(stream: &mut std::net::TcpStream) -> Recorded {
         }
     }
 
-    Recorded { method, path, body }
+    Recorded {
+        method,
+        path,
+        authorization: header("authorization"),
+        body,
+    }
 }
 
 /// An origin nothing listens on: bound to learn a free port, then released.

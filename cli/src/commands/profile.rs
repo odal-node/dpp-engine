@@ -119,15 +119,31 @@ pub fn run_profile_create(
         && config::resolver_is_unstated_default(profile.kind, &profile.resolver_url))
     .then(|| profile.resolver_url.clone());
 
-    config::create_profile(name, profile, force)?;
+    let key_removed = config::create_profile(name, profile, force)?;
     println!(
         "{} Created profile '{name}'. Switch to it with `odal profile use {name}`.",
         style("✓").green()
     );
+    if key_removed {
+        warn_key_removed(name);
+    }
     if let Some(url) = unstated_resolver {
         warn_unstated_resolver(&url);
     }
     Ok(())
+}
+
+/// Say that the API key stored under `name` was removed, and how to store one.
+///
+/// [`config::create_profile`] removes it unless the profile already had the
+/// same vault URL, because a key is sent to whatever URL the profile names.
+pub(crate) fn warn_key_removed(name: &str) {
+    println!(
+        "{} The API key stored for '{name}' was removed: nothing says this node issued it,",
+        style("!").yellow().bold(),
+    );
+    println!("  and it would have been sent to it. Save a key this node issued with");
+    println!("  `odal --profile {name} key use -`.");
 }
 
 /// Warn that a profile pointed at a remote node kept the localhost resolver.

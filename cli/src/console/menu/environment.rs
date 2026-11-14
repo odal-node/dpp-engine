@@ -102,11 +102,18 @@ pub(super) async fn environment() -> Result<()> {
                         }
                     }
                     match config::create_profile(&name, profile, false) {
-                        Ok(()) => {
+                        Ok(key_removed) => {
                             println!(
                                 "\n  {} Created profile '{name}' ({kind}). Use Switch to activate it.\n",
                                 style("✓").green()
                             );
+                            if key_removed {
+                                println!(
+                                    "  {} The API key stored for '{name}' was removed: nothing says this node issued it.\n",
+                                    style("!").yellow().bold()
+                                );
+                                hint(&format!("odal --profile {name} key use -"));
+                            }
                             hint(&format!(
                                 "odal profile create {name} --node-url … --resolver-url …"
                             ));

@@ -330,6 +330,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`odal profile create --force` removes a profile's API key when its vault URL
+  changes.** The credentials store is keyed by profile name, and overwriting a
+  profile replaced its URLs and kept its key, so a profile re-pointed at another
+  node sent the previous node's key with its next request. The key is now kept
+  only when the normalised vault URL stays the same. Otherwise it is removed
+  before the profile is written, and the command says so and names
+  `odal key use`. The check compares URLs: a different node answering at the
+  same URL still receives the key. Creating a profile also removes a key left
+  under its name with no profile, since nothing says which URL it was used
+  with. (#612)
+
 - **The node no longer issues an authority role under another spelling, and no
   longer accepts any category as the lawful basis of a destruction.**
   `POST /credentials` refused the three authority roles by their typed names and
