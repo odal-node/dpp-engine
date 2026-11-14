@@ -545,8 +545,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   credentials are not sent over plain HTTP to a remote host, and terminal output is
   stripped of control characters. (#576)
 
-- **Pointing a profile at another node** clears the credential the previous node
-  issued, so the next request does not send it to a node that never issued it. (#576)
+- **The guided setup, pointing a profile at this machine's node,** clears the
+  credential the previous node issued, so the next request does not send it to a
+  node that never issued it. (#576)
 
 - **A workbook's namespace-prefixed cells** are measured with the same dense-range
   check as unprefixed ones, and a declared shared-string count is capped. (#576)
@@ -602,9 +603,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   dashboard's task list was read from the front for twenty pages, so once an
   operator had more than a thousand tasks a new submission on an oldest-first
   list was never found and was polled forever. The first page says how long the
-  list is (`totalElements`), and a longer one is now read from both ends,
-  interleaved, since the order is not recorded. A search that ran out says so
-  instead of reporting the registry as still working. (#484)
+  list is (`totalElements`), and a longer one is read from the front when the
+  first page shows it came back newest first (see **Changed**), and otherwise
+  from both ends, interleaved. A search that ran out says so instead of
+  reporting the registry as still working. (#484)
 
 - **An access credential that fails authentication is told which of seven
   things to fix:** a token that is not a compact JWS, no key for its `kid`, a
