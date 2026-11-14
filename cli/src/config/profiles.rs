@@ -301,19 +301,42 @@ pub fn use_profile(name: &str) -> Result<()> {
 }
 
 /// Create a new profile. Refuses to overwrite an existing one unless `force`.
-pub fn create_profile(name: &str, profile: Profile, force: bool) -> Result<()> {
+///
+/// Returns whether an API key stored under `name` was removed. The credentials
+/// store is keyed by profile name, so without this a key outlived the profile
+/// it was saved for: overwriting a profile with another node's URL kept the
+/// previous node's key, and the next command sent it to a node that never
+/// issued it. A key is kept only when an existing profile is overwritten with
+/// the same vault URL, the one case where the node that issued it is the node it
+/// goes to. A key under a name no profile holds is removed too, because nothing
+/// says which node issued it.
+///
+/// The key is removed before the profile is written, as guided setup does. If
+/// the write then fails, the profile still points at the node it pointed at,
+/// holding no key, so nothing reaches a node that did not issue it.
+pub fn create_profile(name: &str, profile: Profile, force: bool) -> Result<bool> {
     if name.is_empty() {
         bail!("profile name must not be empty");
     }
     let mut file = ConfigFile::load()?;
-    if file.profiles.contains_key(name) && !force {
+    let existing = file.profiles.get(name);
+    if existing.is_some() && !force {
         bail!("profile '{name}' already exists. Pass --force to overwrite it.");
     }
-    file.profiles.insert(name.to_owned(), normalize(profile));
+    let profile = normalize(profile);
+    let same_node =
+        existing.is_some_and(|old| normalize(old.clone()).vault_url == profile.vault_url);
+    let key_removed = if same_node {
+        false
+    } else {
+        crate::credentials::remove_key(name)?
+    };
+    file.profiles.insert(name.to_owned(), profile);
     if file.current_profile.is_none() {
         file.current_profile = Some(name.to_owned());
     }
-    file.write()
+    file.write()?;
+    Ok(key_removed)
 }
 
 /// Remove a profile. Errors if it is the only one or does not exist.

@@ -60,6 +60,12 @@ odal --profile dev status            # one command against another profile
 both on one origin. The resolver is a separate deployment, so it always needs its
 own `--resolver-url`. `--kind` is inferred from the URL when omitted.
 
+A profile's API key is sent to whatever node the profile names, so it is kept
+only while the profile points at the node that issued it. `profile create
+--force` over an existing profile keeps the stored key if the vault URL is the
+same, and removes it if not. Save a key the new node issued with
+`odal --profile <name> key use -`.
+
 The kind controls the start-up checks, not what is started:
 
 - `dev` accepts the example database passwords from `.env.example`.
