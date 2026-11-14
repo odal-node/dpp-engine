@@ -1,0 +1,6 @@
+{
+  "autoReview": [],
+  "strictness": 1,
+  "shouldUpdateDescription": false,
+  "ignorePatterns": "api/openapi.bundled.yaml\napi/openapi.bundled.json\nCargo.lock"
+}
