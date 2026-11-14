@@ -74,12 +74,15 @@ The version is in four places, changed in one pull request:
 ## Tagging
 
 Merge the release pull request, wait for CI on the merge commit (including both
-**Container image** checks), then tag that commit:
+**Container image** checks), then tag that commit **by its hash**. `git tag` without a
+commit tags whatever is checked out, and a checkout on a feature branch tags that branch.
 
-Replace `<version>` below with the release number from `Cargo.toml`, without the `v`.
+Replace `<version>` below with the release number from `Cargo.toml`, without the `v`,
+and `<merge-commit-sha>` with the merge commit's full hash:
 
 ```bash
-git tag -a v<version> -m "v<version>"
+git fetch origin
+git tag -a v<version> <merge-commit-sha> -m "v<version>"
 git push origin v<version>
 ```
 
@@ -87,6 +90,11 @@ git push origin v<version>
 > Pushing the tag publishes. `release.yml` builds both images and pushes them with their
 > attestations. There is no dry run on a tag; CI's image job, which builds the same
 > Dockerfiles without pushing, is the rehearsal.
+
+Before anything is built, `release.yml` refuses a tag whose commit is not on `main`, or
+whose name is not `v` followed by the version that commit's `Cargo.toml` states
+(`scripts/release-tag-check.sh`). A refused tag publishes nothing: delete it with
+`git push origin :refs/tags/v<version>`, then tag the merge commit.
 
 To build an image locally (the build context is the directory containing
 `dpp-engine/`, and `dpp-core/` for local-core builds):
