@@ -4,11 +4,10 @@
 //! outlives any one URL the profile holds. `odal profile create --force` over an
 //! existing profile used to replace its URLs and keep its key, and the next
 //! command sent the previous node's key to the new one. These pin the rule that
-//! replaced it: a key is kept only while the profile points at the node that
-//! issued it.
+//! replaced it: a key is kept only while the profile's vault URL is unchanged.
 
 mod helpers;
-use helpers::{Recorded, odal, odal_env, recording_server};
+use helpers::{Recorded, config_path, odal, odal_env, recording_server};
 
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -103,7 +102,7 @@ fn a_profile_pointed_at_another_node_does_not_send_it_the_previous_nodes_key() {
 }
 
 #[test]
-fn overwriting_a_profile_for_the_same_node_keeps_its_key() {
+fn overwriting_a_profile_with_the_same_vault_url_keeps_its_key() {
     let (node, requests) = recording_server("200 OK", WHOAMI);
     let home = home_with_key_from(&node);
     received(&requests); // the check `key use` made
@@ -154,4 +153,51 @@ fn a_key_stored_under_a_name_no_profile_holds_is_not_sent_to_a_new_profiles_node
     assert_eq!(run.code, 0, "{}", run.output());
     assert!(run.output().contains("was removed"), "{}", run.output());
     whoami_reaches_without(home.path(), &requests, "odal_sk_left_behind");
+}
+
+/// The key goes before the profile is written, so a failed write never leaves
+/// the new URL holding the old key. The cost of that order is that the old
+/// profile survives the failure without its key, and the error is the only
+/// place left to say so.
+#[cfg(unix)]
+#[test]
+fn a_key_removed_before_the_profile_write_fails_is_still_reported() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (first, _first_node) = recording_server("200 OK", WHOAMI);
+    let home = home_with_key_from(&first);
+    let config = config_path(home.path());
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o444))
+        .expect("make config.toml read-only");
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .open(&config)
+        .is_ok()
+    {
+        eprintln!("skipped: this user can write a read-only file, so the write cannot fail");
+        return;
+    }
+
+    let run = odal(
+        home.path(),
+        &[
+            "profile",
+            "create",
+            "site",
+            "--force",
+            "--node-url",
+            "http://127.0.0.1:9",
+        ],
+    );
+
+    assert_ne!(run.code, 0, "{}", run.output());
+    assert!(
+        run.output().contains("already removed") && run.output().contains("key use"),
+        "a failed write must still say the key is gone, and how to save one:\n{}",
+        run.output()
+    );
+    assert!(
+        !credentials(home.path()).contains(FIRST_NODES_KEY),
+        "the key was expected to be removed before the write"
+    );
 }

@@ -135,8 +135,8 @@ pub fn run_profile_create(
 
 /// Say that the API key stored under `name` was removed, and how to store one.
 ///
-/// [`config::create_profile`] removes it unless the profile already pointed at
-/// the same node, because a key is sent to whatever node the profile names.
+/// [`config::create_profile`] removes it unless the profile already had the
+/// same vault URL, because a key is sent to whatever URL the profile names.
 pub(crate) fn warn_key_removed(name: &str) {
     println!(
         "{} The API key stored for '{name}' was removed: nothing says this node issued it,",
