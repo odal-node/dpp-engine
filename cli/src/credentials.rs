@@ -101,13 +101,14 @@ pub fn save_key(profile: &str, key: &str) -> Result<()> {
     file.write()
 }
 
-/// Remove a profile's API key (no-op if absent).
-pub fn remove_key(profile: &str) -> Result<()> {
+/// Remove a profile's API key (no-op if absent). Returns whether one was stored.
+pub fn remove_key(profile: &str) -> Result<bool> {
     let mut file = CredentialsFile::load()?;
-    if file.keys.remove(profile).is_some() {
+    let removed = file.keys.remove(profile).is_some();
+    if removed {
         file.write()?;
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Move a profile's API key under a new profile name (used by `profile rename`).

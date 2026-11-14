@@ -624,7 +624,8 @@ pub enum ProfileCommands {
         /// Environment kind: dev or prod (inferred from the URL if omitted)
         #[arg(long)]
         kind: Option<String>,
-        /// Overwrite an existing profile of the same name
+        /// Overwrite an existing profile of the same name. Its stored API key
+        /// is kept only if the vault URL stays the same
         #[arg(long)]
         force: bool,
     },
