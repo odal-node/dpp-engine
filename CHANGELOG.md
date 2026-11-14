@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-14
+
 ### Breaking
 
 - **`dpp-core` 0.23.0: a registration refuses an operator identifier with no
@@ -73,6 +75,92 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   **Migration:** read the calculated figures from `complianceResult.co2eScore`
   and `complianceResult.repairabilityIndex`. (#598)
+
+- **A GS1 linkset now validates against GS1's linkset schema, and a redirect
+  hands the query string on.** *(Breaking for a reader of the linkset.)* The
+  linkset was a context with no `title` on any link and an `anchor` beside
+  `linkset` at the top, so it failed the schema the standard holds it to. It is now
+  one context, anchored at the request's uncompressed link, with a title on every
+  link, exactly one `gs1:defaultLink` (also described as `gs1:pip`), and the links
+  of every level from the one the label names up to the GTIN, nearest first. A
+  redirect carries the request's query string on to its target. A `linkType`
+  other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is now a `404` with a
+  problem document, where it redirected to the passport for six types (among
+  them `gs1:epil`, a patient leaflet, and `gs1:recyclingInfo`, which is not a GS1
+  link type) and answered an ad-hoc JSON body for the rest. The linkset no longer carries the
+  `predecessor` and `hasComponent` relations: GS1's schema matches a relation by a
+  pattern with no room for the hyphen in `ref.odal-node.io`, so a linkset holding
+  one is invalid. The lineage and the bill of materials are in the passport
+  itself. A GTIN is validated at the edge with the check digit and each qualifier
+  with the length and character set its Application Identifier allows, so a
+  malformed label is a `400` before the vault is asked.
+
+  **Migration:** read the linkset as one context anchored at the request's link;
+  ask for `gs1:pip`, `gs1:dpp` or `gs1:defaultLink`, and treat any other
+  `linkType` as not served; read the lineage and the bill of materials from the
+  passport. (#477)
+
+- **Publish refuses a second holder of a link or a DID whatever lot it states.**
+  *(Breaking for a client that publishes one link or DID again under another
+  lot.)* 0.15.0 refused a second published passport under one identification
+  link or DID only when it stated the same lot as the first, because the holder
+  was looked up by the passport's own batch and serial. So a create retried under
+  another `batchId` went live beside the first. Publish now asks `dpp-core`
+  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
+  node answers from the existing identifier index, and two publishes of one link
+  or DID take turns whatever lots they state. The second is still a `422` naming
+  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
+  still publishes. A draft retired without being published holds nothing, under
+  any lot, as a draft holds nothing: it answers no label, by the same rule the
+  public read and label resolution now apply (#570). One retired after it was
+  published still holds what it named.
+
+  **Migration:** give each published passport its own identification link and
+  DID. To replace one, name it in the successor's `supersedesId`, as `amend`
+  does, and the successor may hold what it held. (#498)
+
+- **The node no longer issues an authority role under another spelling, and no
+  longer accepts any category as the lawful basis of a destruction.**
+  *(Breaking for a caller that issued such a role, or sent another category.)*
+  `POST /credentials` refused the three authority roles by their typed names and
+  issued `{"custom": "market-surveillance"}`, a role that reads like one, as a
+  legitimate-interest credential. A custom role whose name is an authority
+  role's, or the start of one's, is now refused with `422`; case, `-`, `_` and
+  spaces are ignored, and a name that merely shares a word (`customs-broker`)
+  still issues. `POST /dpp/{id}/eol` accepted any derogation category on a
+  destruction and left the passport `Deactivated`, which is terminal, with that
+  string as its lawful basis. The category must now be a point of Art. 2 of
+  Delegated Regulation (EU) 2026/296, by the names core gives them (for example
+  `dangerousProduct`), or the request is refused with `422` before anything is
+  written.
+
+  **Migration:** name a custom role so that it neither equals nor starts an
+  authority role's name; an authority's standing is conferred by its member
+  state, not by this node. Send a destruction's derogation category as one of the
+  Art. 2 names. (#604)
+
+- **The local admin credential is refused from another origin.** *(Breaking for
+  a browser page that sends the local admin credential.)* A state change arriving
+  with a cross-origin `Origin` header and a Basic credential is refused before the
+  credential is read. Bearer keys are unaffected.
+
+  **Migration:** call state-changing routes from a page with an API key, or from
+  the CLI, which sends no `Origin`. (#576)
+
+- **Imports need a write-scoped key.** *(Breaking for an import made with a
+  read-scoped key.)* A read-only key is refused with `403` before any job or
+  report is recorded.
+
+  **Migration:** import with a write- or admin-scoped key. (#576)
+
+- **`odal` sends no credential over plain HTTP to a remote host.** *(Breaking for
+  a profile that points at a remote node over `http://`.)* An API key, and the
+  admin password that `odal bootstrap` and guided setup send, go only over HTTPS,
+  or over plain HTTP to `localhost`, `127.0.0.1` or `[::1]`. Anything else is
+  refused before a request is made.
+
+  **Migration:** point the profile at the node's `https://` address, or run the
+  command on the node's own host. (#576)
 
 ### Added
 
@@ -279,25 +367,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   node image was checked healthy as uid 1000 with a read-only root filesystem.
   CI's image job now fails if any of these is lost. (#602)
 
-- **A GS1 linkset now validates against GS1's linkset schema, and a redirect
-  hands the query string on.** *(Breaking for a reader of the linkset.)* The
-  linkset was a context with no `title` on any link and an `anchor` beside
-  `linkset` at the top, so it failed the schema the standard holds it to. It is now
-  one context, anchored at the request's uncompressed link, with a title on every
-  link, exactly one `gs1:defaultLink` (also described as `gs1:pip`), and the links
-  of every level from the one the label names up to the GTIN, nearest first. A
-  redirect carries the request's query string on to its target. A `linkType`
-  other than `gs1:pip`, `gs1:dpp` or `gs1:defaultLink` is now a `404` with a
-  problem document, where it redirected to the passport for six types (among
-  them `gs1:epil`, a patient leaflet, and `gs1:recyclingInfo`, which is not a GS1
-  link type) and answered an ad-hoc JSON body for the rest. The linkset no longer carries the
-  `predecessor` and `hasComponent` relations: GS1's schema matches a relation by a
-  pattern with no room for the hyphen in `ref.odal-node.io`, so a linkset holding
-  one is invalid. The lineage and the bill of materials are in the passport
-  itself. A GTIN is validated at the edge with the check digit and each qualifier
-  with the length and character set its Application Identifier allows, so a
-  malformed label is a `400` before the vault is asked. (#477)
-
 - **The vault's registry rollup counts a row as stalled at the node's threshold
   of eight attempts, not five.** `GET /vault/api/v1/registry`, and the `stalled`
   flags on a passport's registry view, reported a registration or a transfer
@@ -340,20 +409,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   same URL still receives the key. Creating a profile also removes a key left
   under its name with no profile, since nothing says which URL it was used
   with. (#612)
-
-- **The node no longer issues an authority role under another spelling, and no
-  longer accepts any category as the lawful basis of a destruction.**
-  `POST /credentials` refused the three authority roles by their typed names and
-  issued `{"custom": "market-surveillance"}`, a role that reads like one, as a
-  legitimate-interest credential. A custom role whose name is an authority
-  role's, or the start of one's, is now refused with `422`; case, `-`, `_` and
-  spaces are ignored, and a name that merely shares a word (`customs-broker`)
-  still issues. `POST /dpp/{id}/eol` accepted any derogation category on a
-  destruction and left the passport `Deactivated`, which is terminal, with that
-  string as its lawful basis. The category must now be a point of Art. 2 of
-  Delegated Regulation (EU) 2026/296, by the names core gives them (for example
-  `dangerousProduct`), or the request is refused with `422` before anything is
-  written. A caller that sent another category will now be refused. (#604)
 
 - **An XLSX import no longer copies a shared string into every cell before its
   byte budget is checked.** The importer read the first worksheet with calamine's
@@ -432,20 +487,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   retired, since the product its label was printed on is still out there.
   (#583)
 
-- **Publish refuses a second holder of a link or a DID whatever lot it states.**
-  0.15.0 refused a second published passport under one identification link or
-  DID only when it stated the same lot as the first, because the holder was
-  looked up by the passport's own batch and serial. So a create retried under
-  another `batchId` went live beside the first. Publish now asks `dpp-core`
-  0.23.0's lookup by the whole value, `find_by_product_identifier`, which this
-  node answers from the existing identifier index, and two publishes of one link
-  or DID take turns whatever lots they state. The second is still a `422` naming
-  `/productGroupData/productIdentifier` and stays a draft, and an amendment chain
-  still publishes. A draft retired without being published holds nothing, under
-  any lot, as a draft holds nothing: it answers no label, by the same rule the
-  public read and label resolution now apply (#570). One retired after it was
-  published still holds what it named. (#498)
-
 - **Two transfer steps that overlap no longer overwrite each other's chain.** A
   passport's transfer chain was read, changed in memory and written back whole,
   with a signature in between, and the write had no condition. Two initiations
@@ -518,13 +559,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   user id, and it is not consulted, so that no credential can be answered with
   another's response. Such records expire 24 hours after they were written. (#576)
 
-- **The local admin credential is refused from another origin.** A state change
-  arriving with a cross-origin `Origin` header and a Basic credential is refused
-  before the credential is read. Bearer keys are unaffected. (#576)
-
-- **Imports need a write-scoped key.** A read-only key is refused with `403`
-  before any job or report is recorded. (#576)
-
 - **Seal and trust checks.** A seal must cover the dossier's own full view, a CA
   path must pass through certificates that may sign certificates, the list of
   trusted lists is verified before its pointers are used, and a verified copy older
@@ -542,8 +576,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 - **Command-line and script hardening:** verify and import take only well-formed
   identifiers and keys, the credential file and exports are owner-only from creation,
-  credentials are not sent over plain HTTP to a remote host, and terminal output is
-  stripped of control characters. (#576)
+  and terminal output is stripped of control characters. The refusal of plain HTTP
+  to a remote host is under **Breaking**. (#576)
 
 - **The guided setup, pointing a profile at this machine's node,** clears the
   credential the previous node issued, so the next request does not send it to a
