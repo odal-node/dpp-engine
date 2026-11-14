@@ -567,6 +567,21 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/ci-guard-check.test.sh
 
+  release-tag-check:
+    name: A release tag is refused unless it is a release of main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      # The gate runs in release.yml, on the tag, which is the one moment a gate
+      # that accepts everything would be found out. So it is tested here, on every
+      # pull request, before a release depends on it. Shell only.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/release-tag-check.test.sh
+
   fuzz-targets-check:
     name: Every fuzz target runs in the nightly job
     runs-on: ubuntu-latest

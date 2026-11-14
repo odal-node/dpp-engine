@@ -408,6 +408,12 @@ ci-guard-check-self-test:
 changelog-check-self-test:
     bash scripts/changelog-check.test.sh
 
+# The gate itself needs a pushed tag, so only `.github/workflows/release.yml`
+# runs it, before any image is built.
+# Prove release-tag-check still refuses a tag that is not a release of main.
+release-tag-check-self-test:
+    bash scripts/release-tag-check.test.sh
+
 # Every fuzz target is built by fuzz/Cargo.toml, run by the nightly fuzz job, and
 # named in fuzz/README.md. The reasoning lives in the script.
 fuzz-targets-check:
@@ -467,7 +473,7 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg
