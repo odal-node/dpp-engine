@@ -181,7 +181,7 @@ console      = "0.16"
 
 # Native OS file picker for `Passports › Import`. `xdg-portal` (not gtk3) keeps
 # Linux/Docker builds free of GTK dev libs; native backends used on Win/macOS.
-rfd          = { version = "0.17", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
+rfd          = { version = "0.18", default-features = false, features = ["xdg-portal", "common-controls-v6"] }
 dirs         = "7"
 
 # Integration tests
