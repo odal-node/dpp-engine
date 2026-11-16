@@ -15,8 +15,29 @@ permissions:
   contents: read
 
 jobs:
+  # Nothing is built until the tag is shown to be a release of main. A tag made on
+  # the wrong commit is otherwise published as `X.Y.Z` and `latest`, and on
+  # 2026-11-14 one was being built from an unmerged branch when it was cancelled.
+  # The rule and its reasons are in scripts/release-tag-check.sh.
+  verify-tag:
+    name: The tag is a release of main
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the check asks whether the tagged commit is on main, and a
+      # shallow checkout holds no main to ask.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse a tag that is not on main or not Cargo.toml's version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: bash scripts/release-tag-check.sh
+
   publish:
     name: Build & push ${{ matrix.image }}
+    needs: verify-tag
     runs-on: ubuntu-latest
     # The one job that pushes images, so the one that may write packages. Granted
     # here and not for the whole workflow, so a job added later does not inherit it.
