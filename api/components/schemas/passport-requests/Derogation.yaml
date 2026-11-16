@@ -1,0 +1,22 @@
+type: string
+description: |
+  The derogation from the ESPR Art. 25(1) destruction ban that a destruction
+  relies on: a point of Art. 2 of Commission Delegated Regulation (EU) 2026/296,
+  named as the unsold-goods records name a discard reason. The letter of each
+  point, in order, is (a) to (j).
+
+  The free-text object `{"category": ...}` that earlier releases accepted is
+  refused on a new declaration with `422`: it cannot be checked against the list.
+  An event stored with one still reads.
+enum:
+  - dangerousProduct
+  - nonCompliantWithLaw
+  - intellectualPropertyInfringement
+  - licensedPeriodExpired
+  - markingsCannotBeRemoved
+  - damagedOrContaminated
+  - defectiveBeyondRepair
+  - offeredForDonationNotAccepted
+  - donatedButNoRecipientFound
+  - reusedButNoRecipientFound
+example: damagedOrContaminated

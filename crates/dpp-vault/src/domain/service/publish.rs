@@ -415,7 +415,13 @@ impl PassportService {
         // the determination is frozen with it, so a fresh one — which would carry
         // a new assessment time — could not be stored; the database refuses it.
         if first_publish {
-            passport.compliance_result = determination;
+            // Attached through core, which binds it to the content being
+            // published: `transition_to` refuses a first publish whose
+            // determination is unbound or was computed over other content.
+            match determination {
+                Some(determination) => passport.attach_compliance_result(determination)?,
+                None => passport.compliance_result = None,
+            }
         }
 
         // Every publish-time field is set before the single serialize below,

@@ -385,14 +385,16 @@ pub enum PassportCommands {
         /// Why the product reached end-of-life
         #[arg(long, value_parser = ["recycled", "destroyed", "exported", "lost"])]
         reason: String,
-        /// Derogation category permitting destruction — required for
-        /// `--reason destroyed`, which is otherwise barred by the ESPR
-        /// Art. 25 unsold-goods destruction ban
+        /// The derogation a destruction relies on: a point of Art. 2 of
+        /// Delegated Regulation (EU) 2026/296 by its name, such as
+        /// `damagedOrContaminated`. The node asks for one only where the
+        /// ESPR Art. 25(1) ban reaches the product
         #[arg(long)]
         derogation: Option<String>,
-        /// The act or article the derogation is grounded in (OJ/CELEX ref)
-        #[arg(long = "derogation-citation")]
-        derogation_citation: Option<String>,
+        /// Whether the product was an unsold consumer product — required for
+        /// `--reason destroyed`, since a passport does not record it
+        #[arg(long, value_name = "true|false")]
+        unsold: Option<bool>,
         /// Free-text note recorded with the declaration
         #[arg(long)]
         notes: Option<String>,

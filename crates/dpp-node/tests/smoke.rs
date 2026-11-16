@@ -1535,15 +1535,16 @@ async fn eol_declaration_deactivates_and_records_reason() {
     assert_eq!(eol_entry["metadata"]["materialRecovery"]["lithiumKg"], 0.4);
 }
 
-// A destruction must cite a point of the delegated act, and one that cites
-// anything else is refused before anything is written.
+// A destruction states whether the product was unsold, cites a derogation as a
+// point of the delegated act by its name, and must cite one only where the
+// ESPR Art. 25(1) ban reaches the product. Each refusal comes before anything is
+// written: `Deactivated` is terminal, so a passport declared destroyed on a
+// basis nobody checked cannot be revived.
 //
-// `Deactivated` is terminal: a passport declared destroyed under a derogation
-// that does not exist cannot be revived, and the string was recorded as its
-// lawful basis. The route accepted any category because the type only enforces
-// that one is present.
+// The product carries an apparel code (CN 6203 42 31), which Annex VII lists, and
+// the node's operator states no enterprise size, so it counts as not exempt.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
+async fn a_destruction_cites_a_point_where_the_ban_reaches_it() {
     let (base, _container) = start_db_and_node().await;
     let token = make_jwt("00000000-0000-0000-0000-000000000055");
     let client = reqwest::Client::new();
@@ -1560,6 +1561,7 @@ async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
                     "productName": name,
                     "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
                     "materials": [],
+                    "commodityCode": "62034231",
                 }))
                 .send()
                 .await
@@ -1579,7 +1581,7 @@ async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
             id
         }
     };
-    let declare = |id: String, category: &'static str| {
+    let declare = |id: String, body: serde_json::Value| {
         let client = client.clone();
         let base = base.clone();
         let token = token.clone();
@@ -1587,24 +1589,65 @@ async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
             client
                 .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
                 .bearer_auth(&token)
-                .json(&serde_json::json!({
-                    "reason": {"kind": "destroyed", "derogation": {"category": category}},
-                }))
+                .json(&body)
                 .send()
                 .await
                 .expect("eol request failed")
         }
     };
+    let refused_on = |problem: &serde_json::Value, field: &str| {
+        problem["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|e| e["field"] == field))
+    };
 
-    let id = publish_one("Destroyed Battery").await;
+    let id = publish_one("Destroyed Trousers").await;
 
-    let refused = declare(id.clone(), "bogus-category").await;
-    assert_eq!(refused.status(), 422, "an unknown category must be refused");
+    // Not saying whether the product was sold.
+    let refused = declare(
+        id.clone(),
+        serde_json::json!({ "reason": {"kind": "destroyed", "derogation": "dangerousProduct"} }),
+    )
+    .await;
+    assert_eq!(
+        refused.status(),
+        422,
+        "a destruction must say whether it was unsold"
+    );
     let problem: serde_json::Value = refused.json().await.unwrap();
+    assert!(refused_on(&problem, "/unsold"), "{problem}");
+
+    // The free-text form an earlier release took.
+    let refused = declare(
+        id.clone(),
+        serde_json::json!({
+            "reason": {"kind": "destroyed", "derogation": {"category": "dangerousProduct"}},
+            "unsold": true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        refused.status(),
+        422,
+        "a free-text derogation must be refused"
+    );
+    let problem: serde_json::Value = refused.json().await.unwrap();
+    assert!(refused_on(&problem, "/reason/derogation"), "{problem}");
     assert!(
-        problem.to_string().contains("dangerousProduct"),
+        problem.to_string().contains("damagedOrContaminated"),
         "the refusal should say what is accepted: {problem}"
     );
+
+    // Unsold, in Annex VII, an operator that is not exempt, and no point cited.
+    let refused = declare(
+        id.clone(),
+        serde_json::json!({ "reason": {"kind": "destroyed"}, "unsold": true }),
+    )
+    .await;
+    assert_eq!(refused.status(), 422, "the ban reaches this destruction");
+    let problem: serde_json::Value = refused.json().await.unwrap();
+    assert!(refused_on(&problem, "/reason/derogation"), "{problem}");
+    assert!(problem.to_string().contains("Art. 25(1)"), "{problem}");
 
     // Nothing was written: the passport is as it was, and can still be declared.
     let fetched: serde_json::Value = client
@@ -1621,7 +1664,14 @@ async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
         "a refused declaration changed it"
     );
 
-    let accepted = declare(id.clone(), "dangerousProduct").await;
+    let accepted = declare(
+        id.clone(),
+        serde_json::json!({
+            "reason": {"kind": "destroyed", "derogation": "dangerousProduct"},
+            "unsold": true,
+        }),
+    )
+    .await;
     assert_eq!(
         accepted.status(),
         200,
@@ -1629,6 +1679,19 @@ async fn a_destruction_must_cite_a_point_of_the_delegated_act() {
     );
     let deactivated: serde_json::Value = accepted.json().await.unwrap();
     assert_eq!(deactivated["status"], "deactivated");
+
+    // A product that was sold is outside the ban, so it needs no derogation.
+    let sold = publish_one("Destroyed After Use").await;
+    let accepted = declare(
+        sold,
+        serde_json::json!({ "reason": {"kind": "destroyed"}, "unsold": false }),
+    )
+    .await;
+    assert_eq!(
+        accepted.status(),
+        200,
+        "a destruction the ban does not reach needs no derogation"
+    );
 }
 
 // Full lifecycle close — publish → transfer initiate (outgoing signs) →

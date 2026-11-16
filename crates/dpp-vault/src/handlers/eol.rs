@@ -22,10 +22,16 @@ use crate::middleware::scope::RequireWrite;
 #[serde(rename_all = "camelCase")]
 pub struct EolRequest {
     /// Why the passport is being deactivated (recycled / destroyed / exported / lost).
-    /// Destruction must carry a derogation: the type enforces that one is
-    /// present, and the node that its category is a point of Art. 2 of
-    /// Delegated Regulation (EU) 2026/296 (`422` otherwise).
+    /// A destruction the ESPR Art. 25(1) ban reaches must cite a derogation, a
+    /// point of Art. 2 of Delegated Regulation (EU) 2026/296 by its name
+    /// (`422` otherwise). A free-text `{"category": ...}` is refused on a new
+    /// declaration.
     pub reason: DeactivationReason,
+    /// Whether the product was an unsold consumer product, which a passport does
+    /// not record. Required with `destroyed`: with the operator's enterprise size
+    /// it decides whether the destruction ban reaches the product.
+    #[serde(default)]
+    pub unsold: Option<bool>,
     /// DID of the declaring operator; defaults to the authenticated actor.
     #[serde(default)]
     pub declared_by: Option<String>,
@@ -53,12 +59,33 @@ pub async fn eol_handler(
         Err(e) => return e,
     };
 
+    let destroyed = matches!(body.reason, DeactivationReason::Destroyed { .. });
+    let unsold = match body.unsold {
+        Some(unsold) => unsold,
+        None if destroyed => {
+            return field_validation_error(&dpp_domain::ValidationErrors {
+                errors: vec![dpp_domain::FieldError {
+                    field: "/unsold".to_owned(),
+                    message: "A destruction states whether the product was an unsold consumer \
+                              product: ESPR Art. 25(1) bars destroying unsold products of \
+                              Annex VII, and a passport does not record whether it was sold."
+                        .to_owned(),
+                }],
+            });
+        }
+        None => false,
+    };
+
     let declared_by = body.declared_by.unwrap_or_else(|| auth.user_id.clone());
     let mut eol = EolEvent::new(passport_id, body.reason, declared_by);
     eol.material_recovery = body.material_recovery;
     eol.notes = body.notes;
 
-    match state.service.declare_eol(passport_id, eol, &auth).await {
+    match state
+        .service
+        .declare_eol(passport_id, eol, unsold, &auth)
+        .await
+    {
         Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => {

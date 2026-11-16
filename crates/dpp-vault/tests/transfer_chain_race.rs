@@ -184,12 +184,12 @@ async fn of_two_transfers_started_together_exactly_one_is_recorded() {
         .expect("a chain was stored")
         .chain;
     assert_eq!(
-        stored.transfers.len(),
+        stored.records().len(),
         1,
         "the chain holds the one initiation that succeeded"
     );
     assert_eq!(
-        stored.transfers[0].transfer_id.to_string(),
+        stored.records()[0].transfer_id.to_string(),
         winner["transferId"].as_str().expect("winner's transfer id"),
         "and it is the one whose caller was told it succeeded"
     );
@@ -277,7 +277,7 @@ async fn a_step_over_a_chain_changed_under_it_is_refused(step: &str) {
         .expect("a chain was stored")
         .chain;
     assert_eq!(
-        stored.transfers[0].status(),
+        stored.records()[0].status(),
         TransferStatus::Initiated,
         "the refused {step} changed nothing"
     );

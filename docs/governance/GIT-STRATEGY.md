@@ -55,11 +55,11 @@ conventional title, not a draft.
 ## Tags and releases
 
 Tags are `v{MAJOR}.{MINOR}.{PATCH}`, annotated, on a `main` commit that has already
-passed CI:
+passed CI, named by its hash so that what is checked out does not decide it:
 
 ```bash
-git tag -a v0.15.0 -m "v0.15.0"
-git push origin v0.15.0
+git tag -a v0.16.0 3765ec18729eaf4b3e89f76d78bcb618fb9d7d6d -m "v0.16.0"
+git push origin v0.16.0
 ```
 
 Pushing a `v*` tag runs `release.yml`, which builds and publishes the container images.

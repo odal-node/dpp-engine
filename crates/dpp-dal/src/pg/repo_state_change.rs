@@ -126,7 +126,8 @@ impl StateChangeLog for PgStateChangeLog {
                     "a transfer notice is queued only with the chain that accepted it".into(),
                 )
             })?;
-            queue_transfer_notice(&mut *tx, *transfer_id, chain.chain.passport_id, payload).await?;
+            queue_transfer_notice(&mut *tx, *transfer_id, chain.chain.passport_id(), payload)
+                .await?;
         }
         if let Some(intent) = registry_intent {
             let passport = written.as_ref().ok_or_else(|| {

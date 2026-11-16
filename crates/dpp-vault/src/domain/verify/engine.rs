@@ -858,11 +858,11 @@ mod tests {
             &acceptance_payload(&record),
         ));
 
-        dossier.transfer_chain = Some(TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        });
+        let mut chain = TransferChain::new(record.passport_id, operator("did:web:from.example"));
+        chain
+            .initiate_transfer(record)
+            .expect("a completed, fully signed transfer from the original operator");
+        dossier.transfer_chain = Some(chain);
         dossier.did_documents.insert(
             "did:web:from.example".to_string(),
             did_doc_for("did:web:from.example", &from_key),
@@ -888,11 +888,13 @@ mod tests {
         // isolating the property it was written for: a broken transfer
         // signature flips this check and no other. The acceptance half has its
         // own tamper test in `transfer_chain`.
+        // A record in a chain cannot be edited in place, so the tamper goes
+        // through the stored form, as a forged dossier would.
         if let Some(chain) = &mut dossier.transfer_chain {
-            chain.transfers[0].from_signature = chain.transfers[0]
-                .from_signature
-                .clone()
-                .map(|s| format!("{s}x"));
+            let mut stored = serde_json::to_value(&*chain).unwrap();
+            let signature = &mut stored["transfers"][0]["fromSignature"];
+            *signature = serde_json::json!(format!("{}x", signature.as_str().unwrap()));
+            *chain = serde_json::from_value(stored).unwrap();
         }
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
@@ -974,11 +976,11 @@ mod tests {
             cancelled_at: None,
             notes: None,
         };
-        dossier.transfer_chain = Some(TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        });
+        let mut chain = TransferChain::new(record.passport_id, operator("did:web:from.example"));
+        chain
+            .initiate_transfer(record)
+            .expect("a completed, fully signed transfer from the original operator");
+        dossier.transfer_chain = Some(chain);
         dossier.manifest.content_hashes =
             compute_content_hashes(&dossier).expect("test dossier canonicalises");
         let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();

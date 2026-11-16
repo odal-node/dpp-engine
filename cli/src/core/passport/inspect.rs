@@ -117,40 +117,43 @@ fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
 
 /// Declare a passport end-of-life.
 ///
-/// `derogation` is carried only for `destroyed`, which the ESPR Art. 25
-/// destruction ban otherwise forbids. The node validates the category against
-/// the applicable delegated act — this only refuses the shape the node would
-/// certainly reject, so an operator is not charged a round-trip to learn that
-/// `--reason destroyed` needs a `--derogation`.
+/// `derogation` and `unsold` are carried only for `destroyed`. Whether a
+/// destruction owes a derogation is the node's question: the ESPR Art. 25(1) ban
+/// reaches an unsold product of Annex VII and an operator that is not exempt, and
+/// the node holds the product's code and the operator's size. This refuses only
+/// the shapes the node would certainly reject, so an operator is not charged a
+/// round-trip to learn that `--reason destroyed` needs `--unsold`.
 pub async fn action_eol(
     id: &str,
     reason: &str,
     derogation: Option<&str>,
-    derogation_citation: Option<&str>,
+    unsold: Option<bool>,
     notes: Option<&str>,
     client: &OdalClient,
     cfg: &Config,
 ) -> Result<()> {
     let mut kind = json!({ "kind": reason });
-    match (reason, derogation) {
-        ("destroyed", None) => anyhow::bail!(
-            "--reason destroyed requires --derogation <category>: destruction is barred by the \
-             ESPR Art. 25 unsold-goods ban unless a recognised derogation applies"
-        ),
-        ("destroyed", Some(category)) => {
-            let mut d = json!({ "category": category });
-            if let Some(c) = derogation_citation {
-                d["actCitation"] = json!(c);
-            }
-            kind["derogation"] = d;
+    if reason == "destroyed" {
+        if unsold.is_none() {
+            anyhow::bail!(
+                "--reason destroyed requires --unsold true|false: the ESPR Art. 25(1) ban on \
+                 destroying unsold products of Annex VII turns on it, and a passport does not \
+                 record whether the product was sold"
+            );
         }
-        (_, Some(_)) => anyhow::bail!(
-            "--derogation applies only to --reason destroyed; {reason} needs no derogation"
-        ),
-        _ => {}
+        if let Some(point) = derogation {
+            kind["derogation"] = json!(point);
+        }
+    } else if derogation.is_some() || unsold.is_some() {
+        anyhow::bail!(
+            "--derogation and --unsold apply only to --reason destroyed; {reason} needs neither"
+        );
     }
 
     let mut payload = json!({ "reason": kind });
+    if let Some(unsold) = unsold {
+        payload["unsold"] = json!(unsold);
+    }
     if let Some(n) = notes {
         payload["notes"] = json!(n);
     }

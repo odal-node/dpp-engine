@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, NaiveDate, Utc};
 use dpp_domain::compliance::ComplianceResult;
-use dpp_domain::identifier::commodity_code::CommodityCode;
+use dpp_domain::identifier::commodity_code::DeclaredCommodityCode;
 use dpp_domain::lint::LintResult;
 use dpp_domain::passport::{
     ComponentRef, DerivationRef, FacilitySnapshot, LifeStatus, ManufacturerInfo, MaterialEntry,
@@ -109,7 +109,7 @@ pub struct PassportResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commodity_code: Option<CommodityCode>,
+    pub commodity_code: Option<DeclaredCommodityCode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_identifier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

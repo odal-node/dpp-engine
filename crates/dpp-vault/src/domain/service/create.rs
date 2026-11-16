@@ -100,7 +100,7 @@ impl PassportService {
         self.guard_component_graph(passport.id, &passport.component_refs)
             .await?;
 
-        apply_compliance(&mut passport, &*self.compliance);
+        apply_compliance(&mut passport, &*self.compliance)?;
         apply_lint(&mut passport);
 
         let entry = PassportAuditEntry::new(
@@ -156,7 +156,7 @@ impl PassportService {
         // The determination of the content as edited, stored beside the delta
         // below. It is not in the delta: the field is protected against a
         // caller's patch, and the host writes it through the write's own slot.
-        apply_compliance(&mut passport, &*self.compliance);
+        apply_compliance(&mut passport, &*self.compliance)?;
         apply_lint(&mut passport);
 
         let mut delta = delta_for(&passport, &applied);
@@ -284,8 +284,21 @@ fn local_component_id(uri: &str) -> Option<PassportId> {
 /// the determination (`co2eScore`, `repairabilityIndex`). A calculated value
 /// copied into the declared field has no methodology or provenance to tell it
 /// from a declaration, and an AAS export reads both as the passport's own.
-pub(super) fn apply_compliance(passport: &mut Passport, registry: &dyn ComplianceRegistry) {
-    passport.compliance_result = determine(passport, registry);
+///
+/// A determination is attached through core's `attach_compliance_result`, which
+/// binds it to the `productGroupData` it was computed over, so a later edit
+/// leaves it visibly stale and a first publish refuses it until reassessed.
+pub(super) fn apply_compliance(
+    passport: &mut Passport,
+    registry: &dyn ComplianceRegistry,
+) -> Result<(), DppError> {
+    match determine(passport, registry) {
+        Some(determination) => passport.attach_compliance_result(determination),
+        None => {
+            passport.compliance_result = None;
+            Ok(())
+        }
+    }
 }
 
 /// The compliance determination of `passport`'s product group data, with its
@@ -1030,7 +1043,7 @@ mod tests {
     #[test]
     fn no_product_group_data_is_noop() {
         let mut p = stub(); // product_group_data is None → early return
-        apply_compliance(&mut p, &NoopRegistry);
+        apply_compliance(&mut p, &NoopRegistry).expect("the content hashes");
         assert!(p.co2e_per_unit.is_none());
         assert!(p.repairability_score.is_none());
     }

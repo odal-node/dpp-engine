@@ -388,7 +388,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     id,
                     reason,
                     derogation,
-                    derogation_citation,
+                    unsold,
                     notes,
                 },
         } => {
@@ -396,7 +396,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                 &id,
                 &reason,
                 derogation.as_deref(),
-                derogation_citation.as_deref(),
+                unsold,
                 notes.as_deref(),
             )
             .await

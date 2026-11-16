@@ -5,6 +5,15 @@ description: Request body for declaring a passport end-of-life.
 properties:
   reason:
     $ref: ./DeactivationReason.yaml
+  unsold:
+    type:
+      - boolean
+      - 'null'
+    description: >-
+      Whether the product was an unsold consumer product, which a passport does
+      not record. Required with a `destroyed` reason (`422` otherwise): with the
+      operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban
+      reaches the product, and so whether the destruction cites a derogation.
   declaredBy:
     type:
       - string
