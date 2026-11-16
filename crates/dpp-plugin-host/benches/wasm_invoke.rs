@@ -2,15 +2,21 @@
 //!
 //! Run with:
 //! ```sh
+//! rustup target add wasm32-wasip1 # for the `sdk_*` benches
 //! cargo bench -p dpp-plugin-host
 //! ```
+//!
+//! Every plugin these benches load is signed with a throwaway key and loaded
+//! against it, the way `tests/sdk_abi.rs` does, so they take the verified path a
+//! production plugin takes and need no `ALLOW_UNSIGNED_PLUGINS`.
 
-use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use dpp_plugin_host::{loader::LoadedPlugin, runtime::build_engine};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use sha2::{Digest, Sha256};
 use wasmtime::Module;
 
 /// Minimal passthrough plugin (WAT) — returns hardcoded AbiResult envelope.
@@ -30,22 +36,38 @@ const PASSTHROUGH_WAT: &str = r#"
 )
 "#;
 
-fn compile_wat(wat_src: &str) -> tempfile::NamedTempFile {
+/// Compile `wat_src` to `passthrough.wasm` in `dir` and return its path.
+fn compile_wat(wat_src: &str, dir: &Path) -> PathBuf {
+    let path = dir.join("passthrough.wasm");
     let wasm_bytes = wat::parse_str(wat_src).expect("WAT parse failed");
-    let mut f = tempfile::Builder::new()
-        .suffix(".wasm")
-        .tempfile()
-        .expect("tempfile failed");
-    f.write_all(&wasm_bytes).unwrap();
-    f.flush().unwrap();
-    f
+    std::fs::write(&path, wasm_bytes).expect("write wasm");
+    path
+}
+
+/// Sign `wasm` the way a publisher does: a detached Ed25519 signature over its
+/// SHA-256, written to `{wasm}.sig`. Returns the key the host must pin.
+///
+/// The host refuses an unsigned plugin unless `ALLOW_UNSIGNED_PLUGINS` is set,
+/// and setting it means mutating the process environment. Signing instead loads
+/// the plugin through the same verified path a production one takes. This repeats
+/// `sign_fixture` in `tests/sdk_abi.rs`: a bench and a test target share no code.
+fn sign(wasm: &Path) -> VerifyingKey {
+    let key = SigningKey::from_bytes(&[11; 32]);
+    let bytes = std::fs::read(wasm).expect("read wasm to sign");
+    let signature = key.sign(&Sha256::digest(&bytes));
+    let mut sig_path = wasm.as_os_str().to_owned();
+    sig_path.push(".sig");
+    std::fs::write(PathBuf::from(sig_path), signature.to_bytes()).expect("write .sig");
+    key.verifying_key()
 }
 
 fn wasm_benchmarks(c: &mut Criterion) {
     let engine = build_engine().expect("build engine");
-    let tmp = compile_wat(PASSTHROUGH_WAT);
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let wasm = compile_wat(PASSTHROUGH_WAT, dir.path());
+    let publisher = sign(&wasm);
     let plugin =
-        LoadedPlugin::from_file(&engine, tmp.path(), "battery", None).expect("load plugin");
+        LoadedPlugin::from_file(&engine, &wasm, "battery", Some(&publisher)).expect("load plugin");
 
     let small_input = serde_json::json!({"chemistry": "LFP", "capacityKwh": 10.0});
     let large_input = serde_json::json!({
@@ -67,37 +89,42 @@ fn wasm_benchmarks(c: &mut Criterion) {
         b.iter(|| plugin.invoke_calculate(&large_input).unwrap());
     });
 
-    // Module instantiation benchmark (cold start).
+    // Module instantiation benchmark (cold start), signature check included.
     c.bench_function("wasm_load_and_invoke", |b| {
         b.iter(|| {
-            let p = LoadedPlugin::from_file(&engine, tmp.path(), "battery", None).unwrap();
+            let p = LoadedPlugin::from_file(&engine, &wasm, "battery", Some(&publisher)).unwrap();
             p.invoke_calculate(&small_input).unwrap();
         });
     });
 }
 
-/// Build the real `product-group-battery` plugin to wasm32-wasip1 and return its path.
+/// Build the `abi-echo` fixture to wasm32-wasip1 and return its path.
+///
+/// The fixture is an `export_plugin!` plugin built against the published
+/// `dpp-plugin-sdk` at the version this workspace pins, the same crate
+/// `tests/sdk_abi.rs` drives, so these benches read nothing from outside this
+/// repository. It is detached from the workspace and builds into its own
+/// `target/`.
 ///
 /// Returns `None` (after a warning) if the build fails — e.g. the wasm32-wasip1
-/// target is not installed — so the WAT floor benches still run. Now that the
-/// host wires sandboxed WASI, this real plugin actually instantiates; the WAT
-/// benches measure the host round-trip floor, these measure battery logic.
-fn build_battery_wasm() -> Option<PathBuf> {
-    // dpp-engine/crates/dpp-plugin-host → Odal-Node → dpp-core/plugins/product-group-battery
-    let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../dpp-core/plugins/product-group-battery");
+/// target is not installed — so the WAT floor benches still run. The WAT benches
+/// measure the host round-trip floor; these add what the SDK-generated ABI costs
+/// on top of it. The fixture echoes its input, so they do not measure any
+/// product group's rules.
+fn build_sdk_fixture_wasm() -> Option<PathBuf> {
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/abi-echo");
     match Command::new(env!("CARGO"))
-        .current_dir(&plugin_dir)
+        .current_dir(&fixture_dir)
         .args(["build", "--release", "--target", "wasm32-wasip1"])
         .status()
     {
         Ok(s) if s.success() => {
-            let wasm = plugin_dir.join("target/wasm32-wasip1/release/product_group_battery.wasm");
+            let wasm = fixture_dir.join("target/wasm32-wasip1/release/abi_echo.wasm");
             wasm.is_file().then_some(wasm)
         }
         _ => {
             eprintln!(
-                "skipping battery_* benches: failed to build product-group-battery.wasm \
+                "skipping sdk_* benches: failed to build the abi-echo fixture \
                  (is the wasm32-wasip1 target installed? `rustup target add wasm32-wasip1`)"
             );
             None
@@ -105,30 +132,22 @@ fn build_battery_wasm() -> Option<PathBuf> {
     }
 }
 
-/// Benchmarks against the real `product-group-battery` plugin (EU Battery Regulation
-/// logic), so §1.3 can be quoted as a battery figure rather than the WAT floor.
-fn battery_benchmarks(c: &mut Criterion) {
-    let Some(wasm) = build_battery_wasm() else {
+/// Benchmarks against a real SDK-generated plugin: the macro's linear-memory
+/// packing, `describe`, and a cranelift compile of an LTO'd module.
+fn sdk_benchmarks(c: &mut Criterion) {
+    let Some(wasm) = build_sdk_fixture_wasm() else {
         return;
     };
     let engine = build_engine().expect("build engine");
-    let plugin =
-        LoadedPlugin::from_file(&engine, &wasm, "battery", None).expect("load battery plugin");
-    let wasm_bytes = std::fs::read(&wasm).expect("read battery wasm");
+    let publisher = sign(&wasm);
+    let plugin = LoadedPlugin::from_file(&engine, &wasm, "abi-echo", Some(&publisher))
+        .expect("load sdk fixture");
+    let wasm_bytes = std::fs::read(&wasm).expect("read fixture wasm");
 
-    // Valid Battery Regulation input — passes the plugin's `validate_input`.
-    let small_input = serde_json::json!({
-        "gtin": "12345678901231",
-        "batteryChemistry": "LFP",
-        "nominalVoltageV": 48.0,
-        "nominalCapacityAh": 100.0,
-        "expectedLifetimeCycles": 3000,
-        "co2ePerUnitKg": 85.4,
-        "recycledContentCobaltPct": 16.0,
-        "recycledContentLithiumPct": 6.0
-    });
+    // The fixture's `validate_input` wants a numeric `co2e` and ignores the rest.
+    let small_input = serde_json::json!({ "co2e": 85.4 });
     // Same valid base padded with a large ignored array, to measure payload-size
-    // scaling: the validator checks named fields only and ignores extras.
+    // scaling.
     let large_input = {
         let mut v = small_input.clone();
         v["telemetry"] = serde_json::json!(
@@ -146,30 +165,31 @@ fn battery_benchmarks(c: &mut Criterion) {
     // Cold-start cost #1: cranelift compilation of the (LTO'd) module. Bytes are
     // read once so this isolates compile from disk I/O. Paid once per plugin at
     // boot — the host caches the resulting `Module` in `LoadedPlugin`.
-    c.bench_function("battery_module_compile", |b| {
+    c.bench_function("sdk_module_compile", |b| {
         b.iter(|| Module::new(&engine, &wasm_bytes).unwrap());
     });
 
     // Per-request cost: re-instantiate the already-compiled module + invoke.
     // (`invoke_calculate` builds a fresh store/linker and instantiates the
     // cached `Module` each call — it does NOT recompile.)
-    c.bench_function("battery_invoke_small_input", |b| {
+    c.bench_function("sdk_invoke_small_input", |b| {
         b.iter(|| plugin.invoke_calculate(&small_input).unwrap());
     });
 
-    c.bench_function("battery_invoke_large_input", |b| {
+    c.bench_function("sdk_invoke_large_input", |b| {
         b.iter(|| plugin.invoke_calculate(&large_input).unwrap());
     });
 
-    // Full cold path for reference: compile + describe-probe + invoke. Should
-    // ≈ battery_module_compile + battery_invoke_small_input (+ the probe).
-    c.bench_function("battery_load_and_invoke", |b| {
+    // Full cold path for reference: signature check + compile + describe-probe +
+    // invoke. Should ≈ sdk_module_compile + sdk_invoke_small_input (+ the probe
+    // and the signature check).
+    c.bench_function("sdk_load_and_invoke", |b| {
         b.iter(|| {
-            let p = LoadedPlugin::from_file(&engine, &wasm, "battery", None).unwrap();
+            let p = LoadedPlugin::from_file(&engine, &wasm, "abi-echo", Some(&publisher)).unwrap();
             p.invoke_calculate(&small_input).unwrap();
         });
     });
 }
 
-criterion_group!(benches, wasm_benchmarks, battery_benchmarks);
+criterion_group!(benches, wasm_benchmarks, sdk_benchmarks);
 criterion_main!(benches);
