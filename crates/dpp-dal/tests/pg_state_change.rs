@@ -593,9 +593,9 @@ async fn a_chain_first_written_after_this_one_was_read_is_not_replaced() {
     assert!(matches!(refused, DppError::Validation(_)), "{refused:?}");
 
     let stored = store.get_chain(p.id).await.expect("read").expect("a chain");
-    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(stored.chain.records().len(), 1);
     assert_eq!(
-        stored.chain.transfers[0].to_operator.did,
+        stored.chain.records()[0].to_operator.did,
         "did:web:a.example"
     );
     assert_eq!(
@@ -626,8 +626,8 @@ async fn a_chain_changed_after_it_was_read_is_not_overwritten() {
     let mut cancel = store.get_chain(p.id).await.expect("read").expect("chain");
     let mut reject = store.get_chain(p.id).await.expect("read").expect("chain");
     assert_eq!(cancel.revision, reject.revision);
-    cancel.chain.transfers[0].cancel().expect("cancel");
-    reject.chain.transfers[0].reject().expect("reject");
+    cancel.chain.cancel_pending().expect("cancel");
+    reject.chain.reject_pending().expect("reject");
 
     log.commit(chain_change(p.id, cancel))
         .await
@@ -640,7 +640,7 @@ async fn a_chain_changed_after_it_was_read_is_not_overwritten() {
 
     let stored = store.get_chain(p.id).await.expect("read").expect("chain");
     assert_eq!(
-        stored.chain.transfers[0].status(),
+        stored.chain.records()[0].status(),
         TransferStatus::Cancelled
     );
 
@@ -763,9 +763,9 @@ async fn of_several_first_initiations_written_together_exactly_one_stands() {
         .await
         .expect("read")
         .expect("chain");
-    assert_eq!(stored.chain.transfers.len(), 1);
+    assert_eq!(stored.chain.records().len(), 1);
     assert_eq!(
-        stored.chain.transfers[0].to_operator.did,
+        stored.chain.records()[0].to_operator.did,
         format!("did:web:to{}.example", won[0])
     );
     assert_eq!(audit_entries(&pg, p.id).await, 1);

@@ -52,3 +52,11 @@ properties:
       Calculation receipt (input hash, ruleset id and version, factor dataset
       version and table hash) for notified-body audit. Present only when a
       calculation actually ran.
+  inputHash:
+    type: string
+    description: >-
+      The content hash of the product group key and `productGroupData` this
+      determination was computed over. A first publish refuses a determination
+      whose hash is missing or no longer matches the passport's content, so a
+      determination never describes content other than what was published.
+      Absent on a determination recorded before the node bound one.

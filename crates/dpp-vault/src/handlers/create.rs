@@ -217,7 +217,7 @@ pub fn assemble_passport(
         responsible_operator: None,
         retention_until: None,
         product_id: None,
-        commodity_code,
+        commodity_code: commodity_code.map(Into::into),
         operator_identifier: None,
         facility: None,
         seal: None,

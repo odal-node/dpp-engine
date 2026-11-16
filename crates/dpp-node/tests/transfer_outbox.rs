@@ -135,7 +135,9 @@ async fn accept(
     record: TransferRecord,
 ) -> Uuid {
     let id = record.transfer_id;
-    chain.transfers.push(record.clone());
+    chain
+        .initiate_transfer(record.clone())
+        .expect("a completed record from the operator the chain names");
     let payload = serde_json::to_value(&record).expect("serialise record");
     outbox
         .commit_accept(chain, id, payload)
@@ -154,7 +156,7 @@ async fn accepting_a_transfer_enqueues_a_pending_notification() {
     let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
-    let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
+    let mut chain = TransferChain::new(passport_id, operator("did:web:Acme.example", "Acme"));
     let record = completed_record(passport_id, "Acme", "Beta");
     let transfer_id = accept(&outbox, &mut chain, record).await;
 
@@ -196,7 +198,7 @@ async fn a_passport_transferred_twice_owes_two_notifications() {
     let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
-    let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
+    let mut chain = TransferChain::new(passport_id, operator("did:web:Acme.example", "Acme"));
     let first = accept(
         &outbox,
         &mut chain,
@@ -235,7 +237,7 @@ async fn re_accepting_the_same_transfer_never_re_notifies() {
     let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
-    let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
+    let mut chain = TransferChain::new(passport_id, operator("did:web:Acme.example", "Acme"));
     let record = completed_record(passport_id, "Acme", "Beta");
     let transfer_id = accept(&outbox, &mut chain, record.clone()).await;
 
@@ -269,7 +271,7 @@ async fn a_transient_failure_backs_off_without_losing_the_row() {
     let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
-    let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
+    let mut chain = TransferChain::new(passport_id, operator("did:web:Acme.example", "Acme"));
     let transfer_id = accept(
         &outbox,
         &mut chain,
@@ -306,7 +308,7 @@ async fn a_rejected_notification_is_kept_for_audit() {
     let dal = _c.dal.clone();
     let (passport_id, outbox) = setup(&dal).await;
 
-    let mut chain = TransferChain::new(passport_id, operator("did:web:acme.example", "Acme"));
+    let mut chain = TransferChain::new(passport_id, operator("did:web:Acme.example", "Acme"));
     let transfer_id = accept(
         &outbox,
         &mut chain,

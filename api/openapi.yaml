@@ -145,8 +145,8 @@ components:
       $ref: components/schemas/passport-requests/EolRequest.yaml
     DeactivationReason:
       $ref: components/schemas/passport-requests/DeactivationReason.yaml
-    DerogationRef:
-      $ref: components/schemas/passport-requests/DerogationRef.yaml
+    Derogation:
+      $ref: components/schemas/passport-requests/Derogation.yaml
     TransferInitiateRequest:
       $ref: components/schemas/passport-requests/TransferInitiateRequest.yaml
     TransferReason:
@@ -243,6 +243,8 @@ components:
       $ref: components/schemas/operator/OperatorConfig.yaml
     UpdateOperatorConfig:
       $ref: components/schemas/operator/UpdateOperatorConfig.yaml
+    EnterpriseSize:
+      $ref: components/schemas/operator/EnterpriseSize.yaml
     Facility:
       $ref: components/schemas/operator/Facility.yaml
     CreateFacilityRequest:

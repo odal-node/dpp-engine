@@ -139,7 +139,7 @@ impl PassportService {
         // the verifier then reports that signature as unverifiable rather
         // than silently skipping it (fail-closed, never false-green).
         if let Some(chain) = &transfer_chain {
-            for record in &chain.transfers {
+            for record in chain.records() {
                 for did in [&record.from_operator.did, &record.to_operator.did] {
                     if did_documents.contains_key(did) {
                         continue;

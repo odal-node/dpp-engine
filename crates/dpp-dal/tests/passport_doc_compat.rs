@@ -197,6 +197,18 @@ const UNREADABLE_FIXTURES: &[(&str, &str)] = &[
     ),
 ];
 
+/// Product groups a node could have stored passports under that the catalog no
+/// longer ships, with the reason. A frozen document under one must still read,
+/// as an unknown product group carrying its payload as stored: that is what a
+/// node upgraded over such a passport meets, and why the document is kept rather
+/// than deleted with the group.
+const RETIRED_PRODUCT_GROUPS: &[(&str, &str)] = &[(
+    "unsold-goods",
+    "dpp-core 0.24.0 made the ESPR Art. 24 disclosure a module of its own rather than a \
+     product group: it is an operator's yearly duty, not a passport. A passport this node \
+     stored under the group before reads as an unknown group, its payload verbatim.",
+)];
+
 /// The documented-unreadable list, as `product_group/file.json` keys.
 fn unreadable_key(path: &Path) -> String {
     let file = path
@@ -242,7 +254,31 @@ fn every_frozen_passport_doc_still_reads() {
             continue;
         }
 
+        let stored_payload = value.get("productGroupData").cloned();
         match Passport::from_stored(value, &lenses, &catalog) {
+            Ok(passport)
+                if RETIRED_PRODUCT_GROUPS
+                    .iter()
+                    .any(|(group, _)| *group == product_group.as_str()) =>
+            {
+                // No longer a group, so no typed variant to pin it to: what has
+                // to hold is that it reads at all, as an unknown group, with
+                // the payload the node stored and nothing rewritten.
+                let unknown = !catalog
+                    .all()
+                    .iter()
+                    .any(|d| d.key == passport.product_group.catalog_key());
+                let verbatim =
+                    serde_json::to_value(&passport.product_group_data).ok() == stored_payload;
+                if !(unknown && verbatim) {
+                    failures.push(format!(
+                        "{}: a document under the retired group `{product_group}` must read as \
+                         an unknown product group with its payload as stored (unknown: \
+                         {unknown}, payload verbatim: {verbatim})",
+                        path.display()
+                    ));
+                }
+            }
             Ok(passport) => {
                 // A fixture that parses into the wrong document (e.g. an
                 // empty object matching every field's default) would pass

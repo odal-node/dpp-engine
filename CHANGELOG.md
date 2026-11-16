@@ -10,6 +10,74 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+### Breaking
+
+- **`dpp-core` 0.24.0: a destruction says whether the product was unsold, cites a
+  derogation as a point by its name, and must cite one only where the ESPR
+  Art. 25(1) ban reaches the product.** Core now models the ban
+  (`destruction_ban_applies`): it reaches an unsold consumer product with a CN
+  code in Annex VII, from 19 July 2026, for an operator that is not exempt (micro
+  and small enterprises, and medium-sized ones until 19 July 2030). A passport
+  records neither whether the product was sold nor the operator's size, so
+  `POST /vault/api/v1/dpp/{dppId}/eol` takes `unsold`, required with a
+  `destroyed` reason, and the operator states `enterpriseSize` once in its
+  configuration (migration 0049, `PATCH /vault/api/v1/operator`). An operator
+  that states no size is treated as not exempt. The derogation is a point of
+  Art. 2 of Delegated Regulation (EU) 2026/296 by its name
+  (`"derogation": "damagedOrContaminated"`); the free-text
+  `{"category": ...}` an earlier release took is refused with `422`, because
+  core never counts it as a derogation, and a name that is not a point fails as
+  the body is read. A destruction the ban does not reach needs no derogation,
+  where every destruction needed one before. An event stored with the old form
+  still reads. The OpenAPI `DerogationRef` schema is replaced by `Derogation`.
+  The CLI's `odal passport eol` takes `--unsold true|false`, required with
+  `--reason destroyed`, and `--derogation <point>`; `--derogation-citation` is
+  gone, since a point carries no free text.
+
+  **Migration:** send `unsold` with every destruction, cite a derogation by its
+  point name, and set `enterpriseSize` (`micro`, `small`, `medium` or `large`)
+  through `PATCH /vault/api/v1/operator` if the operator is exempt. (#600)
+
+- **`dpp-core` 0.24.0: a compliance determination is bound to the content it was
+  computed over.** `complianceResult` gains `inputHash`, the content hash of the
+  product group and `productGroupData` it judged, and core refuses a first
+  publish whose determination is unbound or was computed over other content.
+  Create, update, amend and publish now attach every determination through
+  core's `attach_compliance_result`, and publish computes it again over the
+  content it signs, so a draft stored before the upgrade is reassessed at
+  publish rather than refused. A determination stored before still reads.
+  (#600)
+
+- **`dpp-core` 0.24.0: a stored transfer chain that breaks the chain's
+  invariant no longer reads.** Core checks a chain when it is read as well as
+  when it grows, and refuses one that holds a record for another passport, a
+  broken operator sequence, a record after a pending one, a record with more
+  than one of `completedAt`, `rejectedAt` and `cancelledAt`, or a completion
+  without both signatures. Nothing this node writes produces one: the transfer
+  routes now move the pending record only through core's `complete_pending`,
+  `reject_pending` and `cancel_pending`. An uploaded evidence dossier carrying
+  such a chain fails to read. (#600)
+
+- **`dpp-core` 0.24.0: unsold goods is no longer a product group.** The ESPR
+  Art. 24 disclosure is a module of its own in core. A passport this node stored
+  under `unsold-goods` still reads, as an unknown product group with its payload
+  as written, and `passport_doc_compat` keeps its frozen document to hold that.
+  The fixture capture for the group is removed. The unsold-goods disclosure route
+  is unchanged until #597 replaces it. (#600)
+
+- **`dpp-core` 0.24.0: the resolver's authority view no longer carries
+  `jwsSignature`.** Core's whole-passport filter now drops the root proofs for
+  every audience, since none of them covers the filtered body beside it. Whether
+  the authority view should carry a proof that covers it is open on #600. (#600)
+
+### Changed
+
+- **A credential may be narrowed to a product category an earlier schema version
+  allowed.** The category check now reads core's
+  `ProductGroup::product_category_values_any_version`, so a credential narrowed
+  to a withdrawn value such as electronics `laptop` is issued, matching the stored
+  passports that state it. (#600)
+
 ## [0.16.0] - 2026-11-14
 
 ### Breaking

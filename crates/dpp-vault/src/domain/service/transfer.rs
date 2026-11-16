@@ -126,24 +126,31 @@ impl PassportService {
             .await?
             .ok_or_else(|| DppError::NotFound(format!("no transfer chain for {id}")))?;
 
-        let idx = chain
-            .transfers
-            .iter()
-            .position(|t| t.status() == TransferStatus::Initiated)
+        let pending = chain
+            .pending()
+            .filter(|t| t.status() == TransferStatus::Initiated)
             .ok_or_else(|| DppError::Validation("no pending transfer to accept".into()))?;
 
-        let payload = chain.transfers[idx].signing_payload();
-        let from_sig = chain.transfers[idx]
+        let payload = pending.signing_payload();
+        let from_sig = pending
             .from_signature
             .clone()
             .ok_or_else(|| DppError::Validation("pending transfer has no from-signature".into()))?;
+        let transfer_id = pending.transfer_id;
+        // Signed over `acceptance_payload`, not over `payload` (the initiation
+        // bytes the outgoing operator already signed). Re-signing those made
+        // this attestation byte-identical to `from_signature` whenever the node
+        // key and the from-operator key are the same one — which is every
+        // single-operator node — so the "acceptance" could be produced by
+        // copying a field that predates the acceptance.
+        let attestation = crate::domain::verify::acceptance_payload(pending);
 
         // Fail-closed: the outgoing signature must verify before we countersign.
         if !self.identity.verify_signature(&from_sig, &payload).await? {
             tracing::warn!(
                 code = event_codes::TRANSFER_SIGNATURE_INVALID,
                 passport_id = %id,
-                transfer_id = %chain.transfers[idx].transfer_id,
+                transfer_id = %transfer_id,
                 "accept_transfer rejected — outgoing signature failed verification"
             );
             return Err(DppError::Validation(
@@ -151,19 +158,11 @@ impl PassportService {
             ));
         }
 
-        // Signed over `acceptance_payload`, not over `payload` (the initiation
-        // bytes the outgoing operator already signed). Re-signing those made
-        // this attestation byte-identical to `from_signature` whenever the node
-        // key and the from-operator key are the same one — which is every
-        // single-operator node — so the "acceptance" could be produced by
-        // copying a field that predates the acceptance.
-        let attestation = crate::domain::verify::acceptance_payload(&chain.transfers[idx]);
-        chain.transfers[idx].node_acceptance_attestation =
-            Some(self.identity.sign_passport(id, &attestation).await?.jws);
-        chain.transfers[idx]
-            .complete()
-            .map_err(|e| DppError::Validation(e.to_string().into()))?;
-        let record = chain.transfers[idx].clone();
+        let attestation = self.identity.sign_passport(id, &attestation).await?.jws;
+        let record = chain
+            .complete_pending(attestation)
+            .map_err(|e| DppError::Validation(e.to_string().into()))?
+            .clone();
 
         let entry =
             PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
@@ -297,22 +296,16 @@ impl PassportService {
             .await?
             .ok_or_else(|| DppError::NotFound(format!("no transfer chain for {id}")))?;
 
-        let idx = chain
-            .transfers
-            .iter()
-            .position(|t| {
-                matches!(
-                    t.status(),
-                    TransferStatus::Initiated | TransferStatus::Accepted
-                )
-            })
-            .ok_or_else(|| {
-                DppError::Validation(format!("no pending transfer to {}", how.verb()).into())
-            })?;
+        if chain.pending().is_none() {
+            return Err(DppError::Validation(
+                format!("no pending transfer to {}", how.verb()).into(),
+            ));
+        }
 
-        how.apply(&mut chain.transfers[idx])
-            .map_err(|e| DppError::Validation(e.to_string().into()))?;
-        let record = chain.transfers[idx].clone();
+        let record = how
+            .apply(&mut chain)
+            .map_err(|e| DppError::Validation(e.to_string().into()))?
+            .clone();
 
         let entry =
             PassportAuditEntry::new(&id.to_string(), "transferred", &auth.user_id, None, None)
@@ -372,11 +365,12 @@ impl Termination {
         }
     }
 
-    /// Apply the outcome, letting the record's own state machine refuse it.
-    fn apply(self, record: &mut TransferRecord) -> Result<(), TransferError> {
+    /// Apply the outcome to the chain's pending record, letting the record's own
+    /// state machine refuse it.
+    fn apply(self, chain: &mut TransferChain) -> Result<&TransferRecord, TransferError> {
         match self {
-            Self::Rejected => record.reject(),
-            Self::Cancelled => record.cancel(),
+            Self::Rejected => chain.reject_pending(),
+            Self::Cancelled => chain.cancel_pending(),
         }
     }
 }

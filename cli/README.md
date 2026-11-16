@@ -185,7 +185,7 @@ keeps an append-only history.
 | `odal passport publish [id]` | Sign and publish one draft, or every draft. Given the id of a suspended passport, it publishes that passport again | write |
 | `odal passport suspend <id>` | Suspend a published passport. Its public URL answers `410 Gone` | write |
 | `odal passport retire <id>` | Move a passport to the terminal `retired` state. The public page keeps serving. Refused until the product group's retention period, counted from publication, has passed; the refusal names the date. The operator's `--retention-policy-days` setting does not change it | write |
-| `odal passport eol <id> --reason [--derogation …]` | Declare end of life (terminal). `--reason destroyed` requires a `--derogation`, because ESPR Art. 25 otherwise bans destruction | write |
+| `odal passport eol <id> --reason [--unsold true\|false] [--derogation <point>]` | Declare end of life (terminal). `--reason destroyed` requires `--unsold`; the node then asks for a `--derogation`, a point of Art. 2 of Delegated Regulation (EU) 2026/296 such as `damagedOrContaminated`, only where the ESPR Art. 25(1) ban reaches the product (unsold, Annex VII, an operator that is not exempt) | write |
 | `odal passport amend <id> --patch <file> [--reason]` | Correct a published passport by issuing a successor. Returns the successor, which has a new id; the original moves to `superseded` | write |
 | `odal passport supersede <id> --superseded-by <id>` | Supersede a passport with one that already exists and already names it in `supersedesId` | write |
 | `odal passport lint <id>` | Re-run the advisory plausibility checks and store the findings. Also reports publish readiness | write |

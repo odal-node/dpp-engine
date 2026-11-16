@@ -70,7 +70,7 @@ pub(crate) async fn upsert_chain<'e>(
            ON CONFLICT (passport_id)
            DO UPDATE SET chain = EXCLUDED.chain, updated_at = now()"#,
     )
-    .bind(chain.passport_id.0)
+    .bind(chain.passport_id().0)
     .bind(&doc)
     .execute(executor)
     .await
@@ -93,7 +93,7 @@ pub(crate) async fn write_chain_over<'e>(
     over: &VersionedChain,
 ) -> Result<(), DppError> {
     let doc = chain_doc(&over.chain)?;
-    let id = over.chain.passport_id.0;
+    let id = over.chain.passport_id().0;
     let written = match over.revision {
         None => {
             sqlx::query(

@@ -1303,7 +1303,7 @@
             "$ref": "#/components/responses/Conflict"
           },
           "422": {
-            "description": "A destruction that cites a derogation category which is not a point of\nArt. 2 of Delegated Regulation (EU) 2026/296. The `errors` member names\n`/reason/derogation/category` and the points accepted. The passport is\nnot changed.\n",
+            "description": "A destruction refused, with the passport unchanged, for one of three\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6622,6 +6622,10 @@
             "type": "object",
             "additionalProperties": true,
             "description": "Calculation receipt (input hash, ruleset id and version, factor dataset version and table hash) for notified-body audit. Present only when a calculation actually ran."
+          },
+          "inputHash": {
+            "type": "string",
+            "description": "The content hash of the product group key and `productGroupData` this determination was computed over. A first publish refuses a determination whose hash is missing or no longer matches the passport's content, so a determination never describes content other than what was published. Absent on a determination recorded before the node bound one."
           }
         }
       },
@@ -6950,6 +6954,13 @@
           "reason": {
             "$ref": "#/components/schemas/DeactivationReason"
           },
+          "unsold": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the product was an unsold consumer product, which a passport does not record. Required with a `destroyed` reason (`422` otherwise): with the operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban reaches the product, and so whether the destruction cites a derogation."
+          },
           "declaredBy": {
             "type": [
               "string",
@@ -6973,7 +6984,7 @@
         }
       },
       "DeactivationReason": {
-        "description": "Why a passport reached end-of-life, internally tagged by `kind`. Destruction alone requires a `derogation` citing the lawful basis.",
+        "description": "Why a passport reached end-of-life, internally tagged by `kind`. A destruction that the ESPR Art. 25(1) ban reaches cites a `derogation`, its lawful basis.",
         "oneOf": [
           {
             "type": "object",
@@ -6992,8 +7003,7 @@
           {
             "type": "object",
             "required": [
-              "kind",
-              "derogation"
+              "kind"
             ],
             "properties": {
               "kind": {
@@ -7003,7 +7013,7 @@
                 ]
               },
               "derogation": {
-                "$ref": "#/components/schemas/DerogationRef"
+                "$ref": "#/components/schemas/Derogation"
               }
             }
           },
@@ -7040,26 +7050,22 @@
           "kind": "recycled"
         }
       },
-      "DerogationRef": {
-        "type": "object",
-        "required": [
-          "category"
+      "Derogation": {
+        "type": "string",
+        "description": "The derogation from the ESPR Art. 25(1) destruction ban that a destruction\nrelies on: a point of Art. 2 of Commission Delegated Regulation (EU) 2026/296,\nnamed as the unsold-goods records name a discard reason. The letter of each\npoint, in order, is (a) to (j).\n\nThe free-text object `{\"category\": ...}` that earlier releases accepted is\nrefused on a new declaration with `422`: it cannot be checked against the list.\nAn event stored with one still reads.\n",
+        "enum": [
+          "dangerousProduct",
+          "nonCompliantWithLaw",
+          "intellectualPropertyInfringement",
+          "licensedPeriodExpired",
+          "markingsCannotBeRemoved",
+          "damagedOrContaminated",
+          "defectiveBeyondRepair",
+          "offeredForDonationNotAccepted",
+          "donatedButNoRecipientFound",
+          "reusedButNoRecipientFound"
         ],
-        "description": "A recognised derogation from the ESPR Art. 25 destruction ban. The category list is fixed by the applicable delegated act; validated against that list at the engine boundary, not by this schema.",
-        "properties": {
-          "category": {
-            "type": "string",
-            "description": "One of the points of Art. 2 of Commission Delegated Regulation (EU)\n2026/296, spelled as the unsold-goods disclosure spells a discard reason\n(camelCase), such as `dangerousProduct` for point (a). Any other value is\nrefused with `422`, and the refusal lists them all.\n",
-            "example": "dangerousProduct"
-          },
-          "actCitation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The act/article this derogation is grounded in (e.g. an OJ/CELEX ref)."
-          }
-        }
+        "example": "damagedOrContaminated"
       },
       "TransferInitiateRequest": {
         "type": "object",
@@ -8827,6 +8833,17 @@
             ],
             "format": "date-time",
             "description": "When this operator's identity was last verified against the EU registry. Null when no verification has succeeded; never treat absence as verified."
+          },
+          "enterpriseSize": {
+            "description": "The operator's enterprise size class, which decides whether the ESPR Art. 25(1) destruction ban reaches it. Absent means not stated, treated as not exempt.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnterpriseSize"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -8886,8 +8903,30 @@
             ],
             "format": "date-time",
             "description": "When this operator's identity was last verified against the EU registry. Null when no verification has succeeded; never treat absence as verified."
+          },
+          "enterpriseSize": {
+            "description": "The operator's enterprise size class, which decides whether the ESPR Art. 25(1) destruction ban reaches it. Absent means not stated, treated as not exempt.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnterpriseSize"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
+      },
+      "EnterpriseSize": {
+        "type": "string",
+        "description": "The operator's enterprise size class, as Commission Recommendation\n2003/361/EC defines them. It decides whether the ESPR Art. 25(1) ban on\ndestroying unsold products of Annex VII reaches the operator: micro and small\nenterprises are exempt, and medium-sized ones until 19 July 2030. An operator\nthat has stated no size is treated as not exempt.\n",
+        "enum": [
+          "micro",
+          "small",
+          "medium",
+          "large"
+        ],
+        "example": "large"
       },
       "Facility": {
         "type": "object",

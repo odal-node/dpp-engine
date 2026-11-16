@@ -1,0 +1,13 @@
+type: string
+description: |
+  The operator's enterprise size class, as Commission Recommendation
+  2003/361/EC defines them. It decides whether the ESPR Art. 25(1) ban on
+  destroying unsold products of Annex VII reaches the operator: micro and small
+  enterprises are exempt, and medium-sized ones until 19 July 2030. An operator
+  that has stated no size is treated as not exempt.
+enum:
+  - micro
+  - small
+  - medium
+  - large
+example: large

@@ -103,20 +103,11 @@ pub async fn run_eol(
     id: &str,
     reason: &str,
     derogation: Option<&str>,
-    derogation_citation: Option<&str>,
+    unsold: Option<bool>,
     notes: Option<&str>,
 ) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    action_eol(
-        id,
-        reason,
-        derogation,
-        derogation_citation,
-        notes,
-        &client,
-        &cfg,
-    )
-    .await?;
+    action_eol(id, reason, derogation, unsold, notes, &client, &cfg).await?;
     println!("End of life declared for {id} ({reason}).");
     println!("The record is retained — a passport outlives its product.");
     Ok(())

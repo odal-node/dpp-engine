@@ -47,10 +47,21 @@ post:
       $ref: ../../components/responses/Forbidden.yaml
     '422':
       description: |
-        A destruction that cites a derogation category which is not a point of
-        Art. 2 of Delegated Regulation (EU) 2026/296. The `errors` member names
-        `/reason/derogation/category` and the points accepted. The passport is
-        not changed.
+        A destruction refused, with the passport unchanged, for one of three
+        reasons, each named in the `errors` member:
+
+        - `/unsold`: the request does not say whether the product was an
+          unsold consumer product;
+        - `/reason/derogation`: the derogation is the free-text object
+          `{"category": ...}` rather than a point of Art. 2 of Delegated
+          Regulation (EU) 2026/296 by its name, and the refusal lists the
+          points;
+        - `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product
+          (unsold, a CN code in Annex VII, from 19 July 2026, an operator that
+          is not exempt) and no point is cited.
+
+        A name that is not one of the points is not a derogation and fails as
+        the body is read.
       content:
         application/problem+json:
           schema:

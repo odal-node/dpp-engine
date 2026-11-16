@@ -106,7 +106,7 @@ pub fn verify_transfer_chain(
     did_documents: &BTreeMap<String, serde_json::Value>,
     node_did: &str,
 ) -> Result<(), TransferChainBreak> {
-    for (index, record) in chain.transfers.iter().enumerate() {
+    for (index, record) in chain.records().iter().enumerate() {
         // A completed transfer must be fully signed by both parties.
         let is_completed = record.completed_at.is_some()
             && record.rejected_at.is_none()
@@ -211,6 +211,35 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use uuid::Uuid;
 
+    /// A chain holding `record`, opened by the outgoing operator. Core checks a
+    /// chain as it is built, so a record it refuses never reaches verification.
+    fn chain_of(record: TransferRecord) -> TransferChain {
+        let mut chain = TransferChain::new(record.passport_id, operator("did:web:from.example"));
+        chain
+            .initiate_transfer(record)
+            .expect("core accepts the record");
+        chain
+    }
+
+    /// Core refuses `record` both ways a chain comes into being: appended, and
+    /// read from a stored or uploaded document.
+    fn assert_core_refuses(record: TransferRecord) {
+        let mut chain = TransferChain::new(record.passport_id, operator("did:web:from.example"));
+        assert!(
+            chain.initiate_transfer(record.clone()).is_err(),
+            "core appended a record it must refuse"
+        );
+        let stored = serde_json::json!({
+            "passportId": record.passport_id,
+            "originalOperator": operator("did:web:from.example"),
+            "transfers": [record],
+        });
+        assert!(
+            serde_json::from_value::<TransferChain>(stored).is_err(),
+            "core read a chain it must refuse"
+        );
+    }
+
     fn operator(did: &str) -> ResponsibleOperator {
         ResponsibleOperator {
             did: did.to_owned(),
@@ -296,11 +325,7 @@ mod tests {
             "did:web:from.example",
             "did:web:to.example",
         );
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
+        let chain = chain_of(record);
         let mut docs = BTreeMap::new();
         docs.insert(
             "did:web:from.example".to_string(),
@@ -324,11 +349,7 @@ mod tests {
         record.node_acceptance_attestation = record
             .node_acceptance_attestation
             .map(|s| format!("{s}tampered"));
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
+        let chain = chain_of(record);
         let mut docs = BTreeMap::new();
         docs.insert(
             "did:web:from.example".to_string(),
@@ -391,11 +412,7 @@ mod tests {
             "did:web:from.example",
             "did:web:to.example",
         );
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
+        let chain = chain_of(record);
         // Only the "to" DID document is available, so the outgoing operator's
         // signature — the one signature actually verified here — cannot be
         // checked. An unresolvable DID must be reported, never skipped into a
@@ -431,25 +448,11 @@ mod tests {
         record.completed_at = Some(Utc::now());
         record.node_acceptance_attestation = None;
 
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
-        let mut docs = BTreeMap::new();
-        docs.insert(
-            "did:web:from.example".to_string(),
-            did_doc_for("did:web:from.example", &from_key),
-        );
-
-        let brk = verify_transfer_chain(&chain, &docs, NODE_DID)
-            .expect_err("a completed transfer must carry the node's acceptance attestation");
-        assert_eq!(brk.index, 0);
-        assert!(
-            matches!(brk.issue, TransferSignatureIssue::Acceptance(_)),
-            "must fail on the acceptance step, not an earlier one; got: {:?}",
-            brk.issue
-        );
+        // dpp-core 0.24.0 refuses such a chain before verification can see it:
+        // a completion without both signatures is neither appended nor read. The
+        // acceptance branch below it stays as a second line, and this pins the
+        // first.
+        assert_core_refuses(record);
     }
 
     #[test]
@@ -466,11 +469,7 @@ mod tests {
         );
         record.node_acceptance_attestation = None;
 
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
+        let chain = chain_of(record);
         let mut docs = BTreeMap::new();
         docs.insert(
             "did:web:from.example".to_string(),
@@ -498,16 +497,8 @@ mod tests {
             cancelled_at: None,
             notes: None,
         };
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
-        // No DID docs needed — it must fail on the missing signature first.
-        let brk = verify_transfer_chain(&chain, &BTreeMap::new(), NODE_DID)
-            .expect_err("a completed but unsigned record must fail closed");
-        assert_eq!(brk.index, 0);
-        assert!(matches!(brk.issue, TransferSignatureIssue::From(_)));
+        // As above: dpp-core 0.24.0 refuses the chain before verification runs.
+        assert_core_refuses(record);
     }
 
     #[test]
@@ -531,11 +522,7 @@ mod tests {
         };
         let payload = record.signing_payload();
         record.from_signature = Some(sign("did:web:from.example", &from_key, &payload));
-        let chain = TransferChain {
-            passport_id: record.passport_id,
-            original_operator: operator("did:web:from.example"),
-            transfers: vec![record],
-        };
+        let chain = chain_of(record);
         let mut docs = BTreeMap::new();
         docs.insert(
             "did:web:from.example".to_string(),

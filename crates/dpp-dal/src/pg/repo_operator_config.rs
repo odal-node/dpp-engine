@@ -44,6 +44,11 @@ impl PgOperatorConfigRepo {
             retention_policy_days: r.get::<i32, _>("retention_policy_days").into(),
             feature_flags: r.get("feature_flags"),
             registry_verified_at: r.get("registry_verified_at"),
+            // The column's CHECK admits only the four wire names, so a value
+            // that does not read is not one a write could have stored.
+            enterprise_size: r
+                .get::<Option<String>, _>("enterprise_size")
+                .and_then(|size| serde_json::from_value(serde_json::Value::String(size)).ok()),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -143,8 +148,8 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
                  (operator_id, legal_name, trade_name, address, country, contact_email,
                   did_web_url, product_categories, brand_primary, brand_secondary,
                   brand_logo_url, custom_domain, data_residency, retention_policy_days,
-                  feature_flags, registry_verified_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now(),now())
+                  feature_flags, registry_verified_at, enterprise_size, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),now())
                ON CONFLICT (operator_id) DO UPDATE SET
                  legal_name = EXCLUDED.legal_name,
                  trade_name = EXCLUDED.trade_name,
@@ -165,6 +170,11 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
                  -- is a deliberate act, not a side effect of editing branding.
                  registry_verified_at =
                    COALESCE(EXCLUDED.registry_verified_at, odal.operator_config.registry_verified_at),
+                 -- COALESCE for the same reason: the size decides whether the
+                 -- destruction ban reaches this operator, and an edit that does
+                 -- not carry one must not reset it to "not stated".
+                 enterprise_size =
+                   COALESCE(EXCLUDED.enterprise_size, odal.operator_config.enterprise_size),
                  updated_at = now()
                RETURNING *"#,
         )
@@ -184,6 +194,12 @@ impl OperatorConfigRepository for PgOperatorConfigRepo {
         .bind(retention_days)
         .bind(&config.feature_flags)
         .bind(config.registry_verified_at)
+        .bind(
+            config
+                .enterprise_size
+                .and_then(|size| serde_json::to_value(size).ok())
+                .and_then(|wire| wire.as_str().map(str::to_owned)),
+        )
         .fetch_one(self.dal.pool())
         .await
         .map_err(db_err)?;

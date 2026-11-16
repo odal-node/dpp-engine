@@ -1,17 +1,20 @@
 //! `declare_eol` — end-of-life declaration (recycled, destroyed, exported, or
 //! lost), transitioning a passport to the terminal `Deactivated` status.
 
+use chrono::Utc;
 use dpp_common::event;
 use dpp_domain::{
-    DiscardReason, FieldError, ValidationErrors,
-    eol::{DeactivationReason, EolEvent},
+    CommodityCode, DiscardReason, FieldError, ValidationErrors,
+    eol::{DeactivationReason, Derogation, EolEvent},
     error::DppError,
     passport::{Passport, PassportId},
     status::PassportStatus,
+    unsold_goods::{EnterpriseSize, destruction_ban_applies},
 };
 use dpp_types::{
     audit::PassportAuditEntry,
     auth::AuthContext,
+    operator::STANDALONE_OPERATOR_ID,
     registry_sync::RegistryStatusIntent,
     state_change::{PassportWrite, StateChange},
 };
@@ -25,15 +28,21 @@ impl PassportService {
     /// typed [`EolEvent`] is recorded in the hash-chained audit trail and
     /// a `deactivated` status intent is enqueued to the registry outbox.
     #[tracing::instrument(skip(self, eol), fields(passport_id = %id))]
+    ///
+    /// `unsold` says whether the product was an unsold consumer product, which a
+    /// passport does not record. Together with the operator's enterprise size it
+    /// decides whether ESPR Art. 25(1) reaches a destruction, and so whether the
+    /// destruction must cite a derogation.
     pub async fn declare_eol(
         &self,
         id: PassportId,
         eol: EolEvent,
+        unsold: bool,
         auth: &AuthContext,
     ) -> Result<Passport, DppError> {
         // Before the passport is read, so a refused declaration costs nothing and
         // changes nothing: `Deactivated` is terminal.
-        if let Some(problem) = derogation_category_problem(&eol.reason) {
+        if let Some(problem) = legacy_derogation_problem(&eol.reason) {
             return Err(DppError::Validation(ValidationErrors {
                 errors: vec![problem],
             }));
@@ -49,6 +58,20 @@ impl PassportService {
                 current: passport.status.to_string(),
                 required: PassportStatus::Deactivated.to_string(),
             });
+        }
+
+        if matches!(eol.reason, DeactivationReason::Destroyed { .. }) {
+            let ban_applies = destruction_ban_applies(
+                unsold,
+                &declared_codes(&passport),
+                self.enterprise_size().await?,
+                Utc::now().date_naive(),
+            );
+            if eol.missing_derogation(ban_applies) {
+                return Err(DppError::Validation(ValidationErrors {
+                    errors: vec![missing_derogation_problem()],
+                }));
+            }
         }
 
         let prev_status = passport.status.to_string();
@@ -95,98 +118,133 @@ impl PassportService {
     }
 }
 
-/// Why a destruction's derogation category is not one the delegated act names, or
-/// `None` when it is, or when the reason is not a destruction.
-///
-/// `DerogationRef` says the category "is validated against that list by the
-/// host", and the type enforces only that one is present: any string was
-/// accepted, recorded as the passport's lawful basis, and left it `Deactivated`,
-/// which is terminal. The list is Art. 2 of Commission Delegated Regulation (EU)
-/// 2026/296, points (a) to (j), and core already carries it as
-/// [`DiscardReason`], so the names accepted are core's and nothing here writes a
-/// point out again.
-///
-/// Spelling is exact, as everywhere a category is compared: the value stored is
-/// the one a reader will look for.
-fn derogation_category_problem(reason: &DeactivationReason) -> Option<FieldError> {
-    let DeactivationReason::Destroyed { derogation } = reason else {
-        return None;
-    };
-    let named: Vec<(String, char)> = DiscardReason::ALL
+impl PassportService {
+    /// The operator's enterprise size, from operator configuration.
+    ///
+    /// An operator that has stated none is treated as not exempt, so a destruction
+    /// the ban would reach is asked for a derogation rather than let through on a
+    /// size nobody declared.
+    async fn enterprise_size(&self) -> Result<EnterpriseSize, DppError> {
+        let declared = match &self.registry_reader {
+            Some(reader) => reader
+                .get(STANDALONE_OPERATOR_ID)
+                .await?
+                .and_then(|config| config.enterprise_size),
+            None => None,
+        };
+        Ok(declared.unwrap_or(EnterpriseSize::Large))
+    }
+}
+
+/// The passport's commodity code, where it reads as one. A declared code that
+/// does not parse cannot be placed in Annex VII, so it reaches no ban.
+fn declared_codes(passport: &Passport) -> Vec<CommodityCode> {
+    passport
+        .commodity_code
+        .iter()
+        .filter_map(|code| code.validated().ok())
+        .collect()
+}
+
+/// The points of Art. 2 of Commission Delegated Regulation (EU) 2026/296, as a
+/// request names them. Core carries the list as [`DiscardReason`], so the names
+/// are core's and nothing here writes a point out again.
+fn derogation_points() -> String {
+    DiscardReason::ALL
         .iter()
         .filter_map(|point| {
             let wire = serde_json::to_value(point).ok()?;
-            Some((wire.as_str()?.to_owned(), point.article_2_point()))
+            Some(format!(
+                "{} (point {})",
+                wire.as_str()?,
+                point.article_2_point()
+            ))
         })
-        .collect();
-    if named.iter().any(|(name, _)| *name == derogation.category) {
-        return None;
-    }
-    let list = named
-        .iter()
-        .map(|(name, point)| format!("{name} (point {point})"))
         .collect::<Vec<_>>()
-        .join(", ");
+        .join(", ")
+}
+
+/// A new destruction that cites its derogation as free text, `{"category": ...}`.
+///
+/// Core reads that form only as the history of an event written before the closed
+/// list was modelled, and never counts it as a derogation, so a new event written
+/// with one would record a lawful basis nothing can check. A point is cited by its
+/// name alone.
+fn legacy_derogation_problem(reason: &DeactivationReason) -> Option<FieldError> {
+    let DeactivationReason::Destroyed {
+        derogation: Some(Derogation::Legacy(_)),
+    } = reason
+    else {
+        return None;
+    };
     Some(FieldError {
-        field: "/reason/derogation/category".to_owned(),
+        field: "/reason/derogation".to_owned(),
         message: format!(
-            "'{}' is not a derogation the delegated act names. Art. 2 of Commission Delegated \
-             Regulation (EU) 2026/296 lists: {list}.",
-            derogation.category
+            "A destruction cites a point of Art. 2 of Commission Delegated Regulation (EU) \
+             2026/296 by its name, not as free text. The points are: {}.",
+            derogation_points()
         ),
     })
+}
+
+/// The refusal for a destruction the ESPR Art. 25(1) ban reaches that cites no
+/// point.
+fn missing_derogation_problem() -> FieldError {
+    FieldError {
+        field: "/reason/derogation".to_owned(),
+        message: format!(
+            "ESPR Art. 25(1) bars destroying this product: it is an unsold product of Annex VII, \
+             the ban has applied since 19 July 2026, and the operator is not exempt. Cite the \
+             derogation the destruction relies on, a point of Art. 2 of Commission Delegated \
+             Regulation (EU) 2026/296: {}.",
+            derogation_points()
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use dpp_domain::DiscardReason;
-    use dpp_domain::eol::{DeactivationReason, DerogationRef};
+    use dpp_domain::eol::{DeactivationReason, Derogation};
+    use serde_json::json;
 
-    use super::derogation_category_problem;
+    use super::{legacy_derogation_problem, missing_derogation_problem};
 
-    fn destroyed(category: &str) -> DeactivationReason {
-        DeactivationReason::Destroyed {
-            derogation: DerogationRef {
-                category: category.to_owned(),
-                act_citation: None,
-            },
-        }
+    fn destroyed(derogation: Option<Derogation>) -> DeactivationReason {
+        DeactivationReason::Destroyed { derogation }
     }
 
-    /// Every point of the delegated act's Art. 2 is a category a destruction may
-    /// cite. The names come from core's own list, so a point added there is
-    /// accepted here without anything being edited.
+    /// A request cites a point by its name alone, and every point of the
+    /// delegated act's Art. 2 reads as one. The names come from core's own list,
+    /// so a point added there is accepted here without anything being edited.
     #[test]
-    fn every_point_of_the_delegated_act_is_an_accepted_category() {
+    fn every_point_of_the_delegated_act_is_cited_by_its_name() {
         for point in DiscardReason::ALL {
             let name = serde_json::to_value(point).expect("a reason serialises");
-            let category = name.as_str().expect("a reason serialises as a string");
+            let derogation: Derogation =
+                serde_json::from_value(name.clone()).expect("a point's name reads back");
+            assert_eq!(derogation, Derogation::Point(*point), "{name}");
             assert_eq!(
-                derogation_category_problem(&destroyed(category)),
-                None,
-                "`{category}` is a point of the act and must be accepted"
+                legacy_derogation_problem(&destroyed(Some(derogation))),
+                None
             );
         }
     }
 
-    /// A destruction that cites a lawful basis the act does not list is refused,
-    /// and the refusal says what the act does list. `odal passport eol --reason
-    /// destroyed --derogation bogus-category` exited 0 and left the passport
-    /// terminal with that string recorded as its lawful basis.
+    /// The old free-text form still reads, so a stored event keeps its history,
+    /// but a new destruction written with it is refused, and the refusal lists
+    /// the points. `odal passport eol --reason destroyed --derogation
+    /// bogus-category` once exited 0 and left the passport terminal with that
+    /// string recorded as its lawful basis.
     #[test]
-    fn a_category_the_act_does_not_name_is_refused_with_the_list() {
-        for category in [
-            "bogus-category",
-            "safety",
-            "health-and-safety",
-            "dangerous-product",
-            "DangerousProduct",
-            " dangerousProduct",
-            "",
-        ] {
-            let problem = derogation_category_problem(&destroyed(category))
-                .unwrap_or_else(|| panic!("`{category}` was accepted"));
-            assert_eq!(problem.field, "/reason/derogation/category");
+    fn a_free_text_citation_is_refused_with_the_list() {
+        for category in ["bogus-category", "dangerousProduct", ""] {
+            let legacy: Derogation = serde_json::from_value(json!({ "category": category }))
+                .expect("the old form still reads");
+            assert!(matches!(legacy, Derogation::Legacy(_)), "{category}");
+            let problem = legacy_derogation_problem(&destroyed(Some(legacy)))
+                .unwrap_or_else(|| panic!("`{category}` as free text was accepted"));
+            assert_eq!(problem.field, "/reason/derogation");
             assert!(
                 problem.message.contains("dangerousProduct"),
                 "the refusal should list what is accepted: {}",
@@ -200,16 +258,53 @@ mod tests {
         }
     }
 
-    /// Only destruction carries a derogation, so nothing else has a category to
-    /// check.
+    /// A name the act does not list is not a point and does not read as a
+    /// derogation at all, so it is refused while the body is parsed, before the
+    /// passport is read.
     #[test]
-    fn a_reason_other_than_destruction_has_no_category_to_refuse() {
+    fn a_name_the_act_does_not_list_does_not_read_as_a_derogation() {
+        for name in [
+            "bogus-category",
+            "safety",
+            "DangerousProduct",
+            " dangerousProduct",
+            "",
+        ] {
+            assert!(
+                serde_json::from_value::<Derogation>(json!(name)).is_err(),
+                "`{name}` read as a derogation"
+            );
+        }
+    }
+
+    /// Only a destruction carries a derogation, and one that cites none is a
+    /// question for the ban, not for this check.
+    #[test]
+    fn nothing_but_a_free_text_destruction_is_refused_up_front() {
         for reason in [
             DeactivationReason::Recycled,
             DeactivationReason::Exported,
             DeactivationReason::Lost,
+            destroyed(None),
         ] {
-            assert_eq!(derogation_category_problem(&reason), None);
+            assert_eq!(legacy_derogation_problem(&reason), None);
         }
+    }
+
+    /// The refusal for a destruction the ban reaches says why and what to cite.
+    #[test]
+    fn a_missing_derogation_is_refused_with_the_ban_and_the_list() {
+        let problem = missing_derogation_problem();
+        assert_eq!(problem.field, "/reason/derogation");
+        assert!(
+            problem.message.contains("Art. 25(1)"),
+            "{}",
+            problem.message
+        );
+        assert!(
+            problem.message.contains("dangerousProduct"),
+            "{}",
+            problem.message
+        );
     }
 }
