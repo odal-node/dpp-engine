@@ -4,13 +4,17 @@ post:
   description: |
     Transition a `published` or `suspended` DPP to `deactivated`
     (terminal). The record is retained, never deleted: the passport
-    outlives the product. Destruction (`reason.kind: destroyed`) is only
-    lawful with a recognised derogation from the unsold-goods destruction
-    ban (ESPR Art. 25 delegated act), so the derogation's `category` must be
-    one of the points of Art. 2 of Commission Delegated Regulation (EU)
-    2026/296. Any other category is refused with `422` before anything is
-    written, naming the points. The status is terminal, so a lawful basis that
-    does not exist would otherwise stay on the record.
+    outlives the product. A destruction (`reason.kind: destroyed`) states
+    whether the product was an unsold consumer product (`unsold`), and cites a
+    derogation only where the ESPR Art. 25(1) ban reaches it: an unsold
+    product with a CN code in Annex VII, destroyed from 19 July 2026 by an
+    operator that its `enterpriseSize` does not exempt. The derogation is a
+    point of Art. 2 of Commission Delegated Regulation (EU) 2026/296 by its
+    name, as in `"reason": {"kind": "destroyed", "derogation":
+    "damagedOrContaminated"}`. A destruction the ban reaches that cites none,
+    and the free-text `{"category": ...}` of earlier releases, are refused
+    with `422` before anything is written. The status is terminal, so a
+    lawful basis that does not exist would otherwise stay on the record.
   tags:
     - DPP Lifecycle
   security:

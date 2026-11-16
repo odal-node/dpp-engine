@@ -1244,7 +1244,7 @@
       "post": {
         "operationId": "declareDppEol",
         "summary": "Declare a DPP end-of-life",
-        "description": "Transition a `published` or `suspended` DPP to `deactivated`\n(terminal). The record is retained, never deleted: the passport\noutlives the product. Destruction (`reason.kind: destroyed`) is only\nlawful with a recognised derogation from the unsold-goods destruction\nban (ESPR Art. 25 delegated act), so the derogation's `category` must be\none of the points of Art. 2 of Commission Delegated Regulation (EU)\n2026/296. Any other category is refused with `422` before anything is\nwritten, naming the points. The status is terminal, so a lawful basis that\ndoes not exist would otherwise stay on the record.\n",
+        "description": "Transition a `published` or `suspended` DPP to `deactivated`\n(terminal). The record is retained, never deleted: the passport\noutlives the product. A destruction (`reason.kind: destroyed`) states\nwhether the product was an unsold consumer product (`unsold`), and cites a\nderogation only where the ESPR Art. 25(1) ban reaches it: an unsold\nproduct with a CN code in Annex VII, destroyed from 19 July 2026 by an\noperator that its `enterpriseSize` does not exempt. The derogation is a\npoint of Art. 2 of Commission Delegated Regulation (EU) 2026/296 by its\nname, as in `\"reason\": {\"kind\": \"destroyed\", \"derogation\":\n\"damagedOrContaminated\"}`. A destruction the ban reaches that cites none,\nand the free-text `{\"category\": ...}` of earlier releases, are refused\nwith `422` before anything is written. The status is terminal, so a\nlawful basis that does not exist would otherwise stay on the record.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -8905,7 +8905,7 @@
             "description": "When this operator's identity was last verified against the EU registry. Null when no verification has succeeded; never treat absence as verified."
           },
           "enterpriseSize": {
-            "description": "The operator's enterprise size class, which decides whether the ESPR Art. 25(1) destruction ban reaches it. Absent means not stated, treated as not exempt.",
+            "description": "The operator's enterprise size class, which decides whether the ESPR Art. 25(1) destruction ban reaches it. Omitted or null leaves the current value unchanged, so a size once stated is corrected by stating another. A node that has never been given one treats the operator as not exempt.",
             "anyOf": [
               {
                 "$ref": "#/components/schemas/EnterpriseSize"
