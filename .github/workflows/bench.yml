@@ -17,12 +17,13 @@ name: Benchmarks
 # the DAL and vault benches through `scripts/shared-test-pg.sh`, and the NATS bench
 # starts a container of its own. Docker is installed on the runner.
 #
-# The real-plugin benches in `dpp-plugin-host` build the battery plugin from a
-# sibling `dpp-core` working tree, which a runner does not have. They skip with a
-# warning here, and only the WAT floor benches run. Checking `dpp-core` out beside
-# this repository would not fix that: the run would then bench whatever its default
-# branch holds, not the release this workspace is pinned to. The plugin is not
-# published as a crate.
+# The `sdk_*` benches in `dpp-plugin-host` build the `abi-echo` fixture, a plugin
+# written against the published SDK this workspace pins, so they need the
+# wasm32-wasip1 target, added below. They measure what the SDK's generated ABI
+# costs on top of the WAT floor, not any product group's rules: no product group
+# plugin is published, as a crate or as a release artefact, so there is nothing
+# pinned to bench. Building one from a sibling `dpp-core` checkout would bench
+# whatever that tree held, not the release this workspace is pinned to.
 on:
   schedule:
     - cron: "17 3 * * 1" # Monday 03:17 UTC
@@ -59,7 +60,7 @@ jobs:
         with:
           workspaces: dpp-engine
       - name: Install just
-        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: just
       # Criterion keeps the last run's numbers under `target/criterion` and prints
@@ -90,6 +91,12 @@ jobs:
           fi
           gh run download "$previous" --name criterion-reports --dir dpp-engine/target/criterion \
             || echo "Run $previous has no criterion-reports artifact left."
+      # The `sdk_*` benches compile a plugin to wasm32-wasip1. The target is added
+      # here, not in rust-toolchain.toml, which keeps wasm targets out of every other
+      # build on purpose.
+      - name: Add the wasm32-wasip1 target
+        working-directory: dpp-engine
+        run: rustup target add wasm32-wasip1
       - name: just bench
         id: bench
         working-directory: dpp-engine
