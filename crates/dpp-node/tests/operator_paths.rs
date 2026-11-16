@@ -503,6 +503,11 @@ async fn v0_15_0_upgrades_to_this_build() {
     upgrade_from(&fixture("v0.15.0")).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn v0_16_0_upgrades_to_this_build() {
+    upgrade_from(&fixture("v0.16.0")).await;
+}
+
 async fn upgrade_from(fixture: &Path) {
     let release = fixture
         .file_name()
