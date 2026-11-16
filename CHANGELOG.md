@@ -36,7 +36,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   **Migration:** send `unsold` with every destruction, cite a derogation by its
   point name, and set `enterpriseSize` (`micro`, `small`, `medium` or `large`)
-  through `PATCH /vault/api/v1/operator` if the operator is exempt. (#600)
+  through `PATCH /vault/api/v1/operator` if the operator is exempt. (#600, #616)
 
 - **`dpp-core` 0.24.0: a compliance determination is bound to the content it was
   computed over.** `complianceResult` gains `inputHash`, the content hash of the
@@ -46,7 +46,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   core's `attach_compliance_result`, and publish computes it again over the
   content it signs, so a draft stored before the upgrade is reassessed at
   publish rather than refused. A determination stored before still reads.
-  (#600)
+  (#600, #616)
 
 - **`dpp-core` 0.24.0: a stored transfer chain that breaks the chain's
   invariant no longer reads.** Core checks a chain when it is read as well as
@@ -56,19 +56,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   without both signatures. Nothing this node writes produces one: the transfer
   routes now move the pending record only through core's `complete_pending`,
   `reject_pending` and `cancel_pending`. An uploaded evidence dossier carrying
-  such a chain fails to read. (#600)
+  such a chain fails to read. (#600, #616)
 
 - **`dpp-core` 0.24.0: unsold goods is no longer a product group.** The ESPR
   Art. 24 disclosure is a module of its own in core. A passport this node stored
   under `unsold-goods` still reads, as an unknown product group with its payload
   as written, and `passport_doc_compat` keeps its frozen document to hold that.
   The fixture capture for the group is removed. The unsold-goods disclosure route
-  is unchanged until #597 replaces it. (#600)
+  is unchanged until #597 replaces it. (#600, #616)
 
 - **`dpp-core` 0.24.0: the resolver's authority view no longer carries
   `jwsSignature`.** Core's whole-passport filter now drops the root proofs for
   every audience, since none of them covers the filtered body beside it. Whether
-  the authority view should carry a proof that covers it is open on #600. (#600)
+  the authority view should carry a proof that covers it is open on #600. (#600, #616)
 
 ### Changed
 
@@ -76,7 +76,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   allowed.** The category check now reads core's
   `ProductGroup::product_category_values_any_version`, so a credential narrowed
   to a withdrawn value such as electronics `laptop` is issued, matching the stored
-  passports that state it. (#600)
+  passports that state it. (#600, #616)
 
 ## [0.16.0] - 2026-11-14
 
