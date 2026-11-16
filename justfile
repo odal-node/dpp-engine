@@ -294,7 +294,7 @@ regenerate-templates:
     cargo test -p dpp-integrator --test regenerate_templates \
         -- --ignored --exact regenerate_templates --nocapture
 
-# The argument is a catalog key, so it may contain a hyphen (`unsold-goods`),
+# The argument is a catalog key, so it may contain a hyphen,
 # which a Rust function name cannot — hence the substitution.
 capture-fixture PRODUCT_GROUP:
     cargo test -p dpp-vault --features integration-tests \

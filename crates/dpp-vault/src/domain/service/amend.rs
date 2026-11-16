@@ -183,7 +183,7 @@ impl PassportService {
 
         apply_patch(&mut successor, patch)?;
         guard_personal_data(&successor)?;
-        apply_compliance(&mut successor, &*self.compliance);
+        apply_compliance(&mut successor, &*self.compliance)?;
         apply_lint(&mut successor);
 
         Ok(successor)

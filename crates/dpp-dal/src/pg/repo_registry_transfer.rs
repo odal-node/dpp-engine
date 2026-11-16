@@ -86,7 +86,7 @@ impl RegistryTransferOutbox for PgRegistryTransferRepo {
         let mut tx = self.dal.begin().await?;
         // Same transaction as the chain write — the atomicity guarantee.
         super::repo_transfer::upsert_chain(&mut *tx, chain).await?;
-        queue_transfer_notice(&mut *tx, transfer_id, chain.passport_id, &payload).await?;
+        queue_transfer_notice(&mut *tx, transfer_id, chain.passport_id(), &payload).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(())
     }

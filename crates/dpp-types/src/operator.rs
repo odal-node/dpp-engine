@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use dpp_domain::{DppError, FacilitySnapshot};
+use dpp_domain::{DppError, FacilitySnapshot, unsold_goods::EnterpriseSize};
 use serde::{Deserialize, Serialize};
 
 /// Constant identity of the single operator this node serves.
@@ -62,6 +62,16 @@ pub struct OperatorConfig {
     /// [`OperatorConfig::registry_verification_expires_at`] for what it implies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_verified_at: Option<DateTime<Utc>>,
+    /// The operator's enterprise size class, which decides whether the ESPR
+    /// Art. 25(1) ban on destroying unsold products of Annex VII reaches it
+    /// (micro and small enterprises are exempt, medium-sized ones until 19 July
+    /// 2030).
+    ///
+    /// `None` means not stated, and is treated as not exempt: a destruction the
+    /// ban would reach is asked for a derogation rather than let through on a
+    /// size nobody declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enterprise_size: Option<EnterpriseSize>,
     /// Row creation timestamp.
     pub created_at: Option<DateTime<Utc>>,
     /// Last-update timestamp.
@@ -152,6 +162,7 @@ impl OperatorConfig {
             retention_policy_days: default_retention_days(),
             feature_flags: None,
             registry_verified_at: None,
+            enterprise_size: None,
             created_at: None,
             updated_at: None,
         }
@@ -214,6 +225,10 @@ pub struct UpdateOperatorConfig {
     /// with the rest of this patch type. Correcting a wrong date means passing
     /// the right one.
     pub registry_verified_at: Option<DateTime<Utc>>,
+    /// The operator's enterprise size class (`micro`, `small`, `medium` or
+    /// `large`), which decides whether the ESPR Art. 25(1) destruction ban
+    /// reaches it. Set-only, like the rest of this patch type.
+    pub enterprise_size: Option<EnterpriseSize>,
 }
 
 impl UpdateOperatorConfig {
@@ -291,6 +306,9 @@ impl UpdateOperatorConfig {
         }
         if let Some(v) = self.registry_verified_at {
             cfg.registry_verified_at = Some(v);
+        }
+        if let Some(v) = self.enterprise_size {
+            cfg.enterprise_size = Some(v);
         }
     }
 }
@@ -387,6 +405,7 @@ mod tests {
             retention_policy_days: days,
             feature_flags: None,
             registry_verified_at: None,
+            enterprise_size: None,
         }
     }
 
@@ -490,6 +509,7 @@ mod registry_verification_patch_tests {
             retention_policy_days: None,
             feature_flags: None,
             registry_verified_at: None,
+            enterprise_size: None,
         }
     }
 

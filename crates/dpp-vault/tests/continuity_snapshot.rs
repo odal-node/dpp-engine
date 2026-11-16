@@ -358,7 +358,7 @@ async fn declaring_end_of_life_enqueues_a_reconcile() {
         "did:web:snapshot-test.example.com",
     );
     service
-        .declare_eol(published.id, eol, &auth)
+        .declare_eol(published.id, eol, false, &auth)
         .await
         .expect("declare eol");
 

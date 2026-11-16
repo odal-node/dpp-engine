@@ -39,3 +39,12 @@ properties:
     description: >-
       When this operator's identity was last verified against the EU registry.
       Null when no verification has succeeded; never treat absence as verified.
+  enterpriseSize:
+    description: >-
+      The operator's enterprise size class, which decides whether the ESPR
+      Art. 25(1) destruction ban reaches it. Omitted or null leaves the current
+      value unchanged, so a size once stated is corrected by stating another.
+      A node that has never been given one treats the operator as not exempt.
+    anyOf:
+      - $ref: ./EnterpriseSize.yaml
+      - type: 'null'

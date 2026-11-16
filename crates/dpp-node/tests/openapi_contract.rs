@@ -412,7 +412,6 @@ fn object_cases() -> Vec<ObjectCase> {
         "ResponsibleOperatorSnapshot",
         fixtures::responsible_operator_snapshot()
     );
-    case!("DerogationRef", fixtures::derogation_ref());
     case!("FacilitySnapshot", fixtures::facility_snapshot());
     case!("CarbonFootprint", fixtures::carbon_footprint());
     case!("RepairabilityScore", fixtures::repairability_score());
@@ -695,6 +694,14 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_transfer_reasons()),
         },
         EnumCase {
+            name: "Derogation",
+            variants: wire(&fixtures::all_derogations()),
+        },
+        EnumCase {
+            name: "EnterpriseSize",
+            variants: wire(&fixtures::all_enterprise_sizes()),
+        },
+        EnumCase {
             name: "ScanVariant",
             variants: wire(&fixtures::all_scan_variants()),
         },
@@ -894,7 +901,7 @@ fn deactivation_reason_kinds() -> Vec<String> {
 /// Bump only after re-checking the enums listed below against the released
 /// crate. Bumping it to make a red build green is the one thing that breaks
 /// this gate.
-const CORE_VERSION_VERIFIED: &str = "0.23.0";
+const CORE_VERSION_VERIFIED: &str = "0.24.0";
 
 /// Enums whose variants this test cannot enumerate, and so cannot gate.
 ///
@@ -915,6 +922,7 @@ const UNENUMERABLE_CORE_ENUMS: &[&str] = &[
     "InstrumentStatus",
     "RegulatoryStatus",
     "LawfulBasis",
+    "EnterpriseSize",
 ];
 
 /// A `dpp-core` repin must not pass silently.
@@ -2965,7 +2973,7 @@ mod fixtures {
     };
     use dpp_domain::{
         compliance::{ComplianceFinding, ComplianceResult, ComplianceStatus},
-        eol::{DeactivationReason, DerogationRef},
+        eol::{DeactivationReason, Derogation},
         identifier::commodity_code::CommodityCode,
         lint::{LintFinding, LintResult, LintSeverity},
         operator::{
@@ -2982,6 +2990,7 @@ mod fixtures {
         seal::{SealConformanceLevel, SealFormat, SealedEnvelope},
         status::PassportStatus,
         transfer::{TransferChain, TransferReason, TransferRecord},
+        unsold_goods::{DiscardReason, EnterpriseSize},
     };
     use dpp_integrator::handlers::product_groups::{
         InstrumentRefView, ObligationDateView, PassportObligationView, ProductGroupObligation,
@@ -3115,18 +3124,32 @@ mod fixtures {
         }
     }
 
-    pub fn derogation_ref() -> DerogationRef {
-        DerogationRef {
-            category: "dangerousProduct".into(),
-            act_citation: Some("Regulation (EU) 2024/1781, Art. 25(3)".into()),
-        }
+    /// Every point a destruction may cite, read off core's own list, so a point
+    /// added there reaches the schema check without an edit here.
+    pub fn all_derogations() -> Vec<Derogation> {
+        DiscardReason::ALL
+            .iter()
+            .copied()
+            .map(Derogation::Point)
+            .collect()
+    }
+
+    /// Written by hand: `EnterpriseSize` has no `ALL`, so it is listed among the
+    /// enums the repin tripwire below names.
+    pub fn all_enterprise_sizes() -> Vec<EnterpriseSize> {
+        vec![
+            EnterpriseSize::Micro,
+            EnterpriseSize::Small,
+            EnterpriseSize::Medium,
+            EnterpriseSize::Large,
+        ]
     }
 
     pub fn all_deactivation_reasons() -> Vec<DeactivationReason> {
         vec![
             DeactivationReason::Recycled,
             DeactivationReason::Destroyed {
-                derogation: derogation_ref(),
+                derogation: Some(Derogation::Point(DiscardReason::DamagedOrContaminated)),
             },
             DeactivationReason::Exported,
             DeactivationReason::Lost,
@@ -3308,6 +3331,7 @@ mod fixtures {
             ruleset_version: Some("2026.1.0".into()),
             assessed_at: Some(ts()),
             receipt: Some(json!({ "inputHash": "abc" })),
+            input_hash: Some("9f2c4e".repeat(10) + "9f2c"),
         }
     }
 
@@ -3384,7 +3408,7 @@ mod fixtures {
             )]),
             retention_until: Some(ts()),
             product_id: Some(uuid()),
-            commodity_code: Some(CommodityCode::parse("85076000").expect("valid CN-8")),
+            commodity_code: Some(CommodityCode::parse("85076000").expect("valid CN-8").into()),
             operator_identifier: Some("DE123456789".into()),
             responsible_operator: Some(responsible_operator_snapshot()),
             facility: Some(facility_snapshot()),
@@ -3619,6 +3643,7 @@ mod fixtures {
             retention_policy_days: 3650,
             feature_flags: Some(json!({ "passthroughCompliance": true })),
             registry_verified_at: Some(ts()),
+            enterprise_size: Some(EnterpriseSize::Large),
             created_at: Some(ts()),
             updated_at: Some(ts()),
         }
@@ -3641,6 +3666,7 @@ mod fixtures {
             retention_policy_days: Some(3650),
             feature_flags: Some(json!({ "passthroughCompliance": true })),
             registry_verified_at: Some(ts()),
+            enterprise_size: Some(EnterpriseSize::Medium),
         }
     }
 
@@ -3681,10 +3707,19 @@ mod fixtures {
             public_view: signed_layer(),
             did_documents,
             audit_entries: vec![audit_entry()],
-            transfer_chain: Some(TransferChain {
-                passport_id: PassportId::new(),
-                original_operator: responsible_operator(),
-                transfers: vec![transfer_record()],
+            transfer_chain: Some({
+                // `transfer_record` sets every outcome so the schema check sees
+                // every field, and a chain refuses a record with more than one,
+                // so the chain holds the completed one.
+                let mut record = transfer_record();
+                record.rejected_at = None;
+                record.cancelled_at = None;
+                let mut chain =
+                    TransferChain::new(record.passport_id, record.from_operator.clone());
+                chain
+                    .initiate_transfer(record)
+                    .expect("the fixture record opens a valid chain");
+                chain
             }),
             eol_event: Some(json!({ "kind": "recycled" })),
             checkpoint: Some(json!({})),
@@ -3834,6 +3869,7 @@ mod fixtures {
             declared_by: Some("admin@example.com".into()),
             material_recovery: Some(json!({ "cobaltKg": 1.2 })),
             notes: Some("Sent to certified recycler".into()),
+            unsold: Some(false),
         }
     }
 

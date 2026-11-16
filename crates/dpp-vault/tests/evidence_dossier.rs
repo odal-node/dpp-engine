@@ -106,7 +106,7 @@ impl TransferStore for InMemoryTransferStore {
         self.chains
             .lock()
             .unwrap()
-            .insert(chain.passport_id, chain.clone());
+            .insert(chain.passport_id(), chain.clone());
         Ok(())
     }
 }
@@ -356,7 +356,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         issuer_did.clone(),
     );
     service
-        .declare_eol(published.id, eol, &auth)
+        .declare_eol(published.id, eol, false, &auth)
         .await
         .expect("declare eol");
 
@@ -377,7 +377,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
 
     let dossier = &record.dossier;
     assert_eq!(
-        dossier.transfer_chain.as_ref().map(|c| c.transfers.len()),
+        dossier.transfer_chain.as_ref().map(|c| c.records().len()),
         Some(1)
     );
     assert!(dossier.eol_event.is_some(), "EOL event should be present");

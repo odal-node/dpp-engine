@@ -210,7 +210,6 @@ fn detect_product_group_policy(
 ) -> Option<ProductGroupAccessPolicy> {
     let obj = product_group_data.as_object()?;
     let key = match obj.get("productGroup").and_then(Value::as_str) {
-        Some("unsoldGoods") => "unsold-goods",
         Some(tag) => tag,
         None if obj.contains_key("batteryChemistry") || obj.contains_key("battery_chemistry") => {
             "battery"

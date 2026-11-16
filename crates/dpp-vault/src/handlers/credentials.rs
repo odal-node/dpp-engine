@@ -242,8 +242,9 @@ pub async fn issue_credential_handler(
 ///   credential names the group and can read none of its passports.
 ///
 /// What a group's passports can state is core's answer,
-/// [`ProductGroup::product_category_values`], read from the group's current
-/// schema; nothing here lists a vocabulary. Spelling is compared exactly,
+/// [`ProductGroup::product_category_values_any_version`]: the current schema's
+/// values and any an earlier version allowed, since a stored passport may state a
+/// withdrawn one. Nothing here lists a vocabulary. Spelling is compared exactly,
 /// because the reader compares it exactly.
 fn category_scope_problem(groups: &[String], categories: &[String]) -> Option<String> {
     if categories.is_empty() {
@@ -261,7 +262,7 @@ fn category_scope_problem(groups: &[String], categories: &[String]) -> Option<St
     let legal: Vec<(&str, Option<&'static [String]>)> = groups
         .iter()
         .map(|g| {
-            let values = ProductGroup::from_wire_tag(g).product_category_values();
+            let values = ProductGroup::from_wire_tag(g).product_category_values_any_version();
             (g.as_str(), values)
         })
         .collect();
