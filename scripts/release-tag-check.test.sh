@@ -38,6 +38,7 @@ version = \"0.4.0\"
 
 $(workspace 0.2.0)")"
 no_version="$(commit "no workspace version" "$(printf '[workspace]\nmembers = ["a"]\n')")"
+spaced_header="$(commit "a header with spaces and a comment" "$(printf '[workspace]\nmembers = ["a"]\n\n[ workspace.package ]  # shared by every crate\n  version = "0.2.0"\n')")"
 tip="$(commit "back to 0.2.0" "$(workspace 0.2.0)")"
 git -C "$repo" update-ref refs/remotes/origin/main "$tip"
 
@@ -82,6 +83,8 @@ run_case "a tag without its v" reject 0.2.0 "$tip"
 run_case "the workspace version, not another table's" reject v0.4.0 "$other_table"
 run_case "the workspace version, read past another table" accept v0.2.0 "$other_table"
 run_case "a commit with no workspace version" reject v0.2.0 "$no_version"
+run_case "a header with spaces and a comment, an indented version" accept v0.2.0 "$spaced_header"
+run_case "the same header, at another version" reject v0.3.0 "$spaced_header"
 run_case "a checkout without main" reject v0.2.0 "$tip" origin/absent
 run_case "a commit the checkout does not hold" reject v0.2.0 0000000000000000000000000000000000000000
 

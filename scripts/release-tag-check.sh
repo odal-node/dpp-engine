@@ -52,17 +52,23 @@ if ! git merge-base --is-ancestor "$RELEASE_COMMIT" "$main_ref"; then
     fail "$RELEASE_TAG points at $RELEASE_COMMIT, which is not on main." \
         "A release is tagged on its release pull request's merge commit, named by hash:" \
         "  git tag -a $RELEASE_TAG <merge-commit-sha> -m \"$RELEASE_TAG\"" \
-        "Delete this tag (git push origin :refs/tags/$RELEASE_TAG), then tag that commit."
+        "Delete this tag here and on origin, then tag that commit:" \
+        "  git tag -d $RELEASE_TAG && git push origin :refs/tags/$RELEASE_TAG"
 fi
 
 cargo_toml="$(git show "$RELEASE_COMMIT:Cargo.toml" 2> /dev/null)" \
     || fail "the tagged commit $RELEASE_COMMIT has no Cargo.toml."
 # The version under [workspace.package] only: a `version` key in another table
-# (a dependency, a [package]) is not the release's.
+# (a dependency, a [package]) is not the release's. TOML lets a line be indented
+# and a header carry spaces inside its brackets and a comment after them, and
+# refusing a release over any of those would be a false alarm.
 cargo_version="$(awk '
-    /^\[/ { in_pkg = ($0 == "[workspace.package]"); next }
-    in_pkg && !found && /^version[[:space:]]*=/ {
-        sub(/^version[[:space:]]*=[[:space:]]*"/, "")
+    /^[[:space:]]*\[/ {
+        in_pkg = ($0 ~ /^[[:space:]]*\[[[:space:]]*workspace\.package[[:space:]]*\][[:space:]]*(#.*)?$/)
+        next
+    }
+    in_pkg && !found && /^[[:space:]]*version[[:space:]]*=/ {
+        sub(/^[[:space:]]*version[[:space:]]*=[[:space:]]*"/, "")
         sub(/".*$/, "")
         print
         found = 1
@@ -72,7 +78,9 @@ cargo_version="$(awk '
 
 if [ "$tag_version" != "$cargo_version" ]; then
     fail "$RELEASE_TAG does not match the version its commit's Cargo.toml states, $cargo_version." \
-        "Tag the release pull request's merge commit: that pull request moves the version."
+        "Tag the release pull request's merge commit: that pull request moves the version." \
+        "Delete this tag here and on origin first:" \
+        "  git tag -d $RELEASE_TAG && git push origin :refs/tags/$RELEASE_TAG"
 fi
 
 echo "release-tag-check: $RELEASE_TAG is $RELEASE_COMMIT, on $main_ref, and Cargo.toml states $cargo_version."

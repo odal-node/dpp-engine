@@ -93,7 +93,8 @@ git push origin v<version>
 
 Before anything is built, `release.yml` refuses a tag whose commit is not on `main`, or
 whose name is not `v` followed by the version that commit's `Cargo.toml` states
-(`scripts/release-tag-check.sh`). A refused tag publishes nothing: delete it with
+(`scripts/release-tag-check.sh`). A refused tag publishes nothing: delete it in your
+checkout and on `origin` with `git tag -d v<version>` and
 `git push origin :refs/tags/v<version>`, then tag the merge commit.
 
 To build an image locally (the build context is the directory containing
