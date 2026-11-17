@@ -12,6 +12,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **A battery CSV row without `placedOnMarketDate` is refused at import** wherever
+  core's publish gate would refuse it: an EV, LMT or industrial battery, whatever
+  its Art. 47 declaration, since core asks for the date before the declaration. A
+  second-life battery is asked for one too, although publish would not need it:
+  the importer asks core the same question and cannot read the second-life limb,
+  which core infers privately. The battery templates mark the column `[REQUIRED]`.
+  Such a row used to import as a draft that could never be published.
+  **Migration:** add `placedOnMarketDate` (`YYYY-MM-DD`) to existing EV, LMT and
+  industrial battery spreadsheets. A portable battery needs none. (#563)
+
 - **`dpp-core` 0.24.0: a destruction says whether the product was unsold, cites a
   derogation as a point by its name, and must cite one only where the ESPR
   Art. 25(1) ban reaches the product.** Core now models the ban
@@ -73,11 +83,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 ### Added
 
 - **Battery CSV templates carry the placing date and the due diligence columns.**
-  Every battery template gains `placedOnMarketDate`, marked `[REQUIRED]`. Core
-  cannot tell whether a battery owes the due diligence report without it and
-  refuses the publish, so the importer now refuses such a row, naming it, by
-  asking core the same question. A battery placed from 18 August 2027
-  also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII
+  Every battery template gains `placedOnMarketDate` (now required; see
+  Breaking). A battery placed from 18 August 2027 also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII
   point 1(d)), and `dueDiligenceOperatorScope`, the operator's Art. 47 declaration,
   `subject` or `belowTurnoverThreshold`. An unrecognised declaration is refused,
   naming its row. Both columns stay blank for a battery placed before the date.
