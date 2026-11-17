@@ -78,6 +78,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   to a withdrawn value such as electronics `laptop` is issued, matching the stored
   passports that state it. (#600, #616)
 
+### Added
+
+- **Dated-obligation notices: `dpp.obligation.effective` and
+  `dpp.obligation.upcoming` (#501).** With `OBLIGATION_NOTICES=on`, the node
+  announces the dated obligations in its calendar through its signed webhooks and
+  its event bus: on the UTC day one takes effect, and at each lead time in
+  `OBLIGATION_NOTICE_LEAD_DAYS` before it (default `90,30,7`). Only dates an
+  adopted text fixes are announced, and the switch is off unless set.
+  - **Each notice is recorded once.** A notice is written to a ledger
+    (`odal.obligation_notice`, migration `0050_obligation_notice.sql`) in the same
+    transaction that queues its deliveries, keyed by a name-based UUID of the
+    obligation, its date, its kind and its lead time. A node down on the day
+    announces it on restart, and two nodes over one database announce each notice
+    once. A postponed date is a new notice.
+  - **`GET /vault/api/v1/obligations?from=&to=`** lists the obligations in a
+    window, each notice with whether and when it was announced, and the dates a
+    signed ruleset overruled (`conflicts`).
+  - Event payloads are in `docs/guides/WEBHOOKS.md`.
+
 ## [0.16.0] - 2026-11-14
 
 ### Breaking

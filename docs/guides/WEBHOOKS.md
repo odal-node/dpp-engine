@@ -36,8 +36,10 @@ A subscription receives the events in its filter, or every event when the filter
 `*` (the default). The subjects are listed in
 [EVENT-BUS.md](../architecture/EVENT-BUS.md#subjects): `dpp.passport.created`,
 `updated`, `published`, `suspended`, `superseded`, `retired`, `deactivated` and
-`transferred`; `dpp.import.completed` and `dpp.import.failed`; plus `dpp.webhook.test`
-for test deliveries.
+`transferred`; `dpp.import.completed` and `dpp.import.failed`;
+`dpp.obligation.effective` and `dpp.obligation.upcoming` (see
+[Dated-obligation notices](#dated-obligation-notices)); plus `dpp.webhook.test` for
+test deliveries.
 
 ## What the receiver gets
 
@@ -139,6 +141,73 @@ func Verify(secret, header string, rawBody []byte, tolerance time.Duration) bool
 
 Answer `2xx` as soon as the delivery is stored on your side, and process it
 afterwards.
+
+## Dated-obligation notices
+
+With `OBLIGATION_NOTICES=on` the node announces the dated obligations in its
+obligation calendar: passport start dates, content requirements, minimum shares and
+substance restrictions. Two event types carry them:
+
+- **`dpp.obligation.effective`**, on the UTC day the obligation takes effect;
+- **`dpp.obligation.upcoming`**, `OBLIGATION_NOTICE_LEAD_DAYS` days before it
+  (default `90,30,7`). `data.leadDays` says which.
+
+Both carry the same envelope as every other event. `data.obligation` is the
+calendar's entry for the obligation:
+
+```json
+{
+  "version": 1,
+  "eventId": "0130b7e4-81bd-56c8-9598-1a9a287fa8e5",
+  "eventType": "dpp.obligation.upcoming",
+  "timestamp": "2027-07-19T00:00:00Z",
+  "operatorId": "self_hosted",
+  "data": {
+    "obligation": {
+      "id": "battery.due-diligence-report",
+      "date": "2027-08-18",
+      "kind": "contentRequirement",
+      "citation": "Regulation (EU) 2023/1542 Art. 48(1), as replaced by Regulation (EU) 2025/1561, and Annex XIII point 1(d)",
+      "summary": "The passport of a battery placed on the market from this date carries the address of its operator's due diligence report, unless Art. 47 takes the operator or the battery out of the due diligence chapter.",
+      "productGroup": "battery",
+      "categories": ["ev", "lmt", "industrial"],
+      "basis": "sourced"
+    },
+    "leadDays": 30
+  }
+}
+```
+
+The day itself is the same shape with `eventType` `dpp.obligation.effective`, and no
+`leadDays`. A `bundle` object appears in `obligation` only for an obligation a signed
+ruleset added, naming the bundle it came from.
+
+What to rely on:
+
+- **Once per notice.** Each notice is recorded in the node's database in the same
+  transaction that queues its deliveries, and a notice already recorded is never
+  queued again. A node that was down on the day sends the notice on restart. Two
+  nodes over one database send each notice once.
+- **A stable `eventId`.** It is a name-based UUID of the obligation, its date, its
+  kind and the lead time, so a redelivery, or a notice seen twice, carries the same
+  id. A postponed date has a new id and is announced again under its new date.
+- **`timestamp` is the start of the notice day in UTC**, not the moment of sending,
+  so a redelivery has the same body and signature.
+- **Only sourced dates.** `basis` is always `sourced`. A date no adopted text fixes
+  is never announced.
+- **An upcoming notice is not sent late.** When the node was down across a lead
+  time, that notice is skipped, because the day itself announces the obligation.
+  A notice that says "in seven days" about a date already past would mislead.
+- **No passport count.** Every obligation here binds products placed on the market
+  from its date, so on the day it reaches no passport already published.
+  `productGroup` and `categories` say which products it concerns. An absent
+  `categories` means the source does not narrow it, not that every category is
+  reached.
+- **The first pass covers the day it runs on.** Switching notices on does not replay
+  the calendar's history.
+
+`GET /vault/api/v1/obligations?from=&to=` (any scope) shows the same calendar in a
+window, with each notice and whether and when the node recorded it.
 
 ## Security
 

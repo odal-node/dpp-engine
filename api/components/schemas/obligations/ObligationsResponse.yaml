@@ -1,0 +1,31 @@
+type: object
+description: |
+  The obligations taking effect in a window, with the notices the node has
+  announced for each, and the dates a signed ruleset overruled.
+required:
+  - from
+  - to
+  - events
+  - conflicts
+properties:
+  from:
+    type: string
+    format: date
+    description: First day of the window, as asked.
+  to:
+    type: string
+    format: date
+    description: Last day of the window, as asked.
+  events:
+    type: array
+    description: The obligations taking effect in the window, in date order.
+    items:
+      $ref: ./ObligationEntry.yaml
+  conflicts:
+    type: array
+    description: |
+      Dates a signed ruleset offered for an obligation whose sourced date this
+      build holds, where the two disagree. The build's date is the one announced.
+      Empty when no ruleset in force carries a schedule.
+    items:
+      $ref: ./ScheduleConflict.yaml

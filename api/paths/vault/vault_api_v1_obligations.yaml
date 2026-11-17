@@ -1,0 +1,63 @@
+get:
+  operationId: listObligations
+  summary: Dated obligations in a window, with the notices announced for each
+  description: |
+    The obligations the node's calendar holds that take effect between `from` and
+    `to`, both days included, in date order.
+
+    For each sourced obligation, `notices` lists the notice sent on the day it
+    takes effect, and one for each configured lead time before it. Each notice
+    says whether the node has recorded it as announced, and when. A notice the
+    calendar would send that is not recorded reads as not announced, which covers
+    a notice still to come and a notice whose day passed while the node was not
+    announcing. An upcoming notice whose date has already been reached is never
+    sent; this route does not read the clock, so it cannot tell that notice apart
+    from one still due.
+
+    `conflicts` lists each date a signed ruleset offered for an obligation the
+    build holds from an adopted text, where the two disagree. The build's date is
+    the one announced.
+
+    The notices come from the ledger the webhook deliveries are queued from. With
+    `OBLIGATION_NOTICES` unset, nothing is recorded and every notice reads as not
+    announced. The standalone vault answers from the built-in calendar and
+    announces nothing.
+  tags:
+    - Obligations
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: from
+      in: query
+      required: true
+      description: First day of the window, inclusive, as `YYYY-MM-DD`.
+      schema:
+        type: string
+        format: date
+    - name: to
+      in: query
+      required: true
+      description: |
+        Last day of the window, inclusive, as `YYYY-MM-DD`. At most 3660 days
+        after `from`.
+      schema:
+        type: string
+        format: date
+  responses:
+    '200':
+      description: The obligations taking effect in the window.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/obligations/ObligationsResponse.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '422':
+      description: |
+        `from` or `to` is missing or is not an ISO date, `from` is after `to`, or
+        the window is wider than 3660 days.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

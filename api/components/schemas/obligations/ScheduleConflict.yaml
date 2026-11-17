@@ -1,0 +1,25 @@
+type: object
+description: |
+  A date a signed ruleset offered for an obligation this build holds from an
+  adopted text, where the two disagree. The build's date stays in the calendar and
+  is the one announced: this build's rules select their answers by it. A conflict
+  usually means the law moved and this build has not.
+required:
+  - id
+  - buildDate
+  - bundleDate
+  - bundle
+properties:
+  id:
+    type: string
+    description: The obligation's id.
+  buildDate:
+    type: string
+    format: date
+    description: The sourced date this build holds, and keeps.
+  bundleDate:
+    type: string
+    format: date
+    description: The date the signed ruleset offered.
+  bundle:
+    $ref: ./BundleOrigin.yaml

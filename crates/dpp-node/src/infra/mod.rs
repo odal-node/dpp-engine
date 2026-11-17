@@ -4,6 +4,7 @@ pub mod credential_issuance;
 pub mod credential_issuers;
 pub mod drain;
 pub mod nats_event_bus;
+pub mod obligation_notices;
 pub mod pg_job_store;
 pub mod registry;
 pub mod registry_drain;

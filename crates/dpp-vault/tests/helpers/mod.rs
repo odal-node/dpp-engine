@@ -648,6 +648,7 @@ async fn start_vault_with_identity(
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
+    let obligation_notices = Arc::new(dpp_dal::pg::PgObligationNoticeRepo::new(dal.clone()));
 
     let state = AppState {
         service,
@@ -665,6 +666,8 @@ async fn start_vault_with_identity(
         scan_repo,
         unsold_goods_repo,
         personal_data,
+        obligation_notices,
+        obligation_schedule: Arc::new(dpp_vault::state::BuiltInObligationSchedule),
         plugin_admin: None,
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
