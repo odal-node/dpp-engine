@@ -70,6 +70,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   every audience, since none of them covers the filtered body beside it. Whether
   the authority view should carry a proof that covers it is open on #600. (#600, #616)
 
+### Added
+
+- **Battery CSV templates carry the placing date and the due diligence columns.**
+  Every battery template gains `placedOnMarketDate`, marked `[REQUIRED]`. Core
+  cannot tell whether a battery owes the due diligence report without it and
+  refuses the publish, so the importer now refuses such a row, naming it, by
+  asking core the same question. A battery placed from 18 August 2027
+  also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII
+  point 1(d)), and `dueDiligenceOperatorScope`, the operator's Art. 47 declaration,
+  `subject` or `belowTurnoverThreshold`. An unrecognised declaration is refused,
+  naming its row. Both columns stay blank for a battery placed before the date.
+  The template gates accept a column that either placing date permits, since one
+  template serves both. Until now a battery placed from that date could be
+  imported but never published. (#563)
+
 ### Changed
 
 - **A credential may be narrowed to a product category an earlier schema version

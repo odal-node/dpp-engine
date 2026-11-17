@@ -74,6 +74,26 @@
 //! - **A range** — `notInUseTemperatureMinC` / `…MaxC`.
 //! - **A delimited list** — `componentPartNumbers`, semicolon-separated.
 //!
+//! # Columns that depend on the placing date
+//!
+//! `placedOnMarketDate` is the envelope column every product group carries. For
+//! a battery it also decides whether the due diligence report is owed, so core
+//! refuses a battery that states no placing date at publish, a second-life one
+//! excepted. The battery templates mark it `[REQUIRED]`, and the importer refuses
+//! a row without it wherever core's answer would turn on it (see
+//! `validate_battery_row`).
+//!
+//! `dueDiligenceUrl` and `dueDiligenceOperatorScope` are filled for a battery
+//! placed on or after 18 August 2027 and left blank before it. From that date the
+//! report's address is owed unless Art. 47 exempts the battery. The operator
+//! declares which side of the Art. 47 turnover threshold it is on, as `subject`
+//! or `belowTurnoverThreshold`. The threshold itself is nowhere in this crate, so
+//! a change to it changes no template.
+//!
+//! One template serves both dates, so the template gates run over the facts of a
+//! battery placed before the date and over those of one placed from it, and
+//! accept a column that either permits.
+//!
 //! # The one place the categories genuinely differ in shape
 //!
 //! `StateOfHealth` is a sum type, because Annex VII Part A is two disjoint
@@ -209,6 +229,11 @@ const fn opt(field: &'static str, name: &'static str, example: &'static str) -> 
 const ENVELOPE_COLUMNS: &[Column] = &[
     req(ENVELOPE, "manufacturerName", "Acme Energy GmbH"),
     req(ENVELOPE, "manufacturerCountry", "DE"),
+    // Required here, unlike every other product group's template: whether an
+    // EV, LMT or industrial battery owes its due diligence report turns on this
+    // date, so the importer refuses a row without it, as publish would, even
+    // from an operator declaring the Art. 47 exemption.
+    req(ENVELOPE, "placedOnMarketDate", "2027-09-01"),
     opt(ENVELOPE, "commodityCode", "85076000"),
     opt(ENVELOPE, "carrierSerial", "SN-2026-0001"),
 ];
@@ -383,6 +408,23 @@ const COMMON: &[Column] = &[
         "testReportResults",
         "testReportResults",
         "https://acme.example/reports/ACME-REF-48-100",
+    ),
+    // ── Due diligence (Annex XIII point 1(d)) ─────────────────────────────
+    // Both optional, because the same template serves a battery placed before
+    // 18 August 2027, for which they are not to be filled, and one placed from
+    // then, for which they are owed. Fill both for a battery placed on or after
+    // that date, unless Art. 47 exempts it: `dueDiligenceOperatorScope` is
+    // `subject` or `belowTurnoverThreshold`, and `dueDiligenceUrl` is the address
+    // of the report. Leave both blank before that date.
+    opt(
+        "dueDiligenceUrl",
+        "dueDiligenceUrl",
+        "https://acme.example/due-diligence/ACME-REF-48-100",
+    ),
+    opt(
+        "dueDiligenceOperatorScope",
+        "dueDiligenceOperatorScope",
+        "subject",
     ),
     // ── Composition ───────────────────────────────────────────────────────
     req(
@@ -614,15 +656,30 @@ fn csv_cell(value: &str) -> String {
 /// `BatteryFacts::default()`, under which the due diligence row answers
 /// `Undetermined` instead of the `NotApplicable` it is for such a battery.
 ///
-/// 🚨 They are the obligations of a battery placed before 18 August 2027. From
-/// that date the due diligence report (`dueDiligenceUrl`) is owed unless Art. 47
-/// exempts the battery, and no template has a column for it or for the
-/// operator's declaration (`dueDiligenceOperatorScope`), so a battery placed
-/// from then cannot be imported into a passport that publishes.
+/// They are the obligations of a battery placed before 18 August 2027: the due
+/// diligence report is not to be filled, so `dueDiligenceUrl` is
+/// `NotApplicable` under them. [`facts_from_due_diligence`] is the other side.
 #[cfg(test)]
 pub(crate) fn facts_before_due_diligence() -> dpp_rules::batteries::battery_facts::BatteryFacts {
     dpp_rules::batteries::battery_facts::BatteryFacts {
         placed_on_market: Some(dpp_rules::common::date::CalendarDate::new(2027, 2, 18)),
+        ..dpp_rules::batteries::battery_facts::BatteryFacts::default()
+    }
+}
+
+/// The facts of a battery placed on the market from 18 August 2027 by an operator
+/// subject to Chapter VII.
+///
+/// The due diligence report is owed under these facts, so `dueDiligenceUrl` is
+/// mandatory and the mandatory-column gate must find a column for it. The
+/// operator is declared as `subject` rather than left undeclared: an undeclared
+/// operator answers `Undetermined`, which the mandatory gate does not count, and
+/// the gate would then never ask for the column.
+#[cfg(test)]
+pub(crate) fn facts_from_due_diligence() -> dpp_rules::batteries::battery_facts::BatteryFacts {
+    dpp_rules::batteries::battery_facts::BatteryFacts {
+        placed_on_market: Some(dpp_rules::batteries::due_diligence::DUE_DILIGENCE_REQUIRED_FROM),
+        operator_scope: Some(dpp_rules::batteries::due_diligence::OperatorScope::Subject),
         ..dpp_rules::batteries::battery_facts::BatteryFacts::default()
     }
 }
@@ -640,28 +697,33 @@ mod tests {
             .collect()
     }
 
-    /// The gate this module exists to satisfy.
+    /// The gate this module exists to satisfy, under each placing date.
     ///
     /// Every data point `mandatory_fields` demands for a category has a column
     /// in that category's template. This is the assertion the fifteen-column
     /// template failed roughly forty times over, silently, because nothing
-    /// compared the two.
+    /// compared the two. It runs for a battery placed before 18 August 2027 and
+    /// for one placed from it, since the second owes a field the first does not.
     #[test]
     fn every_mandatory_field_has_a_column() {
-        for category in BatteryCategory::ALL {
-            let covered = fields_covered(*category);
-            let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
-                category.as_str(),
-                facts_before_due_diligence(),
-            )
-            .filter(|f| !covered.contains(f))
-            .collect();
-            assert!(
-                missing.is_empty(),
-                "the {} template has no column for {} mandatory data point(s): {missing:?}",
-                category.as_str(),
-                missing.len()
-            );
+        for facts in [facts_before_due_diligence(), facts_from_due_diligence()] {
+            for category in BatteryCategory::ALL {
+                let covered = fields_covered(*category);
+                let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
+                    category.as_str(),
+                    facts,
+                )
+                .filter(|f| !covered.contains(f))
+                .collect();
+                assert!(
+                    missing.is_empty(),
+                    "the {} template has no column for {} mandatory data point(s) of a battery \
+                     placed {:?}: {missing:?}",
+                    category.as_str(),
+                    missing.len(),
+                    facts.placed_on_market
+                );
+            }
         }
     }
 
@@ -676,6 +738,10 @@ mod tests {
     /// for one invites an operator to supply data that makes their passport
     /// wrong. That is the case worth failing on, and the one an
     /// all-categories-in-one-file template would have walked straight into.
+    ///
+    /// A column is accepted if **either** placing date permits it. One template
+    /// serves a battery placed before 18 August 2027 and one placed from it, so a
+    /// column the first must not fill may still be the second's to fill.
     #[test]
     fn no_column_offers_a_data_point_the_category_must_not_carry() {
         use dpp_rules::batteries::passport_content::annex_xiii_requirement;
@@ -683,13 +749,68 @@ mod tests {
             let refused: Vec<&str> = fields_covered(*category)
                 .into_iter()
                 .filter(|f| {
-                    !annex_xiii_requirement(f, category.as_str(), facts_before_due_diligence())
-                        .permits_presence()
+                    [facts_before_due_diligence(), facts_from_due_diligence()]
+                        .into_iter()
+                        .all(|facts| {
+                            !annex_xiii_requirement(f, category.as_str(), facts).permits_presence()
+                        })
                 })
                 .collect();
             assert!(
                 refused.is_empty(),
                 "the {} template offers column(s) for data point(s) the guidance marks                  `not to be filled/displayed`: {refused:?}",
+                category.as_str()
+            );
+        }
+    }
+
+    /// The report's address is offered for one reason: a battery placed from
+    /// 18 August 2027 owes it. Before the date the same column answers
+    /// `NotApplicable`, so the column is admitted by the second fact set and by
+    /// no other.
+    #[test]
+    fn the_due_diligence_url_is_offered_because_a_battery_placed_from_the_date_owes_it() {
+        use dpp_rules::batteries::passport_content::{Requirement, annex_xiii_requirement};
+        for category in BatteryCategory::ALL {
+            assert_eq!(
+                annex_xiii_requirement(
+                    "dueDiligenceUrl",
+                    category.as_str(),
+                    facts_before_due_diligence()
+                ),
+                Requirement::NotApplicable,
+                "a {} battery placed before 18 August 2027 must not carry the report",
+                category.as_str()
+            );
+            assert_eq!(
+                annex_xiii_requirement(
+                    "dueDiligenceUrl",
+                    category.as_str(),
+                    facts_from_due_diligence()
+                ),
+                Requirement::Mandatory,
+                "a {} battery placed from 18 August 2027 owes the report",
+                category.as_str()
+            );
+            assert!(
+                fields_covered(*category).contains("dueDiligenceUrl"),
+                "the {} template has no dueDiligenceUrl column",
+                category.as_str()
+            );
+        }
+    }
+
+    /// `placedOnMarketDate` is the fact every battery's due diligence answer
+    /// turns on. Without it core answers `Undetermined` and refuses the publish,
+    /// so every battery template carries the column.
+    #[test]
+    fn every_battery_template_carries_the_placing_date() {
+        for category in BatteryCategory::ALL {
+            assert!(
+                columns_for(*category)
+                    .iter()
+                    .any(|c| c.name == "placedOnMarketDate"),
+                "the {} template has no placedOnMarketDate column",
                 category.as_str()
             );
         }
