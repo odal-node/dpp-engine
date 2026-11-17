@@ -182,8 +182,9 @@ fn notice(event: &ObligationEvent, slot: NoticeSlot) -> Result<Notice, DppError>
         version: 1,
         event_id: id,
         event_type: subject.to_owned(),
-        // The start of the notice day, not the moment of the pass: the body, and
-        // so the signature over it, is the same whichever instance builds it.
+        // The start of the notice day, not the moment of the pass: the body is
+        // the same whichever instance builds it. Each delivery attempt still signs
+        // its own sending time with it, so a retry's signature differs.
         timestamp: Utc.from_utc_datetime(&slot.day.and_time(NaiveTime::MIN)),
         operator_id: STANDALONE_OPERATOR_ID.to_owned(),
         data,

@@ -19,7 +19,9 @@ get:
     the one announced.
 
     The notices come from the ledger the webhook deliveries are queued from. With
-    `OBLIGATION_NOTICES` unset, nothing is recorded and every notice reads as not
+    `OBLIGATION_NOTICES` unset, the node records no new notices; one recorded
+    before it was unset still reads as announced, since the ledger is never
+    erased. Only on a node that has never announced does every notice read as not
     announced. The standalone vault answers from the built-in calendar and
     announces nothing.
   tags:

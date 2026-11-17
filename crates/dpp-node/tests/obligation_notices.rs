@@ -47,7 +47,9 @@ async fn two_instances_over_one_database_announce_each_notice_once() {
                 events: vec!["*".into()],
                 description: None,
             },
-            "whsec_test",
+            // A fresh secret per run: no secret is written into the source, tests
+            // included.
+            &format!("whsec_{}", uuid::Uuid::now_v7().simple()),
         )
         .await
         .expect("create subscription");

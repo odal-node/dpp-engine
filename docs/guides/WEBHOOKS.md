@@ -192,12 +192,17 @@ What to rely on:
   kind and the lead time, so a redelivery, or a notice seen twice, carries the same
   id. A postponed date has a new id and is announced again under its new date.
 - **`timestamp` is the start of the notice day in UTC**, not the moment of sending,
-  so a redelivery has the same body and signature.
+  so a redelivery has the same body. Each attempt signs its own sending time with
+  that body, so a retry's signature differs: de-duplicate on `eventId`, never on
+  the signature.
 - **Only sourced dates.** `basis` is always `sourced`. A date no adopted text fixes
   is never announced.
-- **An upcoming notice is not sent late.** When the node was down across a lead
-  time, that notice is skipped, because the day itself announces the obligation.
-  A notice that says "in seven days" about a date already past would mislead.
+- **A missed upcoming notice is caught up only while its obligation is ahead.**
+  When the node was down across a lead time, the next pass sends that notice as
+  long as the obligation's date has not been reached, so it can arrive after its
+  own lead day. Once the date is reached it is skipped, because the day itself
+  announces the obligation, and a notice saying "in seven days" about a date
+  already past would mislead.
 - **No passport count.** Every obligation here binds products placed on the market
   from its date, so on the day it reaches no passport already published.
   `productGroup` and `categories` say which products it concerns. An absent

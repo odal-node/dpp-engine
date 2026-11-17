@@ -65,7 +65,9 @@ async fn subscribe(store: &PgWebhookRepo, events: &[&str]) {
                 events: events.iter().map(|e| (*e).to_owned()).collect(),
                 description: None,
             },
-            "whsec_test",
+            // A fresh secret per run: no secret is written into the source, tests
+            // included.
+            &format!("whsec_{}", uuid::Uuid::now_v7().simple()),
         )
         .await
         .expect("create subscription");
