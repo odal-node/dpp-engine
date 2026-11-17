@@ -110,9 +110,32 @@
 # expires:    2027-02-09
 # release-on: `sqlx` releases a `sqlx-sqlite` that accepts `libsqlite3-sys`
 #             0.39, or the lockfile stops carrying the crate.
+# --- RUSTSEC-2026-0543 --------------------------------------------------
+# crate:      chrono 0.4.45
+# path:       a direct dependency of every crate in this workspace except
+#             the benches, of the dpp-core crates it pins (dpp-domain,
+#             dpp-rules, dpp-crypto, dpp-vc, dpp-registry, dpp-calc), and of
+#             sqlx-core and sqlx-postgres
+# class:      reachable-accepted
+# rationale:  The advisory is "unmaintained", not a vulnerability: it names no
+#             flaw, and it covers every version, so no upgrade clears it.
+#             `chrono` is this workspace's date and time type and is compiled
+#             into every shipped binary. dpp-core's public API takes and
+#             returns its types (`NaiveDate`, `DateTime<Utc>`), so this
+#             workspace cannot leave it before dpp-core does. Accepted until
+#             both move to a maintained crate (`jiff` or `time`, the two the
+#             advisory recommends). A vulnerability advisory against `chrono`
+#             would carry its own ID, which this entry does not cover.
+# anchor:     —
+# owner:      LKSNDRTMLKV
+# recorded:   2026-11-17
+# expires:    2027-05-17
+# release-on: dpp-core and this workspace no longer depend on `chrono`, or
+#             RustSec withdraws the advisory.
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0387",
     "RUSTSEC-2026-0440",
     "RUSTSEC-2026-0459",
+    "RUSTSEC-2026-0543",
 ]
