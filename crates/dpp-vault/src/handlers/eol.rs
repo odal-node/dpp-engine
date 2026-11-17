@@ -12,6 +12,7 @@ use crate::state::AppState;
 
 use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
+    validation_error,
 };
 use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
@@ -41,6 +42,12 @@ pub struct EolRequest {
     /// Optional free-text notes.
     #[serde(default)]
     pub notes: Option<String>,
+    /// The discard record that documents this destruction (ESPR Art. 24 and
+    /// Art. 25). Only with `destroyed`; the record must cite the same derogation
+    /// point as the reason, or the request is refused with `422`. The passport is
+    /// then joined to the record.
+    #[serde(default)]
+    pub discard_record_id: Option<uuid::Uuid>,
 }
 
 /// `POST /api/v1/dpp/{dppId}/eol` — deactivate a published or suspended passport
@@ -76,6 +83,39 @@ pub async fn eol_handler(
         None => false,
     };
 
+    // A discard record documents a destruction, so it is named only with
+    // `destroyed`, and it must cite the same derogation point as the reason. Both
+    // citing none agree; one citing a point and the other none, or two different
+    // points, do not.
+    let discard_record_id = body.discard_record_id;
+    if let Some(record_id) = discard_record_id {
+        let claimed = match &body.reason {
+            DeactivationReason::Destroyed { derogation } => {
+                derogation.as_ref().and_then(|d| d.point())
+            }
+            _ => {
+                return validation_error(
+                    "discardRecordId applies only to a destruction: the reason must be `destroyed`.",
+                );
+            }
+        };
+        let record = match state.discard_records.get(record_id).await {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                return validation_error(
+                    "discardRecordId names no discard record this node holds.",
+                );
+            }
+            Err(e) => return internal_error(e),
+        };
+        if claimed != record.record.reason {
+            return validation_error(
+                "The discard record and the destruction must cite the same derogation point \
+                 of Art. 2 of Delegated Regulation (EU) 2026/296, or both cite none.",
+            );
+        }
+    }
+
     let declared_by = body.declared_by.unwrap_or_else(|| auth.user_id.clone());
     let mut eol = EolEvent::new(passport_id, body.reason, declared_by);
     eol.material_recovery = body.material_recovery;
@@ -83,7 +123,7 @@ pub async fn eol_handler(
 
     match state
         .service
-        .declare_eol(passport_id, eol, unsold, &auth)
+        .declare_eol(passport_id, eol, unsold, discard_record_id, &auth)
         .await
     {
         Ok(p) => (StatusCode::OK, Json(crate::api::PassportResponse::from(&p))).into_response(),

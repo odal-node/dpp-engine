@@ -197,7 +197,7 @@ async fn qr_endpoint_returns_png() {
     assert!(body.len() > 100, "PNG must not be empty");
 }
 
-/// A passport whose product group data carries no GTIN (e.g. an unsold-goods report,
+/// A passport whose product group data carries no GTIN (e.g. an untyped record,
 /// or here simply no `productGroupData` at all) has no valid GS1 Digital Link
 /// carrier to print — the endpoint must fail closed, not encode a broken or
 /// misleading code.

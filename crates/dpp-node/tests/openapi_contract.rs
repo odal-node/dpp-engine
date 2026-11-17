@@ -493,10 +493,13 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("IssuedCredential", fixtures::issued_credential());
     case!(
-        "CreateUnsoldGoodsEntry",
-        fixtures::create_unsold_goods_entry()
+        "CreateDiscardRecordRequest",
+        fixtures::create_discard_record_request()
     );
-    case!("UnsoldGoodsEntry", fixtures::unsold_goods_entry());
+    case!("StoredDiscardRecord", fixtures::stored_discard_record());
+    case!("AttachedEvidence", fixtures::attached_evidence());
+    case!("MissingEvidence", fixtures::missing_evidence());
+    case!("EvidenceRequirement", fixtures::evidence_requirement());
     case!("PassportAuditEntry", fixtures::audit_entry());
     case!("PassportVersion", fixtures::passport_version());
     case!("Facility", fixtures::facility());
@@ -645,16 +648,8 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_passport_statuses()),
         },
         EnumCase {
-            name: "UnsoldProductCategory",
-            variants: wire(&fixtures::all_unsold_product_categories()),
-        },
-        EnumCase {
-            name: "UnsoldDiscardReason",
-            variants: wire(&fixtures::all_unsold_discard_reasons()),
-        },
-        EnumCase {
-            name: "UnsoldDestination",
-            variants: wire(&fixtures::all_unsold_destinations()),
+            name: "EvidenceKind",
+            variants: wire(&fixtures::all_evidence_kinds()),
         },
         EnumCase {
             name: "OperatorRole",
@@ -817,8 +812,8 @@ fn query_cases() -> Vec<QueryCase> {
     );
     case!(
         "get",
-        "/vault/api/v1/unsold-goods",
-        fixtures::unsold_goods_list_query()
+        "/vault/api/v1/discard-records",
+        fixtures::discard_list_query()
     );
     case!(
         "get",
@@ -2289,7 +2284,7 @@ fn every_route_is_documented_and_every_documented_path_exists() {
 /// actually serves.
 ///
 /// This gate exists because the first draft of the policy table listed
-/// `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods` —
+/// `POST /vault/api/v1/credentials` and `POST /vault/api/v1/discard-records` —
 /// routes that exist on an unmerged branch and not on `main`. Nothing would
 /// have failed: `policy_for` would simply never match them, the middleware
 /// would never fire, and the table would have read as protection that was not
@@ -2414,7 +2409,7 @@ fn declares_idempotency_key(spec: &Value, method: &str, path: &str) -> bool {
 /// `documented_error_codes_are_the_ones_handlers_return` cannot see this. It
 /// reads handler bodies, and the `409` here is raised by a `route_layer` that no
 /// handler body mentions — the same blind spot that let two routes ship without
-/// it. `POST /vault/api/v1/credentials` and `POST /vault/api/v1/unsold-goods`
+/// it. `POST /vault/api/v1/credentials` and `POST /vault/api/v1/discard-records`
 /// were added to the policy table and to no `responses:` block, so the sharpest
 /// keyed route in the set — issuance, where a duplicate mints a second live
 /// credential that cannot be found or withdrawn — documented no retry story at
@@ -3447,76 +3442,87 @@ mod fixtures {
         }
     }
 
-    pub fn all_unsold_product_categories() -> Vec<dpp_types::ProductCategory> {
-        use dpp_types::ProductCategory as C;
+    /// Every evidence kind dpp-core names, written by hand: `EvidenceKind` has no
+    /// `ALL`, so a new kind must be added here and the enum check then fails until
+    /// the schema lists it too.
+    pub fn all_evidence_kinds() -> Vec<dpp_domain::unsold_goods::EvidenceKind> {
+        use dpp_domain::unsold_goods::EvidenceKind as K;
         vec![
-            C::Apparel,
-            C::Footwear,
-            C::HomeTextile,
-            C::Accessories,
-            C::Other,
+            K::SafetyAssessment,
+            K::ChemicalsTestReport,
+            K::NonComplianceSelfAssessment,
+            K::InfringementDecision,
+            K::InfringementNotification,
+            K::InternalInvestigation,
+            K::IpLicenceOrContract,
+            K::DestructionJustification,
+            K::ReuseFeasibilityAssessment,
+            K::QualityAssessmentEvidence,
+            K::InspectionRecord,
+            K::DonationOfferEvidence,
+            K::DonationReceiptDeclaration,
+            K::WasteOperatorSourceDocumentation,
+            K::DeliveryDocumentation,
+            K::TreatmentStatement,
+            K::DerogationStatement,
         ]
     }
 
-    pub fn all_unsold_discard_reasons() -> Vec<dpp_types::DiscardReason> {
-        use dpp_types::DiscardReason as R;
-        vec![
-            R::EndOfSeason,
-            R::QualityDefect,
-            R::PackagingDefect,
-            R::OverProduction,
-            R::CustomerReturn,
-            R::Other,
-        ]
-    }
-
-    pub fn all_unsold_destinations() -> Vec<dpp_types::Destination> {
-        use dpp_types::Destination as D;
-        vec![
-            D::Donation,
-            D::Recycling,
-            D::Repurposing,
-            D::SupplierReturn,
-            D::ExemptDestruction,
-        ]
-    }
-
-    pub fn create_unsold_goods_entry() -> dpp_types::CreateUnsoldGoodsEntry {
-        dpp_types::CreateUnsoldGoodsEntry {
-            reporting_period: "2026".into(),
-            unit_count: 1240,
-            volume_kg: 860.5,
-            product_category: dpp_types::ProductCategory::Apparel,
-            reason: dpp_types::DiscardReason::EndOfSeason,
-            destination: dpp_types::Destination::ExemptDestruction,
-            destruction_justification: Some(
-                "Contaminated stock unfit for use under Art. 25(5)".into(),
-            ),
-            country_of_disposal: "DE".into(),
+    pub fn create_discard_record_request()
+    -> dpp_vault::handlers::unsold_goods::CreateDiscardRecordRequest {
+        dpp_vault::handlers::unsold_goods::CreateDiscardRecordRequest {
+            record: serde_json::json!({
+                "discardedOn": "2026-08-01",
+                "cnCodes": ["420300"],
+                "description": "Jackets, unsold season stock",
+                "units": { "value": 1240 },
+                "weight": { "grams": 860500 },
+                "packagingIncluded": false,
+                "treatment": "recycling",
+                "receiver": { "name": "Nord Recycling GmbH" }
+            }),
+            passport_ids: vec![uuid()],
         }
     }
 
-    pub fn unsold_goods_entry() -> dpp_types::UnsoldGoodsEntry {
-        dpp_types::UnsoldGoodsEntry {
+    pub fn stored_discard_record() -> dpp_types::StoredDiscardRecord {
+        dpp_types::StoredDiscardRecord {
             id: uuid(),
-            reporting_period: "2026".into(),
-            unit_count: Some(1240),
-            volume_kg: 860.5,
-            product_category: "apparel".into(),
-            reason: "endOfSeason".into(),
-            destination: "exemptDestruction".into(),
-            destruction_justification: Some(
-                "Contaminated stock unfit for use under Art. 25(5)".into(),
-            ),
-            country_of_disposal: "DE".into(),
-            operator_name: Some("Nord Textiles GmbH".into()),
+            schema_version: "1.0.0".into(),
+            record: serde_json::from_value(create_discard_record_request().record)
+                .expect("the fixture record reads"),
+            passport_ids: vec![uuid()],
             created_at: ts(),
         }
     }
 
-    pub fn unsold_goods_list_query() -> dpp_vault::handlers::unsold_goods::ListQuery {
+    pub fn attached_evidence() -> dpp_vault::handlers::unsold_goods::AttachedEvidence {
+        dpp_vault::handlers::unsold_goods::AttachedEvidence {
+            discard_record_id: uuid(),
+            kind: dpp_domain::unsold_goods::EvidenceKind::DeliveryDocumentation,
+            sha256: "a".repeat(64),
+            size_bytes: 40_960,
+        }
+    }
+
+    pub fn evidence_requirement() -> dpp_domain::unsold_goods::EvidenceRequirement {
+        dpp_domain::unsold_goods::EvidenceRequirement {
+            any_of: vec![dpp_domain::unsold_goods::EvidenceKind::DeliveryDocumentation],
+            basis: "Regulation (EU) 2024/1781 Art. 24(2); Impl. Reg. (EU) 2026/2 Art. 4",
+        }
+    }
+
+    pub fn missing_evidence() -> dpp_vault::handlers::unsold_goods::MissingEvidence {
+        dpp_vault::handlers::unsold_goods::MissingEvidence {
+            enterprise_size: dpp_domain::unsold_goods::EnterpriseSize::Large,
+            missing_evidence: vec![evidence_requirement()],
+        }
+    }
+
+    pub fn discard_list_query() -> dpp_vault::handlers::unsold_goods::ListQuery {
         dpp_vault::handlers::unsold_goods::ListQuery {
-            reporting_period: Some("2026".into()),
+            financial_year_start: date(),
+            financial_year_end: date(),
         }
     }
 
@@ -3870,6 +3876,7 @@ mod fixtures {
             material_recovery: Some(json!({ "cobaltKg": 1.2 })),
             notes: Some("Sent to certified recycler".into()),
             unsold: Some(false),
+            discard_record_id: Some(uuid()),
         }
     }
 

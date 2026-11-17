@@ -356,7 +356,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         issuer_did.clone(),
     );
     service
-        .declare_eol(published.id, eol, false, &auth)
+        .declare_eol(published.id, eol, false, None, &auth)
         .await
         .expect("declare eol");
 

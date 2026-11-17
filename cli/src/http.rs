@@ -413,6 +413,32 @@ impl OdalClient {
         Ok((status, body))
     }
 
+    /// Attach a document to a discard record: a `kind` part naming the evidence
+    /// kind, then the `file` part. Carries no idempotency key, for the reason
+    /// [`Self::upload_file`] gives: a fresh boundary per request.
+    pub async fn upload_evidence(
+        &self,
+        url: &str,
+        kind: &str,
+        filename: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(StatusCode, String)> {
+        let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_owned());
+        let form = reqwest::multipart::Form::new()
+            .text("kind", kind.to_owned())
+            .part("file", part);
+        let resp = self
+            .inner
+            .post(url)
+            .header(AUTHORIZATION, &self.authorization)
+            .multipart(form)
+            .send_to_node()
+            .await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        Ok((status, body))
+    }
+
     /// Upload a signed plugin as `multipart/form-data` — a `wasm` file part
     /// (filename preserved so the node can derive the product group) plus a `sig` part
     /// carrying the detached Ed25519 signature. Mirrors `POST /api/v1/plugins`.

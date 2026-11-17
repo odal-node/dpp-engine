@@ -12,7 +12,9 @@
 pub mod pool;
 pub mod repo_api_key;
 pub mod repo_audit;
+pub mod repo_discard_record;
 pub mod repo_evidence;
+pub mod repo_evidence_file;
 pub mod repo_idempotency;
 pub mod repo_node_signal;
 pub mod repo_operator_config;
@@ -29,14 +31,15 @@ pub mod repo_state_change;
 pub mod repo_successor;
 pub mod repo_transfer;
 pub mod repo_trusted_list;
-pub mod repo_unsold_goods;
 pub mod repo_webhook;
 
 pub use pool::PgDal;
 
 pub use repo_api_key::PgApiKeyRepo;
 pub use repo_audit::PgAuditRepo;
+pub use repo_discard_record::PgDiscardRecordRepo;
 pub use repo_evidence::PgEvidenceDossierRepo;
+pub use repo_evidence_file::PgEvidenceFileRepo;
 pub use repo_idempotency::PgIdempotencyRepo;
 pub use repo_node_signal::PgNodeSignalRepo;
 pub use repo_operator_config::PgOperatorConfigRepo;
@@ -53,7 +56,6 @@ pub use repo_state_change::PgStateChangeLog;
 pub use repo_successor::PgSuccessorRepo;
 pub use repo_transfer::PgTransferRepo;
 pub use repo_trusted_list::PgTrustedListRepo;
-pub use repo_unsold_goods::PgUnsoldGoodsRepo;
 pub use repo_webhook::PgWebhookRepo;
 /// Re-export so downstream crates (dpp-node's PgJobStore) can use the same
 /// sqlx version without declaring their own dependency.

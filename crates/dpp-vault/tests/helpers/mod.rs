@@ -646,7 +646,8 @@ async fn start_vault_with_identity(
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
-    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let discard_records = Arc::new(dpp_dal::pg::PgDiscardRecordRepo::new(dal.clone()));
+    let evidence_store = Arc::new(dpp_dal::pg::PgEvidenceFileRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
 
     let state = AppState {
@@ -663,7 +664,8 @@ async fn start_vault_with_identity(
         credential_issuer: None,
         cors_allowed_origins: Vec::new(),
         scan_repo,
-        unsold_goods_repo,
+        discard_records,
+        evidence_store,
         personal_data,
         plugin_admin: None,
         // These tests exercise the vault in isolation, with no composition

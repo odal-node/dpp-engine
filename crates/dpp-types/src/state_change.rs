@@ -109,6 +109,10 @@ pub struct StateChange {
     /// or deactivated. Recorded on its existing `registry_sync` row; a passport
     /// that never registered has none, and nothing is recorded for it.
     pub registry_intent: Option<RegistryStatusIntent>,
+    /// The discard record a destruction cites, and the passport it documents.
+    /// Joined in the same transaction as the status it records, so the join
+    /// exists exactly when the destruction does.
+    pub discard_record_link: Option<(Uuid, PassportId)>,
     /// The audit entry recording the change, chained onto the passport's trail.
     pub audit: PassportAuditEntry,
     /// The event webhook subscribers are sent.
@@ -126,9 +130,18 @@ impl StateChange {
             registration: None,
             transfer_notice: None,
             registry_intent: None,
+            discard_record_link: None,
             audit,
             webhook: None,
         }
+    }
+
+    /// Join `passport` to the discard record `record_id` that documents its
+    /// destruction, in this change's transaction.
+    #[must_use]
+    pub fn with_discard_record_link(mut self, record_id: Uuid, passport: PassportId) -> Self {
+        self.discard_record_link = Some((record_id, passport));
+        self
     }
 
     /// Write the passport as `write` says.

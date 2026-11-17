@@ -492,8 +492,10 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |
-| POST | `/vault/api/v1/unsold-goods` | Bearer **(write)** | Record an ESPR Art. 24 disclosure line for unsold consumer products discarded in a financial year. Not a passport — Art. 24's subject is an operator over a year. `exemptDestruction` requires a justification (Art. 25 bans the destruction outright from 19 July 2026); any other destination refuses one |
-| GET | `/vault/api/v1/unsold-goods` | Bearer (admin) | List those lines, newest first, optionally filtered by financial year |
+| POST | `/vault/api/v1/discard-records` | Bearer **(write)** | Record one discard of unsold consumer products, with the passports of the units it discards. Checked as sent against dpp-core's discard-record schema; not a passport. Keyed (`Idempotency-Key`), no `DELETE` |
+| GET | `/vault/api/v1/discard-records?financialYearStart&financialYearEnd` | Bearer (admin) | The discard records whose day of discard falls in the year, both days included, earliest first |
+| POST | `/vault/api/v1/discard-records/{id}/evidence` | Bearer **(write)** | Attach a document (multipart: `kind`, `file` of at most 25 MiB) under an evidence kind. Stored once by SHA-256; a second attachment of the same document under the same kind is `409` |
+| GET | `/vault/api/v1/discard-records/{id}/missing-evidence` | Bearer (admin) | The evidence a record still lacks, read against the operator's enterprise size |
 | POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | DELETE | `/vault/api/v1/personal-data/{record}` | Bearer (admin) | Erase a record a passport's `personalData` statement names, keeping a tombstone, and answer the receipt. Idempotent: a retry gets the first receipt; `404` for a record this node never held. Touches neither the passport nor its statement. **No route reads a record** — they are in `odal.personal_data_record` (migration 0043) only, never in the passport, archive or back-up copy |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |

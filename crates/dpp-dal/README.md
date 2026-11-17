@@ -39,7 +39,7 @@ src/
 │   ├── repo_api_key.rs, repo_operator_config.rs, repo_registry_identity.rs
 │   ├── repo_registry_sync.rs, repo_seal.rs, repo_snapshot.rs,
 │   │   repo_webhook.rs, repo_transfer.rs   transactional outboxes
-│   └── …                          evidence, idempotency, scans, unsold goods, trusted lists
+│   └── …                          evidence, idempotency, scans, unsold-goods discard records, trusted lists
 ├── protected_fields.rs            fields a draft update may not change
 ├── in_memory_repo.rs              InMemoryPassportRepo for tests (test-harness feature)
 └── test_harness.rs                shared PostgreSQL container harness (test-harness feature)

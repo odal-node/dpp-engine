@@ -49,7 +49,11 @@ migration.
 | `passport_transfer` | The dual-signed transfer-of-responsibility chain | `0017` |
 | `evidence_dossier` | Stored, immutable evidence dossiers | `0021` |
 | `personal_data_record` | Personal data a passport statement names, held outside the passport so it can be erased | `0043` |
-| `unsold_goods_report` | ESPR Art. 24 disclosure lines (units and weight) | `0008`, `0037` |
+| `discard_record` | ESPR Art. 24 and Art. 25 discards: one record per discard, the record as dpp-core's discard-record schema checks it, under that schema version. Append-only, no `DELETE` | `0052` |
+| `discard_record_passport` | The passports of the units a discard discards. A join in this node's storage. Append-only | `0052` |
+| `evidence_file` | Documents behind a discard, stored once by the SHA-256 of their bytes. Append-only | `0053` |
+| `discard_record_evidence` | A document attached to a discard record under an evidence kind. Append-only | `0053` |
+| `unsold_goods_report` | The one-line-per-category disclosure table of the pre-2026/2 line shape. Kept and documented unused: no repo reads or writes it | `0008`, `0037` |
 | `import_job` | Import jobs and their row-addressed reports | `0007`, `0020` |
 | `idempotency_key` | Replayable answers to client requests sent with `Idempotency-Key` | `0036` |
 | `scan_telemetry`, `qr_render` | Aggregate resolution and QR-render counts per passport and day. No IP, agent or session columns | `0025` |
