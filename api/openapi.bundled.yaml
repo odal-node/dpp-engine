@@ -2748,6 +2748,72 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /vault/api/v1/obligations:
+    get:
+      operationId: listObligations
+      summary: Dated obligations in a window, with the notices announced for each
+      description: |
+        The obligations the node's calendar holds that take effect between `from` and
+        `to`, both days included, in date order.
+
+        For each sourced obligation, `notices` lists the notice sent on the day it
+        takes effect, and one for each configured lead time before it. Each notice
+        says whether the node has recorded it as announced, and when. A notice the
+        calendar would send that is not recorded reads as not announced, which covers
+        a notice still to come and a notice whose day passed while the node was not
+        announcing. An upcoming notice whose date has already been reached is never
+        sent; this route does not read the clock, so it cannot tell that notice apart
+        from one still due.
+
+        `conflicts` lists each date a signed ruleset offered for an obligation the
+        build holds from an adopted text, where the two disagree. The build's date is
+        the one announced.
+
+        The notices come from the ledger the webhook deliveries are queued from. With
+        `OBLIGATION_NOTICES` unset, the node records no new notices; one recorded
+        before it was unset still reads as announced, since the ledger is never
+        erased. Only on a node that has never announced does every notice read as not
+        announced. The standalone vault answers from the built-in calendar and
+        announces nothing.
+      tags:
+        - Obligations
+      security:
+        - BearerApiKey: []
+        - BasicAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: First day of the window, inclusive, as `YYYY-MM-DD`.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: |
+            Last day of the window, inclusive, as `YYYY-MM-DD`. At most 3660 days
+            after `from`.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: The obligations taking effect in the window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObligationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: |
+            `from` or `to` is missing or is not an ISO date, `from` is after `to`, or
+            the window is wider than 3660 days.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/webhooks:
     get:
       operationId: listWebhooks
@@ -9131,6 +9197,195 @@ components:
         reaching act is `provisional` or `watch`, the requirement is a reading of
         instruments that have not yet bound anything.
       example: provisional
+    ObligationsResponse:
+      type: object
+      description: |
+        The obligations taking effect in a window, with the notices the node has
+        announced for each, and the dates a signed ruleset overruled.
+      required:
+        - from
+        - to
+        - events
+        - conflicts
+      properties:
+        from:
+          type: string
+          format: date
+          description: First day of the window, as asked.
+        to:
+          type: string
+          format: date
+          description: Last day of the window, as asked.
+        events:
+          type: array
+          description: The obligations taking effect in the window, in date order.
+          items:
+            $ref: '#/components/schemas/ObligationEntry'
+        conflicts:
+          type: array
+          description: |
+            Dates a signed ruleset offered for an obligation whose sourced date this
+            build holds, where the two disagree. The build's date is the one announced.
+            Empty when no ruleset in force carries a schedule.
+          items:
+            $ref: '#/components/schemas/ScheduleConflict'
+    ObligationEntry:
+      type: object
+      description: |
+        One dated obligation: the calendar's event for it, with the notices the node
+        sends for it.
+
+        The event fields are the ones a `dpp.obligation.*` webhook payload carries under
+        `obligation`. `productGroup` is absent for an act whose passport date names no
+        product group this build models. `categories` is absent where the source does
+        not narrow the obligation, which is not a statement that every category is
+        reached. `bundle` is present only for an obligation a signed ruleset added.
+      required:
+        - id
+        - date
+        - kind
+        - citation
+        - summary
+        - basis
+        - notices
+      properties:
+        id:
+          type: string
+          description: Stable identifier of the obligation.
+          example: battery.due-diligence-report
+        date:
+          type: string
+          format: date
+          description: The first day the obligation applies, in UTC terms.
+        kind:
+          $ref: '#/components/schemas/ObligationKind'
+        citation:
+          type: string
+          description: The provision, or the act, that fixes the date.
+        summary:
+          type: string
+          description: One sentence saying what changes, for a person to read.
+        productGroup:
+          type: string
+          description: The product group the obligation reaches.
+        categories:
+          type: array
+          description: The product categories the source narrows the obligation to.
+          items:
+            type: string
+        basis:
+          $ref: '#/components/schemas/DateBasis'
+          description: |
+            Whether the date traces to an adopted text. Only `sourced` dates have
+            notices.
+        bundle:
+          $ref: '#/components/schemas/BundleOrigin'
+          description: The signed ruleset the obligation came from, when one added it.
+        notices:
+          type: array
+          description: |
+            The notices of this obligation, earliest first: the one on the day it takes
+            effect, and one for each configured lead time. Empty for a date that is not
+            sourced.
+          items:
+            $ref: '#/components/schemas/ObligationNotice'
+    ObligationNotice:
+      type: object
+      description: |
+        One notice of an obligation: the day it is due, and whether the node has
+        announced it.
+      required:
+        - noticeId
+        - eventType
+        - noticeDay
+        - announced
+        - announcedAt
+      properties:
+        noticeId:
+          type: string
+          format: uuid
+          description: |
+            The notice's id, which a webhook delivery carries as its `eventId`. It is
+            derived from the obligation, its date, its kind and the lead time, so the
+            same notice has the same id on every node and in every release.
+        eventType:
+          type: string
+          enum:
+            - dpp.obligation.effective
+            - dpp.obligation.upcoming
+          description: '`dpp.obligation.upcoming` ahead of the date, `dpp.obligation.effective` on it.'
+        leadDays:
+          type: integer
+          minimum: 1
+          description: The lead time, in days, of an upcoming notice. Absent for the day itself.
+        noticeDay:
+          type: string
+          format: date
+          description: The day the notice is sent.
+        announced:
+          type: boolean
+          description: Whether the node has recorded this notice as announced.
+        announcedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When the node recorded the notice. `null` while it is not announced.
+    ObligationKind:
+      type: string
+      enum:
+        - passportStart
+        - contentRequirement
+        - minimumShare
+        - restriction
+      description: |
+        What kind of obligation takes effect on the date.
+
+        - `passportStart`: an act's passport obligation begins.
+        - `contentRequirement`: a passport data point becomes owed, or stops being barred.
+        - `minimumShare`: a minimum share, of recycled content for one, starts to bind.
+        - `restriction`: a substance restriction starts to bind, or a carve-out from one ends.
+      example: passportStart
+    ScheduleConflict:
+      type: object
+      description: |
+        A date a signed ruleset offered for an obligation this build holds from an
+        adopted text, where the two disagree. The build's date stays in the calendar and
+        is the one announced: this build's rules select their answers by it. A conflict
+        usually means the law moved and this build has not.
+      required:
+        - id
+        - buildDate
+        - bundleDate
+        - bundle
+      properties:
+        id:
+          type: string
+          description: The obligation's id.
+        buildDate:
+          type: string
+          format: date
+          description: The sourced date this build holds, and keeps.
+        bundleDate:
+          type: string
+          format: date
+          description: The date the signed ruleset offered.
+        bundle:
+          $ref: '#/components/schemas/BundleOrigin'
+    BundleOrigin:
+      type: object
+      description: The signed ruleset bundle a scheduled date came from.
+      required:
+        - bundleVersion
+        - contentSha256
+      properties:
+        bundleVersion:
+          type: string
+          description: The bundle's version label, as its publisher chose it.
+          example: 2026-Q3.1
+        contentSha256:
+          type: string
+          description: The content hash the publisher signed over.
     CreateLifeStatus:
       type: string
       description: |-

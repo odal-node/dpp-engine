@@ -37,6 +37,8 @@ For delivery to an HTTP endpoint instead, use signed webhooks
 | `dpp.passport.transferred` | A transfer of responsibility is initiated, accepted, rejected or cancelled. The payload's `phase` says which |
 | `dpp.import.completed` | An apply import job finished. The payload carries `jobId`, `productGroup`, `totalRows` and the `created`, `updated` and `failedRows` counts. A dry run sends no event |
 | `dpp.import.failed` | An apply import job could not finish: its batch panicked, or its result could not be recorded. The payload carries `jobId`, `productGroup`, `totalRows` and `reason`. Rows a finished job rejected are counted in `dpp.import.completed`, not here |
+| `dpp.obligation.effective` | A dated obligation takes effect today (UTC), with `OBLIGATION_NOTICES=on`. The payload carries `obligation`, the calendar's entry for it. Sourced dates only |
+| `dpp.obligation.upcoming` | A dated obligation takes effect in a configured number of days. The payload carries `obligation` and `leadDays` |
 
 The constants in `dpp_common::event::subjects` are the authoritative list.
 `just subjects-check` fails the build when a service crate writes a subject as a

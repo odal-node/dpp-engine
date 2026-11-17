@@ -52,7 +52,7 @@ debug = "line-tables-only"
 # Core crates — consumed from crates.io (dpp-core is published independently;
 # see the pins below for the version actually in use, and README.md's sync
 # note for the other places that must agree on a bump).
-dpp-domain = "0.24.0"
+dpp-domain = { version = "0.24.0", features = ["bundle"] }
 
 # Engine-wide types (tenant, auth, audit, API keys) — engine-internal crate.
 dpp-types = { path = "crates/dpp-types" }
@@ -132,7 +132,7 @@ metrics-exporter-prometheus = "0.18"
 criterion    = { version = "0.8", features = ["html_reports"] }
 
 # Utilities
-uuid         = { version = "1", features = ["v7", "serde"] }
+uuid         = { version = "1", features = ["v5", "v7", "serde"] }
 chrono       = { version = "0.4", features = ["serde"] }
 thiserror    = "2"
 anyhow       = "1"

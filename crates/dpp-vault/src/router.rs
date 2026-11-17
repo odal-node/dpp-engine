@@ -37,6 +37,7 @@ use crate::{
         list::list_handler,
         node_health::node_health_handler,
         node_state::node_state_handler,
+        obligations::obligations_handler,
         operator::{operator_get_handler, operator_patch_handler},
         personal_data::personal_data_erase_handler,
         plugins::install_plugin_handler,
@@ -192,6 +193,10 @@ pub fn build(state: AppState) -> Router {
             "/unsold-goods",
             get(unsold_goods_list_handler).post(unsold_goods_create_handler),
         )
+        // ── Dated obligations (the calendar, and the notices announced from it) ──
+        // Any scope: a read, like `/stats`. It reports what the calendar holds,
+        // not anything about a passport.
+        .route("/obligations", get(obligations_handler))
         // ── Plugins (signed product group-plugin hot-install) ────────────────
         .route("/plugins", post(install_plugin_handler))
         // ── Compliance Current (signed ruleset channel hot-reload) ──────────

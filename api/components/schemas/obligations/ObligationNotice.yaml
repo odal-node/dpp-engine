@@ -1,0 +1,41 @@
+type: object
+description: |
+  One notice of an obligation: the day it is due, and whether the node has
+  announced it.
+required:
+  - noticeId
+  - eventType
+  - noticeDay
+  - announced
+  - announcedAt
+properties:
+  noticeId:
+    type: string
+    format: uuid
+    description: |
+      The notice's id, which a webhook delivery carries as its `eventId`. It is
+      derived from the obligation, its date, its kind and the lead time, so the
+      same notice has the same id on every node and in every release.
+  eventType:
+    type: string
+    enum:
+      - dpp.obligation.effective
+      - dpp.obligation.upcoming
+    description: '`dpp.obligation.upcoming` ahead of the date, `dpp.obligation.effective` on it.'
+  leadDays:
+    type: integer
+    minimum: 1
+    description: The lead time, in days, of an upcoming notice. Absent for the day itself.
+  noticeDay:
+    type: string
+    format: date
+    description: The day the notice is sent.
+  announced:
+    type: boolean
+    description: Whether the node has recorded this notice as announced.
+  announcedAt:
+    type:
+      - string
+      - 'null'
+    format: date-time
+    description: When the node recorded the notice. `null` while it is not announced.
