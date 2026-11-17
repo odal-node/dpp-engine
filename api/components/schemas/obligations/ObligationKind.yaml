@@ -1,0 +1,14 @@
+type: string
+enum:
+  - passportStart
+  - contentRequirement
+  - minimumShare
+  - restriction
+description: |
+  What kind of obligation takes effect on the date.
+
+  - `passportStart`: an act's passport obligation begins.
+  - `contentRequirement`: a passport data point becomes owed, or stops being barred.
+  - `minimumShare`: a minimum share, of recycled content for one, starts to bind.
+  - `restriction`: a substance restriction starts to bind, or a carve-out from one ends.
+example: passportStart

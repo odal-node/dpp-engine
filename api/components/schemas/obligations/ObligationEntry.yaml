@@ -1,0 +1,59 @@
+type: object
+description: |
+  One dated obligation: the calendar's event for it, with the notices the node
+  sends for it.
+
+  The event fields are the ones a `dpp.obligation.*` webhook payload carries under
+  `obligation`. `productGroup` is absent for an act whose passport date names no
+  product group this build models. `categories` is absent where the source does
+  not narrow the obligation, which is not a statement that every category is
+  reached. `bundle` is present only for an obligation a signed ruleset added.
+required:
+  - id
+  - date
+  - kind
+  - citation
+  - summary
+  - basis
+  - notices
+properties:
+  id:
+    type: string
+    description: Stable identifier of the obligation.
+    example: battery.due-diligence-report
+  date:
+    type: string
+    format: date
+    description: The first day the obligation applies, in UTC terms.
+  kind:
+    $ref: ./ObligationKind.yaml
+  citation:
+    type: string
+    description: The provision, or the act, that fixes the date.
+  summary:
+    type: string
+    description: One sentence saying what changes, for a person to read.
+  productGroup:
+    type: string
+    description: The product group the obligation reaches.
+  categories:
+    type: array
+    description: The product categories the source narrows the obligation to.
+    items:
+      type: string
+  basis:
+    $ref: ../regulatory/DateBasis.yaml
+    description: |
+      Whether the date traces to an adopted text. Only `sourced` dates have
+      notices.
+  bundle:
+    $ref: ./BundleOrigin.yaml
+    description: The signed ruleset the obligation came from, when one added it.
+  notices:
+    type: array
+    description: |
+      The notices of this obligation, earliest first: the one on the day it takes
+      effect, and one for each configured lead time. Empty for a date that is not
+      sourced.
+    items:
+      $ref: ./ObligationNotice.yaml

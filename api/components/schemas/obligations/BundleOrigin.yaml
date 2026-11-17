@@ -1,0 +1,13 @@
+type: object
+description: The signed ruleset bundle a scheduled date came from.
+required:
+  - bundleVersion
+  - contentSha256
+properties:
+  bundleVersion:
+    type: string
+    description: The bundle's version label, as its publisher chose it.
+    example: 2026-Q3.1
+  contentSha256:
+    type: string
+    description: The content hash the publisher signed over.

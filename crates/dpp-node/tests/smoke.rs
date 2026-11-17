@@ -211,6 +211,7 @@ async fn start_node_with_ruleset(
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
     let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
+    let obligation_notices = Arc::new(dpp_dal::pg::PgObligationNoticeRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
     // the authenticated node-state route can report it.
     let trust = std::sync::Arc::new(dpp_types::trust::NodeTrustReport::new(
@@ -256,6 +257,8 @@ async fn start_node_with_ruleset(
         scan_repo,
         unsold_goods_repo,
         personal_data,
+        obligation_notices,
+        obligation_schedule: Arc::new(dpp_vault::state::BuiltInObligationSchedule),
         plugin_admin: None,
         // The trust posture is asserted through the authenticated node-state
         // route, not the public probe.

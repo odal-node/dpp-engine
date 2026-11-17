@@ -30,6 +30,7 @@ pub mod audit;
 pub mod auth;
 pub mod evidence;
 pub mod node_signal;
+pub mod obligation_notice;
 pub mod operator;
 pub mod passport_request;
 pub mod qualification;
@@ -58,6 +59,7 @@ pub use evidence::{
     EvidenceDossierRepository, EvidenceDossierSummary, SignedLayer, VerificationReport,
     compute_content_hashes, content_hash,
 };
+pub use obligation_notice::{AnnouncedNotice, NoticeRecord, ObligationNoticeStore};
 pub use operator::{
     OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
 };

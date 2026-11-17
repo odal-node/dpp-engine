@@ -96,6 +96,25 @@ pub mod subjects {
     /// `totalRows` and `reason`. Rows a finished job rejected are counted in
     /// `dpp.import.completed`, not reported here.
     pub const IMPORT_FAILED: &str = "dpp.import.failed";
+
+    // Dated obligations, announced from the node's obligation calendar
+    /// A dated obligation takes effect today (UTC). The payload carries
+    /// `obligation`, the calendar's event for it.
+    pub const OBLIGATION_EFFECTIVE: &str = "dpp.obligation.effective";
+    /// A dated obligation takes effect in `leadDays` days (UTC). The payload
+    /// carries `obligation` and `leadDays`.
+    pub const OBLIGATION_UPCOMING: &str = "dpp.obligation.upcoming";
+}
+
+/// The subject a dated-obligation notice is published under: `upcoming` for a
+/// notice sent a lead time ahead of the date, `effective` for the date itself.
+#[must_use]
+pub fn obligation_subject(lead_days: Option<u32>) -> &'static str {
+    if lead_days.is_some() {
+        subjects::OBLIGATION_UPCOMING
+    } else {
+        subjects::OBLIGATION_EFFECTIVE
+    }
 }
 
 // ─── Error type ──────────────────────────────────────────────────────────────
