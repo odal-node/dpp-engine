@@ -13,7 +13,7 @@ the Apache-2.0 Rust library that holds the data model, schemas and regulatory ru
 [![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-orange.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.package%5B'rust-version'%5D&label=MSRV&prefix=Rust%20&logo=rust)](Cargo.toml)
 [![Docs](https://img.shields.io/badge/docs-docs.odal--node.io-blue)](https://docs.odal-node.io)
-[![Status: pre-production](https://img.shields.io/badge/status-pre--production-yellow)](#dpp-engine)
+[![Status: alpha, pre-production](https://img.shields.io/badge/status-alpha%2C%20pre--production-yellow)](#dpp-engine)
 
 [![dpp-core](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies%5B'dpp-domain'%5D&label=dpp-core&logo=rust)](https://github.com/odal-node/dpp-core)
 [![Docker Compose](https://img.shields.io/badge/runs%20on-Docker%20Compose-2496ED?logo=docker&logoColor=white)](docker/)
@@ -22,9 +22,11 @@ the Apache-2.0 Rust library that holds the data model, schemas and regulatory ru
 [![Wasm plugins](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fodal-node%2Fdpp-engine%2Fmain%2FCargo.toml&query=%24.workspace.dependencies.wasmtime.version&label=plugins%20on%20wasmtime&logo=webassembly)](crates/dpp-plugin-host)
 
 > [!NOTE]
-> **Status: pre-production.** CI runs the full passport lifecycle against PostgreSQL
-> on every change, but no operator runs a node against real product data yet. The
-> HTTP API and the database schema still change between minor versions.
+> **Status: alpha, pre-production.** CI runs the full passport lifecycle against
+> PostgreSQL on every change, but no operator runs a node against real product data
+> yet. The HTTP API and the database schema still change between minor versions. The
+> [roadmap](https://odal-node.io/roadmap/) lists what is available today and what is
+> planned.
 
 ## Quick start
 
