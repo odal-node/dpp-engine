@@ -23,7 +23,10 @@ properties:
     type:
       - object
       - 'null'
-    description: Optional recovered-material summary (Battery Annex XIII circularity).
+    description: |
+      Optional recovered-material summary (Battery Annex XIII circularity).
+      A number dpp-core cannot hash exactly, such as an integer too large for a
+      double to hold, is refused with `422` naming `/materialRecovery`.
   notes:
     type:
       - string

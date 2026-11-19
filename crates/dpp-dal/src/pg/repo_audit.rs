@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use dpp_domain::DppError;
+use dpp_domain::{DppError, FieldError, ValidationErrors};
 use dpp_types::audit::{
     AuditChainBreak, AuditRepository, GENESIS_PREV_HASH, PassportAuditEntry, verify_audit_chain,
 };
@@ -66,7 +66,19 @@ pub(crate) async fn append_in_tx(
     .map_err(db_err)?
     .flatten()
     .unwrap_or_else(|| GENESIS_PREV_HASH.to_owned());
-    let entry_hash = entry.chain_hash(&prev_hash);
+    // `metadata` is free JSON a caller chose, and the hasher refuses some
+    // values that parse (an integer beyond 2^53 − 1). That is a refusal of
+    // what the caller sent, not a fault of this node: `Validation` answers
+    // `422` where `Internal` or `Serialisation` would answer `500`. Nothing
+    // has been written yet, and the caller's transaction rolls back.
+    let entry_hash = entry.chain_hash(&prev_hash).map_err(|e| {
+        DppError::Validation(ValidationErrors {
+            errors: vec![FieldError {
+                field: "/metadata".to_owned(),
+                message: format!("The audit entry cannot be hashed: {e}"),
+            }],
+        })
+    })?;
     sqlx::query(
         r#"INSERT INTO odal.passport_audit
              (id, passport_id, actor, action,

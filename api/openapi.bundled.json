@@ -1303,7 +1303,7 @@
             "$ref": "#/components/responses/Conflict"
           },
           "422": {
-            "description": "A destruction refused, with the passport unchanged, for one of three\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n",
+            "description": "A declaration refused, with the passport unchanged, for one of four\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited;\n- `/materialRecovery`: the value holds a number dpp-core cannot hash\n  exactly, such as an integer too large for a double to hold, so the\n  declaration could not be chained into the audit trail.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7038,7 +7038,7 @@
               "object",
               "null"
             ],
-            "description": "Optional recovered-material summary (Battery Annex XIII circularity)."
+            "description": "Optional recovered-material summary (Battery Annex XIII circularity).\nA number dpp-core cannot hash exactly, such as an integer too large for a\ndouble to hold, is refused with `422` naming `/materialRecovery`.\n"
           },
           "notes": {
             "type": [

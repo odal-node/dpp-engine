@@ -410,6 +410,28 @@ async fn t7_audit_hash_chain_detects_tamper() {
     assert_eq!(brk.passport_id, pid);
 }
 
+// Audit metadata is free JSON. One dpp-core cannot hash is refused as the value
+// the caller sent (`Validation`, which the routes answer with `422`), never a
+// panic, and no row is written.
+#[tokio::test]
+async fn an_unhashable_audit_entry_is_refused_not_panicked_and_not_written() {
+    let pg = start_pg().await;
+    let audit = PgAuditRepo::new(pg.dal.clone());
+    let pid = Uuid::now_v7().to_string();
+    let metadata: serde_json::Value =
+        serde_json::from_str(r#"{"materialRecovery": {"recovered": 9007199254740993}}"#)
+            .expect("parses as JSON");
+    let entry =
+        PassportAuditEntry::new(&pid, "deactivated", "test", None, None).with_metadata(metadata);
+
+    let refused = audit.append(entry).await;
+    assert!(
+        matches!(refused, Err(dpp_domain::DppError::Validation(_))),
+        "expected Validation, got {refused:?}"
+    );
+    assert!(audit.list_by_passport(&pid).await.expect("list").is_empty());
+}
+
 // T5 — key_prefix is UNIQUE at the schema level (collision gap closed).
 #[tokio::test]
 async fn t5_api_key_prefix_unique() {
