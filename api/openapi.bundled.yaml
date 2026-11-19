@@ -1607,8 +1607,9 @@ paths:
           description: |
             The stored dossier embeds a transfer chain that dpp-core refuses to
             read, so it cannot be served as a dossier. The detail names the
-            passport and the record dpp-core cited. Verifying it still answers
-            `200`, with the transfer-chain check failed.
+            passport and the record dpp-core cited. Verifying it answers `200`,
+            with the transfer-chain check failed, when the rest of the dossier
+            reads, and `409` when the rest cannot be read either.
           content:
             application/problem+json:
               schema:

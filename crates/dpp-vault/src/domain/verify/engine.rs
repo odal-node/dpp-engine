@@ -403,7 +403,7 @@ pub fn verify_dossier_json(
     // function runs on every dossier verify (both stored and uploaded).
     let dossier: DossierV1 = match serde_json::from_slice(bytes) {
         Ok(dossier) => dossier,
-        Err(error) => return verify_with_refused_chain(raw, seals, error),
+        Err(error) => return verify_with_refused_chain(bytes, raw, seals, error),
     };
 
     let mut report = verify_dossier(&dossier, seals);
@@ -415,12 +415,14 @@ pub fn verify_dossier_json(
 /// way is a `transferChain` member that dpp-core refuses to read.
 ///
 /// That is a dossier whose transfer-chain check fails, not one that cannot be
-/// read. Three things must hold: `error`, the failure of the whole parse, is
+/// read. Four things must hold: `error`, the failure of the whole parse, is
 /// itself core's refusal of a chain (so a document that fails for another reason,
-/// such as a duplicated key, keeps its error); the member alone is refused by
-/// core; and the document without that member parses. Otherwise `error` is
-/// returned as before. `raw` is taken apart rather than copied.
+/// such as a duplicated key ahead of the chain, keeps its error); no object in
+/// `bytes` holds a key twice; the member alone is refused by core; and the
+/// document without that member parses. Otherwise the duplicate's error, or
+/// `error`, is returned. `raw` is taken apart rather than copied.
 fn verify_with_refused_chain(
+    bytes: &[u8],
     mut raw: serde_json::Value,
     seals: Option<&dyn dpp_types::SealInspector>,
     error: serde_json::Error,
@@ -428,6 +430,10 @@ fn verify_with_refused_chain(
     if core_refusal_message(&error).is_none() {
         return Err(error.into());
     }
+    // The parse that failed stopped at the chain, so no key after it was checked
+    // for a duplicate, and `raw` kept the last of any two. The document is read
+    // again for that alone.
+    serde_json::from_slice::<UniqueKeys>(bytes)?;
     let Some(chain) = raw
         .as_object_mut()
         .and_then(|members| members.remove("transferChain"))
@@ -448,6 +454,67 @@ fn verify_with_refused_chain(
     let mut report = verify_members(&dossier, Some(&member), seals);
     report.checks.push(input_fidelity_check(&raw, &dossier));
     Ok(report)
+}
+
+/// A JSON document in which no object holds the same key twice, at any depth.
+/// Only that is read: the values are discarded.
+struct UniqueKeys;
+
+impl<'de> Deserialize<'de> for UniqueKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(UniqueKeysVisitor)
+    }
+}
+
+struct UniqueKeysVisitor;
+
+impl<'de> serde::de::Visitor<'de> for UniqueKeysVisitor {
+    type Value = UniqueKeys;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<UniqueKeys, A::Error> {
+        while seq.next_element::<UniqueKeys>()?.is_some() {}
+        Ok(UniqueKeys)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<UniqueKeys, A::Error> {
+        let mut seen = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if seen.contains(&key) {
+                return Err(serde::de::Error::custom(format!("duplicate key `{key}`")));
+            }
+            map.next_value::<UniqueKeys>()?;
+            seen.insert(key);
+        }
+        Ok(UniqueKeys)
+    }
 }
 
 /// `JCS(raw) == JCS(reserialize(parse(raw)))` — catches content silently
@@ -1236,6 +1303,28 @@ mod tests {
         let err = verify_dossier_json(text.as_bytes(), None)
             .expect_err("a duplicated key is a parse error, whatever the chain is");
         assert!(matches!(err, DossierParseError::Json(_)));
+    }
+
+    #[test]
+    fn a_refused_chain_does_not_excuse_a_duplicated_key_after_it() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let text = String::from_utf8(bytes).unwrap();
+        // A second `manifestJws` closing the document, after the chain. The typed
+        // parse stops at the refused chain and never reaches it, and a `Value`
+        // keeps the last of two keys, so only a read of the bytes can see it.
+        let chain_at = text
+            .find("\"transferChain\"")
+            .expect("the chain is a member");
+        let end = text.rfind('}').expect("the document is an object");
+        assert!(chain_at < end);
+        let text = format!("{},\"manifestJws\":\"last\"}}", &text[..end]);
+
+        let err = verify_dossier_json(text.as_bytes(), None)
+            .expect_err("a duplicated key is a parse error, wherever it sits");
+        assert!(
+            matches!(&err, DossierParseError::Json(e) if e.to_string().contains("duplicate key `manifestJws`")),
+            "{err:?}"
+        );
     }
 
     #[test]

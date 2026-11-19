@@ -1797,7 +1797,7 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "The stored dossier embeds a transfer chain that dpp-core refuses to\nread, so it cannot be served as a dossier. The detail names the\npassport and the record dpp-core cited. Verifying it still answers\n`200`, with the transfer-chain check failed.\n",
+            "description": "The stored dossier embeds a transfer chain that dpp-core refuses to\nread, so it cannot be served as a dossier. The detail names the\npassport and the record dpp-core cited. Verifying it answers `200`,\nwith the transfer-chain check failed, when the rest of the dossier\nreads, and `409` when the rest cannot be read either.\n",
             "content": {
               "application/problem+json": {
                 "schema": {

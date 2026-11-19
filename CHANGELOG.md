@@ -136,7 +136,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   uploaded dossier whose `transferChain` is malformed in any other way is still a
   `422`. `TransferStore::get_chain` and `EvidenceDossierRepository::get` return a
   `ChainError` in place of `DppError`, and the repository gains `get_document`.
-  (#600)
+  (#600, #648)
 
 - **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
   to -0573. All eight were published on 16 November against a dependency tree that
