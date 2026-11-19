@@ -5,6 +5,11 @@ use anyhow::Result;
 use base64::Engine;
 use reqwest::{Client, StatusCode, header::AUTHORIZATION};
 
+/// How long one evidence upload may take end to end. A 25 MiB file in 120
+/// seconds needs about 213 KiB/s. Every other request keeps the client's
+/// 10-second limit.
+const EVIDENCE_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// The `--idempotency-key` value for this invocation, set once from the parsed
 /// arguments in `main`.
 ///
@@ -430,6 +435,7 @@ impl OdalClient {
         let resp = self
             .inner
             .post(url)
+            .timeout(EVIDENCE_UPLOAD_TIMEOUT)
             .header(AUTHORIZATION, &self.authorization)
             .multipart(form)
             .send_to_node()

@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::core::unsold_goods::{
     action_discard_attach, action_discard_list, action_discard_missing, action_discard_record,
+    attached_sha256, missing_requirements, stored_record_id,
 };
 
 /// `odal unsold-goods record` — record one discard from a file.
@@ -21,7 +22,7 @@ pub async fn run_discard_record(file: &Path, passports: &[String]) -> Result<()>
     let (client, cfg) = crate::http::load_client()?;
     let stored = action_discard_record(&record, passports, &client, &cfg).await?;
 
-    let id = stored.get("id").and_then(Value::as_str).unwrap_or("-");
+    let id = stored_record_id(&stored)?;
     println!("Recorded discard {id}.");
     println!();
     println!("There is no delete — pass --idempotency-key if you retry this.");
@@ -73,10 +74,7 @@ pub async fn run_discard_list(start: &str, end: &str, json: bool) -> Result<()> 
 pub async fn run_discard_attach(record_id: &str, kind: &str, file: &Path) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let attached = action_discard_attach(record_id, kind, file, &client, &cfg).await?;
-    let sha = attached
-        .get("sha256")
-        .and_then(Value::as_str)
-        .unwrap_or("-");
+    let sha = attached_sha256(&attached)?;
     println!("Attached {} as {kind} (sha256 {sha}).", file.display());
     Ok(())
 }
@@ -85,25 +83,13 @@ pub async fn run_discard_attach(record_id: &str, kind: &str, file: &Path) -> Res
 pub async fn run_discard_missing(record_id: &str) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let answer = action_discard_missing(record_id, &client, &cfg).await?;
-    let missing = answer
-        .get("missingEvidence")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice);
+    let missing = missing_requirements(&answer)?;
     if missing.is_empty() {
         println!("Nothing is missing for this record.");
         return Ok(());
     }
     println!("Missing evidence:");
-    for requirement in missing {
-        let kinds: Vec<&str> = requirement
-            .get("anyOf")
-            .and_then(Value::as_array)
-            .map(|kinds| kinds.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default();
-        let basis = requirement
-            .get("basis")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
+    for (kinds, basis) in &missing {
         println!("  one of {} ({basis})", kinds.join(", "));
     }
     Ok(())

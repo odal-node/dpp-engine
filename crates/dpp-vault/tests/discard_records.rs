@@ -380,6 +380,27 @@ async fn a_file_over_the_cap_is_refused_with_413() {
     assert_eq!(resp.status(), 413);
 }
 
+/// A file of exactly the cap attaches. The 413 tests above would also pass if
+/// the route lost its raised body limit, so this one proves the limit admits
+/// a file at the cap.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_at_the_cap_attaches() {
+    let s = setup(None).await;
+    let stored = store(&s, discard("2026-08-01", None)).await;
+    let id = stored["id"].as_str().expect("an id");
+
+    let at_cap = vec![0u8; dpp_types::EVIDENCE_FILE_MAX_BYTES];
+    let resp = attach(&s, id, evidence_form("deliveryDocumentation", at_cap)).await;
+    assert_eq!(
+        resp.status(),
+        201,
+        "{}",
+        resp.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = resp.json().await.expect("the attachment");
+    assert_eq!(body["sizeBytes"], dpp_types::EVIDENCE_FILE_MAX_BYTES);
+}
+
 /// A form far past the cap is refused by the body limit, also as `413`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_form_far_past_the_cap_is_refused_by_the_body_limit_with_413() {

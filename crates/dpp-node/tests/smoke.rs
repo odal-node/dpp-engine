@@ -3672,3 +3672,58 @@ async fn a_non_battery_passport_may_not_claim_a_battery_life_status() {
          see why their product group has none: {body}"
     );
 }
+
+/// A file of exactly the cap attaches through the assembled node, whose own
+/// default body limit is 8 MiB. The vault route's raised limit is what admits it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_evidence_file_at_the_cap_attaches_through_the_assembled_node() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000077");
+    let client = reqwest::Client::new();
+
+    let created = client
+        .post(format!("{base}/vault/api/v1/discard-records"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "record": {
+                "discardedOn": "2026-08-01",
+                "cnCodes": ["420300"],
+                "description": "Jackets, unsold season stock",
+                "units": {"value": 1240},
+                "weight": {"grams": 860500},
+                "packagingIncluded": false,
+                "treatment": "recycling",
+                "receiver": {"name": "Nord Recycling GmbH"}
+            },
+            "passportIds": [],
+        }))
+        .send()
+        .await
+        .expect("the discard reaches the node");
+    assert_eq!(
+        created.status(),
+        201,
+        "{}",
+        created.text().await.unwrap_or_default()
+    );
+    let stored: serde_json::Value = created.json().await.expect("the stored record");
+    let id = stored["id"].as_str().expect("an id");
+
+    let file = reqwest::multipart::Part::bytes(vec![0u8; dpp_types::EVIDENCE_FILE_MAX_BYTES])
+        .file_name("delivery-note.pdf");
+    let form = reqwest::multipart::Form::new()
+        .text("kind", "deliveryDocumentation")
+        .part("file", file);
+    let attached = client
+        .post(format!("{base}/vault/api/v1/discard-records/{id}/evidence"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .expect("the attachment reaches the node");
+    let status = attached.status();
+    let body = attached.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "{body}");
+    let body: serde_json::Value = serde_json::from_str(&body).expect("the attachment");
+    assert_eq!(body["sizeBytes"], dpp_types::EVIDENCE_FILE_MAX_BYTES);
+}

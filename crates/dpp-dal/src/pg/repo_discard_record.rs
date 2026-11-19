@@ -4,7 +4,7 @@
 //! is updated or deleted: the tables are append-only for the app role, so a
 //! discard counted once stays counted.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -129,7 +129,7 @@ impl DiscardRecordStore for PgDiscardRecordRepo {
         // Checked here rather than left to the foreign key, whose violation would
         // read as a database fault. Every passport it names is listed.
         if !passports.is_empty() {
-            let held: Vec<Uuid> =
+            let held: HashSet<Uuid> =
                 sqlx::query("SELECT id FROM odal.passport WHERE id = ANY($1::uuid[])")
                     .bind(&passports)
                     .fetch_all(&mut *tx)
@@ -140,7 +140,7 @@ impl DiscardRecordStore for PgDiscardRecordRepo {
                     .collect();
             let missing: Vec<String> = passports
                 .iter()
-                .filter(|p| !held.contains(p))
+                .filter(|p| !held.contains(*p))
                 .map(ToString::to_string)
                 .collect();
             if !missing.is_empty() {
