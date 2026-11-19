@@ -97,6 +97,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     signed ruleset overruled (`conflicts`).
   - Event payloads are in `docs/guides/WEBHOOKS.md`.
 
+### Fixed
+
+- **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
+  to -0573. All eight were published on 16 November against a dependency tree that
+  had not changed, and they cover:
+  - a guest that can abort the host, through a stale GC heap base pointer or a GC
+    heap reservation that is not a multiple of the page size;
+  - aborts in builds without the `gc` or `threads` feature;
+  - panics in `Caller::get_module_export`, and when a component cancels a stream
+    or future copy on the wrong end;
+  - unbounded host memory growth from empty writes in `wasmtime-wasi` and
+    `wasmtime-wasi-http`.
+
+  Only the lockfile changes. (#647)
+
 ## [0.16.0] - 2026-11-14
 
 ### Breaking
