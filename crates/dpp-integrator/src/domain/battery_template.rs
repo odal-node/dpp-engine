@@ -84,7 +84,7 @@
 //! `validate_battery_row`).
 //!
 //! `dueDiligenceUrl` and `dueDiligenceOperatorScope` are filled for a battery
-//! placed on or after 18 August 2027 and left blank before it. From that date the
+//! placed on or after 18 August 2027 and not asked for before it. From that date the
 //! report's address is owed unless Art. 47 exempts the battery. The operator
 //! declares which side of the Art. 47 turnover threshold it is on, as `subject`
 //! or `belowTurnoverThreshold`. The threshold itself is nowhere in this crate, so
@@ -229,10 +229,11 @@ const fn opt(field: &'static str, name: &'static str, example: &'static str) -> 
 const ENVELOPE_COLUMNS: &[Column] = &[
     req(ENVELOPE, "manufacturerName", "Acme Energy GmbH"),
     req(ENVELOPE, "manufacturerCountry", "DE"),
-    // Required here, unlike every other product group's template: whether an
-    // EV, LMT or industrial battery owes its due diligence report turns on this
-    // date, so the importer refuses a row without it, as publish would, even
-    // from an operator declaring the Art. 47 exemption.
+    // Required here, unlike every other product group's template: whether an EV or
+    // LMT battery, or an industrial battery over 2 kWh or of unstated capacity, owes
+    // its due diligence report turns on this date, so the importer refuses a row
+    // without it, as publish would, even from an operator declaring the Art. 47
+    // exemption.
     req(ENVELOPE, "placedOnMarketDate", "2027-09-01"),
     opt(ENVELOPE, "commodityCode", "85076000"),
     opt(ENVELOPE, "carrierSerial", "SN-2026-0001"),
@@ -802,15 +803,16 @@ mod tests {
 
     /// `placedOnMarketDate` is the fact every battery's due diligence answer
     /// turns on. Without it core answers `Undetermined` and refuses the publish,
-    /// so every battery template carries the column.
+    /// so every battery template carries the column, marked `[REQUIRED]`.
     #[test]
     fn every_battery_template_carries_the_placing_date() {
         for category in BatteryCategory::ALL {
+            let placed = columns_for(*category)
+                .into_iter()
+                .find(|c| c.name == "placedOnMarketDate");
             assert!(
-                columns_for(*category)
-                    .iter()
-                    .any(|c| c.name == "placedOnMarketDate"),
-                "the {} template has no placedOnMarketDate column",
+                placed.is_some_and(|c| c.required),
+                "the {} template must carry placedOnMarketDate and mark it [REQUIRED]",
                 category.as_str()
             );
         }

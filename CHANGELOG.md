@@ -13,14 +13,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 ### Breaking
 
 - **A battery CSV row without `placedOnMarketDate` is refused at import** wherever
-  core's publish gate would refuse it: an EV, LMT or industrial battery, whatever
-  its Art. 47 declaration, since core asks for the date before the declaration. A
-  second-life battery is asked for one too, although publish would not need it:
-  the importer asks core the same question and cannot read the second-life limb,
-  which core infers privately. The battery templates mark the column `[REQUIRED]`.
-  Such a row used to import as a draft that could never be published.
+  core's publish gate would refuse it: an EV or LMT battery, or an industrial battery
+  over 2 kWh or with no stated `ratedCapacityKwh`, whatever its Art. 47 declaration,
+  since core asks for the date before the declaration. A second-life battery is asked
+  for one too, although publish would not need it: the importer asks core the same
+  question and cannot read the second-life limb, which core infers privately. The
+  battery templates mark the column `[REQUIRED]`. Such a row used to import as a draft
+  that could never be published.
   **Migration:** add `placedOnMarketDate` (`YYYY-MM-DD`) to existing EV, LMT and
-  industrial battery spreadsheets. A portable battery needs none. (#563)
+  industrial battery spreadsheets. An industrial row with no `ratedCapacityKwh` needs
+  it too. A portable or starting-lighting-ignition battery, and an industrial one of
+  2 kWh or less, need none. (#563)
 
 - **`dpp-core` 0.24.0: a destruction says whether the product was unsold, cites a
   derogation as a point by its name, and must cite one only where the ESPR
@@ -87,20 +90,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   Breaking). A battery placed from 18 August 2027 also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII
   point 1(d)), and `dueDiligenceOperatorScope`, the operator's Art. 47 declaration,
   `subject` or `belowTurnoverThreshold`. An unrecognised declaration is refused,
-  naming its row. Both columns stay blank for a battery placed before the date.
+  naming its row. Neither column is asked for a battery placed before the date.
   The template gates accept a column that either placing date permits, since one
   template serves both. Until now a battery placed from that date could be
   imported but never published. (#563)
-
-### Changed
-
-- **A credential may be narrowed to a product category an earlier schema version
-  allowed.** The category check now reads core's
-  `ProductGroup::product_category_values_any_version`, so a credential narrowed
-  to a withdrawn value such as electronics `laptop` is issued, matching the stored
-  passports that state it. (#600, #616)
-
-### Added
 
 - **Dated-obligation notices: `dpp.obligation.effective` and
   `dpp.obligation.upcoming` (#501).** With `OBLIGATION_NOTICES=on`, the node
@@ -118,6 +111,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     window, each notice with whether and when it was announced, and the dates a
     signed ruleset overruled (`conflicts`).
   - Event payloads are in `docs/guides/WEBHOOKS.md`.
+
+### Changed
+
+- **A credential may be narrowed to a product category an earlier schema version
+  allowed.** The category check now reads core's
+  `ProductGroup::product_category_values_any_version`, so a credential narrowed
+  to a withdrawn value such as electronics `laptop` is issued, matching the stored
+  passports that state it. (#600, #616)
 
 ## [0.16.0] - 2026-11-14
 

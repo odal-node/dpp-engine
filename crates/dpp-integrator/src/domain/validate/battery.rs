@@ -14,6 +14,7 @@ use dpp_domain::{
 use dpp_rules::batteries::{
     battery_facts::BatteryFacts,
     passport_content::{MissingFact, undetermined_fields},
+    passport_scope::{PASSPORT_REQUIRED_FROM, passport_scope},
 };
 
 use crate::domain::battery_fields::{
@@ -206,25 +207,38 @@ pub fn validate_battery_row(
     // A battery whose content rules turn on its placing date cannot publish
     // without one: core's publish gate refuses it at `/placedOnMarketDate`. The
     // row is refused here instead, by asking core the same question, so an import
-    // never creates a draft that can only fail later. The operator's Art. 47
-    // declaration is passed as read, and core asks for the date before it looks
-    // at the declaration. Second-life status is not passed: core infers that
-    // limb from `batteryStatus` privately, so a re-used, repurposed or
-    // remanufactured battery is asked for its date here although publish would
-    // not need it.
-    if placed_on_market_date.is_none() && !errors.iter().any(|e| e.field == "placedOnMarketDate") {
+    // never creates a draft that can only fail later. Core owes the date only for
+    // a battery that Art. 77(1) brings into the passport obligation, and reads an
+    // absent date as the day that obligation starts. So the question is asked here
+    // only when `passport_scope` says a passport is owed or cannot yet say, because
+    // the capacity is not stated. An industrial battery at or below 2 kWh, and a
+    // portable or starting-lighting-ignition one, import without a date. The
+    // operator's Art. 47 declaration is passed as read, and core asks for the date
+    // before it looks at the declaration. Second-life status is not passed: core
+    // infers that limb from `batteryStatus` privately, so a re-used, repurposed or
+    // remanufactured battery is asked for its date here although publish would not
+    // need it. A capacity cell that does not parse is refused on its own column, and
+    // the date is not also asked for, since the capacity that decides whether it is
+    // owed was never read.
+    if placed_on_market_date.is_none()
+        && !errors.iter().any(|e| e.field == "placedOnMarketDate")
+        && !errors.iter().any(|e| e.field == "ratedCapacityKwh")
+    {
         let category = battery_type
             .as_ref()
             .and_then(|t| serde_json::to_value(t).ok())
             .and_then(|v| v.as_str().map(str::to_owned));
         if let Some(category) = category {
+            let scope = passport_scope(&category, rated_capacity_kwh, PASSPORT_REQUIRED_FROM);
+            let asks_for_date = scope.is_required() || scope.is_undetermined();
             let facts = BatteryFacts {
                 placed_on_market: None,
                 operator_scope: due_diligence_operator_scope.map(Into::into),
                 ..BatteryFacts::default()
             };
-            if undetermined_fields(&category, facts)
-                .any(|(_, fact)| fact == MissingFact::PlacingDate)
+            if asks_for_date
+                && undetermined_fields(&category, facts)
+                    .any(|(_, fact)| fact == MissingFact::PlacingDate)
             {
                 errors.push(RowError {
                     row: row_num,
@@ -610,6 +624,102 @@ mod tests {
         portable.remove("placedOnMarketDate");
         portable.insert("batteryType".into(), "portable".into());
         validate_battery_row(&portable, 1).expect("a portable battery needs no date");
+    }
+
+    /// An industrial battery at or below 2 kWh owes no passport under Art. 77(1),
+    /// so its row imports without a date.
+    #[test]
+    fn an_industrial_battery_under_the_threshold_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "1.5".into());
+        validate_battery_row(&row, 1).expect("a 1.5 kWh industrial battery needs no date");
+    }
+
+    /// The threshold is strict: a battery of exactly 2 kWh is not above it.
+    #[test]
+    fn an_industrial_battery_at_exactly_the_threshold_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "2.0".into());
+        validate_battery_row(&row, 1).expect("a 2.0 kWh industrial battery needs no date");
+    }
+
+    /// Above the threshold the battery owes a passport, so its row is refused
+    /// without the date, naming its row.
+    #[test]
+    fn an_industrial_battery_over_the_threshold_is_refused_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "2.5".into());
+        let errs = validate_battery_row(&row, 1).expect_err("a 2.5 kWh battery needs its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// Without a stated capacity the threshold cannot be applied, so the date is
+    /// still asked for.
+    #[test]
+    fn an_industrial_battery_with_no_stated_capacity_is_refused_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        let errs =
+            validate_battery_row(&row, 1).expect_err("a capacity-less battery needs its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// Starting-lighting-ignition batteries are named nowhere in Art. 77(1), so
+    /// no content rule turns on their date.
+    #[test]
+    fn a_starting_lighting_ignition_battery_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("batteryType".into(), "starting-lighting-ignition".into());
+        validate_battery_row(&row, 1).expect("a starting-lighting-ignition battery needs no date");
+    }
+
+    /// Core infers second life from `batteryStatus` privately, so the importer
+    /// cannot see it and still asks for the date. This pins that choice.
+    #[test]
+    fn a_second_life_battery_is_still_asked_for_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "4.8".into());
+        row.insert("batteryStatus".into(), "repurposed".into());
+        let errs =
+            validate_battery_row(&row, 1).expect_err("a second-life battery is asked for its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// A capacity cell that does not parse is refused on its own column. The row
+    /// is not also reported for a missing date, since the capacity it turns on
+    /// was never read.
+    #[test]
+    fn a_malformed_capacity_is_refused_on_its_own_column_only() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "abc".into());
+        let errs = validate_battery_row(&row, 1).expect_err("a malformed capacity is refused");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "ratedCapacityKwh"),
+            "{errs:?}"
+        );
+        assert!(
+            !errs.iter().any(|e| e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
     }
 
     /// A malformed date is reported once, as malformed, and not a second time as
