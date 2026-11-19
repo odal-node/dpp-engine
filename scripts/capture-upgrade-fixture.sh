@@ -25,6 +25,13 @@
 #   dump.sql     `pg_dump --inserts` of the node's database
 #   public.json  every 200 public read at capture time, by passport id, as the
 #                exact body bytes
+#   keystore.enc         the key store that node signed with, as the release wrote it
+#   keystore.passphrase  its passphrase, so the upgrade test can open the store
+#
+# The passphrase is committed on purpose and may be public: the store holds only
+# the throwaway key of a fixture node whose DID is a localhost URL and which never
+# served anyone. The upgrade test opens a copy of the store with an upgraded node
+# and checks that the signatures the release made still verify.
 #
 # Needs docker, curl and jq. The ports are overridable: CAPTURE_PG_PORT
 # (default 56432) and CAPTURE_NODE_PORT (default 58091).
@@ -76,6 +83,7 @@ secret() { head -c 24 /dev/urandom | base64 | tr -d '/+='; }
 admin_user="capture-admin"
 admin_pass="$(secret)"
 db_pass="$(secret)"
+store_pass="$(secret)"
 
 docker run -d --name "$container" -p "127.0.0.1:$pg_port:5432" \
     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD="$db_pass" -e POSTGRES_DB=odal \
@@ -102,7 +110,7 @@ mkdir -p "$work/node" "$work/home" "$work/plugins"
     exec env -i PATH="$PATH" HOME="$work/home" \
         DATABASE_URL="postgres://odal_app:$db_pass@127.0.0.1:$pg_port/odal" \
         DATABASE_MIGRATE_URL="postgres://postgres:$db_pass@127.0.0.1:$pg_port/odal" \
-        KEY_STORE_PATH="$work/keystore.enc" KEY_STORE_PASSPHRASE="$(secret)" \
+        KEY_STORE_PATH="$work/keystore.enc" KEY_STORE_PASSPHRASE="$store_pass" \
         DID_WEB_BASE_URL="$base" RESOLVER_BASE_URL="http://127.0.0.1:1" \
         PORT="$node_port" NODE_PORT="$node_port" METRICS_ADDR="" \
         PLUGINS_DIR="$work/plugins" ADMIN_USERNAME="$admin_user" ADMIN_PASSWORD="$admin_pass" \
@@ -179,6 +187,15 @@ jq -S . "$work/public.json" > "$out/public.json"
 kill "$node_pid"
 wait "$node_pid" 2> /dev/null || true
 node_pid=""
+
+# The key store the release wrote, kept with the passphrase it opens under. Both
+# are committed, and the passphrase may be public: the store holds only the
+# throwaway key of this fixture node, whose DID is a localhost URL and which
+# never served anyone. An upgraded node has to open this exact file, and the
+# signatures in the dump have to verify against the key in it.
+[ -s "$work/keystore.enc" ] || { echo "capture: the node wrote no key store" >&2; exit 1; }
+cp "$work/keystore.enc" "$out/keystore.enc"
+printf '%s\n' "$store_pass" > "$out/keystore.passphrase"
 
 # `--inserts` because the test loads this through sqlx, which cannot run COPY's
 # inline data. pg_dump's `\restrict` lines are psql meta-commands for the same
