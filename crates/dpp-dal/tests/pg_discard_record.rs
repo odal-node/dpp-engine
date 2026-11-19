@@ -8,7 +8,7 @@
 
 use chrono::NaiveDate;
 use dpp_dal::pg::{PgDiscardRecordRepo, PgEvidenceFileRepo};
-use dpp_dal::test_harness::start_pg;
+use dpp_dal::test_harness::{sqlstate, start_pg};
 use dpp_domain::{
     DppError,
     unsold_goods::{DiscardRecord, EvidenceKind, FinancialYear},
@@ -305,14 +305,12 @@ async fn the_app_role_cannot_delete_a_discard_record() {
         .await
         .expect("stored");
 
-    let result = sqlx::query("DELETE FROM odal.discard_record WHERE id = $1")
+    let delete = sqlx::query("DELETE FROM odal.discard_record WHERE id = $1")
         .bind(stored.id)
         .execute(pg.dal.pool())
-        .await;
-    assert!(
-        result.is_err(),
-        "the app role may not delete a discard record"
-    );
+        .await
+        .expect_err("the app role may not delete a discard record");
+    assert_eq!(sqlstate(&delete).as_deref(), Some("42501"), "{delete}");
 }
 
 /// The superuser is refused by the trigger: an update or delete changes nothing

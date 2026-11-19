@@ -289,6 +289,7 @@ async fn listing_without_the_year_is_a_bad_request() {
 /// A document attaches under its kind, with the hash the node computed.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_document_attaches_under_its_kind() {
+    use sha2::{Digest, Sha256};
     let s = setup(None).await;
     let stored = store(&s, discard("2026-08-01", None)).await;
     let id = stored["id"].as_str().expect("an id");
@@ -308,7 +309,9 @@ async fn a_document_attaches_under_its_kind() {
     let body: serde_json::Value = resp.json().await.expect("the attachment");
     assert_eq!(body["kind"], "deliveryDocumentation");
     assert_eq!(body["sizeBytes"], 4);
-    assert_eq!(body["sha256"].as_str().map(str::len), Some(64));
+    // The handler hashes the uploaded bytes as lower-case hex SHA-256.
+    let expected = hex::encode(Sha256::digest(b"note"));
+    assert_eq!(body["sha256"], expected);
 }
 
 /// The same document under the same kind is refused the second time.
