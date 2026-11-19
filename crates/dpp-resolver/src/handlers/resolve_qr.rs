@@ -156,8 +156,14 @@ const MODULE_SCALE: u32 = 8;
 /// SVG renderer uses. This function previously applied none: the image was
 /// exactly `width * scale` pixels of symbol, which is out of spec under
 /// ISO/IEC 18004 and is the rendering an operator prints onto a physical label.
+/// The error-correction level is [`dpp_render::QR_ERROR_CORRECTION`], the same
+/// value the SVG renderer uses.
 fn qr_png(carrier_uri: &str) -> Result<Vec<u8>, String> {
-    let code = QrCode::new(carrier_uri.as_bytes()).map_err(|e| e.to_string())?;
+    let code = QrCode::with_error_correction_level(
+        carrier_uri.as_bytes(),
+        dpp_render::QR_ERROR_CORRECTION,
+    )
+    .map_err(|e| e.to_string())?;
 
     // Build the PNG from the raw colour matrix rather than `qrcode`'s own image
     // renderer, which pins a different `image` major than this workspace.
@@ -269,6 +275,43 @@ mod tests {
         assert!(
             img.pixels().any(|p| p[0] == 0),
             "the image must contain dark modules"
+        );
+    }
+
+    /// The PNG draws the symbol at the width of M, the level the constant names.
+    ///
+    /// The carrier's symbol is a different width at L, M and Q, so a route that
+    /// encoded at either of the other levels would draw a different number of
+    /// modules. The premise is asserted first, so the test cannot pass because
+    /// the three widths have collapsed into one.
+    #[test]
+    fn the_png_symbol_is_drawn_at_the_level_m_width() {
+        use qrcode::EcLevel;
+
+        let width_at = |level: EcLevel| {
+            QrCode::with_error_correction_level(CARRIER.as_bytes(), level)
+                .unwrap()
+                .width() as u32
+        };
+        let m = width_at(EcLevel::M);
+        assert_ne!(
+            width_at(EcLevel::L),
+            m,
+            "premise: L must draw a width other than M's"
+        );
+        assert_ne!(
+            width_at(EcLevel::Q),
+            m,
+            "premise: Q must draw a width other than M's"
+        );
+
+        let png = qr_png(CARRIER).expect("a valid URI must render");
+        let img = image::load_from_memory(&png).unwrap().to_luma8();
+        let quiet = dpp_render::QR_QUIET_ZONE_MODULES;
+        assert_eq!(
+            img.width(),
+            (m + quiet * 2) * MODULE_SCALE,
+            "the image must frame a symbol M's width in modules"
         );
     }
 

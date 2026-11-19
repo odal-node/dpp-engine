@@ -861,7 +861,7 @@ pub fn stamp_publish_obligations(
     Ok(())
 }
 
-/// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
+/// Build the carrier (QR code) URL a passport should encode, on the
 /// node's configured resolver base.
 ///
 /// When the product group data carries a GTIN — every trade-item product group — produces a
