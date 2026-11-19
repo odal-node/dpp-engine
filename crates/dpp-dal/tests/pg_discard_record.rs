@@ -1,5 +1,5 @@
 #![cfg(feature = "integration-tests")]
-//! Discard records and evidence files in PostgreSQL (`ops/pg/0052`, `0053`).
+//! Discard records and evidence files in PostgreSQL (`ops/pg/0051`, `0052`).
 //!
 //! These run against a real database, as the app role unless a test says
 //! otherwise. The append-only guarantees are proved twice: the app role's grants

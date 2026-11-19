@@ -207,6 +207,18 @@ async fn main() -> anyhow::Result<()> {
         .await;
     tracing::info!(version = %active_ruleset.version(), "active ruleset");
 
+    // The calendar the obligations route reads and the notice pass announces
+    // from: the ruleset in force at the moment of each call. The lead times are
+    // read even when the pass is off, so a malformed value fails the boot rather
+    // than the day someone turns the switch on.
+    let obligation_lead_days = dpp_node::infra::obligation_notices::lead_days()?;
+    let obligation_schedule: Arc<dyn dpp_vault::state::ObligationSchedule> = Arc::new(
+        dpp_node::infra::obligation_notices::RulesetObligationSchedule::new(
+            active_ruleset.clone(),
+            obligation_lead_days.clone(),
+        ),
+    );
+
     // ── Vault service state ────────────────────────────────────────────────────
     let operator = match db
         .operator_repo
@@ -412,6 +424,8 @@ async fn main() -> anyhow::Result<()> {
         // force at the moment it is asked, and `POST /ruleset/reload` reaches
         // the same channel this booted from.
         ruleset_admin: Some(active_ruleset.clone()),
+        obligation_notices: db.obligation_notices.clone(),
+        obligation_schedule: obligation_schedule.clone(),
         idempotency: Some(db.idempotency.clone()),
     };
 
@@ -423,7 +437,7 @@ async fn main() -> anyhow::Result<()> {
         job_store: db.job_store.clone(),
         batch_concurrency: cfg.batch_concurrency,
         import_slots: Arc::new(tokio::sync::Semaphore::new(cfg.import_max_concurrent)),
-        events: event_bus,
+        events: event_bus.clone(),
         idempotency: Some(db.idempotency.clone()),
     };
 
@@ -497,6 +511,25 @@ async fn main() -> anyhow::Result<()> {
         tracing::debug!(
             "trusted list refresh is off — seal qualification verdicts will report that no \
              list was consulted. Set TRUSTED_LIST_REFRESH=on to change that"
+        );
+    }
+    // Dated-obligation notices: off unless asked, like the trusted-list refresh.
+    // A node that has not set the switch says so at boot.
+    if dpp_node::infra::obligation_notices::obligation_notices_enabled() {
+        tracing::info!(
+            lead_days = ?obligation_lead_days,
+            "OBLIGATION_NOTICES=on — this node will announce dated obligations through its \
+             webhooks and event bus, on the UTC day and at these lead times before it"
+        );
+        boot::tasks::spawn_obligation_notices(
+            db.obligation_notices.clone(),
+            event_bus.clone(),
+            obligation_schedule.clone(),
+        );
+    } else {
+        tracing::info!(
+            "obligation notices are off — no dpp.obligation.* event will be sent. Set \
+             OBLIGATION_NOTICES=on to change that"
         );
     }
     // Continuity tier: only spawn when object storage is configured — without a

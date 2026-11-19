@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0052 — discard_record: one discard of unsold consumer products, and the
+-- 0051 — discard_record: one discard of unsold consumer products, and the
 -- passports it names.
 --
 -- ESPR Art. 24 has an operator keep, for each discard, the documentation that

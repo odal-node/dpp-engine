@@ -1177,6 +1177,63 @@ pub fn spawn_trusted_list_refresh(
     });
 }
 
+/// How long a node waits before its first obligation-notice pass.
+const OBLIGATION_NOTICE_FIRST_PASS_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How often the obligation-notice pass runs.
+///
+/// Hourly rather than daily. A daily timer started at boot would reach a date at
+/// an arbitrary hour, so a notice for a day could go out up to a day late. The
+/// pass is idempotent, because the ledger holds every notice already sent, so an
+/// hourly run that finds nothing new costs one read and a few conflicting
+/// inserts.
+const OBLIGATION_NOTICE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Spawn the dated-obligation notice pass, if this node was asked for one.
+///
+/// # Off unless asked
+///
+/// The pass starts a stream of deliveries to every subscription that takes `*`,
+/// so it is not something to start for an operator who has not asked. The switch
+/// is explicit, like `TRUSTED_LIST_REFRESH`, and the caller reports it at boot.
+///
+/// The one wall clock in this feature is here: the pass asks what takes effect on
+/// today's UTC date, and nothing else.
+pub fn spawn_obligation_notices(
+    store: Arc<dyn dpp_types::ObligationNoticeStore>,
+    events: Arc<dyn dpp_common::event::EventBus>,
+    schedule: Arc<dyn dpp_vault::state::ObligationSchedule>,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(OBLIGATION_NOTICE_FIRST_PASS_DELAY).await;
+        loop {
+            let today = chrono::Utc::now().date_naive();
+            let calendar = schedule.calendar();
+            match dpp_node::infra::obligation_notices::run_pass(
+                store.as_ref(),
+                events.as_ref(),
+                &calendar,
+                today,
+                &schedule.lead_days(),
+            )
+            .await
+            {
+                Ok(0) => {}
+                Ok(count) => {
+                    tracing::info!(%today, count, "obligation notices recorded and queued");
+                }
+                // Nothing was recorded or queued, so the next pass covers the same
+                // days from the same ledger.
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "an obligation-notice pass failed; the next one covers the same days"
+                ),
+            }
+            tokio::time::sleep(OBLIGATION_NOTICE_INTERVAL).await;
+        }
+    });
+}
+
 #[cfg(test)]
 mod seal_audit_cadence_tests {
     use super::*;

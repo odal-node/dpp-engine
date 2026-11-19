@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0053 — evidence_file and discard_record_evidence: the documents behind a
+-- 0052 — evidence_file and discard_record_evidence: the documents behind a
 -- discard, stored once and cited by every record that relies on them.
 --
 -- A file is addressed by the SHA-256 of its bytes, so the same document cited

@@ -1,4 +1,4 @@
-//! `DiscardRecordStore` on PostgreSQL (`ops/pg/0052`, `0053`).
+//! `DiscardRecordStore` on PostgreSQL (`ops/pg/0051`, `0052`).
 //!
 //! A record and the passports it names are written in one transaction. Nothing
 //! is updated or deleted: the tables are append-only for the app role, so a

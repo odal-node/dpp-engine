@@ -22,7 +22,7 @@ const DOCUMENTED_EXCEPTIONS: &[(&str, &str)] = &[
     (
         "odal.unsold_goods_report",
         "the disclosure-line table of ops/pg/0008, kept and documented unused: no repo \
-         reads or writes it since the discard records of 0052. It is not dropped, because \
+         reads or writes it since the discard records of 0051. It is not dropped, because \
          a node that has run 0008 may hold rows, and a migration does not remove data.",
     ),
     (

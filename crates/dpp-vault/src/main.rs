@@ -77,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
     let discard_records = Arc::new(dpp_dal::pg::PgDiscardRecordRepo::new(dal.clone()));
     let evidence_store = Arc::new(dpp_dal::pg::PgEvidenceFileRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
+    let obligation_notices = Arc::new(dpp_dal::pg::PgObligationNoticeRepo::new(dal.clone()));
 
     let identity = Arc::new(IdentityHttpClient::new(cfg.identity_service_url.clone()));
     let compliance = Arc::new(PassthroughRegistry::new());
@@ -184,6 +185,10 @@ async fn main() -> anyhow::Result<()> {
         discard_records,
         evidence_store,
         personal_data,
+        // The standalone vault announces nothing, so its ledger reads empty; the
+        // calendar it answers from is the built-in one, with no ruleset applied.
+        obligation_notices,
+        obligation_schedule: Arc::new(dpp_vault::state::BuiltInObligationSchedule),
         // The standalone vault binary hosts no Wasm plugin engine; runtime
         // plugin install is available only on the fused node.
         plugin_admin: None,

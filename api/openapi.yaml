@@ -355,6 +355,18 @@ components:
       $ref: components/schemas/regulatory/InstrumentStatus.yaml
     RegulatoryStatus:
       $ref: components/schemas/regulatory/RegulatoryStatus.yaml
+    ObligationsResponse:
+      $ref: components/schemas/obligations/ObligationsResponse.yaml
+    ObligationEntry:
+      $ref: components/schemas/obligations/ObligationEntry.yaml
+    ObligationNotice:
+      $ref: components/schemas/obligations/ObligationNotice.yaml
+    ObligationKind:
+      $ref: components/schemas/obligations/ObligationKind.yaml
+    ScheduleConflict:
+      $ref: components/schemas/obligations/ScheduleConflict.yaml
+    BundleOrigin:
+      $ref: components/schemas/obligations/BundleOrigin.yaml
 paths:
   /vault/api/v1/dpp:
     $ref: paths/vault/vault_api_v1_dpp.yaml
@@ -452,6 +464,8 @@ paths:
     $ref: paths/vault/vault_api_v1_discard-records_{id}_evidence.yaml
   /vault/api/v1/discard-records/{id}/missing-evidence:
     $ref: paths/vault/vault_api_v1_discard-records_{id}_missing-evidence.yaml
+  /vault/api/v1/obligations:
+    $ref: paths/vault/vault_api_v1_obligations.yaml
   /vault/api/v1/webhooks:
     $ref: paths/vault/vault_api_v1_webhooks.yaml
   /vault/api/v1/webhooks/{id}:

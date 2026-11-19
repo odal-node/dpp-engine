@@ -477,6 +477,11 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ObligationDate", fixtures::obligation_date());
     case!("RetentionPeriod", fixtures::retention_period());
     case!("ReachingInstrument", fixtures::reaching_instrument());
+    case!("ObligationsResponse", fixtures::obligations_response());
+    case!("ObligationEntry", fixtures::obligation_entry());
+    case!("ObligationNotice", fixtures::notice_entry());
+    case!("ScheduleConflict", fixtures::schedule_conflict());
+    case!("BundleOrigin", fixtures::bundle_origin());
     case!("JobProgress", fixtures::job_progress());
     case!("LintFinding", fixtures::lint_finding());
     case!("SealedEnvelope", fixtures::sealed_envelope());
@@ -740,6 +745,10 @@ fn enum_cases() -> Vec<EnumCase> {
             variants: wire(&fixtures::all_date_bases()),
         },
         EnumCase {
+            name: "ObligationKind",
+            variants: wire(&fixtures::all_obligation_kinds()),
+        },
+        EnumCase {
             name: "RetentionBasis",
             variants: wire(&fixtures::all_retention_bases()),
         },
@@ -814,6 +823,11 @@ fn query_cases() -> Vec<QueryCase> {
         "get",
         "/vault/api/v1/discard-records",
         fixtures::discard_list_query()
+    );
+    case!(
+        "get",
+        "/vault/api/v1/obligations",
+        fixtures::obligations_query()
     );
     case!(
         "get",
@@ -911,6 +925,7 @@ const UNENUMERABLE_CORE_ENUMS: &[&str] = &[
     "LifecycleStage",
     "SystemBoundary",
     "DateBasis",
+    "ObligationKind",
     "RetentionBasis",
     "Granularity",
     "RecordedBasis",
@@ -2516,6 +2531,7 @@ mod handler_sources {
         include_str!("../../dpp-vault/src/handlers/list.rs"),
         include_str!("../../dpp-vault/src/handlers/node_health.rs"),
         include_str!("../../dpp-vault/src/handlers/node_state.rs"),
+        include_str!("../../dpp-vault/src/handlers/obligations.rs"),
         include_str!("../../dpp-vault/src/handlers/operator.rs"),
         include_str!("../../dpp-vault/src/handlers/personal_data.rs"),
         include_str!("../../dpp-vault/src/handlers/plugins.rs"),
@@ -4391,6 +4407,77 @@ mod fixtures {
             SealCoverage::Superseded,
             SealCoverage::Unknown,
         ]
+    }
+
+    pub fn all_obligation_kinds() -> Vec<dpp_domain::ObligationKind> {
+        use dpp_domain::ObligationKind;
+        vec![
+            ObligationKind::PassportStart,
+            ObligationKind::ContentRequirement,
+            ObligationKind::MinimumShare,
+            ObligationKind::Restriction,
+        ]
+    }
+
+    pub fn bundle_origin() -> dpp_domain::BundleOrigin {
+        dpp_domain::BundleOrigin {
+            bundle_version: "2026-Q3.1".into(),
+            content_sha256: "9f2c7a10".into(),
+        }
+    }
+
+    pub fn schedule_conflict() -> dpp_domain::ScheduleConflict {
+        dpp_domain::ScheduleConflict {
+            id: "battery.due-diligence-report".into(),
+            build_date: date(),
+            bundle_date: NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            bundle: bundle_origin(),
+        }
+    }
+
+    pub fn notice_entry() -> dpp_vault::handlers::obligations::NoticeEntry {
+        dpp_vault::handlers::obligations::NoticeEntry {
+            notice_id: uuid(),
+            event_type: "dpp.obligation.upcoming",
+            lead_days: Some(30),
+            notice_day: date(),
+            announced: true,
+            announced_at: Some(ts()),
+        }
+    }
+
+    pub fn obligation_entry() -> dpp_vault::handlers::obligations::ObligationEntry {
+        use dpp_domain::{DateBasis, ObligationEvent, ObligationKind};
+        dpp_vault::handlers::obligations::ObligationEntry {
+            event: ObligationEvent {
+                id: "battery.due-diligence-report".into(),
+                date: date(),
+                kind: ObligationKind::ContentRequirement,
+                citation: "Regulation (EU) 2023/1542 Annex XIII point 1(d)".into(),
+                summary: "The passport carries the address of the due diligence report.".into(),
+                product_group: Some("battery".into()),
+                categories: vec!["ev".into(), "lmt".into(), "industrial".into()],
+                basis: DateBasis::Sourced,
+                bundle: Some(bundle_origin()),
+            },
+            notices: vec![notice_entry()],
+        }
+    }
+
+    pub fn obligations_response() -> dpp_vault::handlers::obligations::ObligationsResponse {
+        dpp_vault::handlers::obligations::ObligationsResponse {
+            from: date(),
+            to: date(),
+            events: vec![obligation_entry()],
+            conflicts: vec![schedule_conflict()],
+        }
+    }
+
+    pub fn obligations_query() -> dpp_vault::handlers::obligations::ObligationsQuery {
+        dpp_vault::handlers::obligations::ObligationsQuery {
+            from: Some("2026-01-01".into()),
+            to: Some("2026-12-31".into()),
+        }
     }
 
     pub fn all_date_bases() -> Vec<dpp_domain::instrument::DateBasis> {

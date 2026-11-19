@@ -749,6 +749,8 @@ async fn t8_app_role_can_read_every_table() {
         "odal.registry_identity_audit",
         "odal.passport_transfer",
         "odal.personal_data_record",
+        "odal.obligation_notice",
+        "odal.obligation_notice_state",
         "identity.did_document",
         "identity.key_pair",
     ];

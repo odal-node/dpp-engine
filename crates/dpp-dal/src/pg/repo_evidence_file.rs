@@ -1,4 +1,4 @@
-//! `EvidenceStore` on PostgreSQL (`ops/pg/0053`).
+//! `EvidenceStore` on PostgreSQL (`ops/pg/0052`).
 //!
 //! A file is keyed by the SHA-256 of its bytes, so storing a document a second
 //! time, for a second record, writes nothing: the row is already there.

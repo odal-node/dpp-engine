@@ -16,6 +16,7 @@ pub mod lint;
 pub mod list;
 pub mod node_health;
 pub mod node_state;
+pub mod obligations;
 pub mod operator;
 pub mod personal_data;
 pub mod plugins;

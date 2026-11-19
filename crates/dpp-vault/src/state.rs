@@ -59,6 +59,35 @@ pub trait CredentialIssuer: Send + Sync {
     async fn sign(&self, credential: &dpp_vc::DppAccessCredential) -> anyhow::Result<String>;
 }
 
+/// The dated-obligation calendar a node reads, and the lead times it announces at.
+///
+/// A port for the same reason as [`CredentialIssuer`]: the ruleset in force
+/// belongs to the node binary. The calendar is asked for at each call, so a
+/// signed ruleset swapped in at runtime is what the next answer reflects.
+pub trait ObligationSchedule: Send + Sync {
+    /// The calendar in force now.
+    fn calendar(&self) -> dpp_domain::ObligationCalendar;
+
+    /// The lead times, in days, at which `dpp.obligation.upcoming` is announced.
+    fn lead_days(&self) -> Vec<u32>;
+}
+
+/// dpp-core's built-in calendar at the default lead times, with no signed
+/// ruleset laid over it. What the standalone vault answers from, since it has no
+/// ruleset channel.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltInObligationSchedule;
+
+impl ObligationSchedule for BuiltInObligationSchedule {
+    fn calendar(&self) -> dpp_domain::ObligationCalendar {
+        dpp_domain::ObligationCalendar::new()
+    }
+
+    fn lead_days(&self) -> Vec<u32> {
+        dpp_types::obligation_notice::DEFAULT_LEAD_DAYS.to_vec()
+    }
+}
+
 /// Shared Axum application state — cloned cheaply per-request.
 #[derive(Clone)]
 pub struct AppState {
@@ -104,12 +133,12 @@ pub struct AppState {
     /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
     /// directly, there is no orchestration to wrap in a service.
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
-    /// ESPR Art. 24 and Art. 25 discard records (migration 0052). A bare port like
+    /// ESPR Art. 24 and Art. 25 discard records (migration 0051). A bare port like
     /// `scan_repo`: a record is written once and read back, with no lifecycle to
     /// orchestrate.
     pub discard_records: Arc<dyn dpp_types::DiscardRecordStore>,
     /// The documents behind the discard records, stored once by SHA-256
-    /// (migration 0053).
+    /// (migration 0052).
     pub evidence_store: Arc<dyn dpp_types::EvidenceStore>,
     /// The records a passport's `personalData` statements name, held where they
     /// can be erased (migration 0043). Not optional, unlike the ports that are
@@ -122,6 +151,12 @@ pub struct AppState {
     /// the back-up copy, which is why this is a port of its own and not a method
     /// of the passport repository.
     pub personal_data: Arc<dyn dpp_domain::PersonalDataPort>,
+    /// The ledger of announced dated-obligation notices (migration 0050), read
+    /// by the obligations route. Written only by the node's notice pass.
+    pub obligation_notices: Arc<dyn dpp_types::ObligationNoticeStore>,
+    /// The calendar and lead times the obligations route answers from, and the
+    /// node's notice pass announces from. See [`ObligationSchedule`].
+    pub obligation_schedule: Arc<dyn ObligationSchedule>,
     /// Origins allowed for CORS requests (empty = CORS disabled).
     pub cors_allowed_origins: Vec<String>,
     /// Runtime plugin administration (the Wasm plugin host). `None` on

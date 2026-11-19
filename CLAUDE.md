@@ -404,7 +404,7 @@ Implementations:
 - `NoOpEventBus` (default when `NATS_URL` is absent) — discards silently
 - `NatsEventBus` (in `dpp-node/src/infra/`) — publishes to NATS JetStream stream `DPP_EVENTS` with subject pattern `dpp.>`, 7-day retention, file storage
 
-Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,deactivated,transferred}`, `dpp.import.{completed,failed}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
+Subjects: `dpp.passport.{created,updated,published,suspended,superseded,retired,deactivated,transferred}`, `dpp.import.{completed,failed}`, `dpp.obligation.{effective,upcoming}`. The authoritative set is `event::subjects` in `dpp-common`; this line has been behind it before.
 
 ### Job Store
 
@@ -496,6 +496,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/discard-records?financialYearStart&financialYearEnd` | Bearer (admin) | The discard records whose day of discard falls in the year, both days included, earliest first |
 | POST | `/vault/api/v1/discard-records/{id}/evidence` | Bearer **(write)** | Attach a document (multipart: `kind`, `file` of at most 25 MiB) under an evidence kind. Stored once by SHA-256; a second attachment of the same document under the same kind is `409` |
 | GET | `/vault/api/v1/discard-records/{id}/missing-evidence` | Bearer (admin) | The evidence a record still lacks, read against the operator's enterprise size |
+| GET | `/vault/api/v1/obligations` | Bearer | Dated obligations taking effect in `from`..`to` (at most 3660 days), each with its notices and whether and when the node announced them, and the calendar's `conflicts`. Reads the same calendar and ledger the `dpp.obligation.*` webhooks come from |
 | POST | `/vault/api/v1/credentials` | Bearer (admin) | Issue a DPP access credential signed with this node's key. **Legitimate-interest roles only** — an authority's standing is conferred by a member state, so the three authority roles are refused. No revocation list is published, so the lifetime is capped |
 | DELETE | `/vault/api/v1/personal-data/{record}` | Bearer (admin) | Erase a record a passport's `personalData` statement names, keeping a tombstone, and answer the receipt. Idempotent: a retry gets the first receipt; `404` for a record this node never held. Touches neither the passport nor its statement. **No route reads a record** — they are in `odal.personal_data_record` (migration 0043) only, never in the passport, archive or back-up copy |
 | POST | `/vault/api/v1/plugins` | Bearer (admin) | Install a **signed** product group plugin and hot-swap it |
