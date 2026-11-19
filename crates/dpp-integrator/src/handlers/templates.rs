@@ -325,19 +325,61 @@ mod template_publishes {
             };
 
             let json = serde_json::to_value(&*data).expect("battery data serialises");
-            let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
-                category.as_str(),
+            for facts in [
                 crate::domain::battery_template::facts_before_due_diligence(),
-            )
-            .filter(|f| json.get(*f).is_none_or(serde_json::Value::is_null))
-            .collect();
+                crate::domain::battery_template::facts_from_due_diligence(),
+            ] {
+                let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
+                    category.as_str(),
+                    facts,
+                )
+                .filter(|f| json.get(*f).is_none_or(serde_json::Value::is_null))
+                .collect();
+                assert!(
+                    missing.is_empty(),
+                    "the {} template imports a passport still missing {} mandatory data point(s) \
+                     of a battery placed {:?}: {missing:?}",
+                    category.as_str(),
+                    missing.len(),
+                    facts.placed_on_market
+                );
+            }
+        }
+    }
+
+    /// The example row is the one an operator copies, so it has to say when the
+    /// two due diligence columns are filled: a battery placed on or after
+    /// 18 August 2027, declared under Art. 47. An example that left them blank
+    /// would teach the opposite.
+    #[test]
+    fn the_example_fills_the_due_diligence_columns_for_a_battery_placed_from_the_date() {
+        let from = chrono::NaiveDate::from_ymd_opt(2027, 8, 18).expect("a real date");
+        for category in BatteryCategory::ALL {
+            let csv = crate::domain::battery_template::render_csv(*category);
+            let rows = crate::domain::csv_parser::parse_csv(csv.as_bytes()).expect("parses");
+            let row = rows.first().expect("template has an example row");
+
+            let placed = row
+                .get("placedOnMarketDate")
+                .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the {} example has no placedOnMarketDate",
+                        category.as_str()
+                    )
+                });
             assert!(
-                missing.is_empty(),
-                "the {} template imports a passport still missing {} mandatory data point(s): \
-                 {missing:?}",
-                category.as_str(),
-                missing.len()
+                placed >= from,
+                "the {} example places its battery before 18 August 2027",
+                category.as_str()
             );
+            for column in ["dueDiligenceUrl", "dueDiligenceOperatorScope"] {
+                assert!(
+                    row.get(column).is_some(),
+                    "the {} example leaves {column} blank for a battery placed from the date",
+                    category.as_str()
+                );
+            }
         }
     }
 

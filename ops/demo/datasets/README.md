@@ -27,7 +27,7 @@ A file whose column is still headed `sector` (the old name) is not detected.
 | 06 | `06-textile-wrong-sector.csv` | 5 | Wrong / missing / typo `productGroup` values | Whole-file detection uses row 1 (`textile`); the odd values on later rows are not honoured per-row |
 | 07 | `07-textile-encoding-edge-cases.csv` | 8 | Unicode, emoji, long strings, embedded commas | UTF-8 + CSV escaping |
 | 08 | `08-textile-duplicate-gtins.csv` | 5 | Same GTIN on multiple products | Delta-import identity matching |
-| 09 | `09-battery-valid.csv` | 10 | Battery, basic columns | Import OK. `portable` rows publish; `ev`, `industrial` and `lmt` rows stay drafts (see below) |
+| 09 | `09-battery-valid.csv` | 10 | Battery, basic columns and `placedOnMarketDate`, which an `ev`, `industrial` or `lmt` row cannot import without | Import OK. `portable` rows publish; `ev`, `industrial` and `lmt` rows stay drafts (see below) |
 | 10 | `10-battery-faulty.csv` | 10 | Battery, broken data | Per-row import / validation failures |
 | 11 | `11-mixed-sectors.csv` | 5 | Textile and battery in one file | Detection is whole-file, so the battery rows are validated as textile |
 | 12 | `12-textile-tab-separated.tsv` | 3 | TSV (tab delimiter) | Delimiter auto-detect |
@@ -36,7 +36,7 @@ A file whose column is still headed `sector` (the old name) is not detected.
 | 15 | `15-textile-100-products.csv` | 100 | Larger import | All OK; above the 100-row threshold an import runs as a background job |
 | 16 | `16-empty-file.csv` | 0 | Truly empty | "file is empty or has no header row" |
 | 17 | `17-header-only.csv` | 0 | Header, no data rows | "No data rows found" |
-| 18 | `18-battery-extended.csv` | 10 | Industrial batteries with the extended column set: weight, up to three materials, recycled content, operating temperatures, due-diligence URL | Import OK; rows stay drafts (industrial needs the full Annex XIII set) |
+| 18 | `18-battery-extended.csv` | 10 | Industrial batteries with the extended column set: weight, up to three materials, recycled content, operating temperatures, due-diligence URL, placing date | Import OK; rows stay drafts (industrial needs the full Annex XIII set) |
 
 ## Batteries: what a CSV can and cannot carry
 

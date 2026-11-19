@@ -773,10 +773,12 @@ mod tests {
     /// row here since row-level validation runs a real mod-10 checksum, not just a
     /// length check.
     const VALID_GTIN: &str = "09506000134352";
-    const BATTERY_CSV_HEADER: &str = "productName,gtin,batchId,manufacturerName,manufacturerCountry,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType";
+    const BATTERY_CSV_HEADER: &str = "productName,gtin,batchId,manufacturerName,manufacturerCountry,batteryChemistry,nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType,placedOnMarketDate";
 
     fn battery_csv_row(gtin: &str) -> String {
-        format!("EV Battery 48V,{gtin},BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial")
+        format!(
+            "EV Battery 48V,{gtin},BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18"
+        )
     }
 
     fn battery_csv(num_rows: usize) -> String {
@@ -1141,6 +1143,43 @@ mod tests {
         assert_eq!(mock.create_hits.load(Ordering::SeqCst), 3);
     }
 
+    /// A battery placed from 18 August 2027 reaches the vault with the placing
+    /// date and the operator's declaration, which is what core needs to publish
+    /// it. Whether it publishes is the node suite's question, against the real
+    /// vault.
+    #[tokio::test]
+    async fn a_battery_placed_from_the_due_diligence_date_is_created_with_its_declaration() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let csv = format!(
+            "productName,gtin,batchId,manufacturerName,manufacturerCountry,batteryChemistry,\
+             nominalVoltageV,nominalCapacityAh,expectedLifetimeCycles,co2ePerUnitKg,batteryType,\
+             placedOnMarketDate,dueDiligenceUrl,dueDiligenceOperatorScope\n\
+             EV Battery 48V,{VALID_GTIN},BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,ev,\
+             2027-09-01,https://acme.example/due-diligence/ACME-1,belowTurnoverThreshold\n"
+        );
+        let body = multipart_body("X", "battery.csv", &csv, None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let json = response_json(resp).await;
+        assert_eq!(json["errorCount"], 0, "{json}");
+
+        let passports = mock.passports.lock().unwrap();
+        let sent = passports
+            .first()
+            .expect("the vault was asked to create one");
+        assert_eq!(sent["placedOnMarketDate"], "2027-09-01");
+        assert_eq!(
+            sent["productGroupData"]["dueDiligenceUrl"],
+            "https://acme.example/due-diligence/ACME-1"
+        );
+        assert_eq!(
+            sent["productGroupData"]["dueDiligenceOperatorScope"],
+            "belowTurnoverThreshold"
+        );
+    }
+
     #[tokio::test]
     async fn dry_run_validates_without_creating_anything() {
         let (state, mock) = live_vault_state().await;
@@ -1186,7 +1225,7 @@ mod tests {
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
             format!(
-                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18"
             )
         }
 
@@ -1295,7 +1334,7 @@ mod tests {
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
             format!(
-                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18"
             )
         }
 
@@ -1456,7 +1495,7 @@ mod tests {
 
         fn row(product_name: &str, gtin: &str, batch: &str) -> String {
             format!(
-                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial"
+                "{product_name},{gtin},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18"
             )
         }
 
@@ -1572,7 +1611,7 @@ mod tests {
         // the assertions below count errors, and a second one would pass the test
         // for the wrong reason.
         csv.push_str(
-            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial\n",
+            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18\n",
         );
 
         let body = multipart_body("X", "battery.csv", &csv, None);
@@ -1720,7 +1759,7 @@ mod tests {
         // the assertions below count errors, and a second one would pass the test
         // for the wrong reason.
         csv.push_str(
-            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial\n",
+            "EV Battery Bad,1234,BATCH-2,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,industrial,2027-02-18\n",
         );
 
         let body = multipart_body("X", "battery.csv", &csv, None);
@@ -1747,13 +1786,13 @@ mod tests {
         for batch in ["BATCH-1", "BATCH-2"] {
             csv.push_str(&format!(
                 "EV Battery 48V,{VALID_GTIN},{batch},Acme Energy,DE,LFP,48.0,100.0,3000,85.4,\
-                 industrial,SN-1\n"
+                 industrial,2027-02-18,SN-1\n"
             ));
         }
         // The same serial under another GTIN is another product's label.
         csv.push_str(
             "EV Battery 48V,01234567890128,BATCH-1,Acme Energy,DE,LFP,48.0,100.0,3000,85.4,\
-             industrial,SN-1\n",
+             industrial,2027-02-18,SN-1\n",
         );
 
         let body = multipart_body("X", "battery.csv", &csv, None);

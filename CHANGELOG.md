@@ -12,15 +12,18 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
-- **The unsold-goods disclosure line is replaced by discard records (#597, #632).**
-  `POST /vault/api/v1/unsold-goods` and `GET /vault/api/v1/unsold-goods` are
-  removed, with the one-line-per-category shape they stored and the CLI flags of
-  `odal unsold-goods record` that carried it. The yearly disclosure is computed
-  from one record per discard, not uploaded as lines. `POST /vault/api/v1/dpp`
-  refuses `productGroup: unsold-goods`, which dpp-core 0.24.0 no longer has.
-  **Migration:** record each discard through `POST /vault/api/v1/discard-records`
-  or `odal unsold-goods record <file>`. Lines already stored stay in
-  `odal.unsold_goods_report`, which this release neither reads nor writes.
+- **A battery CSV row without `placedOnMarketDate` is refused at import** wherever
+  core's publish gate would refuse it: an EV or LMT battery, or an industrial battery
+  over 2 kWh or with no stated `ratedCapacityKwh`, whatever its Art. 47 declaration,
+  since core asks for the date before the declaration. A second-life battery is asked
+  for one too, although publish would not need it: the importer asks core the same
+  question and cannot read the second-life limb, which core infers privately. The
+  battery templates mark the column `[REQUIRED]`. Such a row used to import as a draft
+  that could never be published.
+  **Migration:** add `placedOnMarketDate` (`YYYY-MM-DD`) to existing EV, LMT and
+  industrial battery spreadsheets. An industrial row with no `ratedCapacityKwh` needs
+  it too. A portable or starting-lighting-ignition battery, and an industrial one of
+  2 kWh or less, need none. (#563)
 
 - **`dpp-core` 0.24.0: a destruction says whether the product was unsold, cites a
   derogation as a point by its name, and must cite one only where the ESPR
@@ -80,7 +83,44 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   every audience, since none of them covers the filtered body beside it. Whether
   the authority view should carry a proof that covers it is open on #600. (#600, #616)
 
+- **The unsold-goods disclosure line is replaced by discard records (#597, #632).**
+  `POST /vault/api/v1/unsold-goods` and `GET /vault/api/v1/unsold-goods` are
+  removed, with the one-line-per-category shape they stored and the CLI flags of
+  `odal unsold-goods record` that carried it. The yearly disclosure is computed
+  from one record per discard, not uploaded as lines. `POST /vault/api/v1/dpp`
+  refuses `productGroup: unsold-goods`, which dpp-core 0.24.0 no longer has.
+  **Migration:** record each discard through `POST /vault/api/v1/discard-records`
+  or `odal unsold-goods record <file>`. Lines already stored stay in
+  `odal.unsold_goods_report`, which this release neither reads nor writes.
+
 ### Added
+
+- **Battery CSV templates carry the placing date and the due diligence columns.**
+  Every battery template gains `placedOnMarketDate` (now required; see
+  Breaking). A battery placed from 18 August 2027 also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII
+  point 1(d)), and `dueDiligenceOperatorScope`, the operator's Art. 47 declaration,
+  `subject` or `belowTurnoverThreshold`. An unrecognised declaration is refused,
+  naming its row. Neither column is asked for a battery placed before the date.
+  The template gates accept a column that either placing date permits, since one
+  template serves both. Until now a battery placed from that date could be
+  imported but never published. (#563)
+
+- **Dated-obligation notices: `dpp.obligation.effective` and
+  `dpp.obligation.upcoming` (#501).** With `OBLIGATION_NOTICES=on`, the node
+  announces the dated obligations in its calendar through its signed webhooks and
+  its event bus: on the UTC day one takes effect, and at each lead time in
+  `OBLIGATION_NOTICE_LEAD_DAYS` before it (default `90,30,7`). Only dates an
+  adopted text fixes are announced, and the switch is off unless set.
+  - **Each notice is recorded once.** A notice is written to a ledger
+    (`odal.obligation_notice`, migration `0050_obligation_notice.sql`) in the same
+    transaction that queues its deliveries, keyed by a name-based UUID of the
+    obligation, its date, its kind and its lead time. A node down on the day
+    announces it on restart, and two nodes over one database announce each notice
+    once. A postponed date is a new notice.
+  - **`GET /vault/api/v1/obligations?from=&to=`** lists the obligations in a
+    window, each notice with whether and when it was announced, and the dates a
+    signed ruleset overruled (`conflicts`).
+  - Event payloads are in `docs/guides/WEBHOOKS.md`.
 
 - **Discard records of unsold consumer products, and the evidence behind them
   (#597, #632).** `POST /vault/api/v1/discard-records` records one discard, checked as
@@ -104,24 +144,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   to a withdrawn value such as electronics `laptop` is issued, matching the stored
   passports that state it. (#600, #616)
 
-### Added
+### Fixed
 
-- **Dated-obligation notices: `dpp.obligation.effective` and
-  `dpp.obligation.upcoming` (#501).** With `OBLIGATION_NOTICES=on`, the node
-  announces the dated obligations in its calendar through its signed webhooks and
-  its event bus: on the UTC day one takes effect, and at each lead time in
-  `OBLIGATION_NOTICE_LEAD_DAYS` before it (default `90,30,7`). Only dates an
-  adopted text fixes are announced, and the switch is off unless set.
-  - **Each notice is recorded once.** A notice is written to a ledger
-    (`odal.obligation_notice`, migration `0050_obligation_notice.sql`) in the same
-    transaction that queues its deliveries, keyed by a name-based UUID of the
-    obligation, its date, its kind and its lead time. A node down on the day
-    announces it on restart, and two nodes over one database announce each notice
-    once. A postponed date is a new notice.
-  - **`GET /vault/api/v1/obligations?from=&to=`** lists the obligations in a
-    window, each notice with whether and when it was announced, and the dates a
-    signed ruleset overruled (`conflicts`).
-  - Event payloads are in `docs/guides/WEBHOOKS.md`.
+- **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
+  to -0573. All eight were published on 16 November against a dependency tree that
+  had not changed, and they cover:
+  - a guest that can abort the host, through a stale GC heap base pointer or a GC
+    heap reservation that is not a multiple of the page size;
+  - aborts in builds without the `gc` or `threads` feature;
+  - panics in `Caller::get_module_export`, and when a component cancels a stream
+    or future copy on the wrong end;
+  - unbounded host memory growth from empty writes in `wasmtime-wasi` and
+    `wasmtime-wasi-http`.
+
+  Only the lockfile changes. (#647)
 
 ## [0.16.0] - 2026-11-14
 
