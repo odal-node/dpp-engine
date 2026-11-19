@@ -12,6 +12,7 @@ use dpp_domain::Audience;
 use dpp_domain::access::{
     DocumentScope, ProductGroupAccessPolicy, filter_by_audience, filter_by_audience_in_scope,
 };
+use dpp_domain::product_group::ProductGroup;
 
 use crate::{infra::did, state::AppState};
 
@@ -124,6 +125,29 @@ fn parse_access_tier(_headers: &HeaderMap) -> Audience {
 /// Apply two-level access tier filtering:
 /// 1. Top-level passport fields (jws, batchId, retentionLocked).
 /// 2. ProductGroup-specific fields within `productGroupData` (e.g. battery supply chain data).
+///
+/// # A deliberate second opinion
+///
+/// The vault builds the view it signs with `dpp_domain::access::redact_passport`.
+/// This function does **not** call it: it is a second, independent pass over the
+/// payload the vault signed, so that a vault which served too much is caught here
+/// rather than trusted. A version that called the same function would check
+/// nothing.
+///
+/// It does take its envelope policy from the same composition the vault does,
+/// `ProductGroupAccessPolicy::for_passport`, keyed by the passport's own product
+/// group and `schemaVersion`. A schema's openings of envelope fields (battery
+/// schemas 2.7.0 and later open `batchId` and `serialNumber`) therefore reach both
+/// sides, and neither restates them. Where `for_passport` has no policy, an
+/// unknown product group or a schema version core does not carry, the envelope
+/// falls back to `passport_default()`, which opens nothing and fails closed.
+///
+/// It must never remove a field from a view the vault signed. The handler
+/// re-attaches `publicJwsSignature` to whatever this returns, so a removed field
+/// leaves a body its own proof does not cover. The parity test
+/// `this_filter_removes_nothing_from_a_view_the_vault_already_signed` is the
+/// contract: a change that breaks it is a change to that contract, not a test to
+/// update.
 fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     // Read before filtering: the version that governs this passport's disclosure
     // is the one it was validated against, and it must be taken from the document
@@ -135,7 +159,7 @@ fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
         .unwrap_or_default()
         .to_owned();
 
-    let passport_policy = ProductGroupAccessPolicy::passport_default();
+    let passport_policy = envelope_policy(&passport, &schema_version);
     let decision = filter_by_audience(&passport, &passport_policy, tier);
     let mut doc = decision.filtered_data;
 
@@ -174,6 +198,25 @@ fn apply_access_tier_filter(passport: Value, tier: Audience) -> Value {
     }
 
     doc
+}
+
+/// The policy for the passport's envelope: the one core composes for this
+/// passport's product group and `schemaVersion`, which carries the schema's
+/// openings of envelope fields.
+///
+/// The product group is read from the envelope's own `productGroup` member through
+/// core's [`ProductGroup`], and its key from core's `catalog_key`, so no mapping is
+/// restated here. A document with no readable product group, an unknown product
+/// group, or a version core does not carry gets `passport_default()`, which opens
+/// nothing.
+fn envelope_policy(passport: &Value, schema_version: &str) -> ProductGroupAccessPolicy {
+    passport
+        .get("productGroup")
+        .and_then(|tag| serde_json::from_value::<ProductGroup>(tag.clone()).ok())
+        .and_then(|group| {
+            ProductGroupAccessPolicy::for_passport(group.catalog_key(), schema_version)
+        })
+        .unwrap_or_else(ProductGroupAccessPolicy::passport_default)
 }
 
 /// True when `productGroupData` carries a non-empty `product_group` tag (i.e. it is a tagged
@@ -330,35 +373,16 @@ mod security_regression {
         );
     }
 
-    /// 🚨 This filter must never remove a field from a view the vault already
-    /// signed, because the handler re-attaches `publicJwsSignature` to whatever
-    /// this returns.
-    ///
-    /// `verify_passport_jws` hands this function the **decoded JWS payload** —
-    /// the exact bytes the operator signed — and the caller then puts the
-    /// signature back on the filtered result. So anything removed here produces
-    /// a body its own proof does not cover, which to every consumer is
-    /// indistinguishable from tampering. That is the failure the vault's
-    /// `signed_public_view` exists to prevent, re-entering through the door
-    /// next to it.
-    ///
-    /// The vault's redaction is `dpp_domain::access::redact_passport`. This
-    /// filter is a **second, hand-rolled implementation** of the same rule
-    /// (envelope pass plus a scoped `productGroupData` pass, its own unknown-
-    /// group backstop, and no undeclared-key drop), so nothing but a test holds
-    /// the two together. Asserting identity — not merely "nothing sensitive
-    /// leaked" — is what makes a divergence visible before a consumer meets it
-    /// as a broken signature.
-    #[test]
-    fn this_filter_removes_nothing_from_a_view_the_vault_already_signed() {
+    /// A battery passport stated at `schema_version`, with both envelope fields a
+    /// battery schema can open (`batchId`, `serialNumber`) populated.
+    fn battery_passport(schema_version: &str) -> dpp_domain::passport::Passport {
         use dpp_domain::passport::{ManufacturerInfo, Passport, PassportId};
-        use dpp_domain::product_group::ProductGroup;
         use dpp_domain::status::PassportStatus;
 
         let mut passport = Passport {
             id: PassportId::new(),
             batch_id: Some("BATCH-42".into()),
-            serial_number: None,
+            serial_number: Some("SN-0001".into()),
             product_name: "Cell".into(),
             product_group: ProductGroup::Battery,
             applicable_instruments: Vec::new(),
@@ -387,7 +411,7 @@ mod security_regression {
             updated_at: chrono::Utc::now(),
             published_at: Some(chrono::Utc::now()),
             placed_on_market_date: None,
-            schema_version: "2.6.0".into(),
+            schema_version: schema_version.into(),
             retention_locked: true,
             version: 1,
             supersedes_id: None,
@@ -417,20 +441,141 @@ mod security_regression {
             }))
             .expect("battery data"),
         );
+        passport
+    }
 
-        // Exactly what `publish` signs and what `verify_passport_jws` hands back.
-        let signed = dpp_domain::access::redact_passport(&passport, Audience::Public).into_value();
+    /// Exactly what `publish` signs and what `verify_passport_jws` hands back for
+    /// a battery passport at `schema_version`.
+    fn signed_battery_view(schema_version: &str) -> Value {
+        let signed = dpp_domain::access::redact_passport(
+            &battery_passport(schema_version),
+            Audience::Public,
+        )
+        .into_value();
         assert!(
             signed.get("productGroupData").is_some(),
             "the fixture must reach the productGroupData branch for this to mean anything"
         );
+        signed
+    }
+
+    /// This filter must never remove a field from a view the vault already
+    /// signed, because the handler re-attaches `publicJwsSignature` to whatever
+    /// this returns.
+    ///
+    /// `verify_passport_jws` hands this function the **decoded JWS payload** —
+    /// the exact bytes the operator signed — and the caller then puts the
+    /// signature back on the filtered result. So anything removed here produces
+    /// a body its own proof does not cover, which to every consumer is
+    /// indistinguishable from tampering. That is the failure the vault's
+    /// `signed_public_view` exists to prevent, re-entering through the door
+    /// next to it.
+    ///
+    /// **This test is the contract** of that second opinion. The vault's
+    /// redaction is `dpp_domain::access::redact_passport`; this filter is an
+    /// independent implementation of the same rule (envelope pass plus a scoped
+    /// `productGroupData` pass, its own unknown-group backstop, and no
+    /// undeclared-key drop), so nothing but this test holds the two together.
+    /// Asserting identity — not merely "nothing sensitive leaked" — is what makes
+    /// a divergence visible before a consumer meets it as a broken signature.
+    ///
+    /// **It runs at every battery schema version core embeds, not at one
+    /// fixture.** A version is where a schema opens an envelope field to the
+    /// public, and the vault signs whatever the version in force opens. A fixture
+    /// pinned before the openings (this one sat at 2.6.0) passes while the filter
+    /// drops `batchId` and `serialNumber` from every passport at 2.7.0 or later.
+    /// A schema that adds an opening is covered the day core ships it.
+    #[test]
+    fn this_filter_removes_nothing_from_a_view_the_vault_already_signed() {
+        let registry = dpp_domain::schemas::VersionedSchemaRegistry::new();
+        let versions: Vec<String> = registry
+            .versions_for("battery")
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+
+        // The loop is only a contract if it reaches the versions that matter: the
+        // last one before the openings, and the one core currently validates new
+        // passports against.
+        let current = dpp_domain::catalog::ProductGroupCatalog::new()
+            .current_schema_version("battery")
+            .map(str::to_owned)
+            .expect("the catalog carries battery");
+        assert!(versions.iter().any(|v| v == "2.6.0"), "{versions:?}");
+        assert!(versions.contains(&current), "{versions:?}");
+
+        for version in &versions {
+            let signed = signed_battery_view(version);
+            let served = apply_access_tier_filter(signed.clone(), Audience::Public);
+            assert_eq!(
+                served, signed,
+                "battery schema {version}: the resolver filtered a field out of the \
+                 payload the vault signed — the re-attached publicJwsSignature no \
+                 longer covers the served body"
+            );
+        }
+    }
+
+    #[test]
+    fn a_battery_passport_at_the_current_schema_is_served_with_batch_id_and_serial_number() {
+        let current = dpp_domain::catalog::ProductGroupCatalog::new()
+            .current_schema_version("battery")
+            .map(str::to_owned)
+            .expect("the catalog carries battery");
+        let signed = signed_battery_view(&current);
+        assert_eq!(
+            signed.get("batchId").and_then(Value::as_str),
+            Some("BATCH-42"),
+            "the vault's signed view must carry batchId at {current}"
+        );
+        assert_eq!(
+            signed.get("serialNumber").and_then(Value::as_str),
+            Some("SN-0001"),
+            "the vault's signed view must carry serialNumber at {current}"
+        );
 
         let served = apply_access_tier_filter(signed.clone(), Audience::Public);
 
+        assert_eq!(served.get("batchId"), signed.get("batchId"), "{served}");
         assert_eq!(
-            served, signed,
-            "the resolver filtered a field out of the payload the vault signed — the \
-             re-attached publicJwsSignature no longer covers the served body"
+            served.get("serialNumber"),
+            signed.get("serialNumber"),
+            "{served}"
+        );
+        assert_eq!(served, signed);
+    }
+
+    #[test]
+    fn an_envelope_with_a_schema_version_core_does_not_carry_fails_closed() {
+        let mut passport = signed_battery_view("2.10.0");
+        passport["schemaVersion"] = json!("99.0.0");
+
+        let served = apply_access_tier_filter(passport, Audience::Public);
+
+        assert!(
+            served.get("batchId").is_none(),
+            "opened without a policy: {served}"
+        );
+        assert!(
+            served.get("serialNumber").is_none(),
+            "opened without a policy: {served}"
+        );
+    }
+
+    #[test]
+    fn an_envelope_with_a_product_group_core_does_not_know_fails_closed() {
+        let mut passport = signed_battery_view("2.10.0");
+        passport["productGroup"] = json!("totallyMadeUpProductGroup");
+
+        let served = apply_access_tier_filter(passport, Audience::Public);
+
+        assert!(
+            served.get("batchId").is_none(),
+            "opened without a policy: {served}"
+        );
+        assert!(
+            served.get("serialNumber").is_none(),
+            "opened without a policy: {served}"
         );
     }
 }
