@@ -110,6 +110,19 @@ field. Supply it as JSON, which `odal passport import` also accepts:
 [`ops/demo/passports/`](../../ops/demo/passports/) has publishable examples for each
 category.
 
+Three battery columns depend on when the battery was placed on the market.
+Fill `placedOnMarketDate` for every EV and LMT battery, and for every industrial battery
+over 2 kWh or with no stated `ratedCapacityKwh`: without it, core cannot tell whether the
+due diligence report is owed and refuses the publish, so the importer refuses the row
+first. A portable or starting-lighting-ignition battery, and an industrial battery of
+2 kWh or less, carry no passport and import without it. Declaring
+`belowTurnoverThreshold` does not excuse a missing date: the date decides whether the
+declaration is asked for at all. For a battery placed on or after 18 August 2027,
+`dueDiligenceOperatorScope` states your Art. 47 declaration, `subject` or
+`belowTurnoverThreshold`, and `dueDiligenceUrl` gives the address of the report unless
+the battery is exempt. For a battery placed before that date, `dueDiligenceUrl` and
+`dueDiligenceOperatorScope` are not asked for.
+
 ### What the data must look like
 
 - **GTINs are GTIN-14 with a valid check digit.** Pad a 13-digit GTIN with a leading

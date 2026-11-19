@@ -6,9 +6,15 @@ use dpp_domain::{
     identifier::gtin::Gtin,
     passport::ManufacturerInfo,
     product_group::{
-        BatteryChemistry, BatteryData, BatteryType, CarbonFootprintClass, ProductGroup,
-        ProductGroupData,
+        BatteryChemistry, BatteryData, BatteryType, CarbonFootprintClass,
+        DueDiligenceOperatorScope, ProductGroup, ProductGroupData,
     },
+};
+
+use dpp_rules::batteries::{
+    battery_facts::BatteryFacts,
+    passport_content::{MissingFact, undetermined_fields},
+    passport_scope::{PASSPORT_REQUIRED_FROM, passport_scope},
 };
 
 use crate::domain::battery_fields::{
@@ -57,6 +63,7 @@ pub(super) const COLUMNS: &[Column] = &[
     Column::optional("operatingTempMaxC"),
     Column::optional("roundTripEfficiencyPct"),
     Column::optional("dueDiligenceUrl"),
+    Column::optional("dueDiligenceOperatorScope"),
     Column::optional("carbonFootprintClass"),
     Column::optional("repairabilityScore"),
 ];
@@ -141,6 +148,28 @@ pub fn validate_battery_row(
     let round_trip_efficiency_pct =
         optional_f64(row, "roundTripEfficiencyPct", row_num, &mut errors);
     let due_diligence_url = optional_str(row, "dueDiligenceUrl");
+    // The operator's Art. 47 declaration. Closed, as core's own parse is: a value
+    // that is not one of the two is refused with its row, never read as either
+    // answer, and an empty cell is an undeclared operator rather than an error.
+    let due_diligence_operator_scope =
+        optional_str(row, "dueDiligenceOperatorScope").and_then(|s| {
+            match serde_json::from_value::<DueDiligenceOperatorScope>(serde_json::Value::String(
+                s.clone(),
+            )) {
+                Ok(scope) => Some(scope),
+                Err(_) => {
+                    errors.push(RowError {
+                        row: row_num,
+                        field: "dueDiligenceOperatorScope".into(),
+                        message: format!(
+                            "{s:?} is not an Art. 47 declaration — expected one of: subject, \
+                             belowTurnoverThreshold"
+                        ),
+                    });
+                    None
+                }
+            }
+        });
     let carbon_footprint_class = optional_str(row, "carbonFootprintClass").and_then(|s| {
         serde_json::from_value::<CarbonFootprintClass>(serde_json::Value::String(s)).ok()
     });
@@ -174,6 +203,55 @@ pub fn validate_battery_row(
     let placed_on_market_date = optional_date(row, "placedOnMarketDate", row_num, &mut errors);
     let commodity_code = optional_commodity_code(row, "commodityCode", row_num, &mut errors);
     let carrier_serial = optional_carrier_serial(row, "carrierSerial", row_num, &mut errors);
+
+    // A battery whose content rules turn on its placing date cannot publish
+    // without one: core's publish gate refuses it at `/placedOnMarketDate`. The
+    // row is refused here instead, by asking core the same question, so an import
+    // never creates a draft that can only fail later. Core owes the date only for
+    // a battery that Art. 77(1) brings into the passport obligation, and reads an
+    // absent date as the day that obligation starts. So the question is asked here
+    // only when `passport_scope` says a passport is owed or cannot yet say, because
+    // the capacity is not stated. An industrial battery at or below 2 kWh, and a
+    // portable or starting-lighting-ignition one, import without a date. The
+    // operator's Art. 47 declaration is passed as read, and core asks for the date
+    // before it looks at the declaration. Second-life status is not passed: core
+    // infers that limb from `batteryStatus` privately, so a re-used, repurposed or
+    // remanufactured battery is asked for its date here although publish would not
+    // need it. A capacity cell that does not parse is refused on its own column, and
+    // the date is not also asked for, since the capacity that decides whether it is
+    // owed was never read.
+    if placed_on_market_date.is_none()
+        && !errors.iter().any(|e| e.field == "placedOnMarketDate")
+        && !errors.iter().any(|e| e.field == "ratedCapacityKwh")
+    {
+        let category = battery_type
+            .as_ref()
+            .and_then(|t| serde_json::to_value(t).ok())
+            .and_then(|v| v.as_str().map(str::to_owned));
+        if let Some(category) = category {
+            let scope = passport_scope(&category, rated_capacity_kwh, PASSPORT_REQUIRED_FROM);
+            let asks_for_date = scope.is_required() || scope.is_undetermined();
+            let facts = BatteryFacts {
+                placed_on_market: None,
+                operator_scope: due_diligence_operator_scope.map(Into::into),
+                ..BatteryFacts::default()
+            };
+            if asks_for_date
+                && undetermined_fields(&category, facts)
+                    .any(|(_, fact)| fact == MissingFact::PlacingDate)
+            {
+                errors.push(RowError {
+                    row: row_num,
+                    field: "placedOnMarketDate".into(),
+                    message: format!(
+                        "required for a {category} battery: whether its due diligence report \
+                         is owed depends on the date it was placed on the market, and a \
+                         passport without it cannot be published"
+                    ),
+                });
+            }
+        }
+    }
 
     // The Annex VI Part A / Annex XIII columns the per-category templates carry.
     //
@@ -272,14 +350,13 @@ pub fn validate_battery_row(
         // figure is prose an operator publishes per model, not per row, and the
         // guidance does not ask for it as a data point.
         soh_methodology: None,
-        // Still without a column, deliberately: none is mandatory or conditional
-        // for any category, and a column an operator cannot answer is a column
-        // they will fill with something.
+        // Not read from the row. The envelope's `placedOnMarketDate` carries the
+        // date for every product group, and core reads either place.
         placed_on_market_date: None,
-        // No column yet: core reads the declaration only for a battery placed on
-        // the market from 18 August 2027, and refuses that battery's first
-        // publish until it is declared.
-        due_diligence_operator_scope: None,
+        // Core reads the declaration for a battery placed on the market from
+        // 18 August 2027, and refuses that battery's first publish until it is
+        // declared.
+        due_diligence_operator_scope,
         carbon_footprint_class_ruleset_id: None,
         carbon_footprint_class_ruleset_version: None,
         recycled_content_reporting_year: None,
@@ -420,6 +497,7 @@ mod tests {
             ("nominalCapacityAh".into(), "100.0".into()),
             ("expectedLifetimeCycles".into(), "3000".into()),
             ("co2ePerUnitKg".into(), "85.4".into()),
+            ("placedOnMarketDate".into(), "2027-02-18".into()),
         ])
     }
 
@@ -462,6 +540,202 @@ mod tests {
         assert!(errs.iter().any(|e| e.field == "gtin"));
     }
 
+    /// The operator's Art. 47 declaration reaches the battery data as the core
+    /// type, under the two spellings core defines.
+    #[test]
+    fn a_declared_operator_scope_is_read_as_core_declares_it() {
+        for (wire, expected) in [
+            ("subject", DueDiligenceOperatorScope::Subject),
+            (
+                "belowTurnoverThreshold",
+                DueDiligenceOperatorScope::BelowTurnoverThreshold,
+            ),
+        ] {
+            let mut row = battery_row();
+            row.insert("dueDiligenceOperatorScope".into(), wire.into());
+            let req = validate_battery_row(&row, 1).expect("a declared scope is a valid row");
+            match req.product_group_data.unwrap() {
+                ProductGroupData::Battery(b) => {
+                    assert_eq!(b.due_diligence_operator_scope, Some(expected), "{wire}");
+                }
+                _ => panic!("expected battery product_group data"),
+            }
+        }
+    }
+
+    /// An unrecognised declaration is refused, naming its row and column. It is
+    /// not read as either answer: an undeclared operator and an exempt one are
+    /// different things to core.
+    #[test]
+    fn an_unknown_operator_scope_is_refused_naming_its_row() {
+        let mut row = battery_row();
+        row.insert("dueDiligenceOperatorScope".into(), "exempt".into());
+        let errs = validate_battery_row(&row, 7).expect_err("an unknown declaration is refused");
+        assert!(
+            errs.iter().any(|e| e.row == 7
+                && e.field == "dueDiligenceOperatorScope"
+                && e.message.contains("exempt")),
+            "{errs:?}"
+        );
+    }
+
+    /// A battery whose due diligence answer turns on its placing date is refused
+    /// at import without one, naming its row, since publish would refuse it.
+    #[test]
+    fn a_battery_whose_report_turns_on_its_date_is_refused_without_one() {
+        for category in ["ev", "lmt", "industrial"] {
+            let mut row = battery_row();
+            row.insert("batteryType".into(), category.into());
+            row.remove("placedOnMarketDate");
+            let errs = validate_battery_row(&row, 9).expect_err("a dateless row is refused");
+            assert!(
+                errs.iter()
+                    .any(|e| e.row == 9 && e.field == "placedOnMarketDate"),
+                "{category}: {errs:?}"
+            );
+        }
+    }
+
+    /// The refusal asks core, so it follows core's order: the date is asked
+    /// before the operator's Art. 47 declaration, since a battery placed before
+    /// 18 August 2027 is never asked for one. A declared exemption therefore does
+    /// not excuse a missing date.
+    #[test]
+    fn a_declared_exemption_does_not_excuse_a_missing_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert(
+            "dueDiligenceOperatorScope".into(),
+            "belowTurnoverThreshold".into(),
+        );
+        let errs = validate_battery_row(&row, 4).expect_err("the date is still asked for");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 4 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// A portable battery carries no passport, so no content rule turns on its
+    /// date and its row imports without one.
+    #[test]
+    fn a_portable_battery_imports_without_its_date() {
+        let mut portable = battery_row();
+        portable.remove("placedOnMarketDate");
+        portable.insert("batteryType".into(), "portable".into());
+        validate_battery_row(&portable, 1).expect("a portable battery needs no date");
+    }
+
+    /// An industrial battery at or below 2 kWh owes no passport under Art. 77(1),
+    /// so its row imports without a date.
+    #[test]
+    fn an_industrial_battery_under_the_threshold_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "1.5".into());
+        validate_battery_row(&row, 1).expect("a 1.5 kWh industrial battery needs no date");
+    }
+
+    /// The threshold is strict: a battery of exactly 2 kWh is not above it.
+    #[test]
+    fn an_industrial_battery_at_exactly_the_threshold_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "2.0".into());
+        validate_battery_row(&row, 1).expect("a 2.0 kWh industrial battery needs no date");
+    }
+
+    /// Above the threshold the battery owes a passport, so its row is refused
+    /// without the date, naming its row.
+    #[test]
+    fn an_industrial_battery_over_the_threshold_is_refused_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "2.5".into());
+        let errs = validate_battery_row(&row, 1).expect_err("a 2.5 kWh battery needs its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// Without a stated capacity the threshold cannot be applied, so the date is
+    /// still asked for.
+    #[test]
+    fn an_industrial_battery_with_no_stated_capacity_is_refused_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        let errs =
+            validate_battery_row(&row, 1).expect_err("a capacity-less battery needs its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// Starting-lighting-ignition batteries are named nowhere in Art. 77(1), so
+    /// no content rule turns on their date.
+    #[test]
+    fn a_starting_lighting_ignition_battery_imports_without_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("batteryType".into(), "starting-lighting-ignition".into());
+        validate_battery_row(&row, 1).expect("a starting-lighting-ignition battery needs no date");
+    }
+
+    /// Core infers second life from `batteryStatus` privately, so the importer
+    /// cannot see it and still asks for the date. This pins that choice.
+    #[test]
+    fn a_second_life_battery_is_still_asked_for_its_date() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "4.8".into());
+        row.insert("batteryStatus".into(), "repurposed".into());
+        let errs =
+            validate_battery_row(&row, 1).expect_err("a second-life battery is asked for its date");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// A capacity cell that does not parse is refused on its own column. The row
+    /// is not also reported for a missing date, since the capacity it turns on
+    /// was never read.
+    #[test]
+    fn a_malformed_capacity_is_refused_on_its_own_column_only() {
+        let mut row = battery_row();
+        row.remove("placedOnMarketDate");
+        row.insert("ratedCapacityKwh".into(), "abc".into());
+        let errs = validate_battery_row(&row, 1).expect_err("a malformed capacity is refused");
+        assert!(
+            errs.iter()
+                .any(|e| e.row == 1 && e.field == "ratedCapacityKwh"),
+            "{errs:?}"
+        );
+        assert!(
+            !errs.iter().any(|e| e.field == "placedOnMarketDate"),
+            "{errs:?}"
+        );
+    }
+
+    /// A malformed date is reported once, as malformed, and not a second time as
+    /// missing.
+    #[test]
+    fn a_malformed_placing_date_is_reported_once() {
+        let mut row = battery_row();
+        row.insert("placedOnMarketDate".into(), "18/02/2027".into());
+        let errs = validate_battery_row(&row, 3).expect_err("a malformed date is refused");
+        let date_errors = errs
+            .iter()
+            .filter(|e| e.field == "placedOnMarketDate")
+            .count();
+        assert_eq!(date_errors, 1, "{errs:?}");
+    }
+
     #[test]
     fn non_numeric_voltage_returns_error() {
         let mut row = battery_row();
@@ -495,6 +769,7 @@ mod tests {
             ("nominalCapacityAh".into(), "100.0".into()),
             ("expectedLifetimeCycles".into(), "3000".into()),
             ("co2ePerUnitKg".into(), "45.2".into()),
+            ("placedOnMarketDate".into(), "2027-02-18".into()),
             ("recycledContentCobaltPct".into(), "0.0".into()),
             ("recycledContentLithiumPct".into(), "12.5".into()),
             ("recycledContentNickelPct".into(), "0.0".into()),

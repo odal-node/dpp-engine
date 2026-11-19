@@ -1457,6 +1457,199 @@ async fn the_quick_start_battery_sample_creates_and_publishes() {
     eprintln!("quick start sample: schema {latest}, carrier {carrier}");
 }
 
+/// Registers the facility and primary operator identifier a battery publish
+/// needs: a battery is in force, so publish refuses without them.
+async fn seed_battery_registry_identity(client: &reqwest::Client, base: &str, token: &str) {
+    let facility = client
+        .post(format!("{base}/vault/api/v1/facilities"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "name": "Berlin plant", "identifierScheme": "gln",
+            "identifierValue": "4012345000009", "country": "DE", "isDefault": true
+        }))
+        .send()
+        .await
+        .expect("facility request failed");
+    assert!(facility.status().is_success(), "facility add failed");
+    let operator_id = client
+        .post(format!("{base}/vault/api/v1/operator-identifiers"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "scheme": "lei", "value": "984500ODALEXAMPLE069", "isPrimary": true }))
+        .send()
+        .await
+        .expect("operator-identifier request failed");
+    assert!(operator_id.status().is_success(), "operator-id add failed");
+}
+
+/// Imports `csv` under `key` through the integrator, as an operator's upload
+/// does, and returns the response body.
+async fn import_battery_csv(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    key: &str,
+    csv: String,
+) -> serde_json::Value {
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::text(csv).file_name("battery.csv"),
+    );
+    let resp = client
+        .post(format!("{base}/integrator/api/v1/import/{key}"))
+        .bearer_auth(token)
+        .multipart(form)
+        .send()
+        .await
+        .expect("import request failed");
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.expect("import response is JSON");
+    assert_eq!(status, 200, "import refused: {body}");
+    body
+}
+
+/// Splits one CSV line into its raw cells, keeping any quotes in place, so the
+/// line can be rebuilt from the cells unchanged. A comma inside quotes does not
+/// end a cell: the example's `manufacturingPlace` is `"Erfurt, DE"`.
+fn split_csv_line(line: &str) -> Vec<&str> {
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                cells.push(&line[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    cells.push(&line[start..]);
+    cells
+}
+
+/// The battery template's example with one cell of its example row emptied.
+///
+/// The width check holds the split to the header's own count, so a row that
+/// splits differently fails here rather than blanking the wrong cell.
+fn template_with_blank_cell(csv: &str, column: &str) -> String {
+    let mut lines = csv.lines();
+    let header = lines.next().expect("template has a header");
+    let example = lines.next().expect("template has an example row");
+    let names = split_csv_line(header);
+    let mut cells = split_csv_line(example);
+    assert_eq!(
+        names.len(),
+        cells.len(),
+        "the example row and header disagree on width"
+    );
+    let index = names
+        .iter()
+        .position(|n| n.starts_with(column))
+        .unwrap_or_else(|| panic!("the template has no {column} column"));
+    assert!(!cells[index].is_empty(), "{column} is blank in the example");
+    cells[index] = "";
+    format!("{header}\n{}\n", cells.join(","))
+}
+
+/// A battery placed from 18 August 2027 goes through the whole due diligence
+/// path an operator takes: the served template, the importer, the vault's create,
+/// and core's publish gate. The template's example is that battery, so it
+/// publishes with its placing date and its declaration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_battery_placed_from_the_due_diligence_date_imports_and_publishes_with_its_declaration() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000093");
+    let client = reqwest::Client::new();
+    seed_battery_registry_identity(&client, &base, &token).await;
+
+    let template = client
+        .get(format!("{base}/integrator/api/v1/templates/battery-ev"))
+        .send()
+        .await
+        .expect("template request failed")
+        .text()
+        .await
+        .expect("template is text");
+    let imported = import_battery_csv(&client, &base, &token, "battery-ev", template).await;
+    assert_eq!(imported["errorCount"], 0, "{imported}");
+    let id = imported["created"][0]["passportId"]
+        .as_str()
+        .expect("the row was created")
+        .to_owned();
+
+    let published = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = published.status();
+    let body: serde_json::Value = published.json().await.expect("publish response is JSON");
+    assert_eq!(status, 200, "publish refused the imported battery: {body}");
+    assert_eq!(body["status"], "active");
+
+    let stored: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .json()
+        .await
+        .expect("read response is JSON");
+    assert_eq!(stored["placedOnMarketDate"], "2027-09-01", "{stored}");
+    assert_eq!(
+        stored["productGroupData"]["dueDiligenceOperatorScope"], "subject",
+        "{stored}"
+    );
+    assert!(
+        stored["productGroupData"]["dueDiligenceUrl"].is_string(),
+        "{stored}"
+    );
+}
+
+/// The same battery, with the operator's Art. 47 declaration left out. Import
+/// accepts it, because the importer does not decide what a battery owes. Publish
+/// refuses it with core's refusal, which names the declaration.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_battery_placed_from_the_due_diligence_date_without_its_declaration_is_refused_at_publish()
+ {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000094");
+    let client = reqwest::Client::new();
+    seed_battery_registry_identity(&client, &base, &token).await;
+
+    let template = client
+        .get(format!("{base}/integrator/api/v1/templates/battery-ev"))
+        .send()
+        .await
+        .expect("template request failed")
+        .text()
+        .await
+        .expect("template is text");
+    let undeclared = template_with_blank_cell(&template, "dueDiligenceOperatorScope");
+    let imported = import_battery_csv(&client, &base, &token, "battery-ev", undeclared).await;
+    assert_eq!(imported["errorCount"], 0, "{imported}");
+    let id = imported["created"][0]["passportId"]
+        .as_str()
+        .expect("the row was created")
+        .to_owned();
+
+    let published = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    let status = published.status();
+    let body = published.text().await.unwrap_or_default();
+    assert_eq!(status, 422, "{body}");
+    assert!(body.contains("dueDiligenceOperatorScope"), "{body}");
+}
+
 // End-of-life deactivates the passport (retained, not deleted) and records
 // the typed EOL reason in the hash-chained audit trail.
 #[tokio::test(flavor = "multi_thread")]
