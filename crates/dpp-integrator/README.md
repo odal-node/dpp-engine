@@ -20,6 +20,22 @@ curl -s -X POST http://localhost:8001/integrator/api/v1/import/battery-industria
 Batteries are served per category: `battery-ev`, `battery-lmt` and
 `battery-industrial`. An unknown key returns `404` listing the valid ones.
 
+Every EV and LMT battery row, and every industrial battery row over 2 kWh or with no
+stated `ratedCapacityKwh`, states `placedOnMarketDate`. Core cannot tell whether the due
+diligence report is owed without it and refuses the publish, so the importer refuses the
+row first, naming it, by asking core the same question. Declaring
+`belowTurnoverThreshold` does not excuse a missing date, since core asks for the date
+first. A second-life battery is asked for one too, although publish would not need it. A
+portable or starting-lighting-ignition battery, and an industrial battery of 2 kWh or
+less, carry no passport and import without one.
+
+A battery placed on or after 18 August 2027 states the operator's Art. 47
+declaration in `dueDiligenceOperatorScope`: `subject`, or `belowTurnoverThreshold`
+where the operator is under the turnover threshold. Unless the battery is exempt,
+`dueDiligenceUrl` carries the address of its report. A `belowTurnoverThreshold`
+declaration exempts the battery, as does a second-life one, which needs neither
+column. For a battery placed before that date, neither column is asked for.
+
 ## Routes
 
 | Route | Auth | What it does |

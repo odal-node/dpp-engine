@@ -19,6 +19,13 @@ path = "src/main.rs"
 
 [dependencies]
 dpp-domain  = { workspace = true }
+# Already in this crate's graph through dpp-domain and dpp-types; named here
+# because the battery validator asks the rules table whether a battery owes a
+# passport (`passport_scope`) and whether a row's placing date decides its content
+# (`undetermined_fields`), with the battery type it has already parsed rather than
+# a raw cell. The template contract is still rendered from this crate, not from
+# the rules crate.
+dpp-rules   = { workspace = true }
 dpp-common  = { path = "../dpp-common" }
 dpp-types  = { path = "../dpp-types" }
 
@@ -49,13 +56,6 @@ zip           = { version = "9", default-features = false, features = ["deflate"
 quick-xml     = "0.42"
 
 [dev-dependencies]
-# Test-only. The battery column contract is *asserted* against the rules table
-# the publish gate reads — `every_mandatory_field_has_a_column` — but nothing on
-# the serving or import path calls into it: the templates are rendered from the
-# contract in this crate, not from the rules crate at runtime. A dev-dependency
-# says so and keeps it out of the shipped binary, so the CSV import path — which
-# parses operator-supplied files — links none of it.
-dpp-rules     = { workspace = true }
 tower         = { workspace = true, features = ["util"] }
 proptest      = { workspace = true }
 criterion     = { workspace = true }
