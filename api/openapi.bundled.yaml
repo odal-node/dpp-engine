@@ -726,6 +726,16 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The stored transfer chain is one dpp-core refuses to read, so
+            whether responsibility may have transferred cannot be answered, and
+            the seal is not served without that answer. The detail names the
+            passport and the record dpp-core cited.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/seal/repair:
     post:
       operationId: repairDppSeal
@@ -1245,7 +1255,18 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: |
+            The passport is not published, so it cannot be transferred.
+
+            Also the stored transfer chain is one dpp-core refuses to read: it breaks
+            the chain's invariants, for instance a record for another passport, a
+            broken operator sequence, or a completion without both signatures. The
+            detail names the passport and the record dpp-core cited. Nothing is
+            written.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/transfer/accept:
@@ -1286,6 +1307,16 @@ paths:
             This DPP has no transfer chain at all: no handover has ever been
             initiated for it. A chain that exists but carries nothing pending is a
             `422`, not this.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: |
+            The stored transfer chain is one dpp-core refuses to read: it breaks the
+            chain's invariants, for instance a record for another passport, a broken
+            operator sequence, or a completion without both signatures. The detail names
+            the passport and the record dpp-core cited. Nothing is written.
           content:
             application/problem+json:
               schema:
@@ -1353,6 +1384,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '409':
+          description: |
+            The stored transfer chain is one dpp-core refuses to read: it breaks the
+            chain's invariants, for instance a record for another passport, a broken
+            operator sequence, or a completion without both signatures. The detail names
+            the passport and the record dpp-core cited. Nothing is written.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           description: |
             There is no pending handover to reject, or the record's state does not
@@ -1414,6 +1455,16 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '409':
+          description: |
+            The stored transfer chain is one dpp-core refuses to read: it breaks the
+            chain's invariants, for instance a record for another passport, a broken
+            operator sequence, or a completion without both signatures. The detail names
+            the passport and the record dpp-core cited. Nothing is written.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           description: |
             There is no pending handover to cancel, or the record's state does not
@@ -1467,7 +1518,18 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: |
+            The passport is a draft, which has no signature to export.
+
+            Also the stored transfer chain is one dpp-core refuses to read: it breaks
+            the chain's invariants, for instance a record for another passport, a
+            broken operator sequence, or a completion without both signatures. The
+            detail names the passport and the record dpp-core cited. No dossier is
+            stored.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
     get:
       operationId: listDppEvidence
       summary: List stored evidence dossiers for a passport
@@ -1541,6 +1603,16 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The stored dossier embeds a transfer chain that dpp-core refuses to
+            read, so it cannot be served as a dossier. The detail names the
+            passport and the record dpp-core cited. Verifying it still answers
+            `200`, with the transfer-chain check failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/evidence/{id}/verify:
     post:
       operationId: verifyStoredEvidenceDossier
@@ -1549,6 +1621,13 @@ paths:
         An integrity check against the stored dossier's own signatures and
         hash chains. A tamper is still a `200` response: the report's
         `checks` name which check failed.
+
+        A dossier whose transfer chain dpp-core refuses to read is reported the
+        same way: the `transfer_chain` check fails, naming the passport and the
+        record dpp-core cited, and every other check is reported as usual. That
+        report also carries an `input_fidelity` check, which compares the stored
+        document with what was read from it; the report of a dossier that reads
+        normally does not.
       tags:
         - Evidence Dossiers
       security:
@@ -1572,11 +1651,29 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The stored dossier embeds a transfer chain that dpp-core refuses to
+            read, and the rest of the document cannot be read either, so there is
+            nothing to report on. The detail names the passport and the record
+            dpp-core cited.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/evidence/verify:
     post:
       operationId: verifyUploadedEvidenceDossier
       summary: Verify an uploaded dossier document
-      description: Same checks as the stored-dossier verify endpoint, run against an uploaded document instead.
+      description: |
+        Same checks as the stored-dossier verify endpoint, run against an uploaded
+        document instead.
+
+        A `transferChain` member that dpp-core refuses to read is a failed
+        `transfer_chain` check in a `200` report, naming the passport and the
+        record dpp-core cited, with every other check reported as usual. A
+        `transferChain` that is malformed in any other way is a `422`, like any
+        other malformed dossier.
       tags:
         - Evidence Dossiers
       security:
@@ -1638,6 +1735,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The stored transfer chain is one dpp-core refuses to read, so the
+            passport's current responsible operator cannot be named. The detail
+            names the passport and the record dpp-core cited.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/registry/handle:
     post:
       operationId: recordDppRegistryHandle

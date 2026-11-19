@@ -99,6 +99,22 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A stored transfer chain that dpp-core 0.24.0 refuses to read no longer
+  answers `500`, and an uploaded dossier carrying one no longer answers
+  `422`.** Core now refuses a chain that breaks its invariants (a record for
+  another passport, a broken operator sequence, a record after a pending one, more
+  than one outcome on a record, or a completion without both signatures). The two
+  verify routes, `POST /vault/api/v1/evidence/{id}/verify` and
+  `POST /vault/api/v1/evidence/verify`, now report it as a failed `transfer_chain`
+  check in a `200` report, naming the passport and the record core cited, with
+  every other check reported as usual. Evidence generation, the four transfer
+  actions, `GET /vault/api/v1/dpp/{dppId}/registry`, `GET /vault/api/v1/dpp/{dppId}/seal`
+  and `GET /vault/api/v1/evidence/{id}` refuse with `409` and the same detail. An
+  uploaded dossier whose `transferChain` is malformed in any other way is still a
+  `422`. `TransferStore::get_chain` and `EvidenceDossierRepository::get` return a
+  `ChainError` in place of `DppError`, and the repository gains `get_document`.
+  (#600)
+
 - **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
   to -0573. All eight were published on 16 November against a dependency tree that
   had not changed, and they cover:

@@ -36,7 +36,18 @@ post:
     '404':
       $ref: ../../components/responses/NotFound.yaml
     '409':
-      $ref: ../../components/responses/Conflict.yaml
+      description: |
+        The passport is a draft, which has no signature to export.
+
+        Also the stored transfer chain is one dpp-core refuses to read: it breaks
+        the chain's invariants, for instance a record for another passport, a
+        broken operator sequence, or a completion without both signatures. The
+        detail names the passport and the record dpp-core cited. No dossier is
+        stored.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '400':
       $ref: ../../components/responses/BadRequest.yaml
     '403':

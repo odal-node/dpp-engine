@@ -2601,6 +2601,8 @@ const CODE_TOKENS: &[(&str, u64)] = &[
     // dpp-vault's named helpers — crates/dpp-vault/src/handlers/error.rs.
     ("not_found_error(", 404),
     ("conflict_error(", 409),
+    // The 409 for a stored transfer chain dpp-core refuses to read.
+    ("refused_chain_error(", 409),
     ("validation_error(", 422),
     ("require_write(", 403),
     ("require_admin(", 403),
