@@ -402,6 +402,14 @@ ci-guard-check:
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
 
+# Record CI time per job and print the partitioning trigger.
+#
+# Requires an authenticated `gh` CLI. Run at each release cut and paste the
+# output into the release pull request so the numbers are recorded.
+# Default is 12 runs; pass a number to analyse more or fewer.
+ci-timing *ARGS:
+    bash scripts/ci-timing.sh {{ARGS}}
+
 # The gate itself needs a pull request's number, labels and body, so only CI
 # (`.github/workflows/changelog.yml`) runs it.
 # Prove changelog-check still refuses a pull request with no entry of its own.
