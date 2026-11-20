@@ -551,6 +551,21 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/no-rsa-private-key.sh
 
+  handler-error-coverage:
+    name: Handler error branches with no test tier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      # Shell only — no Rust toolchain. Maps every handler to the error codes it
+      # can return and checks whether any test asserts that code on the route.
+      # The output is a list of gaps, not a gate: the script always exits 0.
+      - name: List handler error branches no test tier executes
+        working-directory: dpp-engine
+        run: bash scripts/analyze_handler_errors.sh
+
   ci-guard-check:
     name: Every guard script runs in CI
     runs-on: ubuntu-latest
