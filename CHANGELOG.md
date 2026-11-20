@@ -150,6 +150,17 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **Two overlapping `PATCH /vault/api/v1/operator` requests no longer lose one of
+  them.** An update read the operator config, patched it in memory and wrote the
+  whole row back with nothing held in between, so a request that read before the
+  other committed wrote the stale field back: a corrected `enterpriseSize`, which
+  decides whether the ESPR Art. 25(1) destruction ban reaches the operator, could
+  be restored to its old value by a branding change. The read, the patch and the
+  write now run in one transaction that holds the row (`SELECT … FOR UPDATE`),
+  and when no row exists yet the transaction creates it first, so two first
+  updates cannot both start from "absent". `OperatorConfigRepository` gains
+  `update` for this; `upsert` stays a whole-row write for seeding. (#619, #652)
+
 - **A stored transfer chain that dpp-core 0.24.0 refuses to read no longer
   answers `500`, and an uploaded dossier carrying one no longer answers
   `422`.** Core now refuses a chain that breaks its invariants (a record for
