@@ -143,6 +143,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `ProductGroup::product_category_values_any_version`, so a credential narrowed
   to a withdrawn value such as electronics `laptop` is issued, matching the stored
   passports that state it. (#600, #616)
+- **The QR error-correction level is named, not left to the library default.**
+  Both carrier renderers, the passport page's SVG and the resolver's PNG route,
+  now pass M explicitly through one constant beside the quiet-zone constant. The
+  level was already M, so a printed label does not change. (#474, #651)
 
 ### Fixed
 
