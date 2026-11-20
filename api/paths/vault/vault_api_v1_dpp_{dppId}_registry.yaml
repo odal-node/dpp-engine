@@ -34,5 +34,14 @@ get:
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
+    '409':
+      description: |
+        The stored transfer chain is one dpp-core refuses to read, so the
+        passport's current responsible operator cannot be named. The detail
+        names the passport and the record dpp-core cited.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '400':
       $ref: ../../components/responses/BadRequest.yaml

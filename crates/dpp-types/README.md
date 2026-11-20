@@ -24,7 +24,7 @@ single-tenant, so none of these types carries a tenant scope.
 | `trust` | `TrustMode`, `NodeProfile` and `NodeTrustReport`: each trust adapter's mode and the start-up check that refuses a stub under a production profile. Also the trusted-list cache port |
 | `qualification` | The seal qualification result as the HTTP API serves it |
 | `scan` | Scan telemetry port and aggregate read models |
-| `unsold_goods` | The ESPR Art. 24 disclosure record and its port |
+| `unsold_goods` | The ESPR Art. 24 and Art. 25 discard records and evidence files: their storage ports |
 | `passport_request` | `CreatePassportRequest`, the body of `POST /vault/api/v1/dpp` |
 
 `dpp-dal` implements the repository ports against PostgreSQL; `dpp-vault` and

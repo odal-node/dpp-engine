@@ -169,7 +169,10 @@ pub fn render_page(
 
 /// Render a carrier URI as an inline SVG QR code.
 pub fn build_qr_svg(carrier_uri: &str) -> String {
-    let code = match QrCode::new(carrier_uri.as_bytes()) {
+    let code = match QrCode::with_error_correction_level(
+        carrier_uri.as_bytes(),
+        crate::carrier::QR_ERROR_CORRECTION,
+    ) {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
@@ -386,7 +389,8 @@ mod tests {
     /// than it checked: the URI it found was the one in the `<title>`, not
     /// anything about the modules. What the symbol encodes is covered by the
     /// resolver's PNG round-trip; both renderings come from the same
-    /// `QrCode::new`, so the encoding is exercised once rather than twice.
+    /// `QrCode::with_error_correction_level` call, so the encoding is exercised
+    /// once rather than twice.
     #[test]
     fn build_qr_svg_names_the_carrier_uri_in_its_title() {
         let svg = build_qr_svg("https://id.odal-node.io/01/09506000134352/21/abc");
@@ -414,7 +418,12 @@ mod tests {
             .and_then(|s| s.parse().ok())
             .expect("the svg must declare a square viewBox");
 
-        let symbol_px = QrCode::new(uri.as_bytes()).unwrap().width() as u32 * module_size;
+        let code = QrCode::with_error_correction_level(
+            uri.as_bytes(),
+            crate::carrier::QR_ERROR_CORRECTION,
+        )
+        .unwrap();
+        let symbol_px = code.width() as u32 * module_size;
         assert_eq!(
             total,
             symbol_px + quiet_px * 2,
@@ -439,6 +448,50 @@ mod tests {
                 "module at ({x},{y}) crosses the far quiet-zone edge"
             );
         }
+    }
+
+    /// The SVG draws the symbol at the width of M, the level the constant names.
+    ///
+    /// The URI's symbol is a different width at L, M and Q, so a renderer on
+    /// either of the other levels draws a different number of modules. The
+    /// premise is asserted first, so the test cannot pass because the three
+    /// widths have collapsed into one.
+    #[test]
+    fn the_svg_symbol_is_drawn_at_the_level_m_width() {
+        use qrcode::EcLevel;
+
+        let uri = "https://id.odal-node.io/01/09506000134352/10/BATCH-42/21/7abc8def0123456789ab";
+        let width_at = |level: EcLevel| {
+            QrCode::with_error_correction_level(uri.as_bytes(), level)
+                .unwrap()
+                .width() as u32
+        };
+        let m = width_at(EcLevel::M);
+        assert_ne!(
+            width_at(EcLevel::L),
+            m,
+            "premise: L must draw a width other than M's"
+        );
+        assert_ne!(
+            width_at(EcLevel::Q),
+            m,
+            "premise: Q must draw a width other than M's"
+        );
+
+        let svg = build_qr_svg(uri);
+        let side: u32 = svg
+            .split("viewBox=\"0 0 ")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .and_then(|s| s.parse().ok())
+            .expect("the svg must declare a square viewBox");
+        let module_size = 4u32;
+        let quiet = crate::carrier::QR_QUIET_ZONE_MODULES;
+        assert_eq!(
+            side,
+            (m + quiet * 2) * module_size,
+            "the viewBox must frame a symbol M's width in modules"
+        );
     }
 
     #[test]

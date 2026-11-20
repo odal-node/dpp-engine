@@ -3,7 +3,9 @@
 
 use anyhow::Result;
 
-use crate::core::passport::{action_eol, action_find_by_identity, action_lint, action_verify_tree};
+use crate::core::passport::{
+    action_eol, action_find_by_identity, action_lint, action_verify_tree, eol_payload,
+};
 
 /// `odal passport lint` — re-run the plausibility pack against a passport.
 ///
@@ -105,10 +107,15 @@ pub async fn run_eol(
     derogation: Option<&str>,
     unsold: Option<bool>,
     notes: Option<&str>,
+    discard_record: Option<&str>,
 ) -> Result<()> {
+    let payload = eol_payload(reason, derogation, unsold, notes, discard_record)?;
     let (client, cfg) = crate::http::load_client()?;
-    action_eol(id, reason, derogation, unsold, notes, &client, &cfg).await?;
+    action_eol(id, &payload, &client, &cfg).await?;
     println!("End of life declared for {id} ({reason}).");
+    if let Some(record) = discard_record {
+        println!("Documented by discard record {record}; the passport is joined to it.");
+    }
     println!("The record is retained — a passport outlives its product.");
     Ok(())
 }

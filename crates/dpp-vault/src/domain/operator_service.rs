@@ -32,17 +32,14 @@ impl OperatorService {
     }
 
     /// Merge-patch the operator config and persist; creates the row if absent.
+    ///
+    /// The repository runs the read, the patch and the write as one atomic
+    /// step, so overlapping updates to different fields both survive.
     pub async fn update(
         &self,
         operator_id: &str,
         patch: UpdateOperatorConfig,
     ) -> Result<OperatorConfig, DppError> {
-        let mut cfg = self
-            .repo
-            .get(operator_id)
-            .await?
-            .unwrap_or_else(|| OperatorConfig::empty(operator_id));
-        patch.apply(&mut cfg);
-        self.repo.upsert(cfg).await
+        self.repo.update(operator_id, &patch).await
     }
 }

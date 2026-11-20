@@ -318,8 +318,31 @@ impl UpdateOperatorConfig {
 pub trait OperatorConfigRepository: Send + Sync {
     /// Fetch the operator config by id. Returns `None` if not yet bootstrapped.
     async fn get(&self, operator_id: &str) -> Result<Option<OperatorConfig>, DppError>;
-    /// Create or update the operator config (upsert by `operator_id`).
+
+    /// Create or replace the whole operator config row (upsert by `operator_id`).
+    ///
+    /// A whole-row write: every column of `config` is written, so it overwrites
+    /// a change another caller committed after `config` was read. It is for
+    /// seeding a config. A change to an existing one goes through
+    /// [`update`](Self::update).
     async fn upsert(&self, config: OperatorConfig) -> Result<OperatorConfig, DppError>;
+
+    /// Apply `patch` to the stored config with
+    /// [`UpdateOperatorConfig::apply`] and return the persisted row. Creates the
+    /// row from [`OperatorConfig::empty`] first when none exists.
+    ///
+    /// The read, the patch and the write are one atomic step: a second `update`
+    /// started meanwhile waits for this one and then patches the row this one
+    /// wrote, so two updates to different fields both survive. That holds when
+    /// no row exists yet, too.
+    ///
+    /// # Errors
+    /// An error leaves the stored config unchanged, and creates no row.
+    async fn update(
+        &self,
+        operator_id: &str,
+        patch: &UpdateOperatorConfig,
+    ) -> Result<OperatorConfig, DppError>;
 
     /// Snapshot of the operator's **default** facility (ESPR Annex III), or `None`
     /// if none is configured. Read live on create and copied by value onto the

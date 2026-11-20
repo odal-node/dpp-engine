@@ -25,7 +25,7 @@ there is no in-process isolation boundary to enforce.
 **Repositories:** one per concern in `crates/dpp-dal/src/pg/`, for example
 `PgPassportRepo`, `PgAuditRepo`, `PgApiKeyRepo` and `PgOperatorConfigRepo`, plus the outbox
 repositories (registry sync, registry transfer, seal, snapshot), evidence, webhooks,
-idempotency keys, scan telemetry, trusted lists, unsold goods and personal-data records.
+idempotency keys, scan telemetry, trusted lists, unsold-goods discard records and their evidence, and personal-data records.
 
 **Job store:** `PgJobStore` in `crates/dpp-node/src/infra/pg_job_store.rs`.
 

@@ -11,8 +11,10 @@ use dpp_domain::{
     transfer::{TransferChain, TransferError, TransferReason, TransferRecord, TransferStatus},
 };
 use dpp_types::{
-    audit::PassportAuditEntry, auth::AuthContext, state_change::StateChange,
-    transfer::VersionedChain,
+    audit::PassportAuditEntry,
+    auth::AuthContext,
+    state_change::StateChange,
+    transfer::{ChainError, VersionedChain},
 };
 use uuid::Uuid;
 
@@ -34,13 +36,14 @@ impl PassportService {
         reason: TransferReason,
         notes: Option<String>,
         auth: &AuthContext,
-    ) -> Result<TransferRecord, DppError> {
+    ) -> Result<TransferRecord, ChainError> {
         let passport = self.find_by_id(id).await?;
         if passport.status != PassportStatus::Published {
             return Err(DppError::InvalidTransition {
                 current: passport.status.to_string(),
                 required: PassportStatus::Published.to_string(),
-            });
+            }
+            .into());
         }
         let store = self
             .transfer_store
@@ -113,7 +116,7 @@ impl PassportService {
         &self,
         id: PassportId,
         auth: &AuthContext,
-    ) -> Result<TransferRecord, DppError> {
+    ) -> Result<TransferRecord, ChainError> {
         let store = self
             .transfer_store
             .as_ref()
@@ -153,9 +156,9 @@ impl PassportService {
                 transfer_id = %transfer_id,
                 "accept_transfer rejected — outgoing signature failed verification"
             );
-            return Err(DppError::Validation(
-                "transfer from-signature failed verification".into(),
-            ));
+            return Err(
+                DppError::Validation("transfer from-signature failed verification".into()).into(),
+            );
         }
 
         let attestation = self.identity.sign_passport(id, &attestation).await?.jws;
@@ -211,7 +214,7 @@ impl PassportService {
         &self,
         id: PassportId,
         auth: &AuthContext,
-    ) -> Result<TransferRecord, DppError> {
+    ) -> Result<TransferRecord, ChainError> {
         self.terminate_pending_transfer(id, auth, Termination::Rejected)
             .await
     }
@@ -230,7 +233,7 @@ impl PassportService {
         &self,
         id: PassportId,
         auth: &AuthContext,
-    ) -> Result<TransferRecord, DppError> {
+    ) -> Result<TransferRecord, ChainError> {
         self.terminate_pending_transfer(id, auth, Termination::Cancelled)
             .await
     }
@@ -283,7 +286,7 @@ impl PassportService {
         id: PassportId,
         auth: &AuthContext,
         how: Termination,
-    ) -> Result<TransferRecord, DppError> {
+    ) -> Result<TransferRecord, ChainError> {
         let store = self
             .transfer_store
             .as_ref()
@@ -299,7 +302,8 @@ impl PassportService {
         if chain.pending().is_none() {
             return Err(DppError::Validation(
                 format!("no pending transfer to {}", how.verb()).into(),
-            ));
+            )
+            .into());
         }
 
         let record = how

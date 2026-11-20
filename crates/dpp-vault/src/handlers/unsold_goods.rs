@@ -1,183 +1,359 @@
-//! `/api/v1/unsold-goods` — the ESPR Art. 24 disclosure record.
+//! `/api/v1/discard-records` — ESPR Art. 24 and Art. 25 discard records, and the
+//! documents that stand behind them.
 //!
-//! # What was missing
+//! # What is checked, and where
 //!
-//! `odal.unsold_goods_report` has been a migrated table since `0008` with no
-//! production writer: the only references anywhere were two test files
-//! enumerating table names. It is the persistence half of a feature whose write
-//! path was never built, so an operator subject to Art. 24 had a schema for the
-//! disclosure and no way to put anything in it.
+//! A record is checked against dpp-core's discard-record JSON Schema **as sent**,
+//! before it is read into `DiscardRecord`. Reading first would drop a misspelt
+//! field and store the record without it, so the schema is the gate and the type
+//! is what it has already admitted. Reading a stored record back is more lenient
+//! (`dpp_domain::unsold_goods`), so a stored record is never refused here.
+//!
+//! What the node does not decide is whether a discard is lawful. A record that
+//! cites no derogation, or lacks a document, is stored and reported by
+//! `missing-evidence`; the record is the claim, the documents its proof.
 //!
 //! # Why these routes are not on a passport
 //!
 //! There is no digital product passport anywhere in Art. 24 or Art. 25. The
-//! subject of Art. 24 is an **operator over a financial year**, its medium is
-//! the operator's own website, and its trigger is *discarding unsold stock* —
-//! none of which is a product placed on the market. So these sit beside the
-//! other operator-scoped routes rather than under `/dpp/{dppId}`, and there is
-//! deliberately no `unsold-goods` product group carrying passports.
-//!
-//! # The one rule worth enforcing here
-//!
-//! Art. 25 prohibits destroying unsold consumer products in Annex VII from
-//! **19 July 2026**. `exemptDestruction` is the destination that records a
-//! destruction anyway, under an exemption — so it must say which. Recording one
-//! with no justification files a prohibited act as though it were routine, and
-//! it is the disclosure itself that would carry the omission.
-//!
-//! The converse is enforced too: a justification on a donation is refused. It
-//! describes nothing, and a field that is sometimes meaningful and sometimes
-//! ignored is how a reviewer stops reading it.
-//!
-//! # What this does not decide
-//!
-//! Whether the goods fall inside Annex VII at all. That is a CN-code **prefix**
-//! test against two code-valued headings, and the products in an unsold-stock
-//! line do not arrive here with CN codes attached. `productCategory` is the
-//! operator's own categorisation for Art. 24(1)(a), which prescribes no
-//! vocabulary — it is not, and must not be read as, Annex VII ban scope.
+//! subject is an operator over a financial year, so these sit beside the other
+//! operator-scoped routes rather than under `/dpp/{dppId}`.
 
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse as _, Response};
-use dpp_types::CreateUnsoldGoodsEntry;
+use std::sync::OnceLock;
+
+use axum::{
+    extract::{DefaultBodyLimit, Multipart, Path, State, multipart::MultipartRejection},
+    http::StatusCode,
+    response::{IntoResponse as _, Response},
+};
+use chrono::NaiveDate;
+use dpp_domain::{
+    DppError,
+    schemas::VersionedSchemaRegistry,
+    unsold_goods::{
+        DiscardRecord, EnterpriseSize, EvidenceKind, EvidenceRequirement, FinancialYear,
+        RECORD_SCHEMA_KEY, document_schemas,
+    },
+};
+use dpp_types::EVIDENCE_FILE_MAX_BYTES;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use uuid::Uuid;
 
 use crate::extract::{Json, Query};
-use crate::handlers::error::{internal_error, validation_error};
+use crate::handlers::error::{
+    api_error, conflict_error, field_validation_error, internal_error, not_found_error,
+    validation_error,
+};
 use crate::middleware::scope::{RequireAdmin, RequireWrite};
 use crate::state::AppState;
 
-/// Narrow a listing to one reporting period.
+/// Head-room for the multipart framing around a file of the largest allowed size.
+/// The per-file cap is checked on the file itself; this only stops an upload
+/// far beyond it from being buffered.
+pub const EVIDENCE_UPLOAD_LIMIT: usize = EVIDENCE_FILE_MAX_BYTES + 1024 * 1024;
+
+/// The financial year a listing covers, by its first and last day.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListQuery {
-    /// Financial year, as `YYYY`. Omit for every period.
-    pub reporting_period: Option<String>,
+    /// First day of the financial year.
+    pub financial_year_start: NaiveDate,
+    /// Last day of the financial year.
+    pub financial_year_end: NaiveDate,
 }
 
-/// A financial year, disclosed annually for "the preceding financial year".
-fn is_reporting_year(period: &str) -> bool {
-    period.len() == 4 && period.chars().all(|c| c.is_ascii_digit())
+/// The body of `POST /discard-records`.
+///
+/// `record` is the discard as core models it, kept as sent until the schema has
+/// checked it. `passportIds` names the passports of the units discarded: a join
+/// in this node's storage, not part of the record.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateDiscardRecordRequest {
+    /// The discard, as core's discard-record schema describes it.
+    pub record: serde_json::Value,
+    /// The passports of the units discarded. Optional.
+    #[serde(default)]
+    pub passport_ids: Vec<Uuid>,
 }
 
-/// Record one Art. 24 disclosure line.
-pub async fn unsold_goods_create_handler(
+/// The document an attachment answers with.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachedEvidence {
+    /// The record the document is attached to.
+    pub discard_record_id: Uuid,
+    /// The evidence kind the document was attached under.
+    pub kind: EvidenceKind,
+    /// Lower-case hex SHA-256 of the stored bytes.
+    pub sha256: String,
+    /// Size of the stored bytes.
+    pub size_bytes: u64,
+}
+
+/// What a record still lacks.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingEvidence {
+    /// The operator's size class, as the requirements were read for it.
+    pub enterprise_size: EnterpriseSize,
+    /// Each requirement no attached document meets. Empty when none is missing.
+    pub missing_evidence: Vec<EvidenceRequirement>,
+}
+
+/// Core's discard-record schemas, built once.
+fn record_schemas() -> &'static VersionedSchemaRegistry {
+    static REGISTRY: OnceLock<VersionedSchemaRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(document_schemas)
+}
+
+/// The record, as sent, against the current discard-record schema. Returns the
+/// version it was checked under, which the store keeps with the row.
+#[allow(clippy::result_large_err)]
+fn check_record_schema(record: &serde_json::Value) -> Result<String, Response> {
+    let registry = record_schemas();
+    let Some((version, _)) = registry.latest(RECORD_SCHEMA_KEY) else {
+        return Err(internal_error(
+            "the catalog names no current discard-record schema",
+        ));
+    };
+    registry
+        .validate(RECORD_SCHEMA_KEY, version, record)
+        .map_err(|errors| field_validation_error(&errors))?;
+    Ok(version.to_string())
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_record_id(s: &str) -> Result<Uuid, Response> {
+    Uuid::parse_str(s)
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, "", "Invalid discard record id"))
+}
+
+/// Record a discard, with the passports it names.
+///
+/// Creating a record is not idempotent on its own, so the route is keyed in the
+/// idempotency policy; a retry under the same key replays this answer.
+pub async fn discard_record_create_handler(
     State(state): State<AppState>,
     RequireWrite(_auth): RequireWrite,
-    Json(body): Json<CreateUnsoldGoodsEntry>,
+    Json(body): Json<CreateDiscardRecordRequest>,
 ) -> Response {
-    if !is_reporting_year(&body.reporting_period) {
-        return validation_error(
-            "reportingPeriod must be a four-digit financial year, e.g. \"2026\". Art. 24(1) \
-             discloses the preceding financial year, annually.",
-        );
-    }
-    if body.unit_count < 0 {
-        return validation_error("unitCount cannot be negative.");
-    }
-    if !body.volume_kg.is_finite() || body.volume_kg < 0.0 {
-        return validation_error("volumeKg must be a non-negative number.");
-    }
-    if body.country_of_disposal.len() != 2
-        || !body
-            .country_of_disposal
-            .chars()
-            .all(|c| c.is_ascii_alphabetic())
-    {
-        return validation_error("countryOfDisposal must be an ISO 3166-1 alpha-2 code.");
-    }
-
-    let justification = body
-        .destruction_justification
-        .as_deref()
-        .map(str::trim)
-        .filter(|j| !j.is_empty());
-    if body.destination.requires_justification() {
-        if justification.is_none() {
-            return validation_error(
-                "destructionJustification is required when destination is \
-                 'exemptDestruction'. ESPR Art. 25 prohibits destroying unsold consumer \
-                 products in Annex VII from 19 July 2026, so a recorded destruction has to \
-                 say which exemption it relies on.",
-            );
-        }
-    } else if justification.is_some() {
-        return validation_error(
-            "destructionJustification applies only to 'exemptDestruction'. Nothing was \
-             destroyed, so there is no exemption to state.",
-        );
-    }
-
-    // The operator is the node's own, read from its config rather than taken
-    // from the request. The report is *about* this operator — supplying it would
-    // let a caller file a disclosure in someone else's name, and there is no
-    // second operator on a single-tenant node for it to legitimately be.
-    let operator = match state
-        .operator_service
-        .get(dpp_types::STANDALONE_OPERATOR_ID)
-        .await
-    {
-        Ok(cfg) => cfg,
-        Err(e) => return internal_error(e),
+    let schema_version = match check_record_schema(&body.record) {
+        Ok(version) => version,
+        Err(response) => return response,
     };
-
-    let entry = CreateUnsoldGoodsEntry {
-        destruction_justification: justification.map(ToOwned::to_owned),
-        country_of_disposal: body.country_of_disposal.to_uppercase(),
-        ..body
+    let record: DiscardRecord = match serde_json::from_value(body.record) {
+        Ok(record) => record,
+        Err(e) => return validation_error(&format!("The record could not be read: {e}")),
     };
-
     match state
-        .unsold_goods_repo
-        .create(
-            &entry,
-            &operator.operator_id,
-            Some(operator.legal_name.as_str()).filter(|n| !n.is_empty()),
-        )
+        .discard_records
+        .create(&record, &schema_version, &body.passport_ids)
         .await
     {
-        Ok(row) => (StatusCode::CREATED, Json(row)).into_response(),
+        Ok(stored) => (StatusCode::CREATED, Json(stored)).into_response(),
+        Err(DppError::Validation(errors)) => field_validation_error(&errors),
         Err(e) => internal_error(e),
     }
 }
 
-/// List the disclosure lines, newest first.
+/// List the discard records of a financial year, earliest discard first.
 ///
 /// Admin rather than write: these are the operator's own annual figures, and
 /// reading them back is an administrative act rather than part of producing
 /// passports.
-pub async fn unsold_goods_list_handler(
+pub async fn discard_record_list_handler(
     State(state): State<AppState>,
     RequireAdmin(_auth): RequireAdmin,
     Query(q): Query<ListQuery>,
 ) -> Response {
-    if let Some(period) = q.reporting_period.as_deref()
-        && !is_reporting_year(period)
-    {
-        return validation_error("reportingPeriod must be a four-digit financial year.");
-    }
-    match state
-        .unsold_goods_repo
-        .list(q.reporting_period.as_deref())
-        .await
-    {
+    let year = FinancialYear {
+        start: q.financial_year_start,
+        end: q.financial_year_end,
+    };
+    match state.discard_records.list_for_year(year).await {
         Ok(rows) => Json(rows).into_response(),
         Err(e) => internal_error(e),
     }
+}
+
+/// Attach a document to a record under an evidence kind.
+///
+/// The form has two fields: `kind`, an evidence kind as core names it, and
+/// `file`, the document. The document is stored under its SHA-256, once however
+/// many records cite it, and the attachment is recorded against the record.
+pub async fn discard_record_attach_handler(
+    State(state): State<AppState>,
+    RequireWrite(_auth): RequireWrite,
+    Path(id): Path<String>,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Response {
+    let id = match parse_record_id(&id) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let mut multipart = match multipart {
+        Ok(multipart) => multipart,
+        Err(rejection) => {
+            return api_error(rejection.status(), "", &rejection.body_text());
+        }
+    };
+
+    let mut kind: Option<EvidenceKind> = None;
+    let mut file: Option<Vec<u8>> = None;
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => {
+                let name = field.name().unwrap_or("").to_owned();
+                match name.as_str() {
+                    "kind" => {
+                        let text = match field.text().await {
+                            Ok(text) => text,
+                            Err(e) => return api_error(e.status(), "", &e.body_text()),
+                        };
+                        kind = match serde_json::from_value(serde_json::Value::String(
+                            text.trim().to_owned(),
+                        )) {
+                            Ok(kind) => Some(kind),
+                            Err(_) => {
+                                return validation_error(
+                                    "`kind` must be one of the evidence kinds dpp-core names, \
+                                     for example `deliveryDocumentation`.",
+                                );
+                            }
+                        };
+                    }
+                    "file" => match field.bytes().await {
+                        Ok(bytes) => file = Some(bytes.to_vec()),
+                        Err(e) => return api_error(e.status(), "", &e.body_text()),
+                    },
+                    _ => {
+                        if let Err(e) = field.bytes().await {
+                            return api_error(e.status(), "", &e.body_text());
+                        }
+                    }
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return api_error(e.status(), "", &e.body_text()),
+        }
+    }
+
+    let Some(kind) = kind else {
+        return validation_error("The form needs a `kind`: the evidence kind the document is for.");
+    };
+    let Some(bytes) = file else {
+        return validation_error("The form needs a `file`: the document to attach.");
+    };
+    if bytes.len() > EVIDENCE_FILE_MAX_BYTES {
+        return api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "",
+            "The file is larger than the 25 MiB one evidence file may be.",
+        );
+    }
+
+    match state.discard_records.get(id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found_error("Discard record not found."),
+        Err(e) => return internal_error(e),
+    }
+
+    let sha256 = hex::encode(Sha256::digest(&bytes));
+    if let Err(e) = state.evidence_store.put(&sha256, &bytes).await {
+        return internal_error(e);
+    }
+    match state.discard_records.attach(id, kind, &sha256).await {
+        Ok(true) => (
+            StatusCode::CREATED,
+            Json(AttachedEvidence {
+                discard_record_id: id,
+                kind,
+                sha256,
+                size_bytes: bytes.len() as u64,
+            }),
+        )
+            .into_response(),
+        Ok(false) => conflict_error("This record already holds this document under this kind."),
+        Err(e) => internal_error(e),
+    }
+}
+
+/// The evidence a record still lacks, read against the operator's size class.
+///
+/// A requirement is missing when no attached document meets it. A missing
+/// document is not proof of a breach: the Regulation excepts information the
+/// competent authority already holds under another act, which only the operator
+/// can say.
+pub async fn discard_record_missing_handler(
+    State(state): State<AppState>,
+    RequireAdmin(_auth): RequireAdmin,
+    Path(id): Path<String>,
+) -> Response {
+    let id = match parse_record_id(&id) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let stored = match state.discard_records.get(id).await {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return not_found_error("Discard record not found."),
+        Err(e) => return internal_error(e),
+    };
+    let size = match state.service.enterprise_size().await {
+        Ok(size) => size,
+        Err(e) => return internal_error(e),
+    };
+    let held = match state.discard_records.held_kinds(id).await {
+        Ok(held) => held,
+        Err(e) => return internal_error(e),
+    };
+    Json(MissingEvidence {
+        enterprise_size: size,
+        missing_evidence: stored.record.missing_evidence(size, &held),
+    })
+    .into_response()
+}
+
+/// The body limit the attachment route reads through. Set on the route, because
+/// the default would refuse a document between 2 MiB and the per-file cap.
+pub fn evidence_body_limit() -> DefaultBodyLimit {
+    DefaultBodyLimit::max(EVIDENCE_UPLOAD_LIMIT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Art. 24(1) discloses a financial *year*, annually. A month or a quarter
-    /// would make the annual figures unaddable across rows.
+    /// A discard is a record, and the record names its derogation point by its
+    /// wire name. A reason written in the old line vocabulary is refused here.
     #[test]
-    fn a_reporting_period_is_a_four_digit_year() {
-        assert!(is_reporting_year("2026"));
-        for bad in ["2026-01", "26", "20268", "Q1-2026", "", "20a6"] {
-            assert!(!is_reporting_year(bad), "{bad} must be refused");
-        }
+    fn a_record_is_refused_while_it_is_checked_as_sent() {
+        let misspelt = serde_json::json!({
+            "discardedOn": "2026-08-01",
+            "cnCodes": ["420300"],
+            "description": "Jackets",
+            "units": { "value": 10 },
+            "weight": { "grams": 5000 },
+            "packagingIncluded": false,
+            "treatment": "recycling",
+            "receiver": { "name": "Recycler" },
+            "reasonLabel": "Stock",
+            "reasonn": "damagedOrContaminated"
+        });
+        assert!(check_record_schema(&misspelt).is_err());
+    }
+
+    /// The per-file cap is the one number the spec and the store both have to
+    /// agree on, so it is pinned here.
+    #[test]
+    fn the_per_file_cap_is_twenty_five_mebibytes() {
+        assert_eq!(EVIDENCE_FILE_MAX_BYTES, 25 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_record_id_is_a_uuid() {
+        assert!(parse_record_id(&Uuid::now_v7().to_string()).is_ok());
+        assert!(parse_record_id("not-a-record").is_err());
     }
 }

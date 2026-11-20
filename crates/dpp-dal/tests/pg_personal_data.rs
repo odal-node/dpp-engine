@@ -21,7 +21,7 @@
 #![cfg(feature = "integration-tests")]
 
 use dpp_dal::pg::{PgPersonalDataRepo, sqlx};
-use dpp_dal::test_harness::{TestPg, start_pg};
+use dpp_dal::test_harness::{TestPg, sqlstate, start_pg};
 use dpp_domain::DppError;
 use dpp_domain::passport::PassportId;
 use dpp_domain::personal_data::PersonalDataRecordId;
@@ -458,14 +458,6 @@ async fn the_app_role_can_neither_delete_a_record_nor_rewrite_it() {
     .await
     .expect("count");
     assert_eq!(still, 2);
-}
-
-/// The SQLSTATE a database error carries, so a test can tell which line refused.
-fn sqlstate(error: &sqlx::Error) -> Option<String> {
-    error
-        .as_database_error()
-        .and_then(|e| e.code())
-        .map(|c| c.into_owned())
 }
 
 /// The trigger is the second line, and holds for the superuser too: an erased
