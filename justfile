@@ -294,6 +294,22 @@ regenerate-templates:
     cargo test -p dpp-integrator --test regenerate_templates \
         -- --ignored --exact regenerate_templates --nocapture
 
+# Rewrite the `required` list of the redacted passport schema from core's policy.
+#
+# `RedactedPassportResponse` documents every route that serves a redacted view,
+# and what such a view always carries is core's decision, not ours. The list is
+# derived from `dpp_domain::access::redact_passport` for every product group,
+# schema version and audience those routes serve, and written to
+# api/components/schemas/passport/RedactedPassportRequired.yaml. Nothing else in
+# `api/` is generated.
+#
+# Run after a dpp-core bump or a change to `PassportResponse`'s `required`, then
+# `just openapi-bundle`, and commit both. `the_committed_list_is_what_the_policy_derives`
+# fails, naming this recipe, when the file is stale.
+regenerate-redacted-required:
+    cargo test -p dpp-node --test redacted_passport_required \
+        -- --ignored --exact regenerate_redacted_required --nocapture
+
 # The argument is a catalog key, so it may contain a hyphen,
 # which a Rust function name cannot — hence the substitution.
 capture-fixture PRODUCT_GROUP:

@@ -20,5 +20,9 @@ get:
   responses:
     '200':
       description: The database answered; the vault can serve requests.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/access/VaultReadiness.yaml
     '503':
       $ref: ../../components/responses/ServiceUnavailable.yaml

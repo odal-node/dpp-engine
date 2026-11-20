@@ -2669,6 +2669,7 @@ dependencies = [
  "ed25519-dalek 3.0.0",
  "flate2",
  "hex",
+ "jsonschema 0.60.2",
  "metrics",
  "metrics-exporter-prometheus",
  "proptest",

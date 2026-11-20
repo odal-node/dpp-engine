@@ -194,11 +194,8 @@ async fn a_caller_without_the_admin_scope_erases_nothing() {
         assert_eq!(refused.status(), 403, "a {scope}-scoped key must not erase");
     }
 
-    let unauthenticated = reqwest::Client::new()
-        .delete(format!("{url}{path}"))
-        .send()
-        .await
-        .expect("request");
+    let unauthenticated =
+        helpers::send_checked(reqwest::Client::new().delete(format!("{url}{path}"))).await;
     assert_eq!(unauthenticated.status(), 401);
 
     let held = store

@@ -50,7 +50,7 @@ get:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/passport/PassportResponse.yaml
+            $ref: ../../components/schemas/passport/RedactedPassportResponse.yaml
         text/html:
           schema:
             type: string

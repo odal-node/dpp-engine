@@ -122,6 +122,21 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The API description now documents the redacted passport reads with a schema a
+  served read satisfies, and every vault test response is validated against the
+  description.** The public reads, the audience-scoped credential read and the
+  resolver's JSON representation were documented with `PassportResponse`, which
+  requires `retentionLocked`, a field core's redaction withholds from the public,
+  so a public read served exactly as documented failed its own schema. They now
+  answer with `RedactedPassportResponse`, whose `required` list is derived from
+  core's disclosure policy for every product group, schema version and audience
+  those routes serve: `just regenerate-redacted-required` writes it, and a test
+  fails, naming the recipe, when it is stale. The full authenticated read keeps
+  `PassportResponse` unchanged. `TestClient` in `dpp-vault`'s suites now checks
+  each response against the schema the description documents for its method, path
+  and status, and fails one the description does not document. (#378, #635,
+  #PR_PLACEHOLDER)
+
 - **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
   to -0573. All eight were published on 16 November against a dependency tree that
   had not changed, and they cover:

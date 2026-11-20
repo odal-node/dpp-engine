@@ -26,3 +26,7 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '422':
       description: Not a valid dossier (malformed JSON or an unrecognised field).
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

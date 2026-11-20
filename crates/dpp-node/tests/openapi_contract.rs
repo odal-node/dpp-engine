@@ -274,6 +274,39 @@ const UNCHECKED: &[(&str, &str)] = &[
         "a bare `type: string, format: uuid`, not an object with properties",
     ),
     (
+        "PassportProperties",
+        "the properties `PassportResponse` composes with its `required` list, and \
+         nothing else: `object_schemas_match_the_types_behind_them` compares the \
+         property set of `PassportResponse` through its `allOf`, which is this \
+         schema's whole content",
+    ),
+    (
+        "RedactedPassportResponse",
+        "the same properties as `PassportResponse` with the `required` list that \
+         survives redaction. A redacted view omits keys the type emits, so no \
+         serialised value has this schema's property set. The list is pinned by \
+         `redacted_passport_required.rs`, and the shape of every served body by \
+         the response validation in `dpp-vault`'s test client",
+    ),
+    (
+        "VaultHealth",
+        "built with `json!` in the handler, so no Rust type declares its members \
+         and there is nothing to compare the property list against. Every \
+         `GET /vault/health` a vault test sends is validated against it by the \
+         test client",
+    ),
+    (
+        "VaultReadiness",
+        "built with `json!` in the handler, like `VaultHealth`, and checked the \
+         same way by every `GET /vault/ready` a vault test sends",
+    ),
+    (
+        "RedactedPassportRequired",
+        "a generated `required` list with no properties. \
+         `redacted_passport_required.rs` derives it from core's redaction and \
+         compares it with the committed file and with this bundle",
+    ),
+    (
         "PersonalDataStatement",
         "an internally-tagged `oneOf` (`held`) of two objects, one of which \
          carries a closed set of lawful bases — neither checker expresses a \

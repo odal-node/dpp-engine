@@ -1,0 +1,13 @@
+description: |
+  The request was well formed and the node failed while serving it. The body
+  names no cause: the detail is in the node's own log, correlated by
+  `requestId`.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml
+    example:
+      type: https://problems.odal-node.io/internal-server-error
+      title: Internal Server Error
+      status: 500
+      detail: An internal error occurred.

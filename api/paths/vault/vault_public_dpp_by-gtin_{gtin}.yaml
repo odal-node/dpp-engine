@@ -83,7 +83,7 @@ get:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/passport/PassportResponse.yaml
+            $ref: ../../components/schemas/passport/RedactedPassportResponse.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
     '422':

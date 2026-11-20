@@ -204,11 +204,9 @@ async fn the_route_requires_authentication() {
     let base = start_vault(pg.dal.clone()).await;
     let id = seed(&pg.dal, Some(envelope()), Some(JWS)).await;
 
-    let resp = reqwest::Client::new()
-        .get(format!("{base}/api/v1/dpp/{id}/seal"))
-        .send()
-        .await
-        .expect("request");
+    let resp =
+        helpers::send_checked(reqwest::Client::new().get(format!("{base}/api/v1/dpp/{id}/seal")))
+            .await;
     assert_eq!(resp.status(), 401);
 }
 
@@ -332,11 +330,7 @@ async fn the_summary_route_requires_authentication() {
     let base = start_vault(pg.dal.clone()).await;
     let client = reqwest::Client::new();
 
-    let resp = client
-        .get(format!("{base}/api/v1/seal"))
-        .send()
-        .await
-        .expect("request");
+    let resp = helpers::send_checked(client.get(format!("{base}/api/v1/seal"))).await;
     assert_eq!(resp.status(), 401);
 }
 

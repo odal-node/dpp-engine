@@ -8,7 +8,7 @@ async fn health_returns_ok_status() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
 
-    let resp = reqwest::get(format!("{base}/health")).await.unwrap();
+    let resp = helpers::get_checked(format!("{base}/health")).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok");
@@ -20,7 +20,7 @@ async fn ready_returns_ok_when_db_connected() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
 
-    let resp = reqwest::get(format!("{base}/ready")).await.unwrap();
+    let resp = helpers::get_checked(format!("{base}/ready")).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ready");
@@ -32,7 +32,7 @@ async fn info_returns_version_and_features() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
 
-    let resp = reqwest::get(format!("{base}/api/v1/info")).await.unwrap();
+    let resp = helpers::get_checked(format!("{base}/api/v1/info")).await;
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(

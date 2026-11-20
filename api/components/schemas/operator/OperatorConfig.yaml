@@ -21,8 +21,10 @@ properties:
     example: Johannes Strauss 12
   country:
     type: string
-    minLength: 2
     maxLength: 2
+    description: >-
+      ISO 3166-1 alpha-2 country code. Empty on a node whose operator has not
+      been configured yet, which is what a read answers on a fresh install.
     example: DE
   contactEmail:
     type: string

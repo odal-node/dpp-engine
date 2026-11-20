@@ -11,13 +11,17 @@ properties:
     description: Weight in kilograms
     example: 12.5
   recycledPct:
-    type: number
+    type:
+      - number
+      - 'null'
     minimum: 0
     maximum: 100
     description: Percentage of recycled content (0.0–100.0)
     example: 35
   countryOfOrigin:
-    type: string
+    type:
+      - string
+      - 'null'
     minLength: 2
     maxLength: 2
     description: ISO 3166-1 alpha-2 country code

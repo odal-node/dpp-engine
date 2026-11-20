@@ -67,7 +67,8 @@ async fn serve_a_body_in_two_parts() -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_response_comes_back_with_its_whole_body_already_read() {
     let base = serve_a_body_in_two_parts().await;
-    let client = TestClient::new(&base, "token");
+    // A fake server that is not the vault, so there is no description to check.
+    let client = TestClient::new(&base, "token").unchecked();
 
     let started = Instant::now();
     let response = client.get("/anything").await;

@@ -927,7 +927,7 @@
       "post": {
         "operationId": "publishDpp",
         "summary": "Publish a DPP",
-        "description": "Transition a DPP from `draft` to `active`.\n\nOn success:\n1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier:\n   `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else\n   `{resolverBase}/dpp/{id}`\n2. The identity service signs the VC payload with Ed25519 (best-effort;\n   signing failure does not block publish: `jwsSignature` may be null)\n3. `retentionLocked` is set to `true` permanently\n4. `status` = `active`, `publishedAt` = now\n5. A `dpp.published` NATS event is emitted (fire-after-commit)\n\nNo request body is required.\n\nRefused with `422` naming `/carrierSerial` when another published passport\nalready prints the same carrier serial under the same GTIN and is not in\nthis one's amendment chain. Create refuses that too, but two creates that\narrive together can both pass it; this is where the label goes live, so\nthe second to publish stays a draft rather than making one label name two\npassports.\n",
+        "description": "Transition a DPP from `draft` to `active`.\n\nOn success:\n1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier:\n   `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else\n   `{resolverBase}/dpp/{id}`\n2. The identity service signs the VC payload with Ed25519. Publishing fails\n   closed: when the signer cannot sign, the answer is `500` and the passport\n   stays a `draft` with no `jwsSignature`, rather than being published\n   without a signature the resolver would then refuse to serve\n3. `retentionLocked` is set to `true` permanently\n4. `status` = `active`, `publishedAt` = now\n5. A `dpp.published` NATS event is emitted (fire-after-commit)\n\nNo request body is required.\n\nRefused with `422` naming `/carrierSerial` when another published passport\nalready prints the same carrier serial under the same GTIN and is not in\nthis one's amendment chain. Create refuses that too, but two creates that\narrive together can both pass it; this is where the label goes live, so\nthe second to publish stays a draft rather than making one label name two\npassports.\n",
         "tags": [
           "DPP Lifecycle"
         ],
@@ -977,6 +977,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
         }
       }
@@ -1833,7 +1836,14 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "422": {
-            "description": "Not a valid dossier (malformed JSON or an unrecognised field)."
+            "description": "Not a valid dossier (malformed JSON or an unrecognised field).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -3761,7 +3771,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "$ref": "#/components/schemas/RedactedPassportResponse"
                 }
               }
             }
@@ -3859,7 +3869,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "$ref": "#/components/schemas/RedactedPassportResponse"
                 }
               }
             }
@@ -3941,7 +3951,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "$ref": "#/components/schemas/RedactedPassportResponse"
                 }
               }
             }
@@ -4701,7 +4711,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PassportResponse"
+                  "$ref": "#/components/schemas/RedactedPassportResponse"
                 }
               },
               "text/html": {
@@ -5724,7 +5734,14 @@
         "security": [],
         "responses": {
           "200": {
-            "description": "The process is serving. Body carries `status`, `service`, `version` and\n`coreVersion`.\n"
+            "description": "The process is serving. Body carries `status`, `service`, `version` and\n`coreVersion`.\n",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultHealth"
+                }
+              }
+            }
           }
         }
       }
@@ -5740,7 +5757,14 @@
         "security": [],
         "responses": {
           "200": {
-            "description": "The database answered; the vault can serve requests."
+            "description": "The database answered; the vault can serve requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultReadiness"
+                }
+              }
+            }
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -5935,21 +5959,31 @@
         }
       },
       "PassportResponse": {
-        "type": "object",
-        "description": "The canonical Digital Product Passport record. Fields marked required are emitted on every read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.",
-        "required": [
-          "id",
-          "productName",
-          "productGroup",
-          "manufacturer",
-          "materials",
-          "status",
-          "schemaVersion",
-          "createdAt",
-          "updatedAt",
-          "retentionLocked",
-          "version"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PassportProperties"
+          },
+          {
+            "required": [
+              "id",
+              "productName",
+              "productGroup",
+              "manufacturer",
+              "materials",
+              "status",
+              "schemaVersion",
+              "createdAt",
+              "updatedAt",
+              "retentionLocked",
+              "version"
+            ]
+          }
         ],
+        "description": "The canonical Digital Product Passport record, as the **authenticated** reads and writes serve it. Fields marked required are emitted on every such read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.\nThe routes that serve a redacted view (the public reads, the audience-scoped credential read and the resolver) answer with `RedactedPassportResponse` instead, because a redaction removes fields this schema requires."
+      },
+      "PassportProperties": {
+        "type": "object",
+        "description": "The properties of a Digital Product Passport record, shared by the full authenticated read (`PassportResponse`) and the redacted reads (`RedactedPassportResponse`). Which of them a representation always carries is the `required` list of the schema that composes this one.",
         "properties": {
           "id": {
             "$ref": "#/components/schemas/DppId"
@@ -6191,6 +6225,31 @@
           }
         }
       },
+      "RedactedPassportResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PassportProperties"
+          },
+          {
+            "$ref": "#/components/schemas/RedactedPassportRequired"
+          }
+        ],
+        "description": "A Digital Product Passport as a **redacted** read serves it: the public reads, the audience-scoped credential read and the resolver's JSON representation. It is the same record as `PassportResponse`, filtered by the disclosure policy for the audience asking, so fewer fields are always present.\nWhich fields a redacted view always carries is not written by hand. The list is derived from the disclosure policy, for every product group, every schema version and every audience these routes serve, and kept in `RedactedPassportRequired.yaml`. A field the policy withholds from any of them, such as `retentionLocked`, is not in it.\nProofs are not part of a redacted payload: the redaction removes `jwsSignature`, `seal` and `disclosureSignatures` for every audience, and the route attaches the one proof that covers the bytes it serves."
+      },
+      "RedactedPassportRequired": {
+        "required": [
+          "id",
+          "productName",
+          "productGroup",
+          "manufacturer",
+          "materials",
+          "status",
+          "schemaVersion",
+          "createdAt",
+          "updatedAt",
+          "version"
+        ]
+      },
       "DppId": {
         "type": "string",
         "format": "uuid",
@@ -6260,7 +6319,10 @@
             "example": "DE"
           },
           "didWebUrl": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uri",
             "description": "did:web URL for the manufacturer",
             "example": "https://ecotech.example.com/.well-known/did.json"
@@ -6315,14 +6377,20 @@
             "example": 12.5
           },
           "recycledPct": {
-            "type": "number",
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "maximum": 100,
             "description": "Percentage of recycled content (0.0–100.0)",
             "example": 35
           },
           "countryOfOrigin": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 2,
             "maxLength": 2,
             "description": "ISO 3166-1 alpha-2 country code",
@@ -8811,8 +8879,8 @@
           },
           "country": {
             "type": "string",
-            "minLength": 2,
             "maxLength": 2,
+            "description": "ISO 3166-1 alpha-2 country code. Empty on a node whose operator has not been configured yet, which is what a read answers on a fresh install.",
             "example": "DE"
           },
           "contactEmail": {
@@ -9899,6 +9967,61 @@
             },
             "example": [
               "passthrough_compliance"
+            ]
+          }
+        }
+      },
+      "VaultHealth": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "version",
+          "coreVersion"
+        ],
+        "description": "The vault's liveness answer. It checks nothing beyond the process itself.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "service": {
+            "type": "string",
+            "description": "The crate that is serving.",
+            "example": "dpp-vault"
+          },
+          "version": {
+            "type": "string",
+            "description": "This node's own dpp-vault crate version.",
+            "example": "0.16.0"
+          },
+          "coreVersion": {
+            "type": "string",
+            "description": "The dpp-domain (dpp-core) version this build was compiled against.",
+            "example": "0.24.0"
+          }
+        }
+      },
+      "VaultReadiness": {
+        "type": "object",
+        "required": [
+          "status",
+          "db"
+        ],
+        "description": "The vault's readiness answer when its database responded to a ping.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready"
+            ]
+          },
+          "db": {
+            "type": "string",
+            "enum": [
+              "ok"
             ]
           }
         }
@@ -11511,6 +11634,22 @@
               "title": "Conflict",
               "status": 409,
               "detail": "DPP is already published."
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "The request was well formed and the node failed while serving it. The body\nnames no cause: the detail is in the node's own log, correlated by\n`requestId`.\n",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/internal-server-error",
+              "title": "Internal Server Error",
+              "status": 500,
+              "detail": "An internal error occurred."
             }
           }
         }

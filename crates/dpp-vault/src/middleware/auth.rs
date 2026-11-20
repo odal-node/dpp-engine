@@ -4,7 +4,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, Method, StatusCode, header},
     middleware::Next,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
 };
 use dpp_common::{event_codes, http_problem};
 
@@ -130,15 +130,14 @@ async fn route(
 }
 
 fn unauthorized(detail: &str) -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        [(axum::http::header::WWW_AUTHENTICATE, "Bearer, Basic")],
-        Json(
-            http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                .with_detail(detail),
-        ),
-    )
-        .into_response()
+    let mut response = http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
+        .with_detail(detail)
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::WWW_AUTHENTICATE,
+        axum::http::HeaderValue::from_static("Bearer, Basic"),
+    );
+    response
 }
 
 /// Split an `Authorization` header into its scheme and credential.

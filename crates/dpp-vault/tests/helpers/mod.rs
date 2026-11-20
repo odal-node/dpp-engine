@@ -7,6 +7,8 @@
 // only a subset, so per-binary dead_code warnings are expected and not real debt.
 #![allow(dead_code)]
 
+pub mod response_contract;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -829,6 +831,9 @@ pub struct TestClient {
     base_url: String,
     token: String,
     inner: reqwest::Client,
+    /// Whether a response is checked against the API description. Only a client
+    /// pointed at something other than the vault turns it off.
+    checked: bool,
 }
 
 /// How long one test request may take before it is a failure rather than a hang.
@@ -887,7 +892,16 @@ impl TestClient {
                 .connect_timeout(CONNECT_TIMEOUT)
                 .build()
                 .expect("a reqwest client"),
+            checked: true,
         }
+    }
+
+    /// This client without the response check, for a test that points it at a
+    /// server that is not the vault. The check is what keeps the vault's answers
+    /// to the description it publishes, and a fake server has no description.
+    pub fn unchecked(mut self) -> Self {
+        self.checked = false;
+        self
     }
 
     /// Says what was happening when a request timed out, or nothing if it did not.
@@ -945,6 +959,11 @@ impl TestClient {
     /// impossible to hold a response
     /// that still owns a connection, and the response handed back is an ordinary
     /// `reqwest::Response` over those bytes, so no test has to change.
+    ///
+    /// Every response is also checked against the API description before it is
+    /// returned: see [`response_contract`]. A response the description does not
+    /// document, or whose body does not validate against the schema it does,
+    /// fails the test here.
     async fn send(
         &self,
         method: &str,
@@ -957,20 +976,7 @@ impl TestClient {
             .await
             .unwrap_or_else(|e| panic!("{method} {url} failed{}: {e}", self.stall_note(&e)));
 
-        let (status, version, headers) = (
-            response.status(),
-            response.version(),
-            response.headers().clone(),
-        );
-        let body = response.bytes().await.unwrap_or_else(|e| {
-            panic!("{method} {url} answered {status}, but its body failed: {e}")
-        });
-
-        let mut buffered = axum::http::Response::new(body);
-        *buffered.status_mut() = status;
-        *buffered.version_mut() = version;
-        *buffered.headers_mut() = headers;
-        reqwest::Response::from(buffered)
+        buffer_and_check(method, path, response, self.checked).await
     }
 
     pub async fn post_json(&self, path: &str, body: serde_json::Value) -> reqwest::Response {
@@ -1037,4 +1043,63 @@ impl TestClient {
             .bearer_auth(&self.token);
         self.send("DELETE", path, request).await
     }
+}
+
+/// Reads a response's body and checks it against the API description, returning
+/// an ordinary `reqwest::Response` over the same bytes.
+///
+/// `target` is the path the request went to (or its full URL). Reading the body
+/// here is what the check needs, and is what [`TestClient::send`] documents as
+/// the reason it never hands a test a response that still owns its connection.
+async fn buffer_and_check(
+    method: &str,
+    target: &str,
+    response: reqwest::Response,
+    checked: bool,
+) -> reqwest::Response {
+    let (status, version, headers) = (
+        response.status(),
+        response.version(),
+        response.headers().clone(),
+    );
+    let body = response.bytes().await.unwrap_or_else(|e| {
+        panic!("{method} {target} answered {status}, but its body failed: {e}")
+    });
+
+    if checked {
+        response_contract::check_response(
+            method,
+            target,
+            status.as_u16(),
+            headers
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            &body,
+        );
+    }
+
+    let mut buffered = axum::http::Response::new(body);
+    *buffered.status_mut() = status;
+    *buffered.version_mut() = version;
+    *buffered.headers_mut() = headers;
+    reqwest::Response::from(buffered)
+}
+
+/// Sends a request built on any `reqwest` client and checks the response the way
+/// [`TestClient`] does. For a test that needs a header or a client the helper
+/// does not offer.
+pub async fn send_checked(request: reqwest::RequestBuilder) -> reqwest::Response {
+    let (client, request) = request.build_split();
+    let request = request.expect("a well-formed request");
+    let (method, url) = (request.method().to_string(), request.url().to_string());
+    let response = client
+        .execute(request)
+        .await
+        .unwrap_or_else(|e| panic!("{method} {url} failed: {e}"));
+    buffer_and_check(&method, &url, response, true).await
+}
+
+/// `GET url`, checked. A drop-in for `reqwest::get` in a test.
+pub async fn get_checked(url: impl reqwest::IntoUrl) -> reqwest::Response {
+    send_checked(reqwest::Client::new().get(url)).await
 }

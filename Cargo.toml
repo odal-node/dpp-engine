@@ -191,6 +191,11 @@ testcontainers-modules = { version = "0.15", default-features = false }
 # Property-based testing (dev-only)
 proptest              = "1"
 
+# JSON Schema validation (dev-only): the resolver's GS1 conformance suite and the
+# vault test client, which validates every response against the API description.
+# The same version and features `dpp-domain` links, so it adds no crate to the build.
+jsonschema            = { version = "0.60", features = ["idna"], default-features = false }
+
 # Wasm plugin runtime
 wasmtime       = { version = "50", default-features = false, features = ["cranelift", "async", "component-model"] }
 wasmtime-wasi  = "50"
