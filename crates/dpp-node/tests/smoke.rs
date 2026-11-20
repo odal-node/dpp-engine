@@ -1733,6 +1733,92 @@ async fn eol_declaration_deactivates_and_records_reason() {
     assert_eq!(eol_entry["metadata"]["materialRecovery"]["lithiumKg"], 0.4);
 }
 
+// `materialRecovery` is free JSON and becomes audit metadata, hashed into the
+// chain. A number dpp-core cannot hash used to panic inside the audit write, so
+// the caller got a `500` and the declaration rolled back. It is refused at the
+// input now: `422` naming the field, the passport untouched, nothing audited.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unhashable_material_recovery_is_refused_before_anything_is_written() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000078");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Unhashable Recovery Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    assert_eq!(resp.status(), 200);
+
+    let history = || async {
+        let history: serde_json::Value = client
+            .get(format!("{base}/vault/api/v1/dpp/{id}/history"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("history request failed")
+            .json()
+            .await
+            .unwrap();
+        history.as_array().expect("history is an array").clone()
+    };
+    let audited_before = history().await.len();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": {"kind": "recycled"},
+            "materialRecovery": {"recovered": 9_007_199_254_740_993_u64}
+        }))
+        .send()
+        .await
+        .expect("eol request failed");
+    assert_eq!(resp.status(), 422);
+    let problem: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        problem["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|e| e["field"] == "/materialRecovery")),
+        "{problem}"
+    );
+
+    // The passport is as it was, and the refused declaration left no audit entry.
+    let fetched: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["status"], "active");
+    let audited_after = history().await;
+    assert_eq!(audited_after.len(), audited_before);
+    assert!(
+        audited_after.iter().all(|e| e["action"] != "deactivated"),
+        "a refused declaration was audited"
+    );
+}
+
 // A destruction states whether the product was unsold, cites a derogation as a
 // point of the delegated act by its name, and must cite one only where the
 // ESPR Art. 25(1) ban reaches the product. Each refusal comes before anything is

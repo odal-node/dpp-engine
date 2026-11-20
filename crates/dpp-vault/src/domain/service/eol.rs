@@ -55,6 +55,12 @@ impl PassportService {
             }));
         }
 
+        if let Some(problem) = material_recovery_problem(&eol) {
+            return Err(DppError::Validation(ValidationErrors {
+                errors: vec![problem],
+            }));
+        }
+
         let passport = self.find_by_id(id).await?;
 
         if !passport
@@ -180,6 +186,22 @@ fn derogation_points() -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// A `materialRecovery` value dpp-core cannot hash.
+///
+/// The value is free JSON and becomes part of the declaration's audit entry,
+/// whose chain hash is `dpp_rules::canonical::content_hash`. That hash refuses
+/// some values `serde_json` parses, so core is asked, and the answer is the
+/// refusal: an unhashable value can never be chained, and finding out when the
+/// entry is written would cost the whole declaration.
+fn material_recovery_problem(eol: &EolEvent) -> Option<FieldError> {
+    let recovery = eol.material_recovery.as_ref()?;
+    let refusal = dpp_rules::canonical::content_hash(recovery).err()?;
+    Some(FieldError {
+        field: "/materialRecovery".to_owned(),
+        message: format!("The recovered-material summary cannot be recorded: {refusal}."),
+    })
 }
 
 /// A new destruction that cites its derogation as free text, `{"category": ...}`.

@@ -1179,7 +1179,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           description: |
-            A destruction refused, with the passport unchanged, for one of three
+            A declaration refused, with the passport unchanged, for one of four
             reasons, each named in the `errors` member:
 
             - `/unsold`: the request does not say whether the product was an
@@ -1190,7 +1190,10 @@ paths:
               points;
             - `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product
               (unsold, a CN code in Annex VII, from 19 July 2026, an operator that
-              is not exempt) and no point is cited.
+              is not exempt) and no point is cited;
+            - `/materialRecovery`: the value holds a number dpp-core cannot hash
+              exactly, such as an integer too large for a double to hold, so the
+              declaration could not be chained into the audit trail.
 
             A name that is not one of the points is not a derogation and fails as
             the body is read.
@@ -6337,7 +6340,10 @@ components:
           type:
             - object
             - 'null'
-          description: Optional recovered-material summary (Battery Annex XIII circularity).
+          description: |
+            Optional recovered-material summary (Battery Annex XIII circularity).
+            A number dpp-core cannot hash exactly, such as an integer too large for a
+            double to hold, is refused with `422` naming `/materialRecovery`.
         notes:
           type:
             - string

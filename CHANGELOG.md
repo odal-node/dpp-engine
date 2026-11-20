@@ -146,6 +146,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **An end-of-life declaration whose `materialRecovery` holds a number dpp-core
+  cannot hash is refused with `422` naming `/materialRecovery`, instead of a `500`.**
+  dpp-core 0.24.0 refuses an integer too large for a double to hold exactly. The
+  summary is free JSON that becomes audit metadata, and `PassportAuditEntry::chain_hash`
+  panicked on the refusal, so the request ended in a panic, a `500`, and a rolled-back
+  declaration. `chain_hash` now returns a `Result`: writing an entry that cannot be
+  hashed answers `422`, and `verify_audit_chain` reports an entry that cannot be
+  hashed as a break at its index, so a stored or uploaded one cannot panic it either.
+  (#600, #650)
+
 - **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
   to -0573. All eight were published on 16 November against a dependency tree that
   had not changed, and they cover:
