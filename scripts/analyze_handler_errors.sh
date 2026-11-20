@@ -14,33 +14,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CRATES_DIR="$PROJECT_ROOT/crates"
 
-# CODE_TOKENS from openapi_contract.rs — error tokens and their HTTP codes
-# Format: "token|code"
-CODE_TOKENS=(
-    "not_found_error(|404"
-    "conflict_error(|409"
-    "refused_chain_error(|409"
-    "validation_error(|422"
-    "require_write(|403"
-    "require_admin(|403"
-    "RequireWrite|403"
-    "RequireAdmin|403"
-    "parse_passport_id(|400"
-    "http_problem::not_found(|404"
-    "http_problem::bad_request(|400"
-    "http_problem::unprocessable(|422"
-    "StatusCode::BAD_REQUEST|400"
-    "StatusCode::FORBIDDEN|403"
-    "StatusCode::NOT_FOUND|404"
-    "StatusCode::NOT_ACCEPTABLE|406"
-    "StatusCode::CONFLICT|409"
-    "StatusCode::GONE|410"
-    "StatusCode::UNPROCESSABLE_ENTITY|422"
-    "StatusCode::NOT_IMPLEMENTED|501"
-    "StatusCode::BAD_GATEWAY|502"
-    "StatusCode::SERVICE_UNAVAILABLE|503"
-)
-
 # Map error codes to status tokens used in tests
 declare -A CODE_TO_STATUS_TOKEN
 CODE_TO_STATUS_TOKEN[400]="StatusCode::BAD_REQUEST"
