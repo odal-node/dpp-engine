@@ -237,7 +237,10 @@ async fn a_body_that_is_not_json_is_a_bad_request() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_removed_line_route_is_gone() {
     let s = setup(None).await;
+    // The description no longer documents the route either, so there is no
+    // response to check against it: the `404` is the assertion.
     let resp = TestClient::new(&s.base, &s.write)
+        .unchecked()
         .post_json(
             "/api/v1/unsold-goods",
             serde_json::json!({ "reportingPeriod": "2026", "unitCount": 1, "volumeKg": 1.0 }),
