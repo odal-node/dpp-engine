@@ -201,6 +201,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   Only the lockfile changes. (#647)
 
+- **A battery passport at schema 2.7.0 or later is now served from the resolver's
+  JSON door with `batchId` and `serialNumber`, and its body matches its
+  `publicJwsSignature`.** Those schemas open both envelope fields to the public, so
+  the vault signs a public view that carries them. The resolver filtered the
+  envelope with a policy that has no openings and dropped both fields, then
+  attached the proof over the full view: the body it served failed verification.
+  The resolver now takes the envelope policy from the same composition the vault
+  uses, and its parity test runs at every battery schema version core embeds, so a
+  schema that adds an opening is caught the day it ships. (#375, #653)
+
 - **`wasmtime` and `wasmtime-wasi` 50.0.2 → 50.0.3, and `sad-rsa` 0.10.2 →
   0.10.4**, clearing RUSTSEC-2026-0587 and RUSTSEC-2026-0583, both published on
   19 November:
