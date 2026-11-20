@@ -26,6 +26,12 @@
 //! `upgrade_fixture_coverage.rs` fails a release pull request whose predecessor
 //! has none.
 //!
+//! A fixture captured since 0.16.0 also holds the key store that node signed with
+//! (`keystore.enc`) and its passphrase (`keystore.passphrase`). The upgraded node
+//! opens a copy of that store, and the test checks that the signatures the release
+//! stored still verify against the DID document the upgraded node serves. An
+//! earlier fixture has no store and is upgraded with a fresh one.
+//!
 //! Each fixture has a test of its own, `v<X>_<Y>_<Z>_upgrades_to_this_build`, so
 //! each upgrade is held to the slow-test budget alone and a failure names the
 //! release. One test over every fixture grew by a node boot per release and went
@@ -67,6 +73,13 @@ impl Node {
     /// `DATABASE_MIGRATE_URL` set it applies its migrations at boot, as a
     /// deployment does.
     async fn start(pg: &RawPg) -> Node {
+        Node::start_with(pg, None).await
+    }
+
+    /// As `start`, with the key store and DID of an earlier release when given.
+    /// The store is copied into the node's own temporary directory first, so
+    /// nothing a node does can rewrite the committed file.
+    async fn start_with(pg: &RawPg, identity: Option<&FixtureIdentity>) -> Node {
         let dir = tempfile::tempdir().expect("node dir");
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|l| l.local_addr())
@@ -76,15 +89,26 @@ impl Node {
         let admin_password = uuid::Uuid::new_v4().to_string();
         fs::create_dir(dir.path().join("plugins")).expect("plugins dir");
         let log = fs::File::create(dir.path().join("node.log")).expect("node log");
+        let key_store = dir.path().join("keystore.enc");
+        let (passphrase, did_web_base_url) = match identity {
+            Some(identity) => {
+                fs::copy(&identity.store, &key_store).expect("copy the fixture's key store");
+                (
+                    identity.passphrase.clone(),
+                    identity.did_web_base_url.clone(),
+                )
+            }
+            None => (uuid::Uuid::new_v4().to_string(), base.clone()),
+        };
         let child = Command::new(env!("CARGO_BIN_EXE_dpp-node"))
             .current_dir(dir.path())
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("DATABASE_URL", &pg.app_url)
             .env("DATABASE_MIGRATE_URL", &pg.admin_url)
-            .env("KEY_STORE_PATH", dir.path().join("keystore.enc"))
-            .env("KEY_STORE_PASSPHRASE", uuid::Uuid::new_v4().to_string())
-            .env("DID_WEB_BASE_URL", &base)
+            .env("KEY_STORE_PATH", &key_store)
+            .env("KEY_STORE_PASSPHRASE", passphrase)
+            .env("DID_WEB_BASE_URL", did_web_base_url)
             .env("RESOLVER_BASE_URL", "http://127.0.0.1:1")
             .env("PORT", port.to_string())
             .env("NODE_PORT", port.to_string())
@@ -493,6 +517,124 @@ fn latest_migration() -> i64 {
         .expect("ops/pg holds migrations")
 }
 
+/// The key store a release left beside its dump, and the DID its signatures name.
+///
+/// Releases captured before the script kept the store have none. The DID is
+/// read from the stored signatures rather than recorded a second time: a
+/// signature's `kid` is `<did>#<key id>`, and a DID document is only found for
+/// it when the upgraded node is configured with the same `did:web` host, as an
+/// operator upgrading in place is.
+struct FixtureIdentity {
+    store: PathBuf,
+    passphrase: String,
+    did_web_base_url: String,
+}
+
+impl FixtureIdentity {
+    fn of(fixture: &Path, stored_signatures: &[(String, String)]) -> Option<FixtureIdentity> {
+        let store = fixture.join("keystore.enc");
+        if !store.is_file() {
+            return None;
+        }
+        let passphrase = fs::read_to_string(fixture.join("keystore.passphrase"))
+            .expect("a fixture with a key store carries keystore.passphrase")
+            .trim()
+            .to_owned();
+        let (_, jws) = stored_signatures
+            .first()
+            .expect("a fixture holds a stored signature");
+        let header = base64::Engine::decode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            jws.split('.').next().unwrap_or_default(),
+        )
+        .expect("a signature header is base64url");
+        let header: Value = serde_json::from_slice(&header).expect("a signature header is JSON");
+        let did = header["kid"]
+            .as_str()
+            .and_then(|kid| kid.split_once('#'))
+            .and_then(|(did, _)| did.strip_prefix("did:web:"))
+            .expect("a stored signature names a did:web key");
+        Some(FixtureIdentity {
+            store,
+            passphrase,
+            did_web_base_url: format!("http://{}", did.replace("%3A", ":")),
+        })
+    }
+}
+
+/// The DID document an upgraded node serves, and the one key that signed what the
+/// release stored.
+struct StoredSigner {
+    did: Value,
+    key: String,
+}
+
+impl StoredSigner {
+    /// Serve the node's DID document and check each signature the release made
+    /// against it: a store the upgraded node could not open, or one it opened
+    /// differently, would leave a document that names another key or none.
+    async fn of(
+        node: &Node,
+        release: &str,
+        stored_signatures: &[(String, String)],
+    ) -> StoredSigner {
+        let response = node
+            .http
+            .get(node.url("/identity/.well-known/did.json"))
+            .send()
+            .await
+            .expect("DID document read");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{release}: the upgraded node serves its DID document"
+        );
+        let did: Value = response.json().await.expect("DID document body");
+        let mut key = None;
+        for (id, jws) in stored_signatures {
+            let signed_by =
+                verified_key(release, &did, &format!("the stored signature of {id}"), jws);
+            let first = key.get_or_insert_with(|| signed_by.clone());
+            assert_eq!(
+                *first, signed_by,
+                "{release}: the fixture node signed with one key, and {id} was not signed with it"
+            );
+        }
+        StoredSigner {
+            did,
+            key: key.expect("a fixture holds a stored signature"),
+        }
+    }
+
+    /// `jws` verifies against the DID document, and the key is the one that
+    /// signed what the release stored.
+    fn assert_signed(&self, release: &str, what: &str, jws: &str) {
+        let key = verified_key(release, &self.did, what, jws);
+        assert_eq!(
+            key, self.key,
+            "{release}: {what} is signed with a different key than the release's"
+        );
+    }
+}
+
+/// The key `did` names for `jws`, once `jws` verifies against it. Uses the
+/// resolution and verification the vault and resolver use, not a verifier of its
+/// own.
+fn verified_key(release: &str, did: &Value, what: &str, jws: &str) -> String {
+    let key = dpp_crypto::jws::resolve_verification_key(did, jws).unwrap_or_else(|| {
+        panic!(
+            "{release}: the DID document the upgraded node serves names no key for {what}: {did}"
+        )
+    });
+    let verifies = dpp_crypto::jws::verify_jws(jws, &key)
+        .unwrap_or_else(|e| panic!("{release}: {what} cannot be verified: {e}"));
+    assert!(
+        verifies,
+        "{release}: {what} does not verify against the DID document the upgraded node serves"
+    );
+    key
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn v0_14_0_upgrades_to_this_build() {
     upgrade_from(&fixture("v0.14.0")).await;
@@ -545,7 +687,28 @@ async fn upgrade_from(fixture: &Path) {
         "{release}: the fixture holds no published passport"
     );
 
-    let node = Node::start(&pg).await;
+    // The signatures the release made, as it stored them.
+    let stored_signatures: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id::text, doc->>'jwsSignature' FROM odal.passport \
+         WHERE retention_locked AND doc->>'jwsSignature' IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("read the stored signatures");
+    assert_eq!(
+        stored_signatures.len(),
+        signed.len(),
+        "{release}: every published passport carries the signature the release made"
+    );
+
+    // A release that kept its key store has it opened by the upgraded node, as an
+    // operator's own would be. One that did not is upgraded with a fresh store.
+    let identity = FixtureIdentity::of(fixture, &stored_signatures);
+    let node = Node::start_with(&pg, identity.as_ref()).await;
+    let signer = match &identity {
+        Some(_) => Some(StoredSigner::of(&node, release, &stored_signatures).await),
+        None => None,
+    };
 
     let applied: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
         .fetch_one(&admin)
@@ -637,12 +800,30 @@ async fn upgrade_from(fixture: &Path) {
                     .await;
                 assert_eq!(code, StatusCode::OK, "{release}: re-activate {id}: {body}");
             }
-            // A draft may meet a rule added since it was written and be
-            // refused, which is not an upgrade defect. `send` still fails on a
-            // server error.
+            // A draft stored before the upgrade publishes after it: its
+            // stored determination carries no `inputHash`, and publish
+            // computes the determination again over the content it signs.
             "draft" => {
-                node.admin(Method::POST, &format!("{path}/publish"), None)
+                let (code, body) = node
+                    .admin(Method::POST, &format!("{path}/publish"), None)
                     .await;
+                assert_eq!(
+                    code,
+                    StatusCode::OK,
+                    "{release}: publish the draft {id}: {body}"
+                );
+                assert_eq!(
+                    body["status"], "active",
+                    "{release}: the draft {id} is active once published: {body}"
+                );
+                let jws = body["jwsSignature"].as_str().unwrap_or_default();
+                assert!(
+                    !jws.is_empty(),
+                    "{release}: the draft {id} is signed once published: {body}"
+                );
+                if let Some(signer) = &signer {
+                    signer.assert_signed(release, &format!("the published draft {id}"), jws);
+                }
             }
             _ => {}
         }

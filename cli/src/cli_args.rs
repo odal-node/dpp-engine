@@ -116,10 +116,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: CredentialCommands,
     },
-    /// Record and read the ESPR Art. 24 disclosure of unsold consumer products.
+    /// Record the ESPR Art. 24 and Art. 25 discards of unsold consumer products,
+    /// and the documents that stand behind them.
     ///
     /// Not a passport: Art. 24's subject is an operator over a financial year,
-    /// so these lines belong to the operator and not to any product.
+    /// so these records belong to the operator and not to any product.
     #[command(name = "unsold-goods")]
     UnsoldGoods {
         #[command(subcommand)]
@@ -398,6 +399,11 @@ pub enum PassportCommands {
         /// Free-text note recorded with the declaration
         #[arg(long)]
         notes: Option<String>,
+        /// The discard record that documents this destruction, by its id. Only
+        /// with `--reason destroyed`. The record must cite the same derogation
+        /// point as `--derogation`, or both must cite none
+        #[arg(long = "discard-record", value_name = "RECORD_ID")]
+        discard_record: Option<String>,
     },
     /// Walk and verify the component (BOM) tree — checks each node's signed
     /// public view against the hash pinned by its parent
@@ -848,52 +854,45 @@ pub enum CredentialCommands {
 
 #[derive(Subcommand)]
 pub enum UnsoldGoodsCommands {
-    /// Record one line of the Art. 24 disclosure.
+    /// Record one discard of unsold consumer products from a JSON file.
     ///
-    /// A disclosure is many of these, not one row: Art. 24(1) asks for the
-    /// figures "differentiated per type or category of products", and
-    /// separately per reason and destination, which a single aggregate cannot
-    /// express. The operator is not part of the line — the report is about this
-    /// node's own operator, taken from its config.
+    /// The file holds the record as dpp-core's discard-record schema describes
+    /// it. The node checks it against that schema as sent and answers what is
+    /// wrong, so the shape is not restated here.
     Record {
-        /// Financial year the goods were discarded in, as YYYY
-        #[arg(long)]
-        period: String,
-        /// How many products. Art. 24(1)(a) asks for the number *and* the
-        /// weight, so both are required.
-        #[arg(long)]
-        units: i64,
-        /// Their total weight in kilograms
-        #[arg(long)]
-        kg: f64,
-        /// The operator's own categorisation, for Art. 24(1)(a). Not Annex VII
-        /// ban scope — that is a CN-code prefix test this does not perform.
-        #[arg(long, value_parser = ["apparel", "footwear", "homeTextile", "accessories", "other"])]
-        category: String,
-        /// Why the goods went unsold, for Art. 24(1)(b)
-        #[arg(long, value_parser = ["endOfSeason", "qualityDefect", "packagingDefect", "overProduction", "customerReturn", "other"])]
-        reason: String,
-        /// Where they went, for Art. 24(1)(c)
-        #[arg(long, value_parser = ["donation", "recycling", "repurposing", "supplierReturn", "exemptDestruction"])]
-        destination: String,
-        /// Which Art. 25 exemption a destruction relies on. Required for
-        /// `--destination exemptDestruction`, and refused for every other
-        /// destination — a justification attached to a donation describes
-        /// nothing.
-        #[arg(long)]
-        justification: Option<String>,
-        /// ISO 3166-1 alpha-2 country the goods were disposed of in
-        #[arg(long)]
-        country: String,
+        /// The JSON file holding the discard record
+        file: std::path::PathBuf,
+        /// A passport of a unit this discard discards. Repeat for each one.
+        #[arg(long = "passport")]
+        passports: Vec<String>,
     },
-    /// List recorded disclosure lines, newest first
+    /// List the discard records of a financial year, earliest discard first
     List {
-        /// Narrow to one financial year (YYYY). Omit for every period.
+        /// First day of the financial year, as YYYY-MM-DD
         #[arg(long)]
-        period: Option<String>,
+        start: String,
+        /// Last day of the financial year, as YYYY-MM-DD
+        #[arg(long)]
+        end: String,
         /// Output raw JSON instead of a table
         #[arg(long)]
         json: bool,
+    },
+    /// Attach a document to a discard record under an evidence kind
+    Attach {
+        /// The discard record's id
+        record: String,
+        /// The evidence kind, as dpp-core names it, for example deliveryDocumentation
+        #[arg(long)]
+        kind: String,
+        /// The document to attach
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Show the evidence a discard record still lacks
+    Missing {
+        /// The discard record's id
+        record: String,
     },
 }
 

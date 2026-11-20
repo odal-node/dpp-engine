@@ -65,7 +65,10 @@ use crate::{
             transfer_accept_handler, transfer_cancel_handler, transfer_initiate_handler,
             transfer_reject_handler,
         },
-        unsold_goods::{unsold_goods_create_handler, unsold_goods_list_handler},
+        unsold_goods::{
+            discard_record_attach_handler, discard_record_create_handler,
+            discard_record_list_handler, discard_record_missing_handler, evidence_body_limit,
+        },
         update::update_handler,
         validate::validate_handler,
         verify_tree::verify_tree_handler,
@@ -190,8 +193,16 @@ pub fn build(state: AppState) -> Router {
             delete(personal_data_erase_handler),
         )
         .route(
-            "/unsold-goods",
-            get(unsold_goods_list_handler).post(unsold_goods_create_handler),
+            "/discard-records",
+            get(discard_record_list_handler).post(discard_record_create_handler),
+        )
+        .route(
+            "/discard-records/{id}/evidence",
+            post(discard_record_attach_handler).layer(evidence_body_limit()),
+        )
+        .route(
+            "/discard-records/{id}/missing-evidence",
+            get(discard_record_missing_handler),
         )
         // ── Dated obligations (the calendar, and the notices announced from it) ──
         // Any scope: a read, like `/stats`. It reports what the calendar holds,

@@ -40,7 +40,18 @@ post:
     '404':
       $ref: ../../components/responses/NotFound.yaml
     '409':
-      $ref: ../../components/responses/Conflict.yaml
+      description: |
+        The passport is not published, so it cannot be transferred.
+
+        Also the stored transfer chain is one dpp-core refuses to read: it breaks
+        the chain's invariants, for instance a record for another passport, a
+        broken operator sequence, or a completion without both signatures. The
+        detail names the passport and the record dpp-core cited. Nothing is
+        written.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml
     '400':

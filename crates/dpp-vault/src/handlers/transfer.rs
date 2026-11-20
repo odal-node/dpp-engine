@@ -9,13 +9,14 @@ use axum::{
 };
 use dpp_domain::operator::ResponsibleOperator;
 use dpp_domain::transfer::TransferReason;
+use dpp_types::transfer::ChainError;
 use serde::{Deserialize, Serialize};
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
     conflict_error, field_validation_error, internal_error, not_found_error, parse_passport_id,
-    require_write, validation_error,
+    refused_chain_error, require_write, validation_error,
 };
 use crate::extract::Json;
 use crate::middleware::scope::RequireWrite;
@@ -82,12 +83,17 @@ pub async fn transfer_initiate_handler(
         .await
     {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
-        Err(dpp_domain::DppError::InvalidTransition { .. }) => {
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
+            not_found_error("DPP not found.")
+        }
+        Err(ChainError::Other(dpp_domain::DppError::InvalidTransition { .. })) => {
             conflict_error("Only a published DPP can be transferred.")
         }
-        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
-        Err(e) => internal_error(e),
+        Err(ChainError::Other(dpp_domain::DppError::Validation(errs))) => {
+            field_validation_error(&errs)
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 
@@ -107,11 +113,14 @@ pub async fn transfer_accept_handler(
     };
     match state.service.accept_transfer(id, &auth).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
             not_found_error("No transfer to accept for this DPP.")
         }
-        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
-        Err(e) => internal_error(e),
+        Err(ChainError::Other(dpp_domain::DppError::Validation(errs))) => {
+            field_validation_error(&errs)
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 
@@ -140,11 +149,14 @@ pub async fn transfer_reject_handler(
     };
     match state.service.reject_transfer(id, &auth).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
             not_found_error("No transfer to reject for this DPP.")
         }
-        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
-        Err(e) => internal_error(e),
+        Err(ChainError::Other(dpp_domain::DppError::Validation(errs))) => {
+            field_validation_error(&errs)
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 
@@ -168,11 +180,14 @@ pub async fn transfer_cancel_handler(
     };
     match state.service.cancel_transfer(id, &auth).await {
         Ok(r) => (StatusCode::OK, Json(r)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => {
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
             not_found_error("No transfer to cancel for this DPP.")
         }
-        Err(dpp_domain::DppError::Validation(errs)) => field_validation_error(&errs),
-        Err(e) => internal_error(e),
+        Err(ChainError::Other(dpp_domain::DppError::Validation(errs))) => {
+            field_validation_error(&errs)
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 

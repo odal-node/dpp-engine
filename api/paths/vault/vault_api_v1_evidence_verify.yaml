@@ -1,9 +1,15 @@
 post:
   operationId: verifyUploadedEvidenceDossier
   summary: Verify an uploaded dossier document
-  description: >-
+  description: |
     Same checks as the stored-dossier verify endpoint, run against an uploaded
     document instead.
+
+    A `transferChain` member that dpp-core refuses to read is a failed
+    `transfer_chain` check in a `200` report, naming the passport and the
+    record dpp-core cited, with every other check reported as usual. A
+    `transferChain` that is malformed in any other way is a `422`, like any
+    other malformed dossier.
   tags:
     - Evidence Dossiers
   security:

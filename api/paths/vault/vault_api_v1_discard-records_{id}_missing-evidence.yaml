@@ -1,0 +1,38 @@
+get:
+  operationId: discardRecordMissingEvidence
+  summary: Show the evidence a discard record still lacks
+  description: |
+    The requirements of the discard record that no attached document meets,
+    read against the operator's enterprise size. An operator that has stated no
+    size is read as large. A micro or small enterprise, or a medium-sized one
+    before 19 July 2030, owes nothing for a discard, so its list is empty.
+
+    Admin rather than write, as the listing is.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      description: The discard record's id.
+      schema:
+        type: string
+        format: uuid
+  responses:
+    '200':
+      description: What the record still lacks.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/MissingEvidence.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml

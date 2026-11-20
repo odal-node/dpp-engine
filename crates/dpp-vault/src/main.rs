@@ -74,7 +74,8 @@ async fn main() -> anyhow::Result<()> {
     let evidence_repo = Arc::new(PgEvidenceDossierRepo::new(dal.clone()));
     let webhook_repo = Arc::new(PgWebhookRepo::new(dal.clone()));
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
-    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let discard_records = Arc::new(dpp_dal::pg::PgDiscardRecordRepo::new(dal.clone()));
+    let evidence_store = Arc::new(dpp_dal::pg::PgEvidenceFileRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
     let obligation_notices = Arc::new(dpp_dal::pg::PgObligationNoticeRepo::new(dal.clone()));
 
@@ -181,7 +182,8 @@ async fn main() -> anyhow::Result<()> {
         credential_issuer: None,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo,
-        unsold_goods_repo,
+        discard_records,
+        evidence_store,
         personal_data,
         // The standalone vault announces nothing, so its ledger reads empty; the
         // calendar it answers from is the built-in one, with no ruleset applied.

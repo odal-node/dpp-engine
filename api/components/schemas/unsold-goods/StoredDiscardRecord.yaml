@@ -1,0 +1,30 @@
+type: object
+description: A stored discard record, as the node holds it. Append-only.
+required:
+  - id
+  - schemaVersion
+  - record
+  - passportIds
+  - createdAt
+additionalProperties: false
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Minted by the node when the record is stored.
+  schemaVersion:
+    type: string
+    example: '1.0.0'
+    description: The version of dpp-core's discard-record schema the record was checked against.
+  record:
+    type: object
+    description: The discard, as dpp-core's discard-record schema describes it.
+  passportIds:
+    type: array
+    description: The passports of the units this discard discards, sorted.
+    items:
+      type: string
+      format: uuid
+  createdAt:
+    type: string
+    format: date-time

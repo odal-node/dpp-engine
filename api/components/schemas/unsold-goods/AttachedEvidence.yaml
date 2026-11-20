@@ -1,0 +1,22 @@
+type: object
+description: A document attached to a discard record.
+required:
+  - discardRecordId
+  - kind
+  - sha256
+  - sizeBytes
+additionalProperties: false
+properties:
+  discardRecordId:
+    type: string
+    format: uuid
+  kind:
+    $ref: EvidenceKind.yaml
+  sha256:
+    type: string
+    pattern: '^[0-9a-f]{64}$'
+    description: Lower-case hex SHA-256 of the stored bytes. The file's identity.
+  sizeBytes:
+    type: integer
+    format: int64
+    minimum: 0

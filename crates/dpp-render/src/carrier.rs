@@ -1,5 +1,6 @@
 //! GS1 Digital Link carrier URI construction.
 
+use qrcode::EcLevel;
 use serde_json::Value;
 
 /// The quiet zone every rendering of a carrier must leave around the symbol,
@@ -31,7 +32,16 @@ use serde_json::Value;
 /// allowed to get wrong now has one home.
 pub const QR_QUIET_ZONE_MODULES: u32 = 4;
 
-/// The URI this passport's carrier (QR/Data Matrix) encodes: the `qrCodeUrl`
+/// The error-correction level both carrier renderers encode at.
+///
+/// M lets about 15% of a symbol's codewords be damaged or lost and still be
+/// read, which suits a URL printed on a clean label. It is the level
+/// `QrCode::new` has always used, so the symbol printed today does not change.
+/// Naming it means a dependency update cannot change it unseen: both renderers
+/// pass this constant to `QrCode::with_error_correction_level`.
+pub const QR_ERROR_CORRECTION: EcLevel = EcLevel::M;
+
+/// The URI this passport's carrier (its QR code) encodes: the `qrCodeUrl`
 /// the node signed into the passport at publish. `None` when the view carries
 /// none.
 ///
