@@ -33,7 +33,7 @@ use dpp_types::{
     evidence::{
         EvidenceDossierRecord, EvidenceDossierRepository, EvidenceDossierSummary, content_hash,
     },
-    transfer::{TransferStore, VersionedChain},
+    transfer::{ChainError, TransferStore, VersionedChain},
 };
 use dpp_vault::domain::service::{OperatorIdentity, PassportService};
 
@@ -61,7 +61,7 @@ impl AuditRepository for InMemoryAuditRepo {
             .and_then(|e| e.entry_hash.clone())
             .unwrap_or_else(|| GENESIS_PREV_HASH.to_owned());
         let mut entry = entry;
-        entry.entry_hash = Some(entry.chain_hash(&prev_hash));
+        entry.entry_hash = Some(entry.chain_hash(&prev_hash).expect("test entry hashes"));
         entry.prev_hash = Some(prev_hash);
         entries.push(entry);
         Ok(())
@@ -88,7 +88,10 @@ struct InMemoryTransferStore {
 
 #[async_trait]
 impl TransferStore for InMemoryTransferStore {
-    async fn get_chain(&self, passport_id: PassportId) -> Result<Option<VersionedChain>, DppError> {
+    async fn get_chain(
+        &self,
+        passport_id: PassportId,
+    ) -> Result<Option<VersionedChain>, ChainError> {
         // This double never advances a revision: nothing here writes a chain
         // through the state-change log, which is the only reader of one.
         Ok(self
@@ -157,7 +160,7 @@ impl EvidenceDossierRepository for InMemoryEvidenceRepo {
         summaries.sort_by_key(|s| std::cmp::Reverse(s.created_at));
         Ok(summaries)
     }
-    async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, DppError> {
+    async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, ChainError> {
         Ok(self
             .records
             .lock()
@@ -165,6 +168,17 @@ impl EvidenceDossierRepository for InMemoryEvidenceRepo {
             .iter()
             .find(|r| r.id == id)
             .cloned())
+    }
+    async fn get_document(&self, id: Uuid) -> Result<Option<serde_json::Value>, DppError> {
+        self.records
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| {
+                serde_json::to_value(&r.dossier).map_err(|e| DppError::Serialisation(e.to_string()))
+            })
+            .transpose()
     }
 }
 
@@ -300,7 +314,7 @@ async fn generate_evidence_fails_for_a_draft_passport() {
         .generate_evidence(created.id, &auth)
         .await
         .expect_err("draft passport has no signature to export");
-    assert!(matches!(err, DppError::Validation(_)));
+    assert!(matches!(err, ChainError::Other(DppError::Validation(_))));
 }
 
 #[tokio::test]
@@ -356,7 +370,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         issuer_did.clone(),
     );
     service
-        .declare_eol(published.id, eol, false, &auth)
+        .declare_eol(published.id, eol, false, None, &auth)
         .await
         .expect("declare eol");
 

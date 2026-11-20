@@ -273,16 +273,18 @@ components:
       $ref: components/schemas/access/IssueCredentialRequest.yaml
     IssuedCredential:
       $ref: components/schemas/access/IssuedCredential.yaml
-    CreateUnsoldGoodsEntry:
-      $ref: components/schemas/unsold-goods/CreateUnsoldGoodsEntry.yaml
-    UnsoldGoodsEntry:
-      $ref: components/schemas/unsold-goods/UnsoldGoodsEntry.yaml
-    UnsoldProductCategory:
-      $ref: components/schemas/unsold-goods/UnsoldProductCategory.yaml
-    UnsoldDiscardReason:
-      $ref: components/schemas/unsold-goods/UnsoldDiscardReason.yaml
-    UnsoldDestination:
-      $ref: components/schemas/unsold-goods/UnsoldDestination.yaml
+    CreateDiscardRecordRequest:
+      $ref: components/schemas/unsold-goods/CreateDiscardRecordRequest.yaml
+    StoredDiscardRecord:
+      $ref: components/schemas/unsold-goods/StoredDiscardRecord.yaml
+    AttachedEvidence:
+      $ref: components/schemas/unsold-goods/AttachedEvidence.yaml
+    MissingEvidence:
+      $ref: components/schemas/unsold-goods/MissingEvidence.yaml
+    EvidenceRequirement:
+      $ref: components/schemas/unsold-goods/EvidenceRequirement.yaml
+    EvidenceKind:
+      $ref: components/schemas/unsold-goods/EvidenceKind.yaml
     CreatedApiKeyResponse:
       $ref: components/schemas/access/CreatedApiKeyResponse.yaml
     WebhookSubscription:
@@ -466,8 +468,12 @@ paths:
     $ref: paths/vault/vault_api_v1_credentials.yaml
   /vault/api/v1/personal-data/{record}:
     $ref: paths/vault/vault_api_v1_personal-data_{record}.yaml
-  /vault/api/v1/unsold-goods:
-    $ref: paths/vault/vault_api_v1_unsold-goods.yaml
+  /vault/api/v1/discard-records:
+    $ref: paths/vault/vault_api_v1_discard-records.yaml
+  /vault/api/v1/discard-records/{id}/evidence:
+    $ref: paths/vault/vault_api_v1_discard-records_{id}_evidence.yaml
+  /vault/api/v1/discard-records/{id}/missing-evidence:
+    $ref: paths/vault/vault_api_v1_discard-records_{id}_missing-evidence.yaml
   /vault/api/v1/obligations:
     $ref: paths/vault/vault_api_v1_obligations.yaml
   /vault/api/v1/webhooks:

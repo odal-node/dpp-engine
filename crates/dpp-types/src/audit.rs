@@ -127,8 +127,15 @@ impl PassportAuditEntry {
     /// `prev_hash`/`entry_hash` columns themselves (prev is folded in as
     /// `prevHash`), and excludes `request_id` — see that field for why.
     /// Deterministic — the same content + prev always hashes equal.
-    #[must_use]
-    pub fn chain_hash(&self, prev_hash: &str) -> String {
+    ///
+    /// # Errors
+    ///
+    /// The refusal of [`dpp_rules::canonical::content_hash`], which decides
+    /// whether a value can be hashed. `metadata` is free JSON, and a value
+    /// parsed from it can be one the hasher refuses: dpp-core 0.24.0 refuses an
+    /// integer whose magnitude is beyond 2^53 − 1, which `serde_json` parses
+    /// without complaint. An entry whose metadata holds one has no chain hash.
+    pub fn chain_hash(&self, prev_hash: &str) -> Result<String, serde_json::Error> {
         let canonical = serde_json::json!({
             "id": self.id,
             "passportId": self.passport_id,
@@ -143,15 +150,7 @@ impl PassportAuditEntry {
         // Same canonical hasher the evidence dossier and the signed-ruleset
         // channel use — one JCS implementation across both repos, so an audit
         // chain and a dossier can never disagree about what a value hashes to.
-        //
-        // The `expect` is retained deliberately: unlike a dossier member, this
-        // input is assembled here from typed struct fields, and the only
-        // free-form part (`metadata`) has already survived `serde_json`
-        // deserialisation, which rejects the non-finite floats RFC 8785 refuses.
-        // Making this fallible would ripple a `Result` through the whole audit
-        // chain for a branch nothing can currently reach.
         dpp_rules::canonical::content_hash(&canonical)
-            .expect("audit content is struct-built and already parsed; JCS cannot reject it")
     }
 }
 
@@ -171,7 +170,8 @@ pub struct AuditChainBreak {
 /// `entries` must be in chain order (ascending timestamp). Returns the first
 /// break: either a `prev_hash` that doesn't point at the prior entry, or an
 /// `entry_hash` that doesn't match the entry's recomputed content hash (a
-/// tampered row). `Ok(())` means every link verifies.
+/// tampered row), or an entry whose content cannot be hashed at all. `Ok(())`
+/// means every link verifies.
 ///
 /// This detects any tamper that does not re-hash the *entire forward chain*;
 /// pinning the head with a signed checkpoint is what makes a full re-hash
@@ -192,7 +192,16 @@ pub fn verify_audit_chain(entries: &[PassportAuditEntry]) -> Result<(), AuditCha
                 ),
             });
         }
-        let recomputed = entry.chain_hash(&expected_prev);
+        let recomputed = match entry.chain_hash(&expected_prev) {
+            Ok(hash) => hash,
+            Err(e) => {
+                return Err(AuditChainBreak {
+                    index,
+                    passport_id: entry.passport_id.clone(),
+                    reason: format!("entry content cannot be hashed: {e}"),
+                });
+            }
+        };
         let stored_hash = entry.entry_hash.as_deref().unwrap_or("");
         if stored_hash != recomputed {
             return Err(AuditChainBreak {
@@ -255,7 +264,7 @@ mod tests {
             entry_hash: None,
         };
         assert_eq!(
-            fixed.chain_hash(GENESIS_PREV_HASH),
+            fixed.chain_hash(GENESIS_PREV_HASH).unwrap(),
             "0592182c5db2456feb341752f9fb1e8f667ca1a8c25784f52d4bb005d0a05347"
         );
     }
@@ -292,7 +301,7 @@ mod tests {
     fn chain(entries: &mut [PassportAuditEntry]) {
         let mut prev = GENESIS_PREV_HASH.to_owned();
         for e in entries.iter_mut() {
-            let h = e.chain_hash(&prev);
+            let h = e.chain_hash(&prev).unwrap();
             e.prev_hash = Some(prev.clone());
             e.entry_hash = Some(h.clone());
             prev = h;
@@ -302,8 +311,42 @@ mod tests {
     #[test]
     fn chain_hash_is_deterministic_and_prev_sensitive() {
         let e = entry("created");
-        assert_eq!(e.chain_hash(""), e.chain_hash(""));
-        assert_ne!(e.chain_hash(""), e.chain_hash("deadbeef"));
+        assert_eq!(e.chain_hash("").unwrap(), e.chain_hash("").unwrap());
+        assert_ne!(e.chain_hash("").unwrap(), e.chain_hash("deadbeef").unwrap());
+    }
+
+    /// An integer beyond 2^53 − 1 parses as JSON and is refused by the hasher.
+    /// Each case is built by parsing text, as a request body or a stored row
+    /// reaches the entry.
+    fn entry_with_unhashable_metadata() -> PassportAuditEntry {
+        let metadata: serde_json::Value =
+            serde_json::from_str(r#"{"materialRecovery": {"recovered": 9007199254740993}}"#)
+                .unwrap();
+        entry("deactivated").with_metadata(metadata)
+    }
+
+    /// `metadata` is free JSON, so the hash is a refusal the caller can see and
+    /// never a panic.
+    #[test]
+    fn chain_hash_refuses_metadata_the_hasher_cannot_hash() {
+        let e = entry_with_unhashable_metadata();
+        assert!(e.chain_hash(GENESIS_PREV_HASH).is_err());
+    }
+
+    /// A stored entry that cannot be hashed is a break at its index, naming its
+    /// passport, and the entries before it still verify.
+    #[test]
+    fn verify_reports_an_unhashable_entry_as_a_break_at_its_index() {
+        let mut es = vec![entry("created"), entry("published")];
+        chain(&mut es);
+        let mut bad = entry_with_unhashable_metadata();
+        bad.prev_hash = es[1].entry_hash.clone();
+        bad.entry_hash = Some("0".repeat(64));
+        es.push(bad);
+        let brk = verify_audit_chain(&es).expect_err("an unhashable entry is a break");
+        assert_eq!(brk.index, 2);
+        assert_eq!(brk.passport_id, "p1");
+        assert!(brk.reason.contains("cannot be hashed"), "{}", brk.reason);
     }
 
     #[test]

@@ -460,3 +460,54 @@ async fn a_completed_handover_says_responsibility_may_have_moved() {
         "the sealed names are frozen and must not be rewritten by a transfer"
     );
 }
+
+/// A stored chain dpp-core refuses leaves no honest answer for
+/// `responsibilityMayHaveTransferred`, and `false` would claim that
+/// responsibility has not moved. The seal is refused with `409` instead,
+/// naming the passport and the record core cited.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_chain_core_refuses_makes_the_seal_read_409() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let id = seed(&pg.dal, Some(envelope()), Some(JWS)).await;
+
+    // A completed record with no signature, which no route can write.
+    let record = "01990000-0000-7000-8000-0000000000aa";
+    let operator = |did: &str| serde_json::json!({ "did": did, "name": "Acme", "role": "distributor", "country": "DE" });
+    let chain = serde_json::json!({
+        "passportId": id,
+        "originalOperator": operator("did:web:acme.example"),
+        "transfers": [{
+            "transferId": record,
+            "passportId": id,
+            "fromOperator": operator("did:web:acme.example"),
+            "toOperator": operator("did:web:reco.example"),
+            "reason": "sale",
+            "fromSignature": null,
+            "nodeAcceptanceAttestation": null,
+            "initiatedAt": "2026-11-01T00:00:00Z",
+            "completedAt": "2026-11-02T00:00:00Z",
+            "notes": null
+        }]
+    });
+    dpp_dal::pg::sqlx::query(
+        "INSERT INTO odal.passport_transfer (passport_id, chain, updated_at) \
+         VALUES ($1, $2, now())",
+    )
+    .bind(id.0)
+    .bind(chain)
+    .execute(pg.dal.pool())
+    .await
+    .expect("store the refused chain");
+
+    let client = TestClient::new(&base, make_jwt(&op()));
+    let resp = client.get(&format!("/api/v1/dpp/{id}/seal")).await;
+    assert_eq!(resp.status(), 409);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let detail = body["detail"].as_str().expect("a problem detail");
+    assert!(
+        detail.contains(&id.to_string()),
+        "names the passport: {detail}"
+    );
+    assert!(detail.contains(record), "names the record: {detail}");
+}

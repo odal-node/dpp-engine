@@ -861,13 +861,13 @@ pub fn stamp_publish_obligations(
     Ok(())
 }
 
-/// Build the carrier (QR / Data Matrix) URL a passport should encode, on the
+/// Build the carrier (QR code) URL a passport should encode, on the
 /// node's configured resolver base.
 ///
 /// When the product group data carries a GTIN — every trade-item product group — produces a
 /// GS1 Digital Link (`{base}/01/{gtin}[/10/{batch}]/21/{serial}`) with a
 /// GS1-conformant 20-char serial derived from the passport id. When it does not
-/// (an unsold-goods report or untyped record, which identify no trade item),
+/// (an untyped record, which identifies no trade item),
 /// points at the passport's own resolver page on the same configured base —
 /// never a hardcoded host.
 ///
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn no_gtin_points_at_resolver_dpp_page() {
-        // An unsold-goods report / untyped record carries no trade-item GTIN, so
+        // An untyped record carries no trade-item GTIN, so
         // the carrier points at the passport's own page on the configured base —
         // never the old hardcoded `p.odal-node.io` host.
         let p = stub(); // product_group_data is None → no GTIN

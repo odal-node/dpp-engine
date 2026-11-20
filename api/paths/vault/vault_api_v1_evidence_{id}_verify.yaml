@@ -5,6 +5,13 @@ post:
     An integrity check against the stored dossier's own signatures and
     hash chains. A tamper is still a `200` response: the report's
     `checks` name which check failed.
+
+    A dossier whose transfer chain dpp-core refuses to read is reported the
+    same way: the `transfer_chain` check fails, naming the passport and the
+    record dpp-core cited, and every other check is reported as usual. That
+    report also carries an `input_fidelity` check, which compares the stored
+    document with what was read from it; the report of a dossier that reads
+    normally does not.
   tags:
     - Evidence Dossiers
   security:
@@ -28,3 +35,13 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
+    '409':
+      description: |
+        The stored dossier embeds a transfer chain that dpp-core refuses to
+        read, and the rest of the document cannot be read either, so there is
+        nothing to report on. The detail names the passport and the record
+        dpp-core cited.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
