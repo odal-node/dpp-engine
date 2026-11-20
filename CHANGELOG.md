@@ -159,6 +159,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
   Only the lockfile changes. (#647)
 
+- **`wasmtime` and `wasmtime-wasi` 50.0.2 → 50.0.3, and `sad-rsa` 0.10.2 →
+  0.10.4**, clearing RUSTSEC-2026-0587 and RUSTSEC-2026-0583, both published on
+  19 November:
+  - on Windows, a guest could leave its WASI filesystem sandbox through a path
+    component carrying a drive prefix. The plugin host grants a plugin no
+    directory, so there was none to leave;
+  - `sad-rsa`, which `xml-sec` uses for the seal crate's trusted-list signature
+    checks, could panic while constructing, validating or re-encoding an RSA
+    private key.
+
+  `crypto-bigint` and `ctutils` move a patch release with `sad-rsa`. Only the
+  lockfile changes. (#655)
+
 ## [0.16.0] - 2026-11-14
 
 ### Breaking
