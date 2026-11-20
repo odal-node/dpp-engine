@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use dpp_dal::pg::sqlx::Row;
 use dpp_dal::pg::{
-    PgAuditRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo, PgStateChangeLog,
-    PgTransferRepo, PgWebhookRepo, sqlx,
+    PgAuditRepo, PgDiscardRecordRepo, PgPassportRepo, PgPassportVersionRepo, PgRegistrySyncRepo,
+    PgStateChangeLog, PgTransferRepo, PgWebhookRepo, sqlx,
 };
 use dpp_dal::test_harness::{TestPg, sessions_waiting_for_a_lock, start_pg};
 use dpp_domain::DppError;
@@ -27,6 +27,7 @@ use dpp_domain::ports::passport_repo::PassportRepository;
 use dpp_domain::product_group::ProductGroup;
 use dpp_domain::status::PassportStatus;
 use dpp_domain::transfer::{TransferChain, TransferReason, TransferRecord, TransferStatus};
+use dpp_types::DiscardRecordStore;
 use dpp_types::TransferStore;
 use dpp_types::audit::{AuditRepository, PassportAuditEntry, PassportVersionStore};
 use dpp_types::registry_sync::{RegistryStatusIntent, RegistrySyncOutbox};
@@ -1138,4 +1139,115 @@ async fn a_locked_row_keeps_its_determination() {
     let unchanged = stored(&pg, locked.id).await;
     assert!(unchanged.in_doc);
     assert_eq!(unchanged.co2e, before.co2e);
+}
+
+/// A discard record in the shape core's schema admits, for a destruction to cite.
+fn cited_record() -> dpp_domain::unsold_goods::DiscardRecord {
+    serde_json::from_value(serde_json::json!({
+        "discardedOn": "2026-08-01",
+        "cnCodes": ["420300"],
+        "description": "Jackets, unsold season stock",
+        "units": { "value": 1240 },
+        "weight": { "grams": 860500 },
+        "packagingIncluded": false,
+        "treatment": "recycling",
+        "receiver": { "name": "Nord Recycling GmbH" },
+        "reason": "damagedOrContaminated"
+    }))
+    .expect("the fixture record reads")
+}
+
+/// A destruction of a published passport that joins it to `record`, in one change.
+fn destruction_citing(id: PassportId, record: uuid::Uuid) -> StateChange {
+    StateChange::new(PassportAuditEntry::new(
+        &id.to_string(),
+        "deactivated",
+        "state-change-test",
+        Some("published"),
+        Some("deactivated"),
+    ))
+    .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated))
+    .with_discard_record_link(record, id)
+}
+
+/// A destruction whose join cannot be written does not happen at all: the join is
+/// in the same transaction as the status, so a refused join refuses the status,
+/// the audit entry and the join together.
+#[tokio::test]
+async fn a_destruction_whose_join_is_refused_leaves_the_status_unchanged() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let p = repo
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let unheld_record = uuid::Uuid::now_v7();
+
+    let result = PgStateChangeLog::new(pg.dal.clone())
+        .commit(destruction_citing(p.id, unheld_record))
+        .await;
+    assert!(
+        result.is_err(),
+        "a join to a record this node does not hold is refused"
+    );
+
+    let stored = repo.find_by_id(p.id).await.expect("read").expect("exists");
+    assert_eq!(
+        stored.status,
+        PassportStatus::Published,
+        "the status did not move"
+    );
+    assert!(
+        PgAuditRepo::new(pg.dal.clone())
+            .list_by_passport(&p.id.to_string())
+            .await
+            .expect("audit")
+            .is_empty(),
+        "no audit entry for a destruction that did not happen"
+    );
+    let joins: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM odal.discard_record_passport WHERE passport_id = $1",
+    )
+    .bind(p.id.0)
+    .fetch_one(pg.dal.pool())
+    .await
+    .expect("a count");
+    assert_eq!(joins, 0, "no join for it either");
+}
+
+/// The same destruction, citing a record this node holds, commits the status, the
+/// audit entry and the join together.
+#[tokio::test]
+async fn a_destruction_citing_a_held_record_commits_the_join_with_its_status() {
+    let pg = start_pg().await;
+    let repo = PgPassportRepo::new(pg.dal.clone());
+    let p = repo
+        .create(passport(PassportStatus::Published))
+        .await
+        .expect("create");
+    let record = PgDiscardRecordRepo::new(pg.dal.clone())
+        .create(&cited_record(), "1.0.0", &[])
+        .await
+        .expect("the record is stored");
+
+    PgStateChangeLog::new(pg.dal.clone())
+        .commit(destruction_citing(p.id, record.id))
+        .await
+        .expect("the destruction commits");
+
+    let stored = repo.find_by_id(p.id).await.expect("read").expect("exists");
+    assert_eq!(stored.status, PassportStatus::Deactivated);
+    let joined: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM odal.discard_record_passport
+          WHERE discard_record_id = $1 AND passport_id = $2",
+    )
+    .bind(record.id)
+    .bind(p.id.0)
+    .fetch_one(pg.dal.pool())
+    .await
+    .expect("a count");
+    assert_eq!(
+        joined, 1,
+        "the destruction is joined to the record it cites"
+    );
 }

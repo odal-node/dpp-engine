@@ -14,6 +14,18 @@ properties:
       not record. Required with a `destroyed` reason (`422` otherwise): with the
       operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban
       reaches the product, and so whether the destruction cites a derogation.
+  discardRecordId:
+    type:
+      - string
+      - 'null'
+    format: uuid
+    description: >-
+      The discard record that documents this destruction (ESPR Art. 24 and
+      Art. 25). Only with a `destroyed` reason. The record must cite the same
+      derogation point as the reason, or both must cite none; otherwise the
+      request is refused with `422`. On success the passport is joined to the
+      record in the same transaction as the destruction, and the audit entry of
+      the destruction records the citation.
   declaredBy:
     type:
       - string
