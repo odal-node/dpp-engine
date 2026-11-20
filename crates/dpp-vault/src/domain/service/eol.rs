@@ -18,6 +18,7 @@ use dpp_types::{
     registry_sync::RegistryStatusIntent,
     state_change::{PassportWrite, StateChange},
 };
+use uuid::Uuid;
 
 use super::PassportService;
 
@@ -33,11 +34,17 @@ impl PassportService {
     /// passport does not record. Together with the operator's enterprise size it
     /// decides whether ESPR Art. 25(1) reaches a destruction, and so whether the
     /// destruction must cite a derogation.
+    ///
+    /// `discard_record` is the record that documents the destruction, already
+    /// checked by the caller against the reason. The join to it is written in the
+    /// same transaction as the status, and the citation is recorded in the audit
+    /// entry's metadata.
     pub async fn declare_eol(
         &self,
         id: PassportId,
         eol: EolEvent,
         unsold: bool,
+        discard_record: Option<Uuid>,
         auth: &AuthContext,
     ) -> Result<Passport, DppError> {
         // Before the passport is read, so a refused declaration costs nothing and
@@ -77,9 +84,15 @@ impl PassportService {
         let prev_status = passport.status.to_string();
 
         // The typed EOL reason rides in the audit entry's metadata — it becomes
-        // part of the tamper-evident chain.
-        let eol_meta =
+        // part of the tamper-evident chain — and so does the discard record that
+        // documents the destruction, when there is one.
+        let mut eol_meta =
             serde_json::to_value(&eol).map_err(|e| DppError::Serialisation(e.to_string()))?;
+        if let Some(record) = discard_record
+            && let Some(object) = eol_meta.as_object_mut()
+        {
+            object.insert("discardRecordId".to_owned(), serde_json::json!(record));
+        }
         let entry = PassportAuditEntry::new(
             &id.to_string(),
             "deactivated",
@@ -96,13 +109,16 @@ impl PassportService {
                 "previousStatus": prev_status,
             }),
         );
+        // The status, the audit entry, the outbox and the discard join commit in
+        // one transaction: the join is written with the destruction or not at all.
+        let mut change = StateChange::new(entry)
+            .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated));
+        if let Some(record) = discard_record {
+            change = change.with_discard_record_link(record, id);
+        }
         let updated = self
             .commit_passport_change(
-                self.owing_registry_status(
-                    StateChange::new(entry)
-                        .with_passport(PassportWrite::Status(id, PassportStatus::Deactivated)),
-                    RegistryStatusIntent::Deactivated,
-                ),
+                self.owing_registry_status(change, RegistryStatusIntent::Deactivated),
                 event,
             )
             .await?;
@@ -119,12 +135,14 @@ impl PassportService {
 }
 
 impl PassportService {
-    /// The operator's enterprise size, from operator configuration.
+    /// The operator's enterprise size, from operator configuration. The one reader
+    /// of it: the destruction ban here and the discard evidence route both read it
+    /// through this function, so they cannot disagree about the default.
     ///
-    /// An operator that has stated none is treated as not exempt, so a destruction
-    /// the ban would reach is asked for a derogation rather than let through on a
-    /// size nobody declared.
-    async fn enterprise_size(&self) -> Result<EnterpriseSize, DppError> {
+    /// An operator that has stated none is treated as large, so a destruction the
+    /// ban would reach is asked for a derogation rather than let through on a size
+    /// nobody declared.
+    pub async fn enterprise_size(&self) -> Result<EnterpriseSize, DppError> {
         let declared = match &self.registry_reader {
             Some(reader) => reader
                 .get(STANDALONE_OPERATOR_ID)

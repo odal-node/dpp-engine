@@ -83,6 +83,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   every audience, since none of them covers the filtered body beside it. Whether
   the authority view should carry a proof that covers it is open on #600. (#600, #616)
 
+- **The unsold-goods disclosure line is replaced by discard records (#597, #632).**
+  `POST /vault/api/v1/unsold-goods` and `GET /vault/api/v1/unsold-goods` are
+  removed, with the one-line-per-category shape they stored and the CLI flags of
+  `odal unsold-goods record` that carried it. The yearly disclosure is computed
+  from one record per discard, not uploaded as lines. `POST /vault/api/v1/dpp`
+  refuses `productGroup: unsold-goods`, which dpp-core 0.24.0 no longer has.
+  **Migration:** record each discard through `POST /vault/api/v1/discard-records`
+  or `odal unsold-goods record <file>`. Lines already stored stay in
+  `odal.unsold_goods_report`, which this release neither reads nor writes.
+
 ### Added
 
 - **Battery CSV templates carry the placing date and the due diligence columns.**
@@ -111,6 +121,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     window, each notice with whether and when it was announced, and the dates a
     signed ruleset overruled (`conflicts`).
   - Event payloads are in `docs/guides/WEBHOOKS.md`.
+
+- **Discard records of unsold consumer products, and the evidence behind them
+  (#597, #632).** `POST /vault/api/v1/discard-records` records one discard, checked as
+  sent against dpp-core's discard-record schema, with the passports of the units
+  it discards. `GET` lists a financial year's records. `POST
+  …/discard-records/{id}/evidence` attaches a document under an evidence kind:
+  stored once by its SHA-256, at most 25 MiB. `GET
+  …/discard-records/{id}/missing-evidence` shows what a record still lacks against
+  the operator's enterprise size. Records, passport links, documents and their
+  attachments are append-only for the app role. The CLI gains `odal unsold-goods
+  record`, `list`, `attach` and `missing`, and `odal passport eol
+  --discard-record` names the record that documents a destruction. The join to
+  the record commits in the same transaction as the destruction, and the audit
+  entry of the destruction records the citation.
 
 ### Changed
 

@@ -1,0 +1,76 @@
+post:
+  operationId: attachDiscardRecordEvidence
+  summary: Attach a document to a discard record
+  description: |
+    Attaches a document to a discard record under an evidence kind. The request
+    is `multipart/form-data` with two fields: `kind`, the evidence kind as
+    dpp-core names it, and `file`, the document.
+
+    **Stored once.** The document is stored under the SHA-256 of its bytes. A
+    document cited by two records is one stored file, and the attachment is
+    recorded against each record.
+
+    **Size.** A file may be at most 25 MiB. A larger one is refused with `413`.
+
+    **Once per kind.** A record holds a given document under a given kind once.
+    Attaching the same document under the same kind again is refused with `409`.
+
+    Requires a write-scoped key.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: id
+      in: path
+      required: true
+      description: The discard record's id.
+      schema:
+        type: string
+        format: uuid
+  requestBody:
+    required: true
+    content:
+      multipart/form-data:
+        schema:
+          type: object
+          required:
+            - kind
+            - file
+          properties:
+            kind:
+              $ref: ../../components/schemas/unsold-goods/EvidenceKind.yaml
+            file:
+              type: string
+              format: binary
+              description: The document, at most 25 MiB.
+  responses:
+    '201':
+      description: The attachment.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/AttachedEvidence.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      $ref: ../../components/responses/NotFound.yaml
+    '409':
+      description: The record already holds this document under this kind.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '413':
+      description: The file is larger than 25 MiB.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

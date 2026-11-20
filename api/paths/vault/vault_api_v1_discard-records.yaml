@@ -1,0 +1,110 @@
+get:
+  operationId: listDiscardRecords
+  summary: List the discard records of a financial year
+  description: |
+    The discard records whose day of discard falls within the financial year
+    named by `financialYearStart` and `financialYearEnd`, both days included,
+    earliest discard first. A year whose start is after its end lists nothing.
+
+    Admin rather than write: these are the operator's own annual figures, and
+    reading them back is an administrative act rather than part of producing
+    passports.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: financialYearStart
+      in: query
+      required: true
+      description: First day of the financial year, as `YYYY-MM-DD`.
+      schema:
+        type: string
+        format: date
+    - name: financialYearEnd
+      in: query
+      required: true
+      description: Last day of the financial year, as `YYYY-MM-DD`.
+      schema:
+        type: string
+        format: date
+  responses:
+    '200':
+      description: The discard records of the year.
+      content:
+        application/json:
+          schema:
+            type: array
+            items:
+              $ref: ../../components/schemas/unsold-goods/StoredDiscardRecord.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+post:
+  operationId: createDiscardRecord
+  summary: Record a discard of unsold consumer products
+  description: |
+    Records one discard of unsold consumer products, with the passports of the
+    units it discards.
+
+    **Every discard is a record.** A record is made for each discard, not only
+    for a destruction under a derogation: ESPR Art. 24(2) has the operator
+    demonstrate the delivery and reception of every discarded product. A
+    derogation is cited where a destruction relies on one, and the documents
+    behind it are attached with `POST …/evidence`.
+
+    **Checked as sent.** The record is checked against dpp-core's discard-record
+    schema before it is read, so a misspelt field is refused with `422` rather
+    than dropped.
+
+    **This is not a passport.** There is no digital product passport anywhere in
+    Art. 24 or Art. 25: the subject is an operator over a financial year, so
+    these routes sit beside the other operator-scoped ones.
+
+    **Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a
+    duplicate record is permanent, and Art. 24 is disclosed publicly for a
+    financial year, so a discard counted twice overstates what the operator
+    actually did.
+
+    Requires a write-scoped key; reading the records back requires admin.
+  tags:
+    - Unsold goods
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - $ref: ../../components/parameters/IdempotencyKey.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/unsold-goods/CreateDiscardRecordRequest.yaml
+  responses:
+    '201':
+      description: The stored record.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/unsold-goods/StoredDiscardRecord.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '409':
+      $ref: ../../components/responses/IdempotentRequestInFlight.yaml
+    '422':
+      description: |
+        The record cannot be stored: `record` does not match dpp-core's
+        discard-record schema, cannot be read into a discard, or names a
+        passport this node does not hold.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

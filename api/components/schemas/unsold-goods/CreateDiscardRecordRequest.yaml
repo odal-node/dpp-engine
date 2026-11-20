@@ -1,0 +1,29 @@
+type: object
+description: |
+  One discard of unsold consumer products, and the passports of the units it
+  discards.
+
+  `record` is checked as sent, against dpp-core's discard-record schema, before
+  it is read. A field that schema does not have is refused, not dropped. The
+  schema is not restated here: dpp-core publishes it, and this description
+  names only the version the node checks against, which the response reports
+  as `schemaVersion`.
+required:
+  - record
+additionalProperties: false
+properties:
+  record:
+    type: object
+    description: |
+      The discard, as dpp-core's discard-record schema describes it: the day it
+      was discarded, the CN codes, the units and the weight (each marked when it
+      is an estimate), the derogation it relies on where one applies, the
+      treatment and the receiver.
+  passportIds:
+    type: array
+    description: |
+      The passports of the units this discard discards. A join in this node's
+      storage, not part of the record. Duplicates are stored once.
+    items:
+      type: string
+      format: uuid

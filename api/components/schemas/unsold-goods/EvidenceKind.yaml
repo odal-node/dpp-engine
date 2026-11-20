@@ -1,0 +1,26 @@
+type: string
+description: |
+  A kind of document an operator keeps to stand behind a discard, as dpp-core
+  names them. Three provisions name them: the derogation documentation of
+  Delegated Regulation (EU) 2026/296 Article 3, the delivery and treatment
+  documentation of Implementing Regulation (EU) 2026/2 Article 4, and the
+  derogation statement given to the waste treatment operator. The last is a
+  duty to provide, never one a record is found lacking.
+enum:
+  - safetyAssessment
+  - chemicalsTestReport
+  - nonComplianceSelfAssessment
+  - infringementDecision
+  - infringementNotification
+  - internalInvestigation
+  - ipLicenceOrContract
+  - destructionJustification
+  - reuseFeasibilityAssessment
+  - qualityAssessmentEvidence
+  - inspectionRecord
+  - donationOfferEvidence
+  - donationReceiptDeclaration
+  - wasteOperatorSourceDocumentation
+  - deliveryDocumentation
+  - treatmentStatement
+  - derogationStatement
