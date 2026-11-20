@@ -72,14 +72,13 @@ pub async fn resolve_aas_handler(
 
     // The AAS asset identity is the passport's product identifier, in whichever
     // EN 18219 scheme issued it — a GTIN, an identification link or a DID.
-    // Unsold-goods reports and untyped product groups without one do not
-    // identify a product, so no AAS representation of them exists. 406 is the
+    // A record without one, of any product group, does not identify a product,
+    // so no AAS representation of it exists. 406 is the
     // honest answer to "I want this as AAS": the resource has no representation
     // matching the request.
     //
-    // This is the door's constraint, not the mappers'. `dpp-aas` still builds a
-    // correct unsold-goods submodel for a caller that supplies its own asset
-    // identity — a file export or an AASX package for a reporting authority —
+    // This is the door's constraint, not the mappers'. A caller that supplies its
+    // own asset identity — a file export or an AASX package — reaches the mappers
     // through `AssetIdentity::Named`. What is unavailable is *this*
     // representation at *this* URL, and the fix is not to invent a
     // `globalAssetId`: a fabricated product identifier inside a document an

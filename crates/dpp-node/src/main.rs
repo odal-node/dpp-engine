@@ -412,7 +412,8 @@ async fn main() -> anyhow::Result<()> {
         )),
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         scan_repo: db.scan_repo.clone(),
-        unsold_goods_repo: db.unsold_goods_repo.clone(),
+        discard_records: db.discard_records.clone(),
+        evidence_store: db.evidence_files.clone(),
         personal_data: db.personal_data.clone(),
         plugin_admin: Some(plugin_admin),
         // Reported on the authenticated `/vault/api/v1/node/state`, not on the

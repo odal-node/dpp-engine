@@ -36,6 +36,17 @@ pub fn conflict_error(detail: &str) -> Response {
     api_error(StatusCode::CONFLICT, "CONFLICT", detail)
 }
 
+/// 409 Conflict for a stored transfer chain that dpp-core refuses to read.
+///
+/// The request cannot go on until the stored chain, or the stored dossier that
+/// embeds one, is dealt with. The detail is core's own refusal, which names the
+/// passport and the record it cited.
+pub fn refused_chain_error(refused: &dpp_types::transfer::RefusedChain) -> Response {
+    conflict_error(&format!(
+        "The stored transfer chain is refused by dpp-core, so this request cannot go on: {refused}"
+    ))
+}
+
 /// 422 Unprocessable Entity — the standard response for a `DppError::Validation` case.
 ///
 /// Prefer [`field_validation_error`] wherever the caller still holds the

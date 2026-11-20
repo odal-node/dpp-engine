@@ -100,13 +100,13 @@ const KEYED: &[(Method, &str, RoutePolicy)] = &[
         "/vault/api/v1/operator-identifiers",
         RoutePolicy::verbatim(),
     ),
-    // A disclosure line, and the route serves no DELETE — so a duplicate is
+    // A discard record, and the route serves no DELETE — so a duplicate is
     // permanent in the same way a facility is, with a regulatory edge the
     // others do not have: Art. 24 is disclosed publicly for a financial year,
     // and a discard counted twice overstates what the operator actually did.
     (
         Method::POST,
-        "/vault/api/v1/unsold-goods",
+        "/vault/api/v1/discard-records",
         RoutePolicy::verbatim(),
     ),
     // Issuance mints a credential and stores nothing: the node keeps no record
@@ -229,7 +229,7 @@ mod tests {
     /// is a route the assembled node actually serves.
     ///
     /// Ten creates plus the additive scan ingest — the full set the design note
-    /// first counted, now that `POST /credentials` and `POST /unsold-goods`
+    /// first counted, now that `POST /credentials` and `POST /discard-records`
     /// have both landed.
     #[test]
     fn the_keyed_set_is_eleven_routes() {

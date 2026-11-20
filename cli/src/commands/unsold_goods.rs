@@ -1,92 +1,96 @@
-//! `odal unsold-goods` — record and read the ESPR Art. 24 disclosure.
+//! `odal unsold-goods` — record and read the ESPR Art. 24 and Art. 25 discards.
 
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{Context as _, Result};
 use serde_json::Value;
 
 use crate::core::unsold_goods::{
-    DisclosureLine, action_unsold_goods_list, action_unsold_goods_record,
+    action_discard_attach, action_discard_list, action_discard_missing, action_discard_record,
+    attached_sha256, missing_requirements, stored_record_id,
 };
 
-/// `odal unsold-goods record` — write one line of the Art. 24 disclosure.
+/// `odal unsold-goods record` — record one discard from a file.
 ///
-/// Prints the retry advice on the write itself rather than leaving it in the
-/// docs, because the route serves no `DELETE`: a line recorded twice is
-/// permanent, and Art. 24 figures are published for a financial year, so the
-/// duplicate becomes an overstatement of what the operator actually discarded.
-pub async fn run_unsold_goods_record(line: DisclosureLine) -> Result<()> {
+/// Prints the retry advice on the write itself: the route serves no `DELETE`, so
+/// a discard recorded twice stays counted twice.
+pub async fn run_discard_record(file: &Path, passports: &[String]) -> Result<()> {
+    let text =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    let record: Value =
+        serde_json::from_str(&text).with_context(|| format!("{} is not JSON", file.display()))?;
     let (client, cfg) = crate::http::load_client()?;
-    let id = action_unsold_goods_record(&line, &client, &cfg).await?;
+    let stored = action_discard_record(&record, passports, &client, &cfg).await?;
 
-    println!("Recorded disclosure line {id}.");
-    println!(
-        "  {} — {} units, {} kg, {} → {}",
-        line.period, line.units, line.kg, line.category, line.destination
-    );
-    // Said on the write rather than only in the docs: this route serves no
-    // DELETE, so a line recorded twice is a figure overstated for a financial
-    // year that gets published.
+    let id = stored_record_id(&stored)?;
+    println!("Recorded discard {id}.");
     println!();
     println!("There is no delete — pass --idempotency-key if you retry this.");
     Ok(())
 }
 
-/// `odal unsold-goods list` — read the disclosure back, newest first.
-///
-/// The table flags lines carrying no unit count instead of printing a zero for
-/// them. Art. 24(1)(a) asks for the number *and* the weight, and a row written
-/// before the count had a column is incomplete rather than empty — an operator
-/// assembling a return from these figures has to be able to tell the two apart.
-pub async fn run_unsold_goods_list(period: Option<&str>, json: bool) -> Result<()> {
+/// `odal unsold-goods list` — the discards of a financial year, earliest first.
+pub async fn run_discard_list(start: &str, end: &str, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
-    let lines = action_unsold_goods_list(period, &client, &cfg).await?;
+    let records = action_discard_list(start, end, &client, &cfg).await?;
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&lines)?);
+        println!("{}", serde_json::to_string_pretty(&records)?);
         return Ok(());
     }
-
-    if lines.is_empty() {
-        match period {
-            Some(p) => println!("No disclosure lines recorded for {p}."),
-            None => println!("No disclosure lines recorded."),
-        }
+    if records.is_empty() {
+        println!("No discard records between {start} and {end}.");
         return Ok(());
     }
-
-    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("-").to_owned();
     println!(
-        "{:<6}  {:<14}  {:>8}  {:>10}  {:<18}  {:<8}",
-        "YEAR", "CATEGORY", "UNITS", "KG", "DESTINATION", "COUNTRY"
+        "{:<36}  {:<10}  {:<18}  {:>10}",
+        "ID", "DISCARDED", "TREATMENT", "GRAMS"
     );
-    for l in &lines {
-        let units = l
-            .get("unitCount")
-            .and_then(Value::as_i64)
-            .map_or_else(|| "-".to_owned(), |n| n.to_string());
-        let kg = l
-            .get("volumeKg")
-            .and_then(Value::as_f64)
-            .map_or_else(|| "-".to_owned(), |n| format!("{n:.1}"));
+    for r in &records {
+        let record = r.get("record");
+        let text = |key: &str| {
+            record
+                .and_then(|v| v.get(key))
+                .and_then(Value::as_str)
+                .unwrap_or("-")
+                .to_owned()
+        };
+        let grams = record
+            .and_then(|v| v.pointer("/weight/grams"))
+            .and_then(Value::as_u64)
+            .map_or_else(|| "-".to_owned(), |g| g.to_string());
         println!(
-            "{:<6}  {:<14}  {units:>8}  {kg:>10}  {:<18}  {:<8}",
-            s(l, "reportingPeriod"),
-            s(l, "productCategory"),
-            s(l, "destination"),
-            s(l, "countryOfDisposal"),
+            "{:<36}  {:<10}  {:<18}  {grams:>10}",
+            r.get("id").and_then(Value::as_str).unwrap_or("-"),
+            text("discardedOn"),
+            text("treatment"),
         );
     }
-    println!("\n{} line(s).", lines.len());
-    // Art. 24(1)(a) asks for the number and the weight. A row written before
-    // the count had a column reports `-`, and an operator building a return
-    // from these figures needs to see that rather than read it as zero.
-    if lines
-        .iter()
-        .any(|l| l.get("unitCount").is_none_or(Value::is_null))
-    {
-        println!(
-            "Some lines carry no unit count — they predate the column. Art. 24(1)(a)\n\
-             asks for the number *and* the weight, so those lines are incomplete."
-        );
+    println!("\n{} record(s).", records.len());
+    Ok(())
+}
+
+/// `odal unsold-goods attach` — attach a document to a discard record.
+pub async fn run_discard_attach(record_id: &str, kind: &str, file: &Path) -> Result<()> {
+    let (client, cfg) = crate::http::load_client()?;
+    let attached = action_discard_attach(record_id, kind, file, &client, &cfg).await?;
+    let sha = attached_sha256(&attached)?;
+    println!("Attached {} as {kind} (sha256 {sha}).", file.display());
+    Ok(())
+}
+
+/// `odal unsold-goods missing` — the evidence a discard record still lacks.
+pub async fn run_discard_missing(record_id: &str) -> Result<()> {
+    let (client, cfg) = crate::http::load_client()?;
+    let answer = action_discard_missing(record_id, &client, &cfg).await?;
+    let missing = missing_requirements(&answer)?;
+    if missing.is_empty() {
+        println!("Nothing is missing for this record.");
+        return Ok(());
+    }
+    println!("Missing evidence:");
+    for (kinds, basis) in &missing {
+        println!("  one of {} ({basis})", kinds.join(", "));
     }
     Ok(())
 }

@@ -487,9 +487,19 @@ impl PassportService {
             registration,
             transfer_notice,
             registry_intent,
+            discard_record_link,
             audit,
             webhook: _,
         } = change;
+        // A discard join is atomic only in the state-change log's transaction. Refuse
+        // before anything is written, rather than write the destruction without it.
+        if discard_record_link.is_some() {
+            return Err(DppError::Internal(
+                "a destruction that cites a discard record needs the state-change log, which \
+                 this service does not have"
+                    .into(),
+            ));
+        }
 
         let written = match passport {
             None => None,
