@@ -1,0 +1,19 @@
+type: object
+description: |
+  One thing a discard record must be able to show: a document of any one of
+  the listed kinds. A record's requirements are read as an AND of such
+  alternatives.
+required:
+  - anyOf
+  - basis
+additionalProperties: false
+properties:
+  anyOf:
+    type: array
+    minItems: 1
+    description: Any one of these kinds meets the requirement.
+    items:
+      $ref: EvidenceKind.yaml
+  basis:
+    type: string
+    description: The provision that makes it a requirement, cited by its article.

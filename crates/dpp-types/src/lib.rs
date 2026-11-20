@@ -96,8 +96,7 @@ pub use successor::SuccessorLookup;
 pub use transfer::{TransferStore, VersionedChain};
 pub use trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort};
 pub use unsold_goods::{
-    CreateUnsoldGoodsEntry, Destination, DiscardReason, ProductCategory, UnsoldGoodsEntry,
-    UnsoldGoodsStore,
+    DiscardRecordStore, EVIDENCE_FILE_MAX_BYTES, EvidenceStore, StoredDiscardRecord,
 };
 pub use webhook::{
     CreateWebhookRequest, WebhookCounts, WebhookDeliveryRow, WebhookDeliveryStatus, WebhookOutbox,

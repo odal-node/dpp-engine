@@ -209,7 +209,8 @@ async fn start_node_with_ruleset(
     ));
     let auth_provider: Arc<dyn dpp_types::auth::AuthProvider> = Arc::new(TestAuthProvider);
     let scan_repo = Arc::new(PgScanTelemetryRepo::new(dal.clone()));
-    let unsold_goods_repo = Arc::new(dpp_dal::pg::PgUnsoldGoodsRepo::new(dal.clone()));
+    let discard_records = Arc::new(dpp_dal::pg::PgDiscardRecordRepo::new(dal.clone()));
+    let evidence_store = Arc::new(dpp_dal::pg::PgEvidenceFileRepo::new(dal.clone()));
     let personal_data = Arc::new(dpp_dal::pg::PgPersonalDataRepo::new(dal.clone()));
     let obligation_notices = Arc::new(dpp_dal::pg::PgObligationNoticeRepo::new(dal.clone()));
     // Declared before the vault state, which now carries the trust posture so
@@ -255,7 +256,8 @@ async fn start_node_with_ruleset(
         ))),
         cors_allowed_origins: Vec::new(),
         scan_repo,
-        unsold_goods_repo,
+        discard_records,
+        evidence_store,
         personal_data,
         obligation_notices,
         obligation_schedule: Arc::new(dpp_vault::state::BuiltInObligationSchedule),
@@ -1729,6 +1731,92 @@ async fn eol_declaration_deactivates_and_records_reason() {
     assert_eq!(eol_entry["newStatus"], "deactivated");
     assert_eq!(eol_entry["metadata"]["reason"]["kind"], "recycled");
     assert_eq!(eol_entry["metadata"]["materialRecovery"]["lithiumKg"], 0.4);
+}
+
+// `materialRecovery` is free JSON and becomes audit metadata, hashed into the
+// chain. A number dpp-core cannot hash used to panic inside the audit write, so
+// the caller got a `500` and the declaration rolled back. It is refused at the
+// input now: `422` naming the field, the passport untouched, nothing audited.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unhashable_material_recovery_is_refused_before_anything_is_written() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000078");
+    let client = reqwest::Client::new();
+
+    let created: serde_json::Value = client
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "productName": "Unhashable Recovery Battery",
+            "manufacturer": {"name": "SmokeTestCorp", "address": "Berlin, DE"},
+            "materials": [],
+        }))
+        .send()
+        .await
+        .expect("create request failed")
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().expect("id").to_owned();
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/publish"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("publish request failed");
+    assert_eq!(resp.status(), 200);
+
+    let history = || async {
+        let history: serde_json::Value = client
+            .get(format!("{base}/vault/api/v1/dpp/{id}/history"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("history request failed")
+            .json()
+            .await
+            .unwrap();
+        history.as_array().expect("history is an array").clone()
+    };
+    let audited_before = history().await.len();
+
+    let resp = client
+        .post(format!("{base}/vault/api/v1/dpp/{id}/eol"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": {"kind": "recycled"},
+            "materialRecovery": {"recovered": 9_007_199_254_740_993_u64}
+        }))
+        .send()
+        .await
+        .expect("eol request failed");
+    assert_eq!(resp.status(), 422);
+    let problem: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        problem["errors"]
+            .as_array()
+            .is_some_and(|errors| errors.iter().any(|e| e["field"] == "/materialRecovery")),
+        "{problem}"
+    );
+
+    // The passport is as it was, and the refused declaration left no audit entry.
+    let fetched: serde_json::Value = client
+        .get(format!("{base}/vault/api/v1/dpp/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("read request failed")
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fetched["status"], "active");
+    let audited_after = history().await;
+    assert_eq!(audited_after.len(), audited_before);
+    assert!(
+        audited_after.iter().all(|e| e["action"] != "deactivated"),
+        "a refused declaration was audited"
+    );
 }
 
 // A destruction states whether the product was unsold, cites a derogation as a
@@ -3862,4 +3950,59 @@ async fn a_non_battery_passport_may_not_claim_a_battery_life_status() {
         "naming the regulation that defines the vocabulary, so an operator can \
          see why their product group has none: {body}"
     );
+}
+
+/// A file of exactly the cap attaches through the assembled node, whose own
+/// default body limit is 8 MiB. The vault route's raised limit is what admits it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_evidence_file_at_the_cap_attaches_through_the_assembled_node() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000077");
+    let client = reqwest::Client::new();
+
+    let created = client
+        .post(format!("{base}/vault/api/v1/discard-records"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "record": {
+                "discardedOn": "2026-08-01",
+                "cnCodes": ["420300"],
+                "description": "Jackets, unsold season stock",
+                "units": {"value": 1240},
+                "weight": {"grams": 860500},
+                "packagingIncluded": false,
+                "treatment": "recycling",
+                "receiver": {"name": "Nord Recycling GmbH"}
+            },
+            "passportIds": [],
+        }))
+        .send()
+        .await
+        .expect("the discard reaches the node");
+    assert_eq!(
+        created.status(),
+        201,
+        "{}",
+        created.text().await.unwrap_or_default()
+    );
+    let stored: serde_json::Value = created.json().await.expect("the stored record");
+    let id = stored["id"].as_str().expect("an id");
+
+    let file = reqwest::multipart::Part::bytes(vec![0u8; dpp_types::EVIDENCE_FILE_MAX_BYTES])
+        .file_name("delivery-note.pdf");
+    let form = reqwest::multipart::Form::new()
+        .text("kind", "deliveryDocumentation")
+        .part("file", file);
+    let attached = client
+        .post(format!("{base}/vault/api/v1/discard-records/{id}/evidence"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .expect("the attachment reaches the node");
+    let status = attached.status();
+    let body = attached.text().await.unwrap_or_default();
+    assert_eq!(status, 201, "{body}");
+    let body: serde_json::Value = serde_json::from_str(&body).expect("the attachment");
+    assert_eq!(body["sizeBytes"], dpp_types::EVIDENCE_FILE_MAX_BYTES);
 }

@@ -1,0 +1,19 @@
+type: object
+description: |
+  The evidence a discard record still lacks. A requirement is missing when no
+  attached document meets it. That is not proof of a breach: the Regulation
+  excepts information the competent authority already holds under another act,
+  which only the operator can say.
+required:
+  - enterpriseSize
+  - missingEvidence
+additionalProperties: false
+properties:
+  enterpriseSize:
+    $ref: ../operator/EnterpriseSize.yaml
+    description: The operator's size class the requirements were read for. Unset reads as large.
+  missingEvidence:
+    type: array
+    description: Each requirement no attached document meets. Empty when none is missing.
+    items:
+      $ref: EvidenceRequirement.yaml

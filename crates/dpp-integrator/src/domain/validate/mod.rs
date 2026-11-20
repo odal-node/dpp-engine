@@ -150,8 +150,8 @@ pub fn columns_for(product_group: &str) -> Option<Vec<Column>> {
 /// **Not exhaustive over the catalog, and deliberately so.** `unsold-goods` is
 /// absent because it is not a passport. Every validator here produces a
 /// [`CreatePassportRequest`]; an Art. 24 disclosure is one undertaking over one
-/// financial year with N discard lines, recorded through the vault's own
-/// `unsold-goods` route and never as a passport. Importing it needs a
+/// financial year with N discards, recorded through the vault's discard-record
+/// routes and never as a passport. Importing it needs a
 /// different target and a document with a header section, not a passport per
 /// row.
 pub const SUPPORTED_PRODUCT_GROUPS: &[&str] = &[

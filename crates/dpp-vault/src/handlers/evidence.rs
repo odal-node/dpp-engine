@@ -7,13 +7,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use dpp_types::transfer::ChainError;
 use uuid::Uuid;
 
 use crate::{domain::verify::verify_dossier_json, middleware::auth::AuthContext, state::AppState};
 
 use super::error::{
     api_error, field_conflict_error, internal_error, not_found_error, parse_passport_id,
-    require_write,
+    refused_chain_error, require_write,
 };
 
 #[allow(clippy::result_large_err)]
@@ -48,9 +49,12 @@ pub async fn generate_evidence_handler(
 
     match state.service.generate_evidence(passport_id, &auth).await {
         Ok(record) => (StatusCode::CREATED, Json(record)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
-        Err(dpp_domain::DppError::Validation(msg)) => field_conflict_error(&msg),
-        Err(e) => internal_error(e),
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
+            not_found_error("DPP not found.")
+        }
+        Err(ChainError::Other(dpp_domain::DppError::Validation(msg))) => field_conflict_error(&msg),
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 
@@ -86,8 +90,11 @@ pub async fn get_evidence_handler(
 
     match state.service.get_evidence(dossier_id).await {
         Ok(record) => (StatusCode::OK, Json(record.dossier)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("Dossier not found."),
-        Err(e) => internal_error(e),
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
+            not_found_error("Dossier not found.")
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 
@@ -104,8 +111,11 @@ pub async fn verify_evidence_handler(
 
     match state.service.verify_evidence(dossier_id).await {
         Ok(report) => (StatusCode::OK, Json(report)).into_response(),
-        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("Dossier not found."),
-        Err(e) => internal_error(e),
+        Err(ChainError::Refused(refused)) => refused_chain_error(&refused),
+        Err(ChainError::Other(dpp_domain::DppError::NotFound(_))) => {
+            not_found_error("Dossier not found.")
+        }
+        Err(ChainError::Other(e)) => internal_error(e),
     }
 }
 

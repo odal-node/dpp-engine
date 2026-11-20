@@ -21,6 +21,7 @@ use dpp_domain::{DppError, passport::Passport};
 use dpp_types::state_change::{PassportWrite, StateChange, StateChangeLog};
 
 use super::repo_audit::append_in_tx;
+use super::repo_discard_record::link_passport_in_tx;
 use super::repo_passport::{PgPassportRepo, insert_passport_in_tx};
 use super::repo_registry_sync::{queue_registration_in_tx, record_status_intent};
 use super::repo_registry_transfer::queue_transfer_notice;
@@ -99,6 +100,7 @@ impl StateChangeLog for PgStateChangeLog {
             registration,
             transfer_notice,
             registry_intent,
+            discard_record_link,
             audit,
             webhook,
         } = change;
@@ -136,6 +138,9 @@ impl StateChangeLog for PgStateChangeLog {
                 )
             })?;
             record_status_intent(&mut *tx, passport.id, intent).await?;
+        }
+        if let Some((record_id, passport)) = discard_record_link {
+            link_passport_in_tx(&mut *tx, record_id, passport).await?;
         }
         append_in_tx(&mut tx, audit).await?;
         if let Some(event) = &webhook {
