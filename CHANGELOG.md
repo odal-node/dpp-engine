@@ -157,8 +157,9 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   every other check reported as usual. Evidence generation, the four transfer
   actions, `GET /vault/api/v1/dpp/{dppId}/registry`, `GET /vault/api/v1/dpp/{dppId}/seal`
   and `GET /vault/api/v1/evidence/{id}` refuse with `409` and the same detail. An
-  uploaded dossier whose `transferChain` is malformed in any other way is still a
-  `422`. `TransferStore::get_chain` and `EvidenceDossierRepository::get` return a
+  uploaded dossier is still a `422` when its `transferChain` is malformed in any
+  other way, when a key repeats anywhere in it, or when the rest of it cannot be
+  read as a dossier. `TransferStore::get_chain` and `EvidenceDossierRepository::get` return a
   `ChainError` in place of `DppError`, and the repository gains `get_document`.
   (#600, #648)
 
