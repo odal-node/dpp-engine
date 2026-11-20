@@ -17,6 +17,12 @@ use std::path::{Path, PathBuf};
 /// predate the fixtures and are not reconstructed.
 const FIRST_FIXTURE: Version = (0, 14, 0);
 
+/// The first release whose fixture carries its key store. The capture script has
+/// kept the store since, so every fixture from this one on must have it: without
+/// it, `operator_paths.rs` starts the node on a fresh store and checks no
+/// signature the release stored.
+const FIRST_KEY_STORE: Version = (0, 16, 0);
+
 type Version = (u64, u64, u64);
 
 fn parse(version: &str) -> Option<Version> {
@@ -115,6 +121,109 @@ fn every_fixture_is_a_release_and_complete() {
         seen > 0,
         "no upgrade fixtures at all under {}",
         root.display()
+    );
+}
+
+/// What is wrong with the key store a fixture directory carries, if anything.
+///
+/// The store is optional, since the first two fixtures were captured before the
+/// script kept one. But a store with no passphrase beside it cannot be opened by
+/// the upgrade test, and a passphrase with no store opens nothing, so either
+/// half alone is a fixture that was captured wrongly or half deleted.
+fn key_store_gap(dir: &Path) -> Option<String> {
+    let store = dir.join("keystore.enc").is_file();
+    let passphrase = dir.join("keystore.passphrase");
+    match (store, passphrase.is_file()) {
+        (true, false) => Some("keystore.enc has no keystore.passphrase beside it".to_owned()),
+        (false, true) => Some("keystore.passphrase has no keystore.enc beside it".to_owned()),
+        (true, true) => fs::read_to_string(&passphrase)
+            .expect("read keystore.passphrase")
+            .trim()
+            .is_empty()
+            .then(|| "keystore.passphrase is empty".to_owned()),
+        (false, false) => None,
+    }
+}
+
+#[test]
+fn a_fixture_key_store_and_its_passphrase_come_together() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade");
+    for entry in fs::read_dir(&root).expect("read tests/fixtures/upgrade") {
+        let path = entry.expect("dir entry").path();
+        if let Some(gap) = key_store_gap(&path) {
+            panic!(
+                "{}: {gap}. Re-capture the fixture with `scripts/capture-upgrade-fixture.sh`, \
+                 which writes both.",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn every_fixture_from_the_first_key_store_on_carries_one() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade");
+    let mut checked = 0;
+    for entry in fs::read_dir(&root).expect("read tests/fixtures/upgrade") {
+        let path = entry.expect("dir entry").path();
+        // A directory that is not named for a release fails
+        // `every_fixture_is_a_release_and_complete`.
+        let Some(version) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix('v'))
+            .and_then(parse)
+        else {
+            continue;
+        };
+        if version < FIRST_KEY_STORE {
+            continue;
+        }
+        assert!(
+            path.join("keystore.enc").is_file(),
+            "{}: keystore.enc is missing. Every fixture from v{} on carries the \
+             release's key store, and without it the upgrade test starts the node on a \
+             fresh one and checks no signature the release stored. Re-capture the \
+             fixture with `scripts/capture-upgrade-fixture.sh`, which keeps it.",
+            path.display(),
+            show(FIRST_KEY_STORE),
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no fixture from v{} on, so no upgrade test opens a key store a release wrote",
+        show(FIRST_KEY_STORE)
+    );
+}
+
+#[test]
+fn a_key_store_without_a_passphrase_or_the_reverse_is_reported() {
+    let dir = tempfile::tempdir().expect("fixture dir");
+    assert_eq!(key_store_gap(dir.path()), None, "neither is allowed");
+
+    fs::write(dir.path().join("keystore.enc"), "{}").expect("write store");
+    assert!(
+        key_store_gap(dir.path())
+            .expect("a store alone is a gap")
+            .contains("no keystore.passphrase")
+    );
+
+    fs::write(dir.path().join("keystore.passphrase"), " \n").expect("write passphrase");
+    assert!(
+        key_store_gap(dir.path())
+            .expect("a blank passphrase is a gap")
+            .contains("empty")
+    );
+
+    fs::write(dir.path().join("keystore.passphrase"), "secret\n").expect("write passphrase");
+    assert_eq!(key_store_gap(dir.path()), None, "both is allowed");
+
+    fs::remove_file(dir.path().join("keystore.enc")).expect("remove store");
+    assert!(
+        key_store_gap(dir.path())
+            .expect("a passphrase alone is a gap")
+            .contains("no keystore.enc")
     );
 }
 

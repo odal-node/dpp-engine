@@ -23,6 +23,12 @@ secrets/
 # Encrypted Ed25519 key stores (KEY_STORE_PATH) — never commit signing keys
 dev-keystore.enc
 *-keystore.enc
+# The one exception: the key store an upgrade fixture keeps beside its dump. It
+# holds the throwaway key of a fixture node whose DID is a localhost URL and
+# which never served anyone. Its passphrase is committed beside it
+# (`keystore.passphrase`) on purpose, so the upgrade test can open the store.
+# Every other `*.enc` stays refused.
+!crates/dpp-node/tests/fixtures/upgrade/*/keystore.enc
 # Belt and braces for a KEY_STORE_PATH that holds a key instead of a path. The
 # node refuses to boot on that now (`ensure_key_store_path`), but the rules
 # above are extension-based and so match the *configured* path while missing
