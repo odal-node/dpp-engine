@@ -17,6 +17,12 @@ use std::path::{Path, PathBuf};
 /// predate the fixtures and are not reconstructed.
 const FIRST_FIXTURE: Version = (0, 14, 0);
 
+/// The first release whose fixture carries its key store. The capture script has
+/// kept the store since, so every fixture from this one on must have it: without
+/// it, `operator_paths.rs` starts the node on a fresh store and checks no
+/// signature the release stored.
+const FIRST_KEY_STORE: Version = (0, 16, 0);
+
 type Version = (u64, u64, u64);
 
 fn parse(version: &str) -> Option<Version> {
@@ -152,6 +158,43 @@ fn a_fixture_key_store_and_its_passphrase_come_together() {
             );
         }
     }
+}
+
+#[test]
+fn every_fixture_from_the_first_key_store_on_carries_one() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/upgrade");
+    let mut checked = 0;
+    for entry in fs::read_dir(&root).expect("read tests/fixtures/upgrade") {
+        let path = entry.expect("dir entry").path();
+        // A directory that is not named for a release fails
+        // `every_fixture_is_a_release_and_complete`.
+        let Some(version) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix('v'))
+            .and_then(parse)
+        else {
+            continue;
+        };
+        if version < FIRST_KEY_STORE {
+            continue;
+        }
+        assert!(
+            path.join("keystore.enc").is_file(),
+            "{}: keystore.enc is missing. Every fixture from v{} on carries the \
+             release's key store, and without it the upgrade test starts the node on a \
+             fresh one and checks no signature the release stored. Re-capture the \
+             fixture with `scripts/capture-upgrade-fixture.sh`, which keeps it.",
+            path.display(),
+            show(FIRST_KEY_STORE),
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "no fixture from v{} on, so no upgrade test opens a key store a release wrote",
+        show(FIRST_KEY_STORE)
+    );
 }
 
 #[test]
