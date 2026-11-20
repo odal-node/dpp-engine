@@ -162,8 +162,25 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   fails, naming the recipe, when it is stale. The full authenticated read keeps
   `PassportResponse` unchanged. `TestClient` in `dpp-vault`'s suites now checks
   each response against the schema the description documents for its method, path
-  and status, and fails one the description does not document. (#378, #635,
-  #PR_PLACEHOLDER)
+  and status, and fails one the description does not document. The description
+  was corrected where the check found it wrong:
+  - a publish whose signing fails answers `500` and leaves the passport a `draft`,
+    where it described signing as best-effort and `jwsSignature` as possibly
+    null;
+  - `manufacturer.didWebUrl`, `materials[].recycledPct` and
+    `materials[].countryOfOrigin` may be `null`;
+  - an operator that has not been configured yet reads with an empty `country`;
+  - `GET /vault/health` and `GET /vault/ready` document their bodies, and an
+    uploaded dossier's `422` documents its problem body.
+
+  (#378, #635, #656)
+
+- **The vault's `401` is served as `application/problem+json`.** The
+  authentication middleware sent its problem document as `application/json`,
+  although the description documents `application/problem+json` and every other
+  vault error already used it, as RFC 9457 requires. The status, the body and
+  `WWW-Authenticate` are unchanged; a client that matched the `401`'s content type
+  exactly sees the new one. (#635, #656)
 
 - **Two overlapping `PATCH /vault/api/v1/operator` requests no longer lose one of
   them.** An update read the operator config, patched it in memory and wrote the
