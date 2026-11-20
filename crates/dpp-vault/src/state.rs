@@ -133,9 +133,13 @@ pub struct AppState {
     /// counts. A bare port (like `db_ping`): the stats/ingest handlers call it
     /// directly, there is no orchestration to wrap in a service.
     pub scan_repo: Arc<dyn ScanTelemetryRepository>,
-    /// ESPR Art. 24 unsold-goods disclosure lines. A bare port like `scan_repo`
-    /// — a row is written once and read back, with no lifecycle to orchestrate.
-    pub unsold_goods_repo: Arc<dyn dpp_types::UnsoldGoodsStore>,
+    /// ESPR Art. 24 and Art. 25 discard records (migration 0051). A bare port like
+    /// `scan_repo`: a record is written once and read back, with no lifecycle to
+    /// orchestrate.
+    pub discard_records: Arc<dyn dpp_types::DiscardRecordStore>,
+    /// The documents behind the discard records, stored once by SHA-256
+    /// (migration 0052).
+    pub evidence_store: Arc<dyn dpp_types::EvidenceStore>,
     /// The records a passport's `personalData` statements name, held where they
     /// can be erased (migration 0043). Not optional, unlike the ports that are
     /// absent on a deployment without a composition root: a node that cannot

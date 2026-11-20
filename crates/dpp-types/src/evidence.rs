@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::audit::PassportAuditEntry;
+use crate::transfer::ChainError;
 
 /// A JWS alongside the exact JSON payload it was signed over.
 ///
@@ -361,7 +362,15 @@ pub trait EvidenceDossierRepository: Send + Sync {
         passport_id: PassportId,
     ) -> Result<Vec<EvidenceDossierSummary>, DppError>;
     /// One stored dossier by id.
-    async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, DppError>;
+    ///
+    /// # Errors
+    /// [`ChainError::Refused`] when the stored dossier embeds a transfer chain
+    /// dpp-core refuses to read. [`get_document`](Self::get_document) still
+    /// returns such a dossier, as stored.
+    async fn get(&self, id: Uuid) -> Result<Option<EvidenceDossierRecord>, ChainError>;
+    /// The stored document of one dossier by id, as stored, without reading it
+    /// as a [`DossierV1`].
+    async fn get_document(&self, id: Uuid) -> Result<Option<serde_json::Value>, DppError>;
 }
 
 #[cfg(test)]

@@ -83,6 +83,16 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   every audience, since none of them covers the filtered body beside it. Whether
   the authority view should carry a proof that covers it is open on #600. (#600, #616)
 
+- **The unsold-goods disclosure line is replaced by discard records (#597, #632).**
+  `POST /vault/api/v1/unsold-goods` and `GET /vault/api/v1/unsold-goods` are
+  removed, with the one-line-per-category shape they stored and the CLI flags of
+  `odal unsold-goods record` that carried it. The yearly disclosure is computed
+  from one record per discard, not uploaded as lines. `POST /vault/api/v1/dpp`
+  refuses `productGroup: unsold-goods`, which dpp-core 0.24.0 no longer has.
+  **Migration:** record each discard through `POST /vault/api/v1/discard-records`
+  or `odal unsold-goods record <file>`. Lines already stored stay in
+  `odal.unsold_goods_report`, which this release neither reads nor writes.
+
 ### Added
 
 - **Battery CSV templates carry the placing date and the due diligence columns.**
@@ -112,6 +122,20 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     signed ruleset overruled (`conflicts`).
   - Event payloads are in `docs/guides/WEBHOOKS.md`.
 
+- **Discard records of unsold consumer products, and the evidence behind them
+  (#597, #632).** `POST /vault/api/v1/discard-records` records one discard, checked as
+  sent against dpp-core's discard-record schema, with the passports of the units
+  it discards. `GET` lists a financial year's records. `POST
+  …/discard-records/{id}/evidence` attaches a document under an evidence kind:
+  stored once by its SHA-256, at most 25 MiB. `GET
+  …/discard-records/{id}/missing-evidence` shows what a record still lacks against
+  the operator's enterprise size. Records, passport links, documents and their
+  attachments are append-only for the app role. The CLI gains `odal unsold-goods
+  record`, `list`, `attach` and `missing`, and `odal passport eol
+  --discard-record` names the record that documents a destruction. The join to
+  the record commits in the same transaction as the destruction, and the audit
+  entry of the destruction records the citation.
+
 ### Changed
 
 - **A credential may be narrowed to a product category an earlier schema version
@@ -126,6 +150,33 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **A stored transfer chain that dpp-core 0.24.0 refuses to read no longer
+  answers `500`, and an uploaded dossier carrying one no longer answers
+  `422`.** Core now refuses a chain that breaks its invariants (a record for
+  another passport, a broken operator sequence, a record after a pending one, more
+  than one outcome on a record, or a completion without both signatures). The two
+  verify routes, `POST /vault/api/v1/evidence/{id}/verify` and
+  `POST /vault/api/v1/evidence/verify`, now report it as a failed `transfer_chain`
+  check in a `200` report, naming the passport and the record core cited, with
+  every other check reported as usual. Evidence generation, the four transfer
+  actions, `GET /vault/api/v1/dpp/{dppId}/registry`, `GET /vault/api/v1/dpp/{dppId}/seal`
+  and `GET /vault/api/v1/evidence/{id}` refuse with `409` and the same detail. An
+  uploaded dossier is still a `422` when its `transferChain` is malformed in any
+  other way, when a key repeats anywhere in it, or when the rest of it cannot be
+  read as a dossier. `TransferStore::get_chain` and `EvidenceDossierRepository::get` return a
+  `ChainError` in place of `DppError`, and the repository gains `get_document`.
+  (#600, #648)
+
+- **An end-of-life declaration whose `materialRecovery` holds a number dpp-core
+  cannot hash is refused with `422` naming `/materialRecovery`, instead of a `500`.**
+  dpp-core 0.24.0 refuses an integer too large for a double to hold exactly. The
+  summary is free JSON that becomes audit metadata, and `PassportAuditEntry::chain_hash`
+  panicked on the refusal, so the request ended in a panic, a `500`, and a rolled-back
+  declaration. `chain_hash` now returns a `Result`: writing an entry that cannot be
+  hashed answers `422`, and `verify_audit_chain` reports an entry that cannot be
+  hashed as a break at its index, so a stored or uploaded one cannot panic it either.
+  (#600, #650)
+
 - **`wasmtime` and `wasmtime-wasi` 50.0.1 → 50.0.2**, clearing RUSTSEC-2026-0566
   to -0573. All eight were published on 16 November against a dependency tree that
   had not changed, and they cover:
@@ -138,6 +189,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     `wasmtime-wasi-http`.
 
   Only the lockfile changes. (#647)
+
+- **`wasmtime` and `wasmtime-wasi` 50.0.2 → 50.0.3, and `sad-rsa` 0.10.2 →
+  0.10.4**, clearing RUSTSEC-2026-0587 and RUSTSEC-2026-0583, both published on
+  19 November:
+  - on Windows, a guest could leave its WASI filesystem sandbox through a path
+    component carrying a drive prefix. The plugin host grants a plugin no
+    directory, so there was none to leave;
+  - `sad-rsa`, which `xml-sec` uses for the seal crate's trusted-list signature
+    checks, could panic while constructing, validating or re-encoding an RSA
+    private key.
+
+  `crypto-bigint` and `ctutils` move a patch release with `sad-rsa`. Only the
+  lockfile changes. (#655)
 
 ## [0.16.0] - 2026-11-14
 

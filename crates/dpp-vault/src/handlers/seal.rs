@@ -34,12 +34,15 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use dpp_types::transfer::ChainError;
 use serde::Serialize;
 
 use crate::domain::service::seal::seal_digest;
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{internal_error, not_found_error, parse_passport_id, validation_error};
+use super::error::{
+    internal_error, not_found_error, parse_passport_id, refused_chain_error, validation_error,
+};
 
 /// Who declared the content a seal covers, which is not who sealed it.
 ///
@@ -449,6 +452,7 @@ pub async fn seal_handler(
         Some(store) => match store.get_chain(passport_id).await {
             Ok(Some(stored)) => stored.chain.transfer_count() > 0,
             Ok(None) => false,
+            Err(ChainError::Refused(refused)) => return refused_chain_error(&refused),
             Err(e) => return internal_error(e),
         },
         None => false,

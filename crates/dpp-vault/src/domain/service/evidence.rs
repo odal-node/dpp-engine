@@ -12,6 +12,7 @@ use dpp_types::evidence::{
     DossierManifest, DossierV1, EvidenceDossierRecord, EvidenceDossierSummary, SignedLayer,
     VerificationReport, compute_content_hashes, content_hash,
 };
+use dpp_types::transfer::{ChainError, RefusedChain};
 use uuid::Uuid;
 
 use super::PassportService;
@@ -24,7 +25,7 @@ impl PassportService {
         &self,
         id: PassportId,
         auth: &dpp_types::auth::AuthContext,
-    ) -> Result<EvidenceDossierRecord, DppError> {
+    ) -> Result<EvidenceDossierRecord, ChainError> {
         let dossier = self.assemble_dossier(id).await?;
         let store = self.evidence_store.as_ref().ok_or_else(|| {
             DppError::Internal("evidence store not configured on this service".into())
@@ -59,19 +60,37 @@ impl PassportService {
     }
 
     /// Fetch one stored dossier by id.
-    pub async fn get_evidence(&self, dossier_id: Uuid) -> Result<EvidenceDossierRecord, DppError> {
+    pub async fn get_evidence(
+        &self,
+        dossier_id: Uuid,
+    ) -> Result<EvidenceDossierRecord, ChainError> {
         let store = self.evidence_store.as_ref().ok_or_else(|| {
             DppError::Internal("evidence store not configured on this service".into())
         })?;
-        store
+        Ok(store
             .get(dossier_id)
             .await?
-            .ok_or_else(|| DppError::NotFound(dossier_id.to_string()))
+            .ok_or_else(|| DppError::NotFound(dossier_id.to_string()))?)
     }
 
     /// Verify a stored dossier's signatures and hash chains.
-    pub async fn verify_evidence(&self, dossier_id: Uuid) -> Result<VerificationReport, DppError> {
-        let record = self.get_evidence(dossier_id).await?;
+    ///
+    /// A stored dossier whose transfer chain dpp-core refuses to read is
+    /// verified from the document as stored, which reports the transfer-chain
+    /// check failed and every other check as usual. If the rest of that document
+    /// cannot be read either, the answer is the refusal itself
+    /// ([`ChainError::Refused`]), never an internal error.
+    pub async fn verify_evidence(
+        &self,
+        dossier_id: Uuid,
+    ) -> Result<VerificationReport, ChainError> {
+        let record = match self.get_evidence(dossier_id).await {
+            Ok(record) => record,
+            Err(ChainError::Refused(refused)) => {
+                return self.verify_stored_document(dossier_id, refused).await;
+            }
+            Err(e) => return Err(e),
+        };
         // The record already carries a typed `DossierV1` — verify it directly
         // rather than serialising to bytes and re-parsing through
         // `verify_dossier_json`, which exists for the *uploaded-document* path
@@ -82,16 +101,43 @@ impl PassportService {
         ))
     }
 
+    /// Verify one stored dossier from its document as stored, reading it the
+    /// way an uploaded one is read, because it has no typed `DossierV1` to verify.
+    ///
+    /// That path also runs `input_fidelity`, which compares the document with
+    /// what was read from it. The typed path of [`Self::verify_evidence`] has no
+    /// document to compare, so this report carries one check that one lacks.
+    /// A document whose remainder cannot be read either is answered with
+    /// `refused`, the refusal that sent it here.
+    async fn verify_stored_document(
+        &self,
+        dossier_id: Uuid,
+        refused: RefusedChain,
+    ) -> Result<VerificationReport, ChainError> {
+        let store = self.evidence_store.as_ref().ok_or_else(|| {
+            DppError::Internal("evidence store not configured on this service".into())
+        })?;
+        let document = store
+            .get_document(dossier_id)
+            .await?
+            .ok_or_else(|| DppError::NotFound(dossier_id.to_string()))?;
+        let bytes =
+            serde_json::to_vec(&document).map_err(|e| DppError::Serialisation(e.to_string()))?;
+        crate::domain::verify::verify_dossier_json(&bytes, self.seal_inspector.as_deref())
+            .map_err(|_| ChainError::Refused(refused))
+    }
+
     /// Assemble the evidence dossier for a passport. Requires the passport to
     /// have been published at least once (a `Draft` has no signature to
     /// export yet).
     #[tracing::instrument(skip(self), fields(passport_id = %id))]
-    async fn assemble_dossier(&self, id: PassportId) -> Result<DossierV1, DppError> {
+    async fn assemble_dossier(&self, id: PassportId) -> Result<DossierV1, ChainError> {
         let passport = self.find_by_id(id).await?;
         if matches!(passport.status, PassportStatus::Draft) {
             return Err(DppError::Validation(
                 "cannot export evidence for a draft passport — publish it first".into(),
-            ));
+            )
+            .into());
         }
 
         let audit_raw = self.audit.list_by_passport(&id.to_string()).await?;

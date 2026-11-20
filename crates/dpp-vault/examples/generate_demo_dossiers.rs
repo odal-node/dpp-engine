@@ -150,7 +150,7 @@ fn chain(steps: Vec<Step>) -> Vec<PassportAuditEntry> {
                 .expect("audit id");
             e.timestamp = s.at.parse().expect("audit timestamp");
             e.metadata = s.metadata;
-            let h = e.chain_hash(&prev);
+            let h = e.chain_hash(&prev).expect("demo audit entry hashes");
             e.prev_hash = Some(prev.clone());
             e.entry_hash = Some(h.clone());
             prev = h;

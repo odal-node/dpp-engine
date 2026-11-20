@@ -47,7 +47,7 @@ use crate::commands::{
     stats::{run_operator_stats, run_passport_stats},
     status::run_status,
     transfer::{run_transfer_initiate, run_transfer_resolve},
-    unsold_goods::{run_unsold_goods_list, run_unsold_goods_record},
+    unsold_goods::{run_discard_attach, run_discard_list, run_discard_missing, run_discard_record},
     up::run_up,
     update::run_update,
     validate::run_validate,
@@ -229,34 +229,18 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
             })
             .await
         }
-        Commands::UnsoldGoods {
-            command:
-                UnsoldGoodsCommands::Record {
-                    period,
-                    units,
-                    kg,
-                    category,
-                    reason,
-                    destination,
-                    justification,
-                    country,
-                },
-        } => {
-            run_unsold_goods_record(crate::core::unsold_goods::DisclosureLine {
-                period,
-                units,
-                kg,
-                category,
-                reason,
-                destination,
-                justification,
-                country,
-            })
-            .await
-        }
-        Commands::UnsoldGoods {
-            command: UnsoldGoodsCommands::List { period, json },
-        } => run_unsold_goods_list(period.as_deref(), json).await,
+        Commands::UnsoldGoods { command } => match command {
+            UnsoldGoodsCommands::Record { file, passports } => {
+                run_discard_record(&file, &passports).await
+            }
+            UnsoldGoodsCommands::List { start, end, json } => {
+                run_discard_list(&start, &end, json).await
+            }
+            UnsoldGoodsCommands::Attach { record, kind, file } => {
+                run_discard_attach(&record, &kind, &file).await
+            }
+            UnsoldGoodsCommands::Missing { record } => run_discard_missing(&record).await,
+        },
         Commands::Webhook {
             command: WebhookCommands::List,
         } => run_webhook_list().await,
@@ -390,6 +374,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     derogation,
                     unsold,
                     notes,
+                    discard_record,
                 },
         } => {
             run_eol(
@@ -398,6 +383,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                 derogation.as_deref(),
                 unsold,
                 notes.as_deref(),
+                discard_record.as_deref(),
             )
             .await
         }
