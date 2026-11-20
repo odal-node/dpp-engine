@@ -115,23 +115,20 @@ fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
     })
 }
 
-/// Declare a passport end-of-life.
+/// The body of an end-of-life declaration, checked against the shapes the node
+/// would certainly refuse.
 ///
-/// `derogation` and `unsold` are carried only for `destroyed`. Whether a
-/// destruction owes a derogation is the node's question: the ESPR Art. 25(1) ban
-/// reaches an unsold product of Annex VII and an operator that is not exempt, and
-/// the node holds the product's code and the operator's size. This refuses only
-/// the shapes the node would certainly reject, so an operator is not charged a
-/// round-trip to learn that `--reason destroyed` needs `--unsold`.
-pub async fn action_eol(
-    id: &str,
+/// `discard_record` names the discard record that documents a destruction. It is
+/// carried only for `destroyed`: a record documents a destruction and nothing else.
+/// Whether it cites the same derogation point is the node's question, and it
+/// answers `422` for a mismatch.
+pub(crate) fn eol_payload(
     reason: &str,
     derogation: Option<&str>,
     unsold: Option<bool>,
     notes: Option<&str>,
-    client: &OdalClient,
-    cfg: &Config,
-) -> Result<()> {
+    discard_record: Option<&str>,
+) -> Result<Value> {
     let mut kind = json!({ "kind": reason });
     if reason == "destroyed" {
         if unsold.is_none() {
@@ -149,6 +146,12 @@ pub async fn action_eol(
             "--derogation and --unsold apply only to --reason destroyed; {reason} needs neither"
         );
     }
+    if discard_record.is_some() && reason != "destroyed" {
+        anyhow::bail!(
+            "--discard-record applies only to --reason destroyed; {reason} is not a destruction, \
+             and a discard record documents one"
+        );
+    }
 
     let mut payload = json!({ "reason": kind });
     if let Some(unsold) = unsold {
@@ -157,9 +160,28 @@ pub async fn action_eol(
     if let Some(n) = notes {
         payload["notes"] = json!(n);
     }
+    if let Some(record) = discard_record {
+        payload["discardRecordId"] = json!(record);
+    }
+    Ok(payload)
+}
 
+/// Declare a passport end-of-life.
+///
+/// `derogation` and `unsold` are carried only for `destroyed`. Whether a
+/// destruction owes a derogation is the node's question: the ESPR Art. 25(1) ban
+/// reaches an unsold product of Annex VII and an operator that is not exempt, and
+/// the node holds the product's code and the operator's size. This refuses only
+/// the shapes the node would certainly reject, so an operator is not charged a
+/// round-trip to learn that `--reason destroyed` needs `--unsold`.
+pub async fn action_eol(
+    id: &str,
+    payload: &Value,
+    client: &OdalClient,
+    cfg: &Config,
+) -> Result<()> {
     let url = format!("{}/api/v1/dpp/{id}/eol", cfg.vault_url);
-    let (status, body) = client.post_json(&url, &payload).await?;
+    let (status, body) = client.post_json(&url, payload).await?;
     if !status.is_success() {
         anyhow::bail!(
             "end-of-life declaration failed: {}",
@@ -299,6 +321,55 @@ mod publish_readiness {
         let scope = r.scope.expect("passportScope is reported");
         assert_eq!(scope.status, "required");
         assert!(scope.note.is_some());
+    }
+
+    /// A destruction names the discard record that documents it, and the record
+    /// id goes out as the node's `discardRecordId`, beside the derogation point.
+    #[test]
+    fn a_destruction_names_the_discard_record_that_documents_it() {
+        let payload = super::eol_payload(
+            "destroyed",
+            Some("damagedOrContaminated"),
+            Some(false),
+            None,
+            Some("0196a3f0-0000-7000-8000-000000000001"),
+        )
+        .expect("a destruction with a record is a valid declaration");
+        assert_eq!(
+            payload["discardRecordId"],
+            "0196a3f0-0000-7000-8000-000000000001"
+        );
+        assert_eq!(payload["reason"]["derogation"], "damagedOrContaminated");
+    }
+
+    /// A discard record documents a destruction and nothing else, so it is refused
+    /// for every other reason before anything is sent.
+    #[test]
+    fn a_discard_record_is_refused_for_anything_but_a_destruction() {
+        for reason in ["recycled", "exported", "lost"] {
+            let err = super::eol_payload(
+                reason,
+                None,
+                None,
+                None,
+                Some("0196a3f0-0000-7000-8000-000000000001"),
+            )
+            .expect_err("only a destruction names a discard record");
+            assert!(
+                err.to_string()
+                    .contains("--discard-record applies only to --reason destroyed"),
+                "{err}"
+            );
+        }
+    }
+
+    /// Without the flag the payload carries no discard record, so an EOL sent
+    /// without one is unchanged from before the flag existed.
+    #[test]
+    fn without_a_discard_record_the_payload_carries_none() {
+        let payload = super::eol_payload("destroyed", None, Some(true), None, None)
+            .expect("a destruction with unsold stated is valid without a record");
+        assert!(payload.get("discardRecordId").is_none(), "{payload}");
     }
 
     /// Blockers are addressed to a field, which is the whole reason they are a

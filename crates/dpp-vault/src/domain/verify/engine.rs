@@ -631,7 +631,7 @@ mod tests {
     fn chain_entries(mut entries: Vec<PassportAuditEntry>) -> Vec<PassportAuditEntry> {
         let mut prev = String::new();
         for e in &mut entries {
-            let h = e.chain_hash(&prev);
+            let h = e.chain_hash(&prev).expect("test entry hashes");
             e.prev_hash = Some(prev.clone());
             e.entry_hash = Some(h.clone());
             prev = h;

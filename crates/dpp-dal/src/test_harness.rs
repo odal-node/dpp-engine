@@ -199,6 +199,16 @@ pub async fn sessions_waiting_for_a_lock(pg: &TestPg) -> i64 {
     .expect("read pg_stat_activity")
 }
 
+/// The SQLSTATE a database error carries, so a test can tell which line refused.
+///
+/// `None` when the error is not a database error, such as a failed connection.
+pub fn sqlstate(error: &sqlx::Error) -> Option<String> {
+    error
+        .as_database_error()
+        .and_then(|e| e.code())
+        .map(|c| c.into_owned())
+}
+
 /// Swap the database name in a Postgres URL, keeping its TLS settings. `sslmode`
 /// and the certificate settings must survive: dropping them would connect without
 /// the verification the caller asked for. Nothing else in the query does: a

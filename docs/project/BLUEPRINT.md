@@ -49,7 +49,7 @@ no third party sees it.
 | Compliance | Signed Wasm plugins per product group, plausibility lint, signed ruleset channel with hot swap |
 | Regulatory catalog | Which product groups need a passport, from when, under which acts |
 | Resolver | Digital link resolution (GS1 Digital Link and by passport id), HTML, JSON-LD and AAS views, QR codes, signature verification on every read |
-| Operator administration | API keys with scopes, facilities, operator identifiers, webhooks, unsold-goods disclosure lines |
+| Operator administration | API keys with scopes, facilities, operator identifiers, webhooks, unsold-goods discard records and their evidence |
 | Continuity | Signed pre-rendered snapshots of public pages in object storage |
 | Operations | `odal` CLI and console, Prometheus metrics, trust mode reporting |
 

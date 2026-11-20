@@ -1313,7 +1313,7 @@
             "$ref": "#/components/responses/Conflict"
           },
           "422": {
-            "description": "A destruction refused, with the passport unchanged, for one of three\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n",
+            "description": "A declaration refused, with the passport unchanged, for one of four\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited;\n- `/materialRecovery`: the value holds a number dpp-core cannot hash\n  exactly, such as an integer too large for a double to hold, so the\n  declaration could not be chained into the audit trail.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n\nA `discardRecordId` is refused with the passport unchanged when the\nreason is not `destroyed`, when it names no discard record this node\nholds, or when the record and the reason do not cite the same derogation\npoint: one citing a point and the other none, or two different points.\nBoth citing none agree. Such a refusal carries no `errors` member. On\nsuccess the passport is joined to the discard record in the same\ntransaction as the destruction, and the audit entry records the citation.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3189,11 +3189,11 @@
         }
       }
     },
-    "/vault/api/v1/unsold-goods": {
+    "/vault/api/v1/discard-records": {
       "get": {
-        "operationId": "listUnsoldGoods",
-        "summary": "List unsold-goods disclosure lines",
-        "description": "Every recorded ESPR Art. 24 disclosure line, newest first, optionally\nnarrowed to one financial year.\n\nAdmin rather than write: these are the operator's own annual figures, and\nreading them back is an administrative act rather than part of producing\npassports.\n",
+        "operationId": "listDiscardRecords",
+        "summary": "List the discard records of a financial year",
+        "description": "The discard records whose day of discard falls within the financial year\nnamed by `financialYearStart` and `financialYearEnd`, both days included,\nearliest discard first. A year whose start is after its end lists nothing.\n\nAdmin rather than write: these are the operator's own annual figures, and\nreading them back is an administrative act rather than part of producing\npassports.\n",
         "tags": [
           "Unsold goods"
         ],
@@ -3207,52 +3207,55 @@
         ],
         "parameters": [
           {
-            "name": "reportingPeriod",
+            "name": "financialYearStart",
             "in": "query",
-            "required": false,
-            "description": "Financial year as `YYYY`. Omit for every period.",
+            "required": true,
+            "description": "First day of the financial year, as `YYYY-MM-DD`.",
             "schema": {
               "type": "string",
-              "pattern": "^[0-9]{4}$"
+              "format": "date"
+            }
+          },
+          {
+            "name": "financialYearEnd",
+            "in": "query",
+            "required": true,
+            "description": "Last day of the financial year, as `YYYY-MM-DD`.",
+            "schema": {
+              "type": "string",
+              "format": "date"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "The disclosure lines.",
+            "description": "The discard records of the year.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                    "$ref": "#/components/schemas/StoredDiscardRecord"
                   }
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
-          },
-          "422": {
-            "description": "`reportingPeriod` is not a four-digit year.",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
           }
         }
       },
       "post": {
-        "operationId": "recordUnsoldGoods",
-        "summary": "Record an unsold-goods disclosure line",
-        "description": "Records one line of the ESPR Art. 24 disclosure of unsold consumer products\ndiscarded in a financial year.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an *operator over a financial year*, the\nmedium is the operator's own website, and the trigger is discarding unsold\nstock: none of which is a product placed on the market. These routes\ntherefore sit beside the other operator-scoped ones, and no `unsold-goods`\nproduct group carries passports.\n\n**Destruction must be justified.** Art. 25 prohibits destroying unsold\nconsumer products listed in Annex VII from 19 July 2026, so\n`destination: exemptDestruction` requires `destructionJustification` and is\nrefused with `422` without it. The converse is refused too: a justification\non any other destination describes nothing.\n\n**Annex VII scope is not decided here.** That is a CN-code prefix test, and\nthe goods in a disclosure line do not arrive carrying CN codes.\n`productCategory` is the operator's own categorisation for Art. 24(1)(a).\n\n**Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a\nduplicate line is permanent, and Art. 24 is disclosed publicly for a\nfinancial year, so a discard counted twice overstates what the operator\nactually did.\n\nRequires a write-scoped key; reading the lines back requires admin.\n",
+        "operationId": "createDiscardRecord",
+        "summary": "Record a discard of unsold consumer products",
+        "description": "Records one discard of unsold consumer products, with the passports of the\nunits it discards.\n\n**Every discard is a record.** A record is made for each discard, not only\nfor a destruction under a derogation: ESPR Art. 24(2) has the operator\ndemonstrate the delivery and reception of every discarded product. A\nderogation is cited where a destruction relies on one, and the documents\nbehind it are attached with `POST …/evidence`.\n\n**Checked as sent.** The record is checked against dpp-core's discard-record\nschema before it is read, so a misspelt field is refused with `422` rather\nthan dropped.\n\n**This is not a passport.** There is no digital product passport anywhere in\nArt. 24 or Art. 25: the subject is an operator over a financial year, so\nthese routes sit beside the other operator-scoped ones.\n\n**Retry with an `Idempotency-Key`.** This route serves no `DELETE`, so a\nduplicate record is permanent, and Art. 24 is disclosed publicly for a\nfinancial year, so a discard counted twice overstates what the operator\nactually did.\n\nRequires a write-scoped key; reading the records back requires admin.\n",
         "tags": [
           "Unsold goods"
         ],
@@ -3274,18 +3277,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateUnsoldGoodsEntry"
+                "$ref": "#/components/schemas/CreateDiscardRecordRequest"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "The recorded line.",
+            "description": "The stored record.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnsoldGoodsEntry"
+                  "$ref": "#/components/schemas/StoredDiscardRecord"
                 }
               }
             }
@@ -3303,7 +3306,7 @@
             "$ref": "#/components/responses/IdempotentRequestInFlight"
           },
           "422": {
-            "description": "The line cannot be recorded: a `reportingPeriod` that is not a\nfour-digit year, a negative count or weight, a `countryOfDisposal` that\nis not alpha-2, a destruction with no justification, or a justification\non something that was not destroyed.\n",
+            "description": "The record cannot be stored: `record` does not match dpp-core's\ndiscard-record schema, cannot be read into a discard, or names a\npassport this node does not hold.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3311,6 +3314,161 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/vault/api/v1/discard-records/{id}/evidence": {
+      "post": {
+        "operationId": "attachDiscardRecordEvidence",
+        "summary": "Attach a document to a discard record",
+        "description": "Attaches a document to a discard record under an evidence kind. The request\nis `multipart/form-data` with two fields: `kind`, the evidence kind as\ndpp-core names it, and `file`, the document.\n\n**Stored once.** The document is stored under the SHA-256 of its bytes. A\ndocument cited by two records is one stored file, and the attachment is\nrecorded against each record.\n\n**Size.** A file may be at most 25 MiB. A larger one is refused with `413`.\n\n**Once per kind.** A record holds a given document under a given kind once.\nAttaching the same document under the same kind again is refused with `409`.\n\nRequires a write-scoped key.\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The discard record's id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "file"
+                ],
+                "properties": {
+                  "kind": {
+                    "$ref": "#/components/schemas/EvidenceKind"
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The document, at most 25 MiB."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The attachment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachedEvidence"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The record already holds this document under this kind.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The file is larger than 25 MiB.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/vault/api/v1/discard-records/{id}/missing-evidence": {
+      "get": {
+        "operationId": "discardRecordMissingEvidence",
+        "summary": "Show the evidence a discard record still lacks",
+        "description": "The requirements of the discard record that no attached document meets,\nread against the operator's enterprise size. An operator that has stated no\nsize is read as large. A micro or small enterprise, or a medium-sized one\nbefore 19 July 2030, owes nothing for a discard, so its list is empty.\n\nAdmin rather than write, as the listing is.\n",
+        "tags": [
+          "Unsold goods"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The discard record's id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the record still lacks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingEvidence"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -7110,6 +7268,14 @@
             ],
             "description": "Whether the product was an unsold consumer product, which a passport does not record. Required with a `destroyed` reason (`422` otherwise): with the operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban reaches the product, and so whether the destruction cites a derogation."
           },
+          "discardRecordId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The discard record that documents this destruction (ESPR Art. 24 and Art. 25). Only with a `destroyed` reason. The record must cite the same derogation point as the reason, or both must cite none; otherwise the request is refused with `422`. On success the passport is joined to the record in the same transaction as the destruction, and the audit entry of the destruction records the citation."
+          },
           "declaredBy": {
             "type": [
               "string",
@@ -7122,7 +7288,7 @@
               "object",
               "null"
             ],
-            "description": "Optional recovered-material summary (Battery Annex XIII circularity)."
+            "description": "Optional recovered-material summary (Battery Annex XIII circularity).\nA number dpp-core cannot hash exactly, such as an integer too large for a\ndouble to hold, is refused with `422` naming `/materialRecovery`.\n"
           },
           "notes": {
             "type": [
@@ -9493,119 +9659,61 @@
           }
         }
       },
-      "CreateUnsoldGoodsEntry": {
+      "CreateDiscardRecordRequest": {
         "type": "object",
-        "description": "One line of an ESPR Art. 24 disclosure: a category of unsold consumer products\ndiscarded in a financial year, with the reason and where it went.\n\nA disclosure is many of these, not one row. Art. 24(1) asks for the figures\n\"differentiated per type or category of products\", and separately per reason\nand destination, which a single aggregate cannot express.\n\nThe operator is **not** part of the request. The report is about this node's\nown operator, taken from its operator config; there is no second operator on a\nsingle-tenant node for it to legitimately be.\n",
+        "description": "One discard of unsold consumer products, and the passports of the units it\ndiscards.\n\n`record` is checked as sent, against dpp-core's discard-record schema, before\nit is read. A field that schema does not have is refused, not dropped. The\nschema is not restated here: dpp-core publishes it, and this description\nnames only the version the node checks against, which the response reports\nas `schemaVersion`.\n",
         "required": [
-          "reportingPeriod",
-          "unitCount",
-          "volumeKg",
-          "productCategory",
-          "reason",
-          "destination",
-          "countryOfDisposal"
+          "record"
         ],
+        "additionalProperties": false,
         "properties": {
-          "reportingPeriod": {
-            "type": "string",
-            "pattern": "^[0-9]{4}$",
-            "description": "The financial year the goods were discarded in. Art. 24(1) discloses \"the\npreceding financial year\", annually, so this is a year and not a month or\na quarter.\n",
-            "example": "2026"
+          "record": {
+            "type": "object",
+            "description": "The discard, as dpp-core's discard-record schema describes it: the day it\nwas discarded, the CN codes, the units and the weight (each marked when it\nis an estimate), the derogation it relies on where one applies, the\ntreatment and the receiver.\n"
           },
-          "unitCount": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0,
-            "description": "How many products. Art. 24(1)(a) asks for the number **and** the weight;\nboth are required here because a disclosure carrying only one cannot\nsatisfy it.\n",
-            "example": 1240
-          },
-          "volumeKg": {
-            "type": "number",
-            "format": "double",
-            "minimum": 0,
-            "description": "Their total weight in kilograms.",
-            "example": 860.5
-          },
-          "productCategory": {
-            "$ref": "#/components/schemas/UnsoldProductCategory"
-          },
-          "reason": {
-            "$ref": "#/components/schemas/UnsoldDiscardReason"
-          },
-          "destination": {
-            "$ref": "#/components/schemas/UnsoldDestination"
-          },
-          "destructionJustification": {
-            "type": "string",
-            "description": "Which Art. 25 exemption the destruction relies on.\n\n**Required** when `destination` is `exemptDestruction`, and **refused**\notherwise. ESPR Art. 25 prohibits destroying unsold consumer products\nlisted in Annex VII from 19 July 2026, so a recorded destruction has to say\nwhy it was permitted; a justification attached to a donation describes\nnothing.\n",
-            "example": "Contaminated stock unfit for use under Art. 25(5)"
-          },
-          "countryOfDisposal": {
-            "type": "string",
-            "pattern": "^[A-Za-z]{2}$",
-            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in.\n\nEither case is accepted and the stored value is upper-cased. The pattern\nis what makes the description enforceable: a length bound alone admits\n`1?`, which satisfies the published contract and is then refused by the\nhandler: a contract looser than the implementation is the kind a\ngenerated client trusts.\n",
-            "example": "DE"
+          "passportIds": {
+            "type": "array",
+            "description": "The passports of the units this discard discards. A join in this node's\nstorage, not part of the record. Duplicates are stored once.\n",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },
-      "UnsoldGoodsEntry": {
+      "StoredDiscardRecord": {
         "type": "object",
-        "description": "A stored ESPR Art. 24 disclosure line.",
+        "description": "A stored discard record, as the node holds it. Append-only.",
         "required": [
           "id",
-          "reportingPeriod",
-          "volumeKg",
-          "productCategory",
-          "reason",
-          "destination",
-          "countryOfDisposal",
+          "schemaVersion",
+          "record",
+          "passportIds",
           "createdAt"
         ],
+        "additionalProperties": false,
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Minted by the node when the record is stored."
           },
-          "reportingPeriod": {
+          "schemaVersion": {
             "type": "string",
-            "example": "2026"
+            "example": "1.0.0",
+            "description": "The version of dpp-core's discard-record schema the record was checked against."
           },
-          "unitCount": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "description": "Null only for a row written before the count had a column: the write path\nrequires it, so anything recorded through this API carries one.\n"
+          "record": {
+            "type": "object",
+            "description": "The discard, as dpp-core's discard-record schema describes it."
           },
-          "volumeKg": {
-            "type": "number",
-            "format": "double"
-          },
-          "productCategory": {
-            "$ref": "#/components/schemas/UnsoldProductCategory"
-          },
-          "reason": {
-            "$ref": "#/components/schemas/UnsoldDiscardReason"
-          },
-          "destination": {
-            "$ref": "#/components/schemas/UnsoldDestination"
-          },
-          "destructionJustification": {
-            "type": "string",
-            "description": "Present only for `exemptDestruction`."
-          },
-          "countryOfDisposal": {
-            "type": "string",
-            "pattern": "^[A-Z]{2}$",
-            "description": "ISO 3166-1 alpha-2 country the goods were disposed of in."
-          },
-          "operatorName": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The operator the disclosure is about: this node's own legal name at the\ntime the line was recorded. Report content, not a tenant key.\n"
+          "passportIds": {
+            "type": "array",
+            "description": "The passports of the units this discard discards, sorted.",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           },
           "createdAt": {
             "type": "string",
@@ -9613,42 +9721,103 @@
           }
         }
       },
-      "UnsoldProductCategory": {
-        "type": "string",
-        "description": "The operator's own categorisation of the discarded goods, for Art. 24(1)(a)'s\n\"differentiated per type or category of products\", which prescribes no\nvocabulary.\n\nThis is **not** Annex VII ban scope. Annex VII gives two *code-valued*\nheadings, matched by CN **prefix**: apparel and clothing accessories (`4203`,\n`61`, `62`, `6504`, `6505`), and footwear (`6401`–`6405`), with clothing\naccessories inside the first heading rather than beside it. Reading this list\nas those headings gets both their count and their shape wrong.\n",
-        "enum": [
-          "apparel",
-          "footwear",
-          "homeTextile",
-          "accessories",
-          "other"
+      "AttachedEvidence": {
+        "type": "object",
+        "description": "A document attached to a discard record.",
+        "required": [
+          "discardRecordId",
+          "kind",
+          "sha256",
+          "sizeBytes"
         ],
-        "example": "apparel"
+        "additionalProperties": false,
+        "properties": {
+          "discardRecordId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvidenceKind"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Lower-case hex SHA-256 of the stored bytes. The file's identity."
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
       },
-      "UnsoldDiscardReason": {
-        "type": "string",
-        "description": "Why the goods went unsold, for Art. 24(1)(b).",
-        "enum": [
-          "endOfSeason",
-          "qualityDefect",
-          "packagingDefect",
-          "overProduction",
-          "customerReturn",
-          "other"
+      "MissingEvidence": {
+        "type": "object",
+        "description": "The evidence a discard record still lacks. A requirement is missing when no\nattached document meets it. That is not proof of a breach: the Regulation\nexcepts information the competent authority already holds under another act,\nwhich only the operator can say.\n",
+        "required": [
+          "enterpriseSize",
+          "missingEvidence"
         ],
-        "example": "endOfSeason"
+        "additionalProperties": false,
+        "properties": {
+          "enterpriseSize": {
+            "$ref": "#/components/schemas/EnterpriseSize",
+            "description": "The operator's size class the requirements were read for. Unset reads as large."
+          },
+          "missingEvidence": {
+            "type": "array",
+            "description": "Each requirement no attached document meets. Empty when none is missing.",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRequirement"
+            }
+          }
+        }
       },
-      "UnsoldDestination": {
-        "type": "string",
-        "description": "Where the goods went, for Art. 24(1)(c).\n\n`exemptDestruction` is the only value recording an act that is otherwise\nprohibited, and the only one that requires `destructionJustification`.\n",
-        "enum": [
-          "donation",
-          "recycling",
-          "repurposing",
-          "supplierReturn",
-          "exemptDestruction"
+      "EvidenceRequirement": {
+        "type": "object",
+        "description": "One thing a discard record must be able to show: a document of any one of\nthe listed kinds. A record's requirements are read as an AND of such\nalternatives.\n",
+        "required": [
+          "anyOf",
+          "basis"
         ],
-        "example": "recycling"
+        "additionalProperties": false,
+        "properties": {
+          "anyOf": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Any one of these kinds meets the requirement.",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceKind"
+            }
+          },
+          "basis": {
+            "type": "string",
+            "description": "The provision that makes it a requirement, cited by its article."
+          }
+        }
+      },
+      "EvidenceKind": {
+        "type": "string",
+        "description": "A kind of document an operator keeps to stand behind a discard, as dpp-core\nnames them. Three provisions name them: the derogation documentation of\nDelegated Regulation (EU) 2026/296 Article 3, the delivery and treatment\ndocumentation of Implementing Regulation (EU) 2026/2 Article 4, and the\nderogation statement given to the waste treatment operator. The last is a\nduty to provide, never one a record is found lacking.\n",
+        "enum": [
+          "safetyAssessment",
+          "chemicalsTestReport",
+          "nonComplianceSelfAssessment",
+          "infringementDecision",
+          "infringementNotification",
+          "internalInvestigation",
+          "ipLicenceOrContract",
+          "destructionJustification",
+          "reuseFeasibilityAssessment",
+          "qualityAssessmentEvidence",
+          "inspectionRecord",
+          "donationOfferEvidence",
+          "donationReceiptDeclaration",
+          "wasteOperatorSourceDocumentation",
+          "deliveryDocumentation",
+          "treatmentStatement",
+          "derogationStatement"
+        ]
       },
       "CreatedApiKeyResponse": {
         "type": "object",

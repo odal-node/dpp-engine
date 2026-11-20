@@ -185,7 +185,7 @@ keeps an append-only history.
 | `odal passport publish [id]` | Sign and publish one draft, or every draft. Given the id of a suspended passport, it publishes that passport again | write |
 | `odal passport suspend <id>` | Suspend a published passport. Its public URL answers `410 Gone` | write |
 | `odal passport retire <id>` | Move a passport to the terminal `retired` state. The public page keeps serving. Refused until the product group's retention period, counted from publication, has passed; the refusal names the date. The operator's `--retention-policy-days` setting does not change it | write |
-| `odal passport eol <id> --reason [--unsold true\|false] [--derogation <point>]` | Declare end of life (terminal). `--reason destroyed` requires `--unsold`; the node then asks for a `--derogation`, a point of Art. 2 of Delegated Regulation (EU) 2026/296 such as `damagedOrContaminated`, only where the ESPR Art. 25(1) ban reaches the product (unsold, Annex VII, an operator that is not exempt) | write |
+| `odal passport eol <id> --reason [--unsold true\|false] [--derogation <point>] [--discard-record <id>]` | Declare end of life (terminal). `--reason destroyed` requires `--unsold`; the node then asks for a `--derogation`, a point of Art. 2 of Delegated Regulation (EU) 2026/296 such as `damagedOrContaminated`, only where the ESPR Art. 25(1) ban reaches the product (unsold, Annex VII, an operator that is not exempt). `--discard-record` names the discard record that documents the destruction; it is accepted only with `--reason destroyed`, and the record must cite the same derogation point as `--derogation`, or both must cite none. The passport is then joined to the record | write |
 | `odal passport amend <id> --patch <file> [--reason]` | Correct a published passport by issuing a successor. Returns the successor, which has a new id; the original moves to `superseded` | write |
 | `odal passport supersede <id> --superseded-by <id>` | Supersede a passport with one that already exists and already names it in `supersedesId` | write |
 | `odal passport lint <id>` | Re-run the advisory plausibility checks and store the findings. Also reports publish readiness | write |
@@ -250,19 +250,22 @@ asked before anyone runs a node.
 | Command | What it does | Scope |
 |---|---|---|
 | `odal credential issue <holder-did> --name --country [--role] [--product-groups] [--product-categories] [--valid-for-days]` | Issue a credential the holder sends as `X-DPP-Credential` to read restricted fields | admin |
-| `odal unsold-goods record --period --units --kg --category --reason --destination --country [--justification]` | Record one line of the ESPR Art. 24 disclosure of discarded unsold products | write |
-| `odal unsold-goods list [--period] [--json]` | List recorded lines, newest first | admin |
+| `odal unsold-goods record <file.json> [--passport <id>]...` | Record one discard of unsold products; the file holds the record as dpp-core's discard-record schema describes it, and the node checks it as sent | write |
+| `odal unsold-goods list --start <YYYY-MM-DD> --end <YYYY-MM-DD> [--json]` | List the discard records of a financial year, earliest discard first | admin |
+| `odal unsold-goods attach <record-id> --kind <kind> --file <path>` | Attach a document (at most 25 MiB) to a discard record under an evidence kind | write |
+| `odal unsold-goods missing <record-id>` | Show the evidence a discard record still lacks, read against the operator's enterprise size | admin |
 
 `credential issue` covers legitimate-interest roles (repairers, recyclers,
 remanufacturers and similar). Authority roles are refused, because a member state
 confers that standing, not the operator. The node publishes no revocation list, so
 a credential lives at most 90 days.
 
-`unsold-goods` lines are not passports: Art. 24 reports on the operator over a
-financial year. Both `--units` and `--kg` are required because Art. 24(1)(a) asks
-for the number and the weight. `--destination exemptDestruction` requires a
-`--justification` naming the Art. 25 exemption, and every other destination
-refuses one.
+`unsold-goods` records are not passports: Art. 24 reports on the operator over a
+financial year. Every discard is a record, whatever was done with the product.
+A record names the derogation it relies on where a destruction needs one, and
+`odal unsold-goods attach` supplies the documents behind it; `odal unsold-goods
+missing` shows which are still absent. `record` is not idempotent by itself, so
+pass `--idempotency-key` when retrying it: there is no delete.
 
 ### Webhooks, plugins and rulesets
 

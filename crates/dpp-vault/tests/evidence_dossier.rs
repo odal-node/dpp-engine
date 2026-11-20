@@ -61,7 +61,7 @@ impl AuditRepository for InMemoryAuditRepo {
             .and_then(|e| e.entry_hash.clone())
             .unwrap_or_else(|| GENESIS_PREV_HASH.to_owned());
         let mut entry = entry;
-        entry.entry_hash = Some(entry.chain_hash(&prev_hash));
+        entry.entry_hash = Some(entry.chain_hash(&prev_hash).expect("test entry hashes"));
         entry.prev_hash = Some(prev_hash);
         entries.push(entry);
         Ok(())
@@ -370,7 +370,7 @@ async fn publish_transfer_eol_then_generate_verifies_and_persists() {
         issuer_did.clone(),
     );
     service
-        .declare_eol(published.id, eol, false, &auth)
+        .declare_eol(published.id, eol, false, None, &auth)
         .await
         .expect("declare eol");
 
