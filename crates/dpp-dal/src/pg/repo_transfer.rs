@@ -5,7 +5,7 @@ use sqlx::Row;
 
 use dpp_domain::{DppError, passport::PassportId, transfer::TransferChain};
 use dpp_types::TransferStore;
-use dpp_types::transfer::{VersionedChain, stale_chain};
+use dpp_types::transfer::{ChainError, RefusedChain, VersionedChain, stale_chain};
 
 use super::{PgDal, db_err};
 
@@ -23,7 +23,10 @@ impl PgTransferRepo {
 
 #[async_trait]
 impl TransferStore for PgTransferRepo {
-    async fn get_chain(&self, passport_id: PassportId) -> Result<Option<VersionedChain>, DppError> {
+    async fn get_chain(
+        &self,
+        passport_id: PassportId,
+    ) -> Result<Option<VersionedChain>, ChainError> {
         let row = sqlx::query(
             "SELECT chain, revision FROM odal.passport_transfer WHERE passport_id = $1",
         )
@@ -32,8 +35,15 @@ impl TransferStore for PgTransferRepo {
         .await
         .map_err(db_err)?;
         row.map(|r| {
-            let chain = serde_json::from_value(r.get::<serde_json::Value, _>("chain"))
-                .map_err(|e| DppError::Internal(format!("deserialize transfer chain: {e}")))?;
+            let chain =
+                serde_json::from_value(r.get::<serde_json::Value, _>("chain")).map_err(|e| {
+                    match RefusedChain::from_read_error(passport_id, &e) {
+                        Some(refused) => ChainError::Refused(refused),
+                        None => ChainError::Other(DppError::Internal(format!(
+                            "deserialize transfer chain: {e}"
+                        ))),
+                    }
+                })?;
             Ok(VersionedChain {
                 chain,
                 revision: Some(r.get::<i64, _>("revision")),

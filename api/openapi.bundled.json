@@ -817,6 +817,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The stored transfer chain is one dpp-core refuses to read, so\nwhether responsibility may have transferred cannot be answered, and\nthe seal is not served without that answer. The detail names the\npassport and the record dpp-core cited.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -1375,7 +1385,14 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "The passport is not published, so it cannot be transferred.\n\nAlso the stored transfer chain is one dpp-core refuses to read: it breaks\nthe chain's invariants, for instance a record for another passport, a\nbroken operator sequence, or a completion without both signatures. The\ndetail names the passport and the record dpp-core cited. Nothing is\nwritten.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -1431,6 +1448,16 @@
           },
           "404": {
             "description": "This DPP has no transfer chain at all: no handover has ever been\ninitiated for it. A chain that exists but carries nothing pending is a\n`422`, not this.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The stored transfer chain is one dpp-core refuses to read: it breaks the\nchain's invariants, for instance a record for another passport, a broken\noperator sequence, or a completion without both signatures. The detail names\nthe passport and the record dpp-core cited. Nothing is written.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1508,6 +1535,16 @@
               }
             }
           },
+          "409": {
+            "description": "The stored transfer chain is one dpp-core refuses to read: it breaks the\nchain's invariants, for instance a record for another passport, a broken\noperator sequence, or a completion without both signatures. The detail names\nthe passport and the record dpp-core cited. Nothing is written.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "422": {
             "description": "There is no pending handover to reject, or the record's state does not\npermit it. Core allows a reject only from `Initiated`. Also a transfer\nchain that another request changed while this one was running: nothing\nis written, and the request can be sent again.\n",
             "content": {
@@ -1569,6 +1606,16 @@
           },
           "404": {
             "description": "This DPP has no transfer chain at all: no handover has ever been\ninitiated for it. A chain that exists but carries nothing pending is a\n`422`, not this.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The stored transfer chain is one dpp-core refuses to read: it breaks the\nchain's invariants, for instance a record for another passport, a broken\noperator sequence, or a completion without both signatures. The detail names\nthe passport and the record dpp-core cited. Nothing is written.\n",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1643,7 +1690,14 @@
             "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "$ref": "#/components/responses/Conflict"
+            "description": "The passport is a draft, which has no signature to export.\n\nAlso the stored transfer chain is one dpp-core refuses to read: it breaks\nthe chain's invariants, for instance a record for another passport, a\nbroken operator sequence, or a completion without both signatures. The\ndetail names the passport and the record dpp-core cited. No dossier is\nstored.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       },
@@ -1741,6 +1795,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The stored dossier embeds a transfer chain that dpp-core refuses to\nread, so it cannot be served as a dossier. The detail names the\npassport and the record dpp-core cited. Verifying it answers `200`,\nwith the transfer-chain check failed, when the rest of the dossier\nreads, and `409` when the rest cannot be read either.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -1749,7 +1813,7 @@
       "post": {
         "operationId": "verifyStoredEvidenceDossier",
         "summary": "Verify a stored dossier",
-        "description": "An integrity check against the stored dossier's own signatures and\nhash chains. A tamper is still a `200` response: the report's\n`checks` name which check failed.\n",
+        "description": "An integrity check against the stored dossier's own signatures and\nhash chains. A tamper is still a `200` response: the report's\n`checks` name which check failed.\n\nA dossier whose transfer chain dpp-core refuses to read is reported the\nsame way: the `transfer_chain` check fails, naming the passport and the\nrecord dpp-core cited, and every other check is reported as usual. That\nreport also carries an `input_fidelity` check, which compares the stored\ndocument with what was read from it; the report of a dossier that reads\nnormally does not.\n",
         "tags": [
           "Evidence Dossiers"
         ],
@@ -1788,6 +1852,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The stored dossier embeds a transfer chain that dpp-core refuses to\nread, and the rest of the document cannot be read either, so there is\nnothing to report on. The detail names the passport and the record\ndpp-core cited.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }
@@ -1796,7 +1870,7 @@
       "post": {
         "operationId": "verifyUploadedEvidenceDossier",
         "summary": "Verify an uploaded dossier document",
-        "description": "Same checks as the stored-dossier verify endpoint, run against an uploaded document instead.",
+        "description": "Same checks as the stored-dossier verify endpoint, run against an uploaded\ndocument instead.\n\nA `transferChain` member that dpp-core refuses to read is a failed\n`transfer_chain` check in a `200` report, naming the passport and the\nrecord dpp-core cited, with every other check reported as usual. A\n`transferChain` that is malformed in any other way is a `422`, like any\nother malformed dossier.\n",
         "tags": [
           "Evidence Dossiers"
         ],
@@ -1883,6 +1957,16 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The stored transfer chain is one dpp-core refuses to read, so the\npassport's current responsible operator cannot be named. The detail\nnames the passport and the record dpp-core cited.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
           }
         }
       }

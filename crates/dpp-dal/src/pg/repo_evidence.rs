@@ -8,6 +8,7 @@ use dpp_domain::{DppError, passport::PassportId};
 use dpp_types::evidence::{
     DossierV1, EvidenceDossierRecord, EvidenceDossierRepository, EvidenceDossierSummary,
 };
+use dpp_types::transfer::{ChainError, RefusedChain};
 
 use super::{PgDal, db_err};
 
@@ -74,7 +75,7 @@ impl EvidenceDossierRepository for PgEvidenceDossierRepo {
             .collect())
     }
 
-    async fn get(&self, id: uuid::Uuid) -> Result<Option<EvidenceDossierRecord>, DppError> {
+    async fn get(&self, id: uuid::Uuid) -> Result<Option<EvidenceDossierRecord>, ChainError> {
         let row = sqlx::query(
             r#"SELECT id, passport_id, actor, doc_hash, doc, created_at
                FROM odal.evidence_dossier
@@ -85,11 +86,22 @@ impl EvidenceDossierRepository for PgEvidenceDossierRepo {
         .await
         .map_err(db_err)?;
         row.map(|r| {
-            let dossier: DossierV1 = serde_json::from_value(r.get("doc"))
-                .map_err(|e| DppError::Internal(format!("deserialize evidence dossier: {e}")))?;
+            let passport_id = PassportId(r.get("passport_id"));
+            let doc: serde_json::Value = r.get("doc");
+            let dossier = <DossierV1 as serde::Deserialize>::deserialize(&doc).map_err(|e| {
+                // A dossier is read member by member and stops at the first
+                // fault, so the chain is read on its own: a refused chain is
+                // reported as one even when something else fails first.
+                match RefusedChain::from_dossier_document(passport_id, &doc) {
+                    Some(refused) => ChainError::Refused(refused),
+                    None => ChainError::Other(DppError::Internal(format!(
+                        "deserialize evidence dossier: {e}"
+                    ))),
+                }
+            })?;
             Ok(EvidenceDossierRecord {
                 id: r.get("id"),
-                passport_id: PassportId(r.get("passport_id")),
+                passport_id,
                 actor: r.get("actor"),
                 created_at: r.get("created_at"),
                 doc_hash: r.get("doc_hash"),
@@ -97,5 +109,13 @@ impl EvidenceDossierRepository for PgEvidenceDossierRepo {
             })
         })
         .transpose()
+    }
+
+    async fn get_document(&self, id: uuid::Uuid) -> Result<Option<serde_json::Value>, DppError> {
+        sqlx::query_scalar("SELECT doc FROM odal.evidence_dossier WHERE id = $1")
+            .bind(id)
+            .fetch_optional(self.dal.pool())
+            .await
+            .map_err(db_err)
     }
 }

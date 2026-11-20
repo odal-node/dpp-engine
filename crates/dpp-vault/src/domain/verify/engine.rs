@@ -2,10 +2,13 @@
 //! [`DossierV1`] and produces a [`VerificationReport`] — a single tamper
 //! flips exactly one named check, never cascades into unrelated failures.
 
+use dpp_domain::transfer::TransferChain;
 use dpp_types::audit::verify_audit_chain;
 use dpp_types::evidence::{
-    CheckResult, CheckStatus, DossierV1, VerificationReport, compute_content_hashes,
+    CheckResult, CheckStatus, DossierV1, VerificationReport, compute_content_hashes, content_hash,
 };
+use dpp_types::transfer::core_refusal_message;
+use serde::Deserialize;
 
 use super::jws::{resolve_public_key, verify_jws_content};
 use super::transfer_chain::verify_transfer_chain;
@@ -30,6 +33,29 @@ pub enum DossierParseError {
 /// raw bytes.
 pub fn verify_dossier(
     dossier: &DossierV1,
+    seals: Option<&dyn dpp_types::SealInspector>,
+) -> VerificationReport {
+    verify_members(dossier, None, seals)
+}
+
+/// A `transferChain` member that dpp-core refuses to read, so a dossier could
+/// not hold it as a typed chain.
+struct RefusedChainMember<'a> {
+    /// The member as the document carries it.
+    raw: &'a serde_json::Value,
+    /// Core's refusal, naming the passport and the record it cited.
+    refusal: String,
+}
+
+/// [`verify_dossier`], for a dossier read without its `transferChain` member
+/// because dpp-core refuses that member (`refused`).
+///
+/// The member is checked as the document carries it: its hash is compared with
+/// the one the manifest commits to, and the transfer-chain check fails with
+/// core's refusal. Every other check reads the rest of the dossier as usual.
+fn verify_members(
+    dossier: &DossierV1,
+    refused: Option<&RefusedChainMember<'_>>,
     seals: Option<&dyn dpp_types::SealInspector>,
 ) -> VerificationReport {
     let mut checks = Vec::new();
@@ -65,7 +91,12 @@ pub fn verify_dossier(
     //    manifest commits to.
     checks.push(CheckResult {
         name: "content_integrity".into(),
-        status: match compute_content_hashes(dossier) {
+        status: match compute_content_hashes(dossier).and_then(|mut hashes| {
+            if let Some(member) = refused {
+                hashes.insert("transferChain".to_owned(), content_hash(member.raw)?);
+            }
+            Ok(hashes)
+        }) {
             // A dossier whose members cannot be canonicalised cannot be
             // attested at all — fail the check rather than abort the verifier.
             Err(e) => CheckStatus::Fail(format!("cannot canonicalise dossier members: {e}")),
@@ -117,9 +148,13 @@ pub fn verify_dossier(
     // 6. Transfer chain.
     checks.push(CheckResult {
         name: "transfer_chain".into(),
-        status: match &dossier.transfer_chain {
-            None => CheckStatus::Absent("no transfer chain on this passport".into()),
-            Some(chain) => match verify_transfer_chain(
+        status: match (&dossier.transfer_chain, refused) {
+            (_, Some(member)) => CheckStatus::Fail(format!(
+                "the transfer chain is refused by dpp-core: {}",
+                member.refusal
+            )),
+            (None, None) => CheckStatus::Absent("no transfer chain on this passport".into()),
+            (Some(chain), None) => match verify_transfer_chain(
                 chain,
                 &dossier.did_documents,
                 &dossier.manifest.issuer_did,
@@ -346,6 +381,16 @@ fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
 ///   *actually parsed* and compares them against the canonical bytes of what
 ///   was *received*. Any content lost in between fails this check.
 ///
+/// - A `transferChain` member that dpp-core refuses to read (a record for
+///   another passport, a broken operator sequence, a completion without both
+///   signatures, ...) is neither of the above: it returns `Ok(report)` with the
+///   `transfer_chain` check failed, naming the passport and the record core
+///   cited, and every other check run on the rest of the dossier. The member is
+///   hashed as the document carries it, so `content_integrity` still attests it
+///   against the manifest, and `input_fidelity` covers the rest of the
+///   document. A document that fails to parse for any other reason keeps its
+///   error, whether or not its chain is refused.
+///
 /// # Errors
 /// [`DossierParseError`] — see above.
 pub fn verify_dossier_json(
@@ -356,11 +401,120 @@ pub fn verify_dossier_json(
     // Parsed a second time directly from `bytes` rather than `raw.clone()` —
     // cheaper than deep-cloning an already-parsed `Value` tree, and this
     // function runs on every dossier verify (both stored and uploaded).
-    let dossier: DossierV1 = serde_json::from_slice(bytes)?;
+    let dossier: DossierV1 = match serde_json::from_slice(bytes) {
+        Ok(dossier) => dossier,
+        Err(error) => return verify_with_refused_chain(bytes, raw, seals, error),
+    };
 
     let mut report = verify_dossier(&dossier, seals);
     report.checks.push(input_fidelity_check(&raw, &dossier));
     Ok(report)
+}
+
+/// Verify a document that did not parse as a dossier, if the only thing in the
+/// way is a `transferChain` member that dpp-core refuses to read.
+///
+/// That is a dossier whose transfer-chain check fails, not one that cannot be
+/// read. Four things must hold: `error`, the failure of the whole parse, is
+/// itself core's refusal of a chain (so a document that fails for another reason,
+/// such as a duplicated key ahead of the chain, keeps its error); no object in
+/// `bytes` holds a key twice; the member alone is refused by core; and the
+/// document without that member parses. Otherwise the duplicate's error, or
+/// `error`, is returned. `raw` is taken apart rather than copied.
+fn verify_with_refused_chain(
+    bytes: &[u8],
+    mut raw: serde_json::Value,
+    seals: Option<&dyn dpp_types::SealInspector>,
+    error: serde_json::Error,
+) -> Result<VerificationReport, DossierParseError> {
+    if core_refusal_message(&error).is_none() {
+        return Err(error.into());
+    }
+    // The parse that failed stopped at the chain, so no key after it was checked
+    // for a duplicate, and `raw` kept the last of any two. The document is read
+    // again for that alone.
+    serde_json::from_slice::<UniqueKeys>(bytes)?;
+    let Some(chain) = raw
+        .as_object_mut()
+        .and_then(|members| members.remove("transferChain"))
+    else {
+        return Err(error.into());
+    };
+    let refusal = TransferChain::deserialize(&chain)
+        .err()
+        .and_then(|e| core_refusal_message(&e));
+    let (Some(refusal), Ok(dossier)) = (refusal, DossierV1::deserialize(&raw)) else {
+        return Err(error.into());
+    };
+
+    let member = RefusedChainMember {
+        raw: &chain,
+        refusal,
+    };
+    let mut report = verify_members(&dossier, Some(&member), seals);
+    report.checks.push(input_fidelity_check(&raw, &dossier));
+    Ok(report)
+}
+
+/// A JSON document in which no object holds the same key twice, at any depth.
+/// Only that is read: the values are discarded.
+struct UniqueKeys;
+
+impl<'de> Deserialize<'de> for UniqueKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(UniqueKeysVisitor)
+    }
+}
+
+struct UniqueKeysVisitor;
+
+impl<'de> serde::de::Visitor<'de> for UniqueKeysVisitor {
+    type Value = UniqueKeys;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<UniqueKeys, E> {
+        Ok(UniqueKeys)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<UniqueKeys, A::Error> {
+        while seq.next_element::<UniqueKeys>()?.is_some() {}
+        Ok(UniqueKeys)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<UniqueKeys, A::Error> {
+        let mut seen = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if seen.contains(&key) {
+                return Err(serde::de::Error::custom(format!("duplicate key `{key}`")));
+            }
+            map.next_value::<UniqueKeys>()?;
+            seen.insert(key);
+        }
+        Ok(UniqueKeys)
+    }
 }
 
 /// `JCS(raw) == JCS(reserialize(parse(raw)))` — catches content silently
@@ -998,6 +1152,204 @@ mod tests {
             CheckStatus::Fail(_)
         ));
         assert!(!report.all_verified());
+    }
+
+    /// A dossier whose signed manifest commits to a `transferChain` member that
+    /// dpp-core refuses to read: a record that says it completed and carries no
+    /// signature.
+    fn dossier_bytes_with_a_refused_chain(
+        tamper_after_signing: bool,
+    ) -> (Vec<u8>, serde_json::Value) {
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut dossier = valid_dossier(&signing_key);
+        let operator = |did: &str| serde_json::json!({ "did": did, "name": "Acme", "role": "distributor", "country": "DE" });
+        let passport = "01990000-0000-7000-8000-000000000001";
+        let mut chain = serde_json::json!({
+            "passportId": passport,
+            "originalOperator": operator("did:web:from.example"),
+            "transfers": [{
+                "transferId": "01990000-0000-7000-8000-0000000000aa",
+                "passportId": passport,
+                "fromOperator": operator("did:web:from.example"),
+                "toOperator": operator("did:web:to.example"),
+                "reason": "sale",
+                "fromSignature": null,
+                "nodeAcceptanceAttestation": null,
+                "initiatedAt": "2026-11-01T00:00:00Z",
+                "completedAt": "2026-11-02T00:00:00Z",
+                "notes": null
+            }]
+        });
+        let mut hashes = compute_content_hashes(&dossier).unwrap();
+        hashes.insert("transferChain".into(), content_hash(&chain).unwrap());
+        dossier.manifest.content_hashes = hashes;
+        let manifest_value = serde_json::to_value(&dossier.manifest).unwrap();
+        dossier.manifest_jws = sign("did:web:node.example", &signing_key, &manifest_value);
+
+        if tamper_after_signing {
+            chain["transfers"][0]["notes"] = serde_json::json!("changed after signing");
+        }
+        let mut value = serde_json::to_value(&dossier).unwrap();
+        value["transferChain"] = chain.clone();
+        (serde_json::to_vec(&value).unwrap(), chain)
+    }
+
+    #[test]
+    fn a_chain_core_refuses_fails_only_the_transfer_chain_check() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+
+        let report = verify_dossier_json(&bytes, None)
+            .expect("a chain core refuses is a failed check, not an unreadable dossier");
+
+        match by_name(&report, "transfer_chain") {
+            CheckStatus::Fail(detail) => assert!(
+                detail.contains("01990000-0000-7000-8000-0000000000aa")
+                    && detail.contains("01990000-0000-7000-8000-000000000001"),
+                "names the passport and the record core cited: {detail}"
+            ),
+            other => panic!("the transfer-chain check must fail, got {other:?}"),
+        }
+        let failed: Vec<&str> = report
+            .checks
+            .iter()
+            .filter(|c| c.status.is_failure())
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(
+            failed,
+            ["transfer_chain"],
+            "every other check is reported as usual: {report:?}"
+        );
+    }
+
+    #[test]
+    fn the_member_core_refuses_is_still_attested_by_the_manifest() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(true);
+
+        let report = verify_dossier_json(&bytes, None).expect("parses");
+
+        assert!(
+            matches!(by_name(&report, "content_integrity"), CheckStatus::Fail(d) if d.contains("transferChain")),
+            "{report:?}"
+        );
+    }
+
+    /// `value` as text with every object's keys in reverse order and
+    /// whitespace between every token.
+    fn reversed_and_spaced(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::Object(map) => {
+                let members: Vec<String> = map
+                    .iter()
+                    .rev()
+                    .map(|(k, v)| format!("\n  {k:?} :  {}", reversed_and_spaced(v)))
+                    .collect();
+                format!("{{{}\n}}", members.join(" ,"))
+            }
+            serde_json::Value::Array(items) => {
+                let items: Vec<String> = items.iter().map(reversed_and_spaced).collect();
+                format!("[ {} ]", items.join(" , "))
+            }
+            other => other.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_member_signed_as_the_generator_signs_it_passes_content_integrity_however_it_is_written() {
+        let (bytes, chain) = dossier_bytes_with_a_refused_chain(false);
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["transferChain"] = serde_json::json!("PLACEHOLDER");
+        let text = serde_json::to_string(&value)
+            .unwrap()
+            .replace("\"PLACEHOLDER\"", &reversed_and_spaced(&chain));
+        assert_ne!(
+            text.matches("\"transferChain\"").count(),
+            0,
+            "the member is in the document"
+        );
+
+        let report = verify_dossier_json(text.as_bytes(), None).expect("parses");
+
+        assert_eq!(*by_name(&report, "content_integrity"), CheckStatus::Pass);
+        assert!(matches!(
+            by_name(&report, "transfer_chain"),
+            CheckStatus::Fail(_)
+        ));
+    }
+
+    #[test]
+    fn a_member_with_one_unknown_field_more_fails_content_integrity() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["transferChain"]["notARealField"] = serde_json::json!(1);
+
+        let report = verify_dossier_json(&serde_json::to_vec(&value).unwrap(), None)
+            .expect("core's chain tolerates an unknown field, so this is still a refused chain");
+
+        assert!(
+            matches!(by_name(&report, "content_integrity"), CheckStatus::Fail(d) if d.contains("transferChain")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_chain_does_not_excuse_a_duplicated_key() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let text = String::from_utf8(bytes).unwrap();
+        // A second `manifestJws` ahead of the real one. A reader that keeps the
+        // last of two keys would verify a document whose first value it never saw.
+        let text = text.replacen('{', "{\"manifestJws\":\"first\",", 1);
+
+        let err = verify_dossier_json(text.as_bytes(), None)
+            .expect_err("a duplicated key is a parse error, whatever the chain is");
+        assert!(matches!(err, DossierParseError::Json(_)));
+    }
+
+    #[test]
+    fn a_refused_chain_does_not_excuse_a_duplicated_key_after_it() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let text = String::from_utf8(bytes).unwrap();
+        // A second `manifestJws` closing the document, after the chain. The typed
+        // parse stops at the refused chain and never reaches it, and a `Value`
+        // keeps the last of two keys, so only a read of the bytes can see it.
+        let chain_at = text
+            .find("\"transferChain\"")
+            .expect("the chain is a member");
+        let end = text.rfind('}').expect("the document is an object");
+        assert!(chain_at < end);
+        let text = format!("{},\"manifestJws\":\"last\"}}", &text[..end]);
+
+        let err = verify_dossier_json(text.as_bytes(), None)
+            .expect_err("a duplicated key is a parse error, wherever it sits");
+        assert!(
+            matches!(&err, DossierParseError::Json(e) if e.to_string().contains("duplicate key `manifestJws`")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_chain_that_is_malformed_not_refused_is_a_parse_error() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["transferChain"]
+            .as_object_mut()
+            .unwrap()
+            .remove("transfers");
+
+        let err = verify_dossier_json(&serde_json::to_vec(&value).unwrap(), None)
+            .expect_err("a chain with no transfers member is malformed");
+        assert!(matches!(err, DossierParseError::Json(_)));
+    }
+
+    #[test]
+    fn a_refused_chain_does_not_excuse_a_dossier_malformed_elsewhere() {
+        let (bytes, _) = dossier_bytes_with_a_refused_chain(false);
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["notARealField"] = serde_json::json!("sneaky");
+
+        let err = verify_dossier_json(&serde_json::to_vec(&value).unwrap(), None)
+            .expect_err("an unrecognised field is still a parse error");
+        assert!(matches!(err, DossierParseError::Json(_)));
     }
 
     #[test]

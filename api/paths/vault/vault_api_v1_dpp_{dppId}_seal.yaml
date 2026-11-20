@@ -49,5 +49,15 @@ get:
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
+    '409':
+      description: |
+        The stored transfer chain is one dpp-core refuses to read, so
+        whether responsibility may have transferred cannot be answered, and
+        the seal is not served without that answer. The detail names the
+        passport and the record dpp-core cited.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '400':
       $ref: ../../components/responses/BadRequest.yaml

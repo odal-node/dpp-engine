@@ -20,11 +20,12 @@ use axum::{
     response::IntoResponse,
 };
 use dpp_types::registry_sync::STALL_THRESHOLD;
+use dpp_types::transfer::ChainError;
 use serde::Serialize;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::{internal_error, parse_passport_id};
+use super::error::{internal_error, parse_passport_id, refused_chain_error};
 
 /// One passport's registration, as the registry queue holds it.
 #[derive(Serialize)]
@@ -253,6 +254,7 @@ pub async fn passport_registry_handler(
                 })
             }
             Ok(_) => None,
+            Err(ChainError::Refused(refused)) => return refused_chain_error(&refused),
             Err(e) => return internal_error(format!("reading transfer chain: {e}")),
         },
         None => None,
