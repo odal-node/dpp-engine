@@ -27,6 +27,7 @@ Docker runs the local infrastructure (PostgreSQL, Redis, NATS) and the integrati
 ```bash
 git clone https://github.com/odal-node/dpp-engine.git
 cd dpp-engine
+just install-hooks      # pre-commit hook enforces Rule 5: green `just check` before commit
 just infra              # PostgreSQL, Redis and NATS in Docker
 cp .env.example .env    # then set KEY_STORE_PASSPHRASE
 cargo run -p dpp-node   # the node, on port 8001
@@ -34,7 +35,8 @@ cargo run -p dpp-node   # the node, on port 8001
 
 | Command | What it runs |
 |---|---|
-| `just check` | The local gate: format, clippy over every target (the Docker-gated suites included), the guard scripts, the spec-version check, unit tests, `cargo audit` and `cargo deny` |
+| `just install-hooks` | Install the pre-commit hook that enforces Rule 5: no commit without a green `just check` |
+| `just check` | The local gate: format, clippy over every target (the Docker-gated suites included), the guard scripts, the spec-version check, unit tests, `cargo audit` and `cargo deny` — records the tree id so the pre-commit hook can verify it |
 | `just ci` | `just check` plus the Docker-backed integration tiers |
 | `just test` | Unit tests (`cargo nextest`), no Docker |
 | `just test-integration` | The Docker-backed integration tiers |
