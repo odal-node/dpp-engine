@@ -19,9 +19,12 @@
 //! - The operation must document the status (exactly, as a range such as `4XX`,
 //!   or as `default`) and the content type the response carried.
 //! - A JSON body (`application/json`, or any `+json` type such as
-//!   `application/problem+json`) must validate against the schema documented for
-//!   that content type. A body of any other type is not validated: its status
-//!   and content type are what is checked.
+//!   `application/problem+json`) must parse as JSON, and must validate against
+//!   the schema documented for that content type where there is one. A body of
+//!   any other type is not validated: its status and content type are what is
+//!   checked.
+//! - A response the description documents with a body must carry a content
+//!   type, even when it is empty.
 //!
 //! A response none of this accepts fails the test, naming the method, the path,
 //! the status and the start of the body.
@@ -316,12 +319,16 @@ impl Contract {
             })?;
 
         let json = served == "application/json" || served.ends_with("+json");
-        let Some(schema) = media.get("schema").filter(|_| json) else {
+        if !json {
             return Ok(());
-        };
-
+        }
+        // Parsed before the schema is looked up: a JSON media type documented
+        // without a schema still promises JSON.
         let instance: Value = serde_json::from_slice(body)
             .map_err(|e| format!("{who}\n  the body is not JSON although it is {served}: {e}"))?;
+        let Some(schema) = media.get("schema") else {
+            return Ok(());
+        };
         let validator = self.validator(
             &format!(
                 "{} {} {status_key} {media_key}",

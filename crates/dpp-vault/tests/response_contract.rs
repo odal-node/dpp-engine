@@ -267,6 +267,32 @@ fn an_empty_answer_documented_without_a_body_passes() {
 }
 
 #[test]
+fn a_json_type_documented_without_a_schema_still_has_to_be_json() {
+    let mut schemaless = bundle();
+    schemaless["paths"][PUBLIC_READ]["get"]["responses"]["200"]["content"]["application/json"]
+        .as_object_mut()
+        .expect("the 200 documents application/json")
+        .remove("schema");
+    let contract = Contract::from_bundle(schemaless);
+    let target = format!("/public/dpp/{ID}");
+
+    let failure = contract
+        .check("GET", &target, 200, Some("application/json"), b"not json")
+        .expect_err("a JSON media type promises JSON, schema or not");
+    assert!(failure.contains("is not JSON"), "{failure}");
+
+    check_json(
+        &contract,
+        "GET",
+        &target,
+        200,
+        "application/json",
+        &json!({ "anything": 1 }),
+    )
+    .expect("JSON with no schema to hold it to passes");
+}
+
+#[test]
 fn a_problem_document_is_validated_against_the_problem_schema() {
     let failure = check_json(
         &contract(),

@@ -151,7 +151,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 ### Fixed
 
 - **The API description now documents the redacted passport reads with a schema a
-  served read satisfies, and every vault test response is validated against the
+  served read satisfies, and vault test responses are validated against the
   description.** The public reads, the audience-scoped credential read and the
   resolver's JSON representation were documented with `PassportResponse`, which
   requires `retentionLocked`, a field core's redaction withholds from the public,
@@ -162,8 +162,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   fails, naming the recipe, when it is stale. The full authenticated read keeps
   `PassportResponse` unchanged. `TestClient` in `dpp-vault`'s suites now checks
   each response against the schema the description documents for its method, path
-  and status, and fails one the description does not document. The description
-  was corrected where the check found it wrong:
+  and status, and fails one the description does not document. A test opts out
+  only by saying so with `unchecked()`, as the two do that talk to a stand-in
+  server and to a removed route. The description was corrected where the check
+  found it wrong:
   - a publish whose signing fails answers `500` and leaves the passport a `draft`,
     where it described signing as best-effort and `jwsSignature` as possibly
     null;
