@@ -9,8 +9,8 @@
 mod helpers;
 
 use helpers::{
-    PgContainer, TestClient, make_jwt, make_jwt_scoped, seed_complete_operator, start_postgres,
-    start_vault,
+    PgContainer, TestClient, make_jwt, make_jwt_scoped, seed_complete_operator, send_checked,
+    start_postgres, start_vault,
 };
 
 const OPERATOR: &str = "00000000-0000-0000-0000-000000000077";
@@ -100,16 +100,16 @@ fn evidence_form(kind: &str, bytes: Vec<u8>) -> reqwest::multipart::Form {
 }
 
 async fn attach(s: &Setup, record_id: &str, form: reqwest::multipart::Form) -> reqwest::Response {
-    reqwest::Client::new()
-        .post(format!(
-            "{}/api/v1/discard-records/{record_id}/evidence",
-            s.base
-        ))
-        .bearer_auth(&s.write)
-        .multipart(form)
-        .send()
-        .await
-        .expect("the attachment reaches the node")
+    send_checked(
+        reqwest::Client::new()
+            .post(format!(
+                "{}/api/v1/discard-records/{record_id}/evidence",
+                s.base
+            ))
+            .bearer_auth(&s.write)
+            .multipart(form),
+    )
+    .await
 }
 
 // ─── Recording ────────────────────────────────────────────────────────────────
@@ -209,12 +209,12 @@ async fn recording_a_discard_needs_a_write_key() {
 #[tokio::test(flavor = "multi_thread")]
 async fn recording_a_discard_needs_a_credential() {
     let s = setup(None).await;
-    let resp = reqwest::Client::new()
-        .post(format!("{}/api/v1/discard-records", s.base))
-        .json(&discard("2026-08-01", None))
-        .send()
-        .await
-        .expect("the request reaches the node");
+    let resp = send_checked(
+        reqwest::Client::new()
+            .post(format!("{}/api/v1/discard-records", s.base))
+            .json(&discard("2026-08-01", None)),
+    )
+    .await;
     assert_eq!(resp.status(), 401);
 }
 
@@ -222,14 +222,14 @@ async fn recording_a_discard_needs_a_credential() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_body_that_is_not_json_is_a_bad_request() {
     let s = setup(None).await;
-    let resp = reqwest::Client::new()
-        .post(format!("{}/api/v1/discard-records", s.base))
-        .bearer_auth(&s.write)
-        .header("content-type", "application/json")
-        .body("not json")
-        .send()
-        .await
-        .expect("the request reaches the node");
+    let resp = send_checked(
+        reqwest::Client::new()
+            .post(format!("{}/api/v1/discard-records", s.base))
+            .bearer_auth(&s.write)
+            .header("content-type", "application/json")
+            .body("not json"),
+    )
+    .await;
     assert_eq!(resp.status(), 400);
 }
 

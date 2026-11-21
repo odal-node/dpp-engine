@@ -37,8 +37,9 @@
 //!
 //! The committed file is the artifact: `the_committed_list_is_what_the_policy_derives`
 //! recomputes it and fails, naming the recipe, when it differs.
-//! `just regenerate-redacted-required` rewrites it, and `just openapi-bundle`
-//! carries it into the bundle.
+//! `just regenerate-redacted-required` rewrites it. The full list is read from
+//! the bundle, so the recipe bundles before it derives the list and again after,
+//! to carry the new list into the bundle.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -218,8 +219,8 @@ fn the_committed_list_is_what_the_policy_derives() {
     assert_eq!(
         COMMITTED, derived,
         "api/components/schemas/passport/RedactedPassportRequired.yaml no longer matches what \
-         core's disclosure policy derives. Run `{RECIPE}`, then `just openapi-bundle`, and commit \
-         both."
+         core's disclosure policy derives. Run `{RECIPE}` (it bundles the description before \
+         and after) and commit what it changes."
     );
 }
 

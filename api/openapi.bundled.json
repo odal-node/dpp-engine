@@ -4000,7 +4000,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.\n\n**The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled, so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.\n\nWhen (and only when) the body is a different record from the one asked for, the response carries `Content-Location` naming where that record lives (RFC 9110 §8.7). Its **presence** is the signal: a client can tell \"this is your record\" from \"this is the record that replaced it\" without comparing `id` against what it sent. It is a relative reference, so it resolves correctly wherever this API is mounted.",
+            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }` (`SchemaViewResponse`).\n\n**The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled, so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.\n\nWhat is served is the successor's own signed public view, and its `supersedesId` names the passport that was asked for: the pointer is part of a document the reader can verify rather than a claim beside one. The chain is followed rather than stepped once, so `A → B → C` serves `C` when `A` is scanned.\n\nA superseded passport whose successor is **not published yet** keeps serving its own frozen view, as does one retired or deactivated with no replacement at all. In that view `status` reads as it did at publish, because the body is the payload `publicJwsSignature` was computed over.\n\nWhen (and only when) the body is a different record from the one asked for, the response carries `Content-Location` naming where that record lives (RFC 9110 §8.7). Its **presence** is the signal: a client can tell \"this is your record\" from \"this is the record that replaced it\" without comparing `id` against what it sent. It is a relative reference, so it resolves correctly wherever this API is mounted.",
             "headers": {
               "Content-Location": {
                 "description": "Present only on a superseded read, naming the record actually served, relative to the request URI (e.g. `./0b6b…`). Absent on an ordinary read.",
@@ -4013,7 +4013,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RedactedPassportResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RedactedPassportResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SchemaViewResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -4107,11 +4114,18 @@
         ],
         "responses": {
           "200": {
-            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.",
+            "description": "Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }` (`SchemaViewResponse`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RedactedPassportResponse"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RedactedPassportResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SchemaViewResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -6491,6 +6505,76 @@
           "updatedAt",
           "version"
         ]
+      },
+      "SchemaViewResponse": {
+        "type": "object",
+        "description": "What a public read answers when it is asked for `schema_view`: the published passport exactly as the plain read serves it, alongside a view of its product group data under the requested schema version.",
+        "required": [
+          "passport",
+          "schemaView"
+        ],
+        "properties": {
+          "passport": {
+            "$ref": "#/components/schemas/RedactedPassportResponse"
+          },
+          "schemaView": {
+            "$ref": "#/components/schemas/DerivedView"
+          }
+        }
+      },
+      "DerivedView": {
+        "type": "object",
+        "description": "A passport's product group data re-viewed under a newer schema version, built at read time by upcasting the published data along the schema's lenses. It is derived and never signed: the passport it accompanies, and the proof attached to that passport, are the record.",
+        "required": [
+          "data",
+          "derived",
+          "from",
+          "to",
+          "lensChain",
+          "lossy"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "The product group data, transformed to conform to `to`."
+          },
+          "derived": {
+            "type": "boolean",
+            "description": "Always `true`. The view is computed at read time, not signed source."
+          },
+          "from": {
+            "type": "string",
+            "description": "The schema version the passport was published under.",
+            "example": "1.0.0"
+          },
+          "to": {
+            "type": "string",
+            "description": "The schema version the data now conforms to, the one `schema_view` asked for. Equal to `from` when the request names the passport's own version.",
+            "example": "2.0.0"
+          },
+          "lensChain": {
+            "type": "array",
+            "description": "The hops applied, oldest first, each a `[from, to]` pair. Empty when `from` and `to` are equal.",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              }
+            },
+            "example": [
+              [
+                "1.0.0",
+                "2.0.0"
+              ]
+            ]
+          },
+          "lossy": {
+            "type": "boolean",
+            "description": "`true` when any hop dropped or defaulted information, so `data` says less than, or other than, the published passport."
+          }
+        }
       },
       "DppId": {
         "type": "string",

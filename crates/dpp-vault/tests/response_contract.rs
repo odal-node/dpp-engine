@@ -251,6 +251,22 @@ fn a_body_in_a_content_type_the_response_does_not_document_fails() {
 }
 
 #[test]
+fn an_empty_answer_to_a_read_that_documents_a_body_fails() {
+    let failure = contract()
+        .check("GET", &format!("/public/dpp/{ID}"), 200, None, b"")
+        .expect_err("the public read documents a passport, not nothing");
+
+    assert!(failure.contains("no content type"), "{failure}");
+}
+
+#[test]
+fn an_empty_answer_documented_without_a_body_passes() {
+    contract()
+        .check("DELETE", &format!("/api/v1/webhooks/{ID}"), 204, None, b"")
+        .expect("a 204 the description documents with no content");
+}
+
+#[test]
 fn a_problem_document_is_validated_against_the_problem_schema() {
     let failure = check_json(
         &contract(),

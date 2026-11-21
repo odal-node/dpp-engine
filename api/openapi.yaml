@@ -87,6 +87,10 @@ components:
       $ref: components/schemas/passport/RedactedPassportResponse.yaml
     RedactedPassportRequired:
       $ref: components/schemas/passport/RedactedPassportRequired.yaml
+    SchemaViewResponse:
+      $ref: components/schemas/passport/SchemaViewResponse.yaml
+    DerivedView:
+      $ref: components/schemas/passport/DerivedView.yaml
     DppId:
       $ref: components/schemas/passport/DppId.yaml
     PassportStatus:

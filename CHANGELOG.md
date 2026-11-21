@@ -171,7 +171,10 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
     `materials[].countryOfOrigin` may be `null`;
   - an operator that has not been configured yet reads with an empty `country`;
   - `GET /vault/health` and `GET /vault/ready` document their bodies, and an
-    uploaded dossier's `422` documents its problem body.
+    uploaded dossier's `422` documents its problem body;
+  - the public reads' `200` documents the `{ passport, schemaView }` body that
+    `?schema_view` answers with (`SchemaViewResponse`, its `schemaView` a
+    `DerivedView`), which no schema described before.
 
   (#378, #635, #656)
 

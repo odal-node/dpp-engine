@@ -281,12 +281,18 @@ impl Contract {
                     .to_ascii_lowercase()
             })
             .filter(|media| !media.is_empty());
+        // The response documents a body, so one with no content type fails
+        // whether it is empty or not: an empty `200` would otherwise pass
+        // without a single required field being checked. A response the
+        // description documents without a body took the branch above.
         let Some(served) = served else {
-            return if body.is_empty() {
-                Ok(())
-            } else {
-                Err(format!("{who}\n  a body with no content type"))
-            };
+            let documented: Vec<&str> = content.keys().map(String::as_str).collect();
+            return Err(format!(
+                "{who}\n  the {status_key} response of {} {} documents {}, and this one has no content type",
+                method.to_ascii_uppercase(),
+                operation.template,
+                documented.join(", ")
+            ));
         };
 
         let (media_key, media) = content
