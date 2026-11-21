@@ -33,6 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN cargo install cargo-auditable --locked
 # See node.Dockerfile: the third-party notices shipped beside the binary.
 RUN cargo install cargo-about --locked --version 0.9.2 --features cli
+# See node.Dockerfile: splits the dependency build (cacher stage below) from
+# the workspace-crate build, so a source-only change reuses the dependency
+# layer instead of recompiling every dependency in release mode.
+RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /build
 ENV RUSTC_WRAPPER=""
 # See node.Dockerfile: the shipped binary carries no symbol table, and the
@@ -42,8 +46,26 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols
 # ── published: dpp-* from crates.io; strip any local [patch.crates-io] override ──
 # Never honour a developer's local dpp-core override — the sibling ../dpp-core
 # isn't in this context. (.dockerignore already strips it; the rm is defensive.)
-FROM builder-base AS builder-published
+FROM builder-base AS planner-published
 COPY dpp-engine/ dpp-engine/
+WORKDIR /build/dpp-engine
+RUN rm -f .cargo/config.toml
+# See node.Dockerfile: the minimal skeleton that reproduces this dependency
+# graph without the crate source, so the cacher stage's layer key is the
+# recipe's content, not the source tree.
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM builder-base AS cacher-published
+WORKDIR /build/dpp-engine
+COPY --from=planner-published /build/dpp-engine/recipe.json recipe.json
+# Same package and lockfile as the real build below, release profile, built
+# from the recipe alone.
+RUN cargo chef cook --release --locked -p dpp-resolver --recipe-path recipe.json
+
+FROM cacher-published AS builder-published
+# Absolute, here and in builder-local: see node.Dockerfile. This stage inherits
+# the cacher's WORKDIR, and a relative destination builds the stand-in crates.
+COPY dpp-engine/ /build/dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
 # `--locked`: the graph this embeds is the SBOM's crate list, so it must be the
@@ -58,13 +80,31 @@ RUN cargo fetch --locked \
        -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
-FROM builder-base AS builder-local
+FROM builder-base AS planner-local
 # Sibling core checkout — the [patch.crates-io] paths below resolve into this.
+# `prepare` runs `cargo metadata` internally, which must resolve the patched
+# graph too, so the sibling has to be present here as well as in the cacher.
 COPY dpp-core/   dpp-core/
 COPY dpp-engine/ dpp-engine/
 # The committed example carries the [patch.crates-io] paths (../dpp-core/crates/*),
 # which resolve to /build/dpp-core. Placing it at Cargo's discovery location makes
 # Cargo pick it up regardless of host dev state (host config.toml is .dockerignore'd).
+COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
+WORKDIR /build/dpp-engine
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM builder-base AS cacher-local
+# The recipe's manifests still carry the [patch] paths, so `cook` needs the
+# same sibling tree the planner read them against.
+COPY dpp-core/ dpp-core/
+WORKDIR /build/dpp-engine
+COPY --from=planner-local /build/dpp-engine/recipe.json recipe.json
+# As below, without `--locked`: the [patch] changes the lock by design.
+RUN cargo chef cook --release -p dpp-resolver --recipe-path recipe.json
+
+FROM cacher-local AS builder-local
+COPY dpp-core/   /build/dpp-core/
+COPY dpp-engine/ /build/dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-resolver
