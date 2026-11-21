@@ -116,8 +116,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # Reads the layer cache ci.yml's images job writes on every push to
+          # `main`; see that job for why it is a GHCR package of its own. A tag
+          # is cut from a commit on `main`, so once that commit's CI run has
+          # finished the cache holds this build's layers. Read only: `main` is
+          # the one writer.
+          cache-from: type=registry,ref=ghcr.io/odal-node/${{ matrix.image }}-buildcache
           # Two attestations, pushed alongside the image and readable with
           # `docker buildx imagetools inspect ghcr.io/odal-node/<image>:<tag>`.
           #

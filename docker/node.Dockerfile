@@ -52,12 +52,49 @@ RUN cargo install cargo-auditable --locked
 # changed between releases, and a moved default would break every image build.
 RUN cargo install cargo-about --locked --version 0.9.2 --features cli
 
+# Splits the dependency build from the workspace-crate build (see the planner
+# and cacher stages below): any change to source that leaves every Cargo.toml
+# and Cargo.lock untouched then invalidates only the final stage's layer, not
+# the one that recompiles every dependency in release mode. Pinned for the same
+# reason as cargo-about: a new release can change what `prepare` writes or what
+# `cook` accepts, and the image build should move only when this line does.
+RUN cargo install cargo-chef --locked --version 0.1.78
+
 # ── published: dpp-* from crates.io; strip any local [patch.crates-io] override ──
 # Never honour a developer's local dpp-core override — it points at a sibling
 # ../dpp-core that isn't in this context. (.dockerignore already strips it; the
 # rm is belt-and-suspenders.)
-FROM builder-base AS builder-published
+FROM builder-base AS planner-published
 COPY dpp-engine/ dpp-engine/
+WORKDIR /build/dpp-engine
+RUN rm -f .cargo/config.toml
+# `prepare` reads the workspace's manifests and lockfile and writes the
+# minimal skeleton (Cargo.toml/Cargo.lock plus dummy source) that reproduces
+# the same dependency graph without the actual crate source — the thing the
+# next stage's layer key is allowed to depend on.
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM builder-base AS cacher-published
+WORKDIR /build/dpp-engine
+COPY --from=planner-published /build/dpp-engine/recipe.json recipe.json
+# Builds every dependency this feature set needs, release profile, from the
+# recipe alone. This layer's cache key is the recipe's content — a manifest or
+# Cargo.lock change — not the source tree, so an ordinary source change below
+# reuses it instead of recompiling every dependency.
+#
+# Same package, features and lockfile as the real build below, so the two
+# resolve to one dependency graph and the second build's `cargo auditable`
+# step relinks only the workspace crates, not the dependencies this already
+# compiled.
+RUN cargo chef cook --release --locked -p dpp-node --features s3 --recipe-path recipe.json
+
+FROM cacher-published AS builder-published
+# An absolute destination, here and in builder-local. This stage inherits the
+# cacher's WORKDIR, /build/dpp-engine, so `COPY dpp-engine/ dpp-engine/` would
+# land the source in /build/dpp-engine/dpp-engine, where cargo never looks. The
+# build below would then compile the recipe's stand-in crates, which are empty
+# and versioned 0.0.1, into a binary that does nothing.
+COPY dpp-engine/ /build/dpp-engine/
 WORKDIR /build/dpp-engine
 RUN rm -f .cargo/config.toml
 # `s3` is off by default (object storage is an optional deployment
@@ -88,14 +125,32 @@ RUN cargo fetch --locked \
        -o /build/THIRD-PARTY-NOTICES docker/third-party-notices.hbs
 
 # ── local: patch dpp-* to the sibling ../dpp-core source ─────────────────────────
-FROM builder-base AS builder-local
+FROM builder-base AS planner-local
 # Sibling core checkout — the [patch.crates-io] paths below resolve into this.
+# `cargo metadata`, which `prepare` runs internally, must resolve the patched
+# graph too, so the sibling has to be present here as well as in the cacher.
 COPY dpp-core/   dpp-core/
 COPY dpp-engine/ dpp-engine/
 # The committed example carries the [patch.crates-io] paths (../dpp-core/crates/*);
 # placing it at Cargo's discovery location makes the deps resolve to /build/dpp-core
 # regardless of host dev state (the host's own .cargo/config.toml is excluded from
 # the context via .dockerignore, so this is deterministic).
+COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
+WORKDIR /build/dpp-engine
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM builder-base AS cacher-local
+# The recipe's manifests still carry the [patch] paths, so `cook` needs the
+# same sibling tree the planner read them against.
+COPY dpp-core/ dpp-core/
+WORKDIR /build/dpp-engine
+COPY --from=planner-local /build/dpp-engine/recipe.json recipe.json
+# As below, without `--locked`: the [patch] changes the lock by design.
+RUN cargo chef cook --release -p dpp-node --features s3 --recipe-path recipe.json
+
+FROM cacher-local AS builder-local
+COPY dpp-core/   /build/dpp-core/
+COPY dpp-engine/ /build/dpp-engine/
 COPY dpp-engine/.cargo/config.toml.example /build/dpp-engine/.cargo/config.toml
 WORKDIR /build/dpp-engine
 RUN cargo auditable build --release -p dpp-node --features s3
