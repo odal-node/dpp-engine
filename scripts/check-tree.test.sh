@@ -7,8 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RECORD="$SCRIPT_DIR/check-tree.sh"
-HOOK="$(cd "$SCRIPT_DIR/.." && pwd)/.githooks/pre-commit"
+HOOK="$ROOT/.githooks/pre-commit"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -171,6 +172,68 @@ assert_fail() {
 
     # Now the index tree should match the recorded tree.
     assert_pass "hook accepts after re-recording" bash "$HOOK"
+}
+
+# ---------------------------------------------------------------------------
+# Test 7: A clone's `git commit` runs the hook through core.hooksPath
+# ---------------------------------------------------------------------------
+# The tests above call the hook with `bash`, which runs it whatever its mode.
+# Git does not: it skips a hook that is not executable, with only a hint, so a
+# hook committed as 100644 refuses nothing in a fresh clone. The working copy's
+# mode cannot be trusted to show that (a filesystem without Unix modes reports
+# every file executable), so the hook is installed here with the mode the
+# repository commits it with, and a real commit goes through it.
+{
+    repo="$TMP/test-installed"
+    git init -q "$repo"
+    cd "$repo"
+    git config user.email "test@test"
+    git config user.name "Test"
+    mkdir .githooks
+    git -C "$ROOT" show :.githooks/pre-commit > .githooks/pre-commit
+    case "$(git -C "$ROOT" ls-files -s .githooks/pre-commit)" in
+        100755*) chmod 755 .githooks/pre-commit ;;
+        *) chmod 644 .githooks/pre-commit ;;
+    esac
+    git config core.hooksPath .githooks
+    echo "hello" > file.txt
+    git add file.txt
+    # No tree recorded, so the hook must refuse this commit, and only can if
+    # git runs it.
+    assert_fail "a clone's commit runs the hook" git commit -q -m "unchecked"
+}
+
+# ---------------------------------------------------------------------------
+# Test 8: A tracked file an ignore rule names stays in the recorded tree
+# ---------------------------------------------------------------------------
+# Ignore rules do not apply to a file the index already tracks, so `git add -A`
+# keeps it. They do apply to a file absent from the index, so a record built
+# from an empty index would drop it, and the hook would then refuse a fully
+# staged, unchanged commit.
+{
+    repo="$TMP/test-excluded"
+    git init -q "$repo"
+    cd "$repo"
+    git config user.email "test@test"
+    git config user.name "Test"
+    echo "hello" > file.txt
+    echo "local" > notes.local
+    git add file.txt notes.local
+    git commit -q -m "initial"
+    echo "notes.local" >> .git/info/exclude
+
+    bash "$RECORD" >/dev/null
+    assert_pass "an excluded tracked file stays in the record" bash "$HOOK"
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: `just check` records the tree as its last step
+# ---------------------------------------------------------------------------
+# A record written before a later step fails would outlive the failure, and the
+# hook would accept a tree `just check` did not pass.
+{
+    last="$(grep -E '^check:' "$ROOT/justfile" | awk '{ print $NF }')"
+    assert_pass "check-tree is the last step of just check" [ "$last" = "check-tree" ]
 }
 
 echo ""

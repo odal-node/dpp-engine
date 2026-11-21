@@ -523,7 +523,7 @@ doc:
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
 # `check-tree` runs last so it only records the tree when every other gate passed.
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit check-tree check-tree-self-test
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit check-tree-self-test check-tree
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg
