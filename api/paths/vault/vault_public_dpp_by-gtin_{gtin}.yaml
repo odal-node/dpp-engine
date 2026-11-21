@@ -79,11 +79,13 @@ get:
     '200':
       description: >-
         Published passport record. With `?schema_view`, the body is instead `{
-        passport, schemaView }`.
+        passport, schemaView }` (`SchemaViewResponse`).
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/passport/PassportResponse.yaml
+            oneOf:
+              - $ref: ../../components/schemas/passport/RedactedPassportResponse.yaml
+              - $ref: ../../components/schemas/passport/SchemaViewResponse.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
     '422':

@@ -150,11 +150,8 @@ async fn unauthenticated_request_returns_401() {
     let pg = start_postgres().await;
     let base_url = start_vault(pg.dal.clone()).await;
 
-    let resp = reqwest::Client::new()
-        .get(format!("{base_url}/api/v1/dpps"))
-        .send()
-        .await
-        .expect("HTTP request failed");
+    let resp =
+        helpers::send_checked(reqwest::Client::new().get(format!("{base_url}/api/v1/dpps"))).await;
 
     assert_eq!(resp.status(), 401, "missing token should return 401");
 }

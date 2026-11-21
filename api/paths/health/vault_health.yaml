@@ -21,3 +21,7 @@ get:
       description: |
         The process is serving. Body carries `status`, `service`, `version` and
         `coreVersion`.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/access/VaultHealth.yaml

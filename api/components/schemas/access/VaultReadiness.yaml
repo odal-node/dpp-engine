@@ -1,0 +1,14 @@
+type: object
+required:
+  - status
+  - db
+description: The vault's readiness answer when its database responded to a ping.
+properties:
+  status:
+    type: string
+    enum:
+      - ready
+  db:
+    type: string
+    enum:
+      - ok

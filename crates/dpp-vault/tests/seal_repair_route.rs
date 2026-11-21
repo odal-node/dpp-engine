@@ -644,11 +644,10 @@ async fn the_route_requires_authentication() {
     let base = vault_reading(&pg.dal, SealBinding::NotIntact).await;
     let id = seed(&pg.dal).await;
 
-    let resp = reqwest::Client::new()
-        .post(format!("{base}/api/v1/dpp/{id}/seal/repair"))
-        .send()
-        .await
-        .expect("request");
+    let resp = helpers::send_checked(
+        reqwest::Client::new().post(format!("{base}/api/v1/dpp/{id}/seal/repair")),
+    )
+    .await;
     assert_eq!(resp.status(), 401);
 }
 

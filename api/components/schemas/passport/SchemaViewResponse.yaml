@@ -1,0 +1,13 @@
+type: object
+description: >-
+  What a public read answers when it is asked for `schema_view`: the published
+  passport exactly as the plain read serves it, alongside a view of its product
+  group data under the requested schema version.
+required:
+  - passport
+  - schemaView
+properties:
+  passport:
+    $ref: ./RedactedPassportResponse.yaml
+  schemaView:
+    $ref: ./DerivedView.yaml

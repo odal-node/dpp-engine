@@ -8,8 +8,10 @@ post:
     1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier:
        `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else
        `{resolverBase}/dpp/{id}`
-    2. The identity service signs the VC payload with Ed25519 (best-effort;
-       signing failure does not block publish: `jwsSignature` may be null)
+    2. The identity service signs the VC payload with Ed25519. Publishing fails
+       closed: when the signer cannot sign, the answer is `500` and the passport
+       stays a `draft` with no `jwsSignature`, rather than being published
+       without a signature the resolver would then refuse to serve
     3. `retentionLocked` is set to `true` permanently
     4. `status` = `active`, `publishedAt` = now
     5. A `dpp.published` NATS event is emitted (fire-after-commit)
@@ -52,3 +54,5 @@ post:
       $ref: ../../components/responses/Forbidden.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml
+    '500':
+      $ref: ../../components/responses/InternalServerError.yaml

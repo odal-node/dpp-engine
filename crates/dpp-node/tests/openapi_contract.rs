@@ -274,6 +274,46 @@ const UNCHECKED: &[(&str, &str)] = &[
         "a bare `type: string, format: uuid`, not an object with properties",
     ),
     (
+        "PassportProperties",
+        "the properties `PassportResponse` composes with its `required` list, and \
+         nothing else: `object_schemas_match_the_types_behind_them` compares the \
+         property set of `PassportResponse` through its `allOf`, which is this \
+         schema's whole content",
+    ),
+    (
+        "RedactedPassportResponse",
+        "the same properties as `PassportResponse` with the `required` list that \
+         survives redaction. A redacted view omits keys the type emits, so no \
+         serialised value has this schema's property set. The list is pinned by \
+         `redacted_passport_required.rs`, and the shape of every served body by \
+         the response validation in `dpp-vault`'s test client",
+    ),
+    (
+        "VaultHealth",
+        "built with `json!` in the handler, so no Rust type declares its members \
+         and there is nothing to compare the property list against. Every \
+         `GET /vault/health` a vault test sends is validated against it by the \
+         test client",
+    ),
+    (
+        "VaultReadiness",
+        "built with `json!` in the handler, like `VaultHealth`, and checked the \
+         same way by every `GET /vault/ready` a vault test sends",
+    ),
+    (
+        "RedactedPassportRequired",
+        "a generated `required` list with no properties. \
+         `redacted_passport_required.rs` derives it from core's redaction and \
+         compares it with the committed file and with this bundle",
+    ),
+    (
+        "SchemaViewResponse",
+        "built with `json!` in the public read's `build_schema_view`, so no Rust type \
+         declares its members. Its `schemaView` is `DerivedView`, which is checked \
+         against core's type, and the whole body is validated by the test client \
+         in `a_schema_view_is_served_as_documented_on_both_public_reads`",
+    ),
+    (
         "PersonalDataStatement",
         "an internally-tagged `oneOf` (`held`) of two objects, one of which \
          carries a closed set of lawful bases — neither checker expresses a \
@@ -419,6 +459,19 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("ComplianceResult", fixtures::compliance_result());
     case!("ComplianceFinding", fixtures::compliance_finding());
     case!("LintResult", fixtures::lint_result());
+    // `?schema_view` on the public reads: core's derived view, as the handler
+    // serialises it beside the passport.
+    case!(
+        "DerivedView",
+        dpp_domain::schemas::DerivedView {
+            data: serde_json::json!({ "ratedEnergyWh": 4800.0 }),
+            derived: true,
+            from: "1.0.0".to_owned(),
+            to: "2.0.0".to_owned(),
+            lens_chain: vec![["1.0.0".to_owned(), "2.0.0".to_owned()]],
+            lossy: false,
+        }
+    );
 
     // Publish-readiness, reported by `POST /dpp/{dppId}/lint`. Registered from
     // the handler's own types rather than a hand-written literal, so the
@@ -1777,13 +1830,23 @@ fn every_json_success_response_names_a_schema() {
                     continue;
                 };
 
-                // A named schema, an array of one, or a composition over one.
+                // A named schema, an array of one, a composition over one, or a
+                // choice between named schemas only (the public reads answer a
+                // passport or, with `?schema_view`, a `SchemaViewResponse`). A
+                // `oneOf` with one inline arm still fails: that arm is a shape
+                // nothing checks.
                 let named = schema.get("$ref").is_some()
                     || schema.get("items").is_some_and(|i| i.get("$ref").is_some())
                     || schema
                         .get("allOf")
                         .and_then(Value::as_array)
-                        .is_some_and(|b| b.iter().any(|x| x.get("$ref").is_some()));
+                        .is_some_and(|b| b.iter().any(|x| x.get("$ref").is_some()))
+                    || schema
+                        .get("oneOf")
+                        .and_then(Value::as_array)
+                        .is_some_and(|b| {
+                            !b.is_empty() && b.iter().all(|x| x.get("$ref").is_some())
+                        });
 
                 if named {
                     continue;
@@ -1882,8 +1945,7 @@ fn every_json_request_body_names_a_schema() {
                 continue;
             };
 
-            // A named schema, an array of one, or a composition over one — the
-            // same three shapes the response check accepts.
+            // A named schema, an array of one, or a composition over one.
             let named = schema.get("$ref").is_some()
                 || schema.get("items").is_some_and(|i| i.get("$ref").is_some())
                 || schema

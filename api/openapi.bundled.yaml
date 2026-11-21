@@ -868,8 +868,10 @@ paths:
         1. `qrCodeUrl` is set to the passport's GS1 Digital Link carrier:
            `{resolverBase}/01/{gtin}/21/{serial}` for a trade item, else
            `{resolverBase}/dpp/{id}`
-        2. The identity service signs the VC payload with Ed25519 (best-effort;
-           signing failure does not block publish: `jwsSignature` may be null)
+        2. The identity service signs the VC payload with Ed25519. Publishing fails
+           closed: when the signer cannot sign, the answer is `500` and the passport
+           stays a `draft` with no `jwsSignature`, rather than being published
+           without a signature the resolver would then refuse to serve
         3. `retentionLocked` is set to `true` permanently
         4. `status` = `active`, `publishedAt` = now
         5. A `dpp.published` NATS event is emitted (fire-after-commit)
@@ -912,6 +914,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /vault/api/v1/dpp/{dppId}/amend:
     post:
       operationId: amendDpp
@@ -1708,6 +1712,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           description: Not a valid dossier (malformed JSON or an unrecognised field).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/dpp/{dppId}/registry:
     get:
       operationId: getDppRegistryStatus
@@ -3391,7 +3399,7 @@ paths:
       responses:
         '200':
           description: |-
-            Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.
+            Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }` (`SchemaViewResponse`).
 
             **The body's `id` is not always the `dppId` that was asked for.** A passport in the `superseded` status serves the published record that replaced it. ESPR Art. 9(1) has the data carrier link to *the* passport for the product, and a carrier is printed on a physical thing and cannot be recalled, so this door has to keep landing on whichever record is current, which is what `/01/{gtin}` beside it has always done.
 
@@ -3409,7 +3417,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PassportResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/RedactedPassportResponse'
+                  - $ref: '#/components/schemas/SchemaViewResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -3508,11 +3518,13 @@ paths:
           example: 2.0.0
       responses:
         '200':
-          description: Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }`.
+          description: Published passport record. With `?schema_view`, the body is instead `{ passport, schemaView }` (`SchemaViewResponse`).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PassportResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/RedactedPassportResponse'
+                  - $ref: '#/components/schemas/SchemaViewResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
@@ -3656,7 +3668,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PassportResponse'
+                $ref: '#/components/schemas/RedactedPassportResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4330,7 +4342,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PassportResponse'
+                $ref: '#/components/schemas/RedactedPassportResponse'
             text/html:
               schema:
                 type: string
@@ -5183,6 +5195,10 @@ paths:
           description: |
             The process is serving. Body carries `status`, `service`, `version` and
             `coreVersion`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultHealth'
   /vault/ready:
     get:
       operationId: vaultReady
@@ -5206,6 +5222,10 @@ paths:
       responses:
         '200':
           description: The database answered; the vault can serve requests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultReadiness'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /vault/api/v1/info:
@@ -5454,20 +5474,26 @@ components:
           description: What is wrong with that member, in one sentence.
           example: '''batteryModelId'' is mandatory for a ''industrial'' battery and is absent'
     PassportResponse:
+      allOf:
+        - $ref: '#/components/schemas/PassportProperties'
+        - required:
+            - id
+            - productName
+            - productGroup
+            - manufacturer
+            - materials
+            - status
+            - schemaVersion
+            - createdAt
+            - updatedAt
+            - retentionLocked
+            - version
+      description: |-
+        The canonical Digital Product Passport record, as the **authenticated** reads and writes serve it. Fields marked required are emitted on every such read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.
+        The routes that serve a redacted view (the public reads, the audience-scoped credential read and the resolver) answer with `RedactedPassportResponse` instead, because a redaction removes fields this schema requires.
+    PassportProperties:
       type: object
-      description: The canonical Digital Product Passport record. Fields marked required are emitted on every read; the rest are omitted when unset rather than sent as null, so a consumer must treat absence and null as the same thing.
-      required:
-        - id
-        - productName
-        - productGroup
-        - manufacturer
-        - materials
-        - status
-        - schemaVersion
-        - createdAt
-        - updatedAt
-        - retentionLocked
-        - version
+      description: The properties of a Digital Product Passport record, shared by the full authenticated read (`PassportResponse`) and the redacted reads (`RedactedPassportResponse`). Which of them a representation always carries is the `required` list of the schema that composes this one.
       properties:
         id:
           $ref: '#/components/schemas/DppId'
@@ -5642,6 +5668,77 @@ components:
           allOf:
             - $ref: '#/components/schemas/SealedEnvelope'
           description: The eIDAS electronic seal applied to this passport. Absent until a seal has been applied; check its `placeholder` flag rather than inferring validity from presence.
+    RedactedPassportResponse:
+      allOf:
+        - $ref: '#/components/schemas/PassportProperties'
+        - $ref: '#/components/schemas/RedactedPassportRequired'
+      description: |-
+        A Digital Product Passport as a **redacted** read serves it: the public reads, the audience-scoped credential read and the resolver's JSON representation. It is the same record as `PassportResponse`, filtered by the disclosure policy for the audience asking, so fewer fields are always present.
+        Which fields a redacted view always carries is not written by hand. The list is derived from the disclosure policy, for every product group, every schema version and every audience these routes serve, and kept in `RedactedPassportRequired.yaml`. A field the policy withholds from any of them, such as `retentionLocked`, is not in it.
+        Proofs are not part of a redacted payload: the redaction removes `jwsSignature`, `seal` and `disclosureSignatures` for every audience, and the route attaches the one proof that covers the bytes it serves.
+    RedactedPassportRequired:
+      required:
+        - id
+        - productName
+        - productGroup
+        - manufacturer
+        - materials
+        - status
+        - schemaVersion
+        - createdAt
+        - updatedAt
+        - version
+    SchemaViewResponse:
+      type: object
+      description: 'What a public read answers when it is asked for `schema_view`: the published passport exactly as the plain read serves it, alongside a view of its product group data under the requested schema version.'
+      required:
+        - passport
+        - schemaView
+      properties:
+        passport:
+          $ref: '#/components/schemas/RedactedPassportResponse'
+        schemaView:
+          $ref: '#/components/schemas/DerivedView'
+    DerivedView:
+      type: object
+      description: 'A passport''s product group data re-viewed under a newer schema version, built at read time by upcasting the published data along the schema''s lenses. It is derived and never signed: the passport it accompanies, and the proof attached to that passport, are the record.'
+      required:
+        - data
+        - derived
+        - from
+        - to
+        - lensChain
+        - lossy
+      properties:
+        data:
+          type: object
+          description: The product group data, transformed to conform to `to`.
+        derived:
+          type: boolean
+          description: Always `true`. The view is computed at read time, not signed source.
+        from:
+          type: string
+          description: The schema version the passport was published under.
+          example: 1.0.0
+        to:
+          type: string
+          description: The schema version the data now conforms to, the one `schema_view` asked for. Equal to `from` when the request names the passport's own version.
+          example: 2.0.0
+        lensChain:
+          type: array
+          description: The hops applied, oldest first, each a `[from, to]` pair. Empty when `from` and `to` are equal.
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: string
+          example:
+            - - 1.0.0
+              - 2.0.0
+        lossy:
+          type: boolean
+          description: '`true` when any hop dropped or defaulted information, so `data` says less than, or other than, the published passport.'
     DppId:
       type: string
       format: uuid
@@ -5733,7 +5830,9 @@ components:
           description: 'ISO 3166-1 alpha-2 country of the manufacturer, upper case. Structural rather than descriptive: whether an operator is established in the Union separates a manufacturer from an importer or an authorised representative, and that decides who carries the passport obligation. Before this field existed the country was written into `address`, where nothing downstream could tell it apart from a postal address. Absent means not stated, never stateless.'
           example: DE
         didWebUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
           description: did:web URL for the manufacturer
           example: https://ecotech.example.com/.well-known/did.json
@@ -5779,13 +5878,17 @@ components:
           description: Weight in kilograms
           example: 12.5
         recycledPct:
-          type: number
+          type:
+            - number
+            - 'null'
           minimum: 0
           maximum: 100
           description: Percentage of recycled content (0.0–100.0)
           example: 35
         countryOfOrigin:
-          type: string
+          type:
+            - string
+            - 'null'
           minLength: 2
           maxLength: 2
           description: ISO 3166-1 alpha-2 country code
@@ -7922,8 +8025,8 @@ components:
           example: Johannes Strauss 12
         country:
           type: string
-          minLength: 2
           maxLength: 2
+          description: ISO 3166-1 alpha-2 country code. Empty on a node whose operator has not been configured yet, which is what a read answers on a fresh install.
           example: DE
         contactEmail:
           type: string
@@ -8864,6 +8967,46 @@ components:
             type: string
           example:
             - passthrough_compliance
+    VaultHealth:
+      type: object
+      required:
+        - status
+        - service
+        - version
+        - coreVersion
+      description: The vault's liveness answer. It checks nothing beyond the process itself.
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+        service:
+          type: string
+          description: The crate that is serving.
+          example: dpp-vault
+        version:
+          type: string
+          description: This node's own dpp-vault crate version.
+          example: 0.16.0
+        coreVersion:
+          type: string
+          description: The dpp-domain (dpp-core) version this build was compiled against.
+          example: 0.24.0
+    VaultReadiness:
+      type: object
+      required:
+        - status
+        - db
+      description: The vault's readiness answer when its database responded to a ping.
+      properties:
+        status:
+          type: string
+          enum:
+            - ready
+        db:
+          type: string
+          enum:
+            - ok
     DidDocument:
       type: object
       description: |
@@ -10589,6 +10732,20 @@ components:
             title: Conflict
             status: 409
             detail: DPP is already published.
+    InternalServerError:
+      description: |
+        The request was well formed and the node failed while serving it. The body
+        names no cause: the detail is in the node's own log, correlated by
+        `requestId`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/internal-server-error
+            title: Internal Server Error
+            status: 500
+            detail: An internal error occurred.
     IdempotentRequestInFlight:
       description: |
         An earlier attempt carrying this `Idempotency-Key` is still running.

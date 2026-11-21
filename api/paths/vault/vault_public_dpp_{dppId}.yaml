@@ -31,7 +31,7 @@ get:
     '200':
       description: >-
         Published passport record. With `?schema_view`, the body is instead `{
-        passport, schemaView }`.
+        passport, schemaView }` (`SchemaViewResponse`).
 
 
         **The body's `id` is not always the `dppId` that was asked for.** A
@@ -73,7 +73,9 @@ get:
       content:
         application/json:
           schema:
-            $ref: ../../components/schemas/passport/PassportResponse.yaml
+            oneOf:
+              - $ref: ../../components/schemas/passport/RedactedPassportResponse.yaml
+              - $ref: ../../components/schemas/passport/SchemaViewResponse.yaml
     '404':
       description: Not found or not published.
       content:

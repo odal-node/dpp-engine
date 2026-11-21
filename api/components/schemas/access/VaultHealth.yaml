@@ -1,0 +1,25 @@
+type: object
+required:
+  - status
+  - service
+  - version
+  - coreVersion
+description: >-
+  The vault's liveness answer. It checks nothing beyond the process itself.
+properties:
+  status:
+    type: string
+    enum:
+      - ok
+  service:
+    type: string
+    description: The crate that is serving.
+    example: dpp-vault
+  version:
+    type: string
+    description: This node's own dpp-vault crate version.
+    example: 0.16.0
+  coreVersion:
+    type: string
+    description: The dpp-domain (dpp-core) version this build was compiled against.
+    example: 0.24.0
