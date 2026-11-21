@@ -63,6 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine/fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       # A minute a night from an empty corpus starts over every night. The
