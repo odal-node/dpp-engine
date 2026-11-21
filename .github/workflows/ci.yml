@@ -162,7 +162,6 @@ jobs:
   test-integration:
     name: Integration tests (testcontainers)
     runs-on: ubuntu-latest
-    needs: [test-unit]
     # One Postgres for the whole job, rather than one container per test.
     #
     # `start_pg` is called from 170 places and used to boot a fresh `postgres:17`
