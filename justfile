@@ -422,6 +422,14 @@ ci-guard-check:
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
 
+# Record CI time per job and print the partitioning trigger.
+#
+# Requires an authenticated `gh` CLI. Run at each release cut and paste the
+# output into the release pull request so the numbers are recorded.
+# Default is 12 runs; pass a number to analyse more or fewer.
+ci-timing *ARGS:
+    bash scripts/ci-timing.sh {{ARGS}}
+
 # Record the tree id of the current working tree.
 #
 # Runs at the end of `just check` so the pre-commit hook can prove the committed
