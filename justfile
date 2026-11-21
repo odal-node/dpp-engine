@@ -410,6 +410,27 @@ ci-guard-check-self-test:
 ci-timing *ARGS:
     bash scripts/ci-timing.sh {{ARGS}}
 
+# Record the tree id of the current working tree.
+#
+# Runs at the end of `just check` so the pre-commit hook can prove the committed
+# tree is the one that passed the gate. Uses a temporary index, so the real
+# index is left untouched.
+check-tree:
+    bash scripts/check-tree.sh
+
+# Prove check-tree and the pre-commit hook work together.
+check-tree-self-test:
+    bash scripts/check-tree.test.sh
+
+# Install the git hooks directory.
+#
+# Sets `core.hooksPath` to `.githooks/` so git picks up the pre-commit hook
+# that enforces Rule 5 of CLAUDE.md: never commit before a green `just check`.
+# `--no-verify` still bypasses the hook, and CI remains the gate of record.
+install-hooks:
+    git config core.hooksPath .githooks
+    @echo "Hooks installed. Pre-commit will refuse a commit whose tree has not passed \`just check\`."
+
 # The gate itself needs a pull request's number, labels and body, so only CI
 # (`.github/workflows/changelog.yml`) runs it.
 # Prove changelog-check still refuses a pull request with no entry of its own.
@@ -481,7 +502,8 @@ doc:
 
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit
+# `check-tree` runs last so it only records the tree when every other gate passed.
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit check-tree check-tree-self-test
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg

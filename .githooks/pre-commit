@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Refuse a commit whose tree has not passed `just check`.
+#
+# When `just check` passes, it records the id of the working tree's content
+# under the .git directory (one record per worktree). This hook compares the
+# tree about to be committed with that record. On a mismatch it refuses and
+# names both trees, so the author knows what changed since the last green run.
+#
+# Committing only part of a checked working tree is refused too, since that
+# partial tree was never checked as a whole.
+#
+# Bypass: `git commit --no-verify` still works. CI remains the gate of record.
+set -euo pipefail
+
+# Locate the git directory — works for worktrees because git rev-parse resolves
+# to the actual worktree's .git, not the main repo's .git/files.
+GIT_PATH="$(git rev-parse --git-dir 2>/dev/null)" || {
+    echo "pre-commit: cannot determine git path — skipping." >&2
+    exit 0
+}
+
+RECORDED="$GIT_PATH/checked-tree"
+
+if [ ! -f "$RECORDED" ]; then
+    echo "ERROR: no recorded tree — run \`just check\` first." >&2
+    echo "" >&2
+    echo "Rule 5 of CLAUDE.md: never commit before a green \`just check\`." >&2
+    echo "This hook enforces it by recording the tree \`just check\` verified," >&2
+    echo "and refusing any commit whose tree does not match." >&2
+    exit 1
+fi
+
+# The tree about to be committed is the index tree.
+COMMITTING="$(git write-tree)"
+CHECKED="$(cat "$RECORDED")"
+
+if [ "$COMMITTING" != "$CHECKED" ]; then
+    echo "ERROR: tree mismatch — refusing commit." >&2
+    echo "" >&2
+    echo "  Checked tree : $CHECKED" >&2
+    echo "  Committing   : $COMMITTING" >&2
+    echo "" >&2
+    echo "The tree you are committing does not match the tree that passed" >&2
+    echo "\`just check\`. Run \`just check\` again and commit without further" >&2
+    echo "changes, or use \`git commit --no-verify\` to bypass (CI still gates)." >&2
+    exit 1
+fi

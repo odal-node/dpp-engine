@@ -24,10 +24,8 @@
 #
 # - sccache in CI: it draws on the same 10 GiB Actions cache, and it caches
 #   neither incremental builds, nor proc-macros, nor binaries.
-# - Cache storage above 10 GiB: the free tier limit; paid tiers do not guarantee
-#   the time savings sccache cannot provide.
-# - Larger runners: the speedup is proportional to the runner size; the trigger
-#   above defers the decision until it is needed.
+# - Cache storage above 10 GiB, and larger runners: not needed once the cache
+#   is saved from `main` only (#642), so that pull requests stop evicting it.
 # - Retrying failed tests by default: here, a test that fails one time in a
 #   hundred is a finding — silencing it hides the signal.
 #
@@ -44,11 +42,11 @@ set -euo pipefail
 
 N="${1:-12}"
 
-# Fetch the last N successful ci.yml runs.
-# Filter for success first, then limit to N runs.
-runs="$(gh run list --workflow=ci.yml --json databaseId,createdAt,updatedAt,conclusion,attempt \
-  --limit "$((N * 3))" \
-  | jq -r '[.[] | select(.conclusion == "success")] | .[:'"$N"'] | .[] | "\(.databaseId) \(.createdAt) \(.updatedAt) \(.attempt)"')"
+# Fetch the last N successful ci.yml runs. `--status success` filters before
+# `--limit` counts, so N failures in a row cannot crowd out older successes.
+runs="$(gh run list --workflow=ci.yml --status success --limit "$N" \
+  --json databaseId,startedAt,updatedAt,attempt \
+  --jq '.[] | "\(.databaseId) \(.startedAt) \(.updatedAt) \(.attempt)"')"
 
 if [ -z "$runs" ]; then
   echo "ci-timing: no successful ci.yml runs found" >&2
@@ -62,15 +60,17 @@ declare -A job_times
 while IFS= read -r run_line; do
   run_id="${run_line%% *}"
   rest="${run_line#* }"
-  run_created="${rest%% *}"
+  run_started="${rest%% *}"
   rest2="${rest#* }"
   run_updated="${rest2%% *}"
   run_attempt="${run_line##* }"
 
-  # Compute wall-clock for the whole run.
-  created_epoch=$(date -d "$run_created" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$run_created" +%s 2>/dev/null)
+  # Compute wall-clock for the whole run. `startedAt` is the start of the
+  # latest attempt, the one whose jobs are read below; `createdAt` would count
+  # the time between a failed attempt and its rerun.
+  run_started_epoch=$(date -d "$run_started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$run_started" +%s 2>/dev/null)
   updated_epoch=$(date -d "$run_updated" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$run_updated" +%s 2>/dev/null)
-  wall_clock=$((updated_epoch - created_epoch))
+  wall_clock=$((updated_epoch - run_started_epoch))
 
   echo "Run ${run_id} (attempt ${run_attempt}): $((wall_clock / 60))m $((wall_clock % 60))s wall-clock"
 

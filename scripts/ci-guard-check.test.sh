@@ -22,6 +22,7 @@ scaffold() {
     mkdir -p "$root/scripts" "$root/.github/workflows"
     touch "$root/scripts/a-check.sh" "$root/scripts/a-check.test.sh" \
         "$root/scripts/capture-upgrade-fixture.sh" \
+        "$root/scripts/check-tree.sh" \
         "$root/scripts/ci-timing.sh" \
         "$root/scripts/coderabbit-check.sh" "$root/scripts/shared-test-pg.sh" \
         "$root/scripts/test-changed.sh"
