@@ -5268,7 +5268,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6830,9 +6830,9 @@ dependencies = [
 
 [[package]]
 name = "structured-asn1"
-version = "0.20.2"
+version = "0.21.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23852bb67534243c15bc4f14aa5b859c0fa75d5d25806df4d908380445b62a24"
+checksum = "faf0fbaeca1c6c9e8411a2094614780f7347126058efc51d54fa5c26b3b47ed3"
 dependencies = [
  "allocator-api2 0.2.21",
  "allocator-api2 0.4.0",
@@ -6843,9 +6843,9 @@ dependencies = [
 
 [[package]]
 name = "structured-cms"
-version = "0.20.2"
+version = "0.21.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70c64ec9b683bd850d5c3fa585aa1077ba0e0a79433d95afb21083ec0f7cae80"
+checksum = "9b7355895f1d51319b62cbc11b703a693c09cb2d79a0f690bcc70a2b4efa3797"
 dependencies = [
  "structured-asn1",
  "structured-pkix",
@@ -6865,9 +6865,9 @@ dependencies = [
 
 [[package]]
 name = "structured-pkix"
-version = "0.20.2"
+version = "0.21.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "665155f911162aba65bb2d76ab92a5e79891a46ebb58260765dc26956856c89d"
+checksum = "a5bf32c2309e76e03d940228312847f1bb00affe691423650176f4a32ae3499a"
 dependencies = [
  "structured-asn1",
  "structured-email-address",
@@ -6969,7 +6969,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -8571,9 +8571,9 @@ dependencies = [
 
 [[package]]
 name = "xml-sec"
-version = "0.4.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "288c13e4faf720c404b3b8aefc00dc5d87de4dc5d8a7056743321ecbd8f417f5"
+checksum = "d9c7b4b086e889c8ae721ae9b5b3ee04bb531ad7951ff81dd24fb9e77f4243e0"
 dependencies = [
  "base64 0.23.1",
  "crypto-bigint 0.7.11",
