@@ -806,6 +806,14 @@ jobs:
     # the exact shape ci.yml's trigger comment above describes, where
     # `gh pr checks` reads green and only the ruleset knows better.
     name: Container image — ${{ matrix.image }}
+    # `packages: write` is for the layer cache in GHCR, which only a run on
+    # `main` writes (the build step's `cache-to`). A permission cannot be set
+    # per event, so pull requests from this repository are granted it too and
+    # never use it. GitHub gives a pull request from a fork, and one from
+    # Dependabot, a read-only token whatever this says.
+    permissions:
+      contents: read
+      packages: write # the GHCR layer cache, written on `main` only
     runs-on: ubuntu-latest
     strategy:
       # Both images, independently: a break in one is not a reason to stop
@@ -902,15 +910,31 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.scope.outputs.build == 'true'
 
+      # On every build, pull requests included: reading the cache needs a login
+      # unless its package is public, and an anonymous read of a private one
+      # does not fail. It logs a warning and the build runs cold.
+      - name: Log in to GHCR
+        if: steps.scope.outputs.build == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Context is the workspace root holding the checked-out repo, matching
       # `release.yml` and `just docker-node`. BUILD_MODE defaults to
       # `published`, which takes dpp-core from crates.io, so only this
       # repository needs checking out.
       #
-      # Same `scope=` as release.yml on purpose: Actions cache is already
-      # partitioned per branch, so a pull request reads main's layers and
-      # cannot overwrite them, and a release build on main starts warm from
-      # the merge that preceded it.
+      # The layer cache is a GHCR package of its own per image,
+      # `<image>-buildcache`, not the Actions cache: the cooked dependency
+      # layers are large, and the Actions cache is held to its 10 GiB by saving
+      # from `main` only. A package of its own keeps the cache manifests, which
+      # nobody can pull as an image, out of the published package's tags and
+      # versions. The same rule as the Actions cache holds here: only `main`
+      # writes, so every pull request starts from the last merge and none
+      # replaces the cache for the others. `release.yml` reads the same
+      # reference. `ignore-error`: a failed cache write is not a failed image.
       - name: Build ${{ matrix.image }} (no push)
         if: steps.scope.outputs.build == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -920,8 +944,8 @@ jobs:
           push: false
           load: true
           tags: ${{ matrix.image }}:ci
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=registry,ref=ghcr.io/odal-node/${{ matrix.image }}-buildcache
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/odal-node/{0}-buildcache,mode=max,ignore-error=true', matrix.image) || '' }}
 
       # 🚨 The assertion this job exists for, beyond "it built".
       #
@@ -968,6 +992,20 @@ jobs:
             exit 1
           fi
           echo "${{ matrix.image }}: .dep-v0 carries ${bytes} bytes of compressed dependency graph."
+          # The graph must also be this workspace's own. cargo-chef first builds
+          # every workspace crate as an empty stand-in versioned 0.0.1, and a
+          # binary built from those still carries a `.dep-v0` section and its
+          # notices, so every other check in this job passes on a program that
+          # does nothing. The root package's version tells the two apart: the
+          # real crate carries `[workspace.package]`'s. Perl's Compress::Zlib
+          # and jq are both on the runner.
+          want="$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' dpp-engine/Cargo.toml)"
+          root="$(perl -MCompress::Zlib -0777 -ne 'print uncompress($_)' ./dep-v0.bin | jq -r '.packages[] | select(.root) | "\(.name) \(.version)"')"
+          if [ -z "$want" ] || [ "$root" != "${{ matrix.image }} ${want}" ]; then
+            echo "::error::${{ matrix.image }}'s .dep-v0 graph is rooted at '${root}', not '${{ matrix.image }} ${want}': the binary was not built from this workspace's source (a cargo-chef stand-in is versioned 0.0.1)."
+            exit 1
+          fi
+          echo "${{ matrix.image }}: the graph is rooted at ${root}, this workspace's version."
 
       # The licences the image must carry: the engine's own, and the notices of
       # every third-party crate linked into the binary, which most of those
