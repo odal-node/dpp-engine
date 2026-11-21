@@ -33,6 +33,8 @@ local_only=(
   "check-tree.sh|records the working tree id for the local pre-commit hook; CI does not use hooks and has no commits to gate"
   "ci-timing.sh|workflow-run and job read endpoints require Actions: read permission; the command remains local because it supports release reporting, not because CI cannot read runs"
   "coderabbit-check.sh|validates .coderabbit.yaml against a schema fetched over the network, and reads a file a service owns; a local aid, not a gate on the code"
+  "coverage-gaps.sh|reads the report coverage.sh writes and prints a list; a measurement of the tests, not a gate on the code, and there is no report in CI to read"
+  "coverage.sh|about 25 minutes of instrumented builds and every Docker tier, which CI already runs uninstrumented; a measurement, not a gate, run by hand when the question is what the tests execute"
   "shared-test-pg.sh|starts a local Postgres for \`just test-integration\`; CI's integration job has its own service container"
   "test-changed.sh|an iteration aid that skips tests on purpose; CI runs the whole suite"
 )

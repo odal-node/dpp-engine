@@ -798,3 +798,19 @@ test-changed BASE="origin/main":
 # under full isolation before believing it.
 test-integration-isolated:
     just _test-integration-tiers
+
+# About 25 minutes, and it builds the workspace instrumented into
+# `target/llvm-cov-target` (tens of GB). Needs `cargo install cargo-llvm-cov
+# --version 0.9.1 --locked` and `rustup component add llvm-tools-preview`. Not
+# part of `just check` or CI: it is a measurement, not a gate. The script's header
+# says what it cannot see.
+#
+# Measure what the tests execute (unit tests and Docker tiers, one report in OUT)
+coverage OUT='target/coverage':
+    COV_OUT={{ OUT }} bash scripts/shared-test-pg.sh bash scripts/coverage.sh
+
+# Reads the report `just coverage` wrote; a TSV on stdout, and it needs `jq`.
+#
+# List the handler error sites that no test tier executed
+coverage-gaps OUT='target/coverage':
+    bash scripts/coverage-gaps.sh {{ OUT }}/coverage.lcov . {{ OUT }}/coverage.json
