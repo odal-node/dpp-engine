@@ -21,7 +21,7 @@
 //! masked, such as `a<` beside `a>`, is not compared, since masking it drops a
 //! key.
 
-use dpp_render::{render_page, SnapshotNotice};
+use dpp_render::{SnapshotNotice, render_page};
 use libfuzzer_sys::fuzz_target;
 use serde_json::{Map, Value};
 

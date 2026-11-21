@@ -13,8 +13,8 @@
 use base64::Engine as _;
 use chrono::{DateTime, TimeZone, Utc};
 use dpp_domain::seal::{SealFormat, SealedEnvelope};
-use dpp_seal::cades::{self, TimestampToken};
 use dpp_seal::CadesInspector;
+use dpp_seal::cades::{self, TimestampToken};
 use dpp_types::SealInspector;
 use libfuzzer_sys::fuzz_target;
 

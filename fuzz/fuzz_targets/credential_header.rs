@@ -22,7 +22,7 @@ use std::task::{Context, Poll, Waker};
 use base64::Engine as _;
 use dpp_domain::Audience;
 use dpp_vault::middleware::credential::{
-    credential_header_name, read_and_verify, CredentialDirectory, CredentialOutcome,
+    CredentialDirectory, CredentialOutcome, credential_header_name, read_and_verify,
 };
 use dpp_vc::{DppAccessCredential, StatusList, TrustedIssuerRegistry};
 use http::{HeaderMap, HeaderValue};
