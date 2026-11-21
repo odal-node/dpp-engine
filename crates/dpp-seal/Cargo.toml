@@ -129,7 +129,7 @@ roxmltree    = "0.21"
 #     transform, and it is not compiled, so no trusted list can make this node
 #     run one. Signing and XML encryption are left out for the same reason:
 #     nothing here uses them.
-xml-sec      = { version = "0.4.1", default-features = false, features = ["std", "xmldsig", "xml-backend-xmloxide"] }
+xml-sec      = { version = "0.6.0", default-features = false, features = ["std", "xmldsig", "xml-backend-xmloxide"] }
 
 cms          = { version = "0.2", default-features = false }
 x509-cert    = "0.2"
