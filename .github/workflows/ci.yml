@@ -105,6 +105,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The command lives in the justfile, once: `just lint` is what `just check`
       # runs and what runs here. It used to be spelled out in both places and the
       # two drifted — the local copy left the feature-gated suites out, so a lint
@@ -133,6 +134,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -203,6 +205,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -634,6 +637,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine/fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install just
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -703,6 +707,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: cargo audit
@@ -766,6 +771,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
