@@ -81,6 +81,16 @@ components:
       $ref: components/schemas/errors/ProblemFieldError.yaml
     PassportResponse:
       $ref: components/schemas/passport/PassportResponse.yaml
+    PassportProperties:
+      $ref: components/schemas/passport/PassportProperties.yaml
+    RedactedPassportResponse:
+      $ref: components/schemas/passport/RedactedPassportResponse.yaml
+    RedactedPassportRequired:
+      $ref: components/schemas/passport/RedactedPassportRequired.yaml
+    SchemaViewResponse:
+      $ref: components/schemas/passport/SchemaViewResponse.yaml
+    DerivedView:
+      $ref: components/schemas/passport/DerivedView.yaml
     DppId:
       $ref: components/schemas/passport/DppId.yaml
     PassportStatus:
@@ -305,6 +315,10 @@ components:
       $ref: components/schemas/access/WhoamiResponse.yaml
     VaultInfo:
       $ref: components/schemas/access/VaultInfo.yaml
+    VaultHealth:
+      $ref: components/schemas/access/VaultHealth.yaml
+    VaultReadiness:
+      $ref: components/schemas/access/VaultReadiness.yaml
     DidDocument:
       $ref: components/schemas/identity/DidDocument.yaml
     ResolverDescription:

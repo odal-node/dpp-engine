@@ -1,0 +1,49 @@
+type: object
+description: >-
+  A passport's product group data re-viewed under a newer schema version, built
+  at read time by upcasting the published data along the schema's lenses. It is
+  derived and never signed: the passport it accompanies, and the proof attached
+  to that passport, are the record.
+required:
+  - data
+  - derived
+  - from
+  - to
+  - lensChain
+  - lossy
+properties:
+  data:
+    type: object
+    description: The product group data, transformed to conform to `to`.
+  derived:
+    type: boolean
+    description: Always `true`. The view is computed at read time, not signed source.
+  from:
+    type: string
+    description: The schema version the passport was published under.
+    example: 1.0.0
+  to:
+    type: string
+    description: >-
+      The schema version the data now conforms to, the one `schema_view` asked
+      for. Equal to `from` when the request names the passport's own version.
+    example: 2.0.0
+  lensChain:
+    type: array
+    description: >-
+      The hops applied, oldest first, each a `[from, to]` pair. Empty when
+      `from` and `to` are equal.
+    items:
+      type: array
+      minItems: 2
+      maxItems: 2
+      items:
+        type: string
+    example:
+      - - 1.0.0
+        - 2.0.0
+  lossy:
+    type: boolean
+    description: >-
+      `true` when any hop dropped or defaulted information, so `data` says less
+      than, or other than, the published passport.

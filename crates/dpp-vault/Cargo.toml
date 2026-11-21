@@ -74,6 +74,9 @@ flate2                = { workspace = true }
 ed25519-dalek         = { workspace = true }
 proptest              = { workspace = true }
 criterion             = { workspace = true }
+# Validates every response the test client receives against the schema the API
+# description documents for it (`tests/helpers/response_contract.rs`).
+jsonschema            = { workspace = true }
 
 [[bench]]
 name    = "publish_serve"

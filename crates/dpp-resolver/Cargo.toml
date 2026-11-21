@@ -68,6 +68,6 @@ rand          = { workspace = true }
 rqrr          = "0.11"
 # Checks the linkset and the description file against the schemas GS1 publishes
 # (`tests/fixtures/gs1/`), which is what the resolver standard says they must
-# validate against. The same version and features `dpp-domain` links, so this
-# adds no crate to the build.
-jsonschema    = { version = "0.60", features = ["idna"], default-features = false }
+# validate against. Declared once in the workspace, at the version and features
+# `dpp-domain` links, so it adds no crate to the build.
+jsonschema    = { workspace = true }

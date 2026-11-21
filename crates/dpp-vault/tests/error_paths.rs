@@ -128,9 +128,7 @@ async fn history_invalid_uuid_returns_400() {
 async fn public_read_invalid_uuid_returns_400() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
-    let resp = reqwest::get(format!("{base}/public/dpp/{INVALID_UUID}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{INVALID_UUID}")).await;
     assert_eq!(resp.status(), 400);
 }
 
@@ -237,9 +235,7 @@ async fn history_nonexistent_returns_404() {
 async fn public_read_nonexistent_returns_404() {
     let pg = start_postgres().await;
     let base = start_vault(pg.dal.clone()).await;
-    let resp = reqwest::get(format!("{base}/public/dpp/{NONEXISTENT}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{NONEXISTENT}")).await;
     assert_eq!(resp.status(), 404);
 }
 
@@ -338,9 +334,7 @@ async fn public_read_draft_returns_404() {
         .unwrap()
         .to_owned();
 
-    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{id}")).await;
     assert_eq!(resp.status(), 404);
 }
 
@@ -356,9 +350,7 @@ async fn public_read_suspended_returns_410_gone() {
         .post_json(&format!("/api/v1/dpp/{id}/suspend"), serde_json::json!({}))
         .await;
 
-    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{id}")).await;
     assert_eq!(resp.status(), 410);
 }
 
@@ -413,7 +405,7 @@ async fn public_read_retired_never_published_draft_returns_404() {
         format!("/public/dpp/{id}"),
         format!("/public/dpp/by-gtin/{GTIN}"),
     ] {
-        let resp = reqwest::get(format!("{base}{path}")).await.unwrap();
+        let resp = helpers::get_checked(format!("{base}{path}")).await;
         assert_eq!(
             resp.status(),
             404,
@@ -435,9 +427,7 @@ async fn public_read_retired_published_passport_still_serves_its_signed_view() {
     let client = TestClient::new(&base, make_jwt(&op()));
     let id = create_and_publish(&client).await;
 
-    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{id}")).await;
     assert_eq!(resp.status(), 200, "the passport must be published first");
 
     PgPassportRepo::new(pg.dal.clone())
@@ -448,9 +438,7 @@ async fn public_read_retired_published_passport_still_serves_its_signed_view() {
         .await
         .expect("retire the published passport");
 
-    let resp = reqwest::get(format!("{base}/public/dpp/{id}"))
-        .await
-        .unwrap();
+    let resp = helpers::get_checked(format!("{base}/public/dpp/{id}")).await;
     assert_eq!(
         resp.status(),
         200,

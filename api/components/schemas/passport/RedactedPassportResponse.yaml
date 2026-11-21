@@ -1,0 +1,19 @@
+allOf:
+  - $ref: ./PassportProperties.yaml
+  - $ref: ./RedactedPassportRequired.yaml
+description: >-
+  A Digital Product Passport as a **redacted** read serves it: the public
+  reads, the audience-scoped credential read and the resolver's JSON
+  representation. It is the same record as `PassportResponse`, filtered by the
+  disclosure policy for the audience asking, so fewer fields are always
+  present.
+
+  Which fields a redacted view always carries is not written by hand. The list
+  is derived from the disclosure policy, for every product group, every schema
+  version and every audience these routes serve, and kept in
+  `RedactedPassportRequired.yaml`. A field the policy withholds from any of
+  them, such as `retentionLocked`, is not in it.
+
+  Proofs are not part of a redacted payload: the redaction removes
+  `jwsSignature`, `seal` and `disclosureSignatures` for every audience, and the
+  route attaches the one proof that covers the bytes it serves.

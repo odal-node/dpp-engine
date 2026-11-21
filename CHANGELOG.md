@@ -150,6 +150,43 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **The API description now documents the redacted passport reads with a schema a
+  served read satisfies, and vault test responses are validated against the
+  description.** The public reads, the audience-scoped credential read and the
+  resolver's JSON representation were documented with `PassportResponse`, which
+  requires `retentionLocked`, a field core's redaction withholds from the public,
+  so a public read served exactly as documented failed its own schema. They now
+  answer with `RedactedPassportResponse`, whose `required` list is derived from
+  core's disclosure policy for every product group, schema version and audience
+  those routes serve: `just regenerate-redacted-required` writes it, and a test
+  fails, naming the recipe, when it is stale. The full authenticated read keeps
+  `PassportResponse` unchanged. `TestClient` in `dpp-vault`'s suites now checks
+  each response against the schema the description documents for its method, path
+  and status, and fails one the description does not document. A test opts out
+  only by saying so with `unchecked()`, as the two do that talk to a stand-in
+  server and to a removed route. The description was corrected where the check
+  found it wrong:
+  - a publish whose signing fails answers `500` and leaves the passport a `draft`,
+    where it described signing as best-effort and `jwsSignature` as possibly
+    null;
+  - `manufacturer.didWebUrl`, `materials[].recycledPct` and
+    `materials[].countryOfOrigin` may be `null`;
+  - an operator that has not been configured yet reads with an empty `country`;
+  - `GET /vault/health` and `GET /vault/ready` document their bodies, and an
+    uploaded dossier's `422` documents its problem body;
+  - the public reads' `200` documents the `{ passport, schemaView }` body that
+    `?schema_view` answers with (`SchemaViewResponse`, its `schemaView` a
+    `DerivedView`), which no schema described before.
+
+  (#378, #635, #656)
+
+- **The vault's `401` is served as `application/problem+json`.** The
+  authentication middleware sent its problem document as `application/json`,
+  although the description documents `application/problem+json` and every other
+  vault error already used it, as RFC 9457 requires. The status, the body and
+  `WWW-Authenticate` are unchanged; a client that matched the `401`'s content type
+  exactly sees the new one. (#635, #656)
+
 - **Two overlapping `PATCH /vault/api/v1/operator` requests no longer lose one of
   them.** An update read the operator config, patched it in memory and wrote the
   whole row back with nothing held in between, so a request that read before the

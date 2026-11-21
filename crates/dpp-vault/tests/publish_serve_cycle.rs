@@ -165,3 +165,70 @@ async fn published_passport_is_served_as_the_payload_its_proof_signed() {
          payload signed at publish time, not the live row"
     );
 }
+
+/// `?schema_view` answers `{ passport, schemaView }` on both public doors, and
+/// the test client holds that body to the schema the description documents for
+/// it. A version equal to the passport's own is core's identity upcast, so this
+/// needs no particular lens to exist.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_schema_view_is_served_as_documented_on_both_public_reads() {
+    let pg = start_postgres().await;
+    let vault_url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&vault_url, &token);
+
+    let resp = client
+        .post_json(
+            "/api/v1/dpp",
+            serde_json::json!({
+                "productName": "Schema View Pack",
+                "manufacturer": { "name": "Example Batteries GmbH", "address": "Berlin, DE" },
+                "materials": [{ "name": "Lithium", "weightKg": 1.2 }],
+                "productGroupData": {
+                    "productGroup": "battery",
+                    "productIdentifier": { "scheme": "gs1", "gtin": "09506000134352" },
+                    "batteryChemistry": "LFP",
+                    "batteryType": "portable",
+                    "nominalVoltageV": 48.0,
+                    "nominalCapacityAh": 100.0,
+                    "expectedLifetimeCycles": 3000,
+                    "co2ePerUnitKg": 45.2,
+                    "ratedCapacityKwh": 4.8
+                }
+            }),
+        )
+        .await;
+    assert_eq!(resp.status(), 201, "create failed");
+    let created: Value = resp.json().await.unwrap();
+    let id = created["id"].as_str().expect("created passport has an id");
+    let resp = client
+        .post_json(&format!("/api/v1/dpp/{id}/publish"), serde_json::json!({}))
+        .await;
+    assert_eq!(resp.status(), 200, "publish failed");
+
+    let plain: Value = client
+        .get(&format!("/public/dpp/{id}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let version = plain["schemaVersion"]
+        .as_str()
+        .expect("a public view states its schema version");
+
+    for read in [
+        format!("/public/dpp/{id}?schema_view={version}"),
+        format!("/public/dpp/by-gtin/09506000134352?schema_view={version}"),
+    ] {
+        let resp = client.get(&read).await;
+        assert_eq!(resp.status(), 200, "{read}");
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(
+            body["passport"], plain,
+            "{read}: the canonical view rides along untouched"
+        );
+        assert_eq!(body["schemaView"]["derived"], true, "{read}");
+        assert_eq!(body["schemaView"]["to"], version, "{read}");
+    }
+}

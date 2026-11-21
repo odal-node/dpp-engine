@@ -188,7 +188,7 @@ async fn get_with_credential(base: &str, id: &str, credential: Option<&str>) -> 
     if let Some(c) = credential {
         req = req.header("X-DPP-Credential", c);
     }
-    req.send().await.expect("request failed")
+    helpers::send_checked(req).await
 }
 
 fn product_group_data(v: &Value) -> &serde_json::Map<String, Value> {
@@ -224,9 +224,8 @@ async fn an_anonymous_read_serves_exactly_the_public_view() {
     );
     let credential_body: Value = resp.json().await.unwrap();
 
-    let public_body: Value = reqwest::get(format!("{base}/public/dpp/{id}"))
+    let public_body: Value = helpers::get_checked(format!("{base}/public/dpp/{id}"))
         .await
-        .expect("public read")
         .json()
         .await
         .unwrap();
@@ -480,9 +479,8 @@ async fn a_credential_for_another_product_group_grants_only_public() {
 
     // The reason travels in the header because the body cannot carry it: a
     // downgraded body is the public view exactly, the payload its proof signs.
-    let public_body: Value = reqwest::get(format!("{base}/public/dpp/{id}"))
+    let public_body: Value = helpers::get_checked(format!("{base}/public/dpp/{id}"))
         .await
-        .expect("public read")
         .json()
         .await
         .unwrap();
@@ -711,7 +709,7 @@ async fn get_as_of(
     if let Some(c) = credential {
         req = req.header("X-DPP-Credential", c);
     }
-    req.send().await.expect("request failed")
+    helpers::send_checked(req).await
 }
 
 /// Check a served non-public view the way a reader would: the attached proof
@@ -883,9 +881,8 @@ async fn a_past_version_is_refused_without_a_credential_not_answered_with_the_pr
 
     // The same passport's public read is untouched: the refusal is for `asOf`.
     assert_eq!(
-        reqwest::get(format!("{base}/public/dpp/{id}"))
+        helpers::get_checked(format!("{base}/public/dpp/{id}"))
             .await
-            .expect("public read")
             .status(),
         200
     );
@@ -1080,12 +1077,12 @@ async fn the_moments_no_version_covers_are_told_apart() {
         "the operator's route, asked of the future"
     );
 
-    let resp = reqwest::Client::new()
-        .get(format!("{base}/credential/dpp/{id}?asOf=yesterday"))
-        .header("X-DPP-Credential", &header)
-        .send()
-        .await
-        .expect("request failed");
+    let resp = helpers::send_checked(
+        reqwest::Client::new()
+            .get(format!("{base}/credential/dpp/{id}?asOf=yesterday"))
+            .header("X-DPP-Credential", &header),
+    )
+    .await;
     let (status, body) = refusal(resp).await;
     assert_eq!(status, 422);
     assert!(
