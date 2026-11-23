@@ -50,14 +50,14 @@ impl AuthProvider for ApiKeyAuthProvider {
             Ok(None) => {
                 // Key not found among active, unexpired keys. Check if it
                 // exists at all so we can emit the right audit code.
-                match self.repo.find_any_by_prefix(&prefix).await.ok().flatten() {
+                let error = match self.repo.find_any_by_prefix(&prefix).await.ok().flatten() {
                     Some(key) if !key.is_active => {
                         tracing::warn!(
                             code = event_codes::AUTH_KEY_REVOKED,
                             key_prefix = %prefix,
                             "revoked API key used"
                         );
-                        return Err(AuthError::Invalid("API key has been revoked".to_owned()));
+                        AuthError::Invalid("API key has been revoked".to_owned())
                     }
                     Some(key) if key.expires_at.map(|e| e < Utc::now()).unwrap_or(false) => {
                         tracing::warn!(
@@ -65,10 +65,11 @@ impl AuthProvider for ApiKeyAuthProvider {
                             key_prefix = %prefix,
                             "expired API key used"
                         );
-                        return Err(AuthError::Invalid("API key has expired".to_owned()));
+                        AuthError::Invalid("API key has expired".to_owned())
                     }
-                    _ => return Err(AuthError::Invalid("unknown API key".to_owned())),
-                }
+                    _ => AuthError::Invalid("unknown API key".to_owned()),
+                };
+                return Err(error);
             }
         };
 

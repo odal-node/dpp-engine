@@ -273,7 +273,7 @@ mod tests {
         p.carrier_serial = Some("SN-0001".into());
         p.personal_data.insert(
             "usageHistory.negativeEvents".into(),
-            dpp_domain::PersonalDataStatement::NothingHeld,
+            PersonalDataStatement::NothingHeld,
         );
         p
     }

@@ -5,6 +5,8 @@
 //! cargo bench -p dpp-node --features integration-tests -- nats
 //! ```
 
+#![cfg(feature = "integration-tests")]
+
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};

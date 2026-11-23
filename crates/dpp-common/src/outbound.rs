@@ -3,12 +3,12 @@
 //!
 //! # Why this module exists
 //!
-//! [`crate::url_guard`] already defines *which* targets are refused. It was
+//! [`url_guard`] already defines *which* targets are refused. It was
 //! being applied unevenly: some call sites used the resolving, fetch-time guard
 //! and a client with redirects disabled and a body cap; others used the
 //! IP-literal-only check and a bare `reqwest::get`. Those are not two opinions
 //! about risk — the weaker combination does not guard anything a hostname can
-//! express, because [`crate::url_guard::validate_public_https_url`] passes every
+//! express, because [`url_guard::validate_public_https_url`] passes every
 //! `Host::Domain` unchecked and the default redirect policy will follow a public
 //! host into the internal network on the second hop.
 //!

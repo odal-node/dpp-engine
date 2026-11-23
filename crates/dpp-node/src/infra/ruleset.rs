@@ -922,7 +922,7 @@ mod tests {
 
     /// Remembers every outcome it is told to record.
     #[derive(Default)]
-    struct Tally(std::sync::Mutex<Vec<(Signal, Outcome)>>);
+    struct Tally(Mutex<Vec<(Signal, Outcome)>>);
 
     #[async_trait]
     impl NodeSignals for Tally {

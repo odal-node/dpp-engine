@@ -119,15 +119,10 @@ fn entry_for(pointer: &TrustedListPointer, fetched: Result<String, String>) -> C
 /// refreshing a complete cache seeds nothing and never drops a good list to
 /// `unavailable` on its way to re-reading it. Returns how many were claimed.
 async fn claim_unheld(store: &Arc<dyn TrustedListStore>, national: &[&TrustedListPointer]) -> u32 {
-    let held = match store.load().await {
-        Ok(h) => h,
-        // Seed everything rather than nothing: a pass that cannot see what is
-        // already held must not assume it is complete.
-        Err(e) => {
-            tracing::warn!(error = %e, "could not read the trusted-list cache before a pass");
-            std::collections::BTreeMap::new()
-        }
-    };
+    let held = store.load().await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "could not read the trusted-list cache before a pass");
+        std::collections::BTreeMap::new()
+    });
 
     let mut seeded = 0;
     for pointer in national {

@@ -182,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
     // (`jws_verify_total`, `cache_requests_total`, …) are actually collected.
     // Without this they are silent no-ops — the public-facing tamper signal would
     // be lost (RT2-6). Served on a dedicated private listener (RT2-7).
-    let prometheus_handle = std::sync::Arc::new(
+    let prometheus_handle = Arc::new(
         PrometheusBuilder::new()
             .install_recorder()
             .context("Failed to install Prometheus metrics recorder")?,
@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
     // (Private-IP blocking is deliberately NOT applied: the self-hosted/dev model
     // legitimately resolves the vault and DID over localhost.)
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("Failed to build HTTP client")?;
@@ -313,7 +313,7 @@ async fn main() -> anyhow::Result<()> {
 /// terminating proxy verifies `CN=odal-resolver`. Without it (local dev over
 /// plain HTTP), a plain client is returned.
 fn build_scan_flush_client() -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(10));
     if let Ok(path) = std::env::var("SCAN_FLUSH_CLIENT_IDENTITY")
         && !path.trim().is_empty()
     {

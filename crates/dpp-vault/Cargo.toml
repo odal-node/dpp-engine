@@ -67,8 +67,6 @@ tempfile     = "3"
 metrics-exporter-prometheus = { workspace = true }
 tower                 = { version = "0.5", features = ["util"] }
 axum                  = { workspace = true }
-testcontainers        = { workspace = true }
-testcontainers-modules = { workspace = true }
 tokio                 = { workspace = true }
 flate2                = { workspace = true }
 ed25519-dalek         = { workspace = true }

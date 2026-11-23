@@ -4,6 +4,8 @@ use super::*;
 use cms::cert::CertificateChoices;
 use dpp_domain::seal::SealConformanceLevel;
 
+use chrono::{DateTime, Duration, Utc};
+
 use crate::cades::evidenced_level;
 use crate::cades::signed::signer_certificate_of;
 
@@ -17,12 +19,12 @@ fn an_archived_seal_reports_a_renewal_date() {
         .expect("sign");
 
     let ArchivalFreshness::Current { expires: renew_by } =
-        archival_freshness(&der, chrono::Utc::now()).expect("readable")
+        archival_freshness(&der, Utc::now()).expect("readable")
     else {
         panic!("a fresh LTA seal is current");
     };
     assert!(
-        renew_by > chrono::Utc::now(),
+        renew_by > Utc::now(),
         "the renewal date must be in the future: {renew_by}"
     );
 }
@@ -41,11 +43,11 @@ fn the_same_seal_read_later_reports_that_it_lapsed() {
         .expect("sign");
 
     let ArchivalFreshness::Current { expires: renew_by } =
-        archival_freshness(&der, chrono::Utc::now()).expect("readable")
+        archival_freshness(&der, Utc::now()).expect("readable")
     else {
         panic!("current now");
     };
-    let after = renew_by + chrono::Duration::seconds(1);
+    let after = renew_by + Duration::seconds(1);
 
     assert_eq!(
         archival_freshness(&der, after).expect("readable"),
@@ -68,7 +70,7 @@ fn a_seal_below_lta_has_nothing_to_renew() {
         .expect("sign");
 
     assert_eq!(
-        archival_freshness(&der, chrono::Utc::now()).expect("readable"),
+        archival_freshness(&der, Utc::now()).expect("readable"),
         ArchivalFreshness::NotArchived
     );
 }
@@ -88,7 +90,7 @@ fn a_lapsed_seal_still_evidences_lta() {
 
     // Past the local authority's certificate, which runs to 4096.
     let far_future = "9999-01-01T00:00:00Z"
-        .parse::<chrono::DateTime<chrono::Utc>>()
+        .parse::<DateTime<Utc>>()
         .expect("a representable instant");
     assert!(matches!(
         archival_freshness(&der, far_future).expect("readable"),
@@ -124,7 +126,7 @@ fn an_archive_timestamp_whose_indexed_material_is_gone_is_refused() {
     // The control: untouched, this seal is archived.
     assert!(
         matches!(
-            archival_freshness(&der, chrono::Utc::now()).expect("readable"),
+            archival_freshness(&der, Utc::now()).expect("readable"),
             ArchivalFreshness::Current { .. }
         ),
         "the seal is archived before anything is removed"
@@ -172,7 +174,7 @@ fn an_archive_timestamp_whose_indexed_material_is_gone_is_refused() {
     .expect("re-encode");
 
     assert_eq!(
-        archival_freshness(&stripped, chrono::Utc::now()).expect("readable"),
+        archival_freshness(&stripped, Utc::now()).expect("readable"),
         ArchivalFreshness::Unknown,
         "an index naming a certificate the seal no longer carries must not still report \
          archival protection"
@@ -212,7 +214,7 @@ fn an_archive_timestamp_from_another_seal_does_not_archive_this_one() {
     // report unarchived would pass the assertion below and prove nothing.
     assert!(
         matches!(
-            archival_freshness(&theirs, chrono::Utc::now()).expect("readable"),
+            archival_freshness(&theirs, Utc::now()).expect("readable"),
             ArchivalFreshness::Current { .. }
         ),
         "the donor seal is genuinely archived, or the swap proves nothing"
@@ -263,7 +265,7 @@ fn an_archive_timestamp_from_another_seal_does_not_archive_this_one() {
     .expect("re-encode");
 
     assert_eq!(
-        archival_freshness(&swapped, chrono::Utc::now()).expect("readable"),
+        archival_freshness(&swapped, Utc::now()).expect("readable"),
         ArchivalFreshness::Unknown,
         "a genuine archive timestamp over someone else's signature must not report this \
          seal as archived — it is present and unreadable *as this seal's*, which is what \

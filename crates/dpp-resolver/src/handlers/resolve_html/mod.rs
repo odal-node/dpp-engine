@@ -56,7 +56,7 @@ pub async fn resolve_html_handler(
 
     if matches!(
         resp.status(),
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::BAD_REQUEST
+        StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
     ) {
         return (
             StatusCode::NOT_FOUND,
@@ -66,7 +66,7 @@ pub async fn resolve_html_handler(
             .into_response();
     }
 
-    if resp.status() == reqwest::StatusCode::GONE {
+    if resp.status() == StatusCode::GONE {
         return (
             StatusCode::GONE,
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

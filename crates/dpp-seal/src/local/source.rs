@@ -39,7 +39,7 @@ impl LocalTimestampSource {
     pub fn load_or_create(dir: &Path) -> Result<Self, SealError> {
         let tsa = LocalTsa::load_or_create(dir)?;
         let clock: Clock = Arc::new(Utc::now);
-        let first = u64::try_from((clock)().timestamp_millis()).unwrap_or(1);
+        let first = u64::try_from(clock().timestamp_millis()).unwrap_or(1);
         Ok(Self {
             tsa,
             clock,

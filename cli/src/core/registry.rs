@@ -20,7 +20,7 @@ pub async fn action_registry_status(
     };
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        anyhow::bail!(
+        bail!(
             "failed to read registry status: {}",
             describe_error(status, &body)
         );
@@ -85,7 +85,7 @@ pub async fn action_provenance(
     let url = format!("{}/api/v1/{collection}/{id}/audit", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
-        anyhow::bail!(
+        bail!(
             "failed to read the provenance trail: {}",
             describe_error(status, &body)
         );

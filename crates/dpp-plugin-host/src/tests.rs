@@ -13,8 +13,9 @@ use dpp_plugin_traits::{
 
 use dpp_common::plugin_admin::{PluginAdmin, PluginInstallError};
 
+use crate::host_funcs::build_linker;
 use crate::loader::LoadedPlugin;
-use crate::runtime::build_engine;
+use crate::runtime::{DEFAULT_FUEL, HostState, build_engine, build_store};
 use crate::{WasmPluginHost, plugin_result_to_compliance};
 
 // ProductGroup → catalog key mapping is `ProductGroup::catalog_key()` in dpp-core (tested there).
@@ -383,7 +384,7 @@ fn generate_passport_payload_no_plugin_returns_unknown_product_group() {
 
 #[test]
 fn build_engine_succeeds() {
-    let engine = crate::runtime::build_engine();
+    let engine = build_engine();
     assert!(engine.is_ok());
 }
 
@@ -392,7 +393,7 @@ fn build_engine_succeeds() {
 /// every plugin declares, compiles.
 #[test]
 fn a_module_declaring_two_memories_is_refused_at_compile_time() {
-    let engine = crate::runtime::build_engine().unwrap();
+    let engine = build_engine().unwrap();
     let one = wat::parse_str("(module (memory 1))").expect("parse WAT");
     assert!(wasmtime::Module::new(&engine, &one).is_ok());
     let two = wat::parse_str("(module (memory 1) (memory 1))").expect("parse WAT");
@@ -404,16 +405,16 @@ fn a_module_declaring_two_memories_is_refused_at_compile_time() {
 
 #[test]
 fn build_store_has_fuel() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let store = crate::runtime::build_store(&engine, None, None).unwrap();
+    let engine = build_engine().unwrap();
+    let store = build_store(&engine, None, None).unwrap();
     assert!(store.get_fuel().unwrap() > 0);
 }
 
 #[test]
 fn build_store_fuel_equals_default() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let store = crate::runtime::build_store(&engine, None, None).unwrap();
-    assert_eq!(store.get_fuel().unwrap(), crate::runtime::DEFAULT_FUEL);
+    let engine = build_engine().unwrap();
+    let store = build_store(&engine, None, None).unwrap();
+    assert_eq!(store.get_fuel().unwrap(), DEFAULT_FUEL);
 }
 
 /// Regression (W-9): the 64 MiB memory cap must be enforced by the sandbox.
@@ -424,8 +425,8 @@ fn build_store_fuel_equals_default() {
 /// not succeed and not cause an OOM on the host.
 #[test]
 fn memory_growth_beyond_cap_is_refused() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
+    let engine = build_engine().unwrap();
+    let mut store = build_store(&engine, None, None).unwrap();
 
     // WAT: starts with 1 page, tries to grow by 1024 pages → total 1025 pages
     // (67_174_400 bytes) which exceeds the 64 MiB cap.
@@ -440,7 +441,7 @@ fn memory_growth_beyond_cap_is_refused() {
 
     let wasm = wat::parse_str(wat_src).expect("parse WAT");
     let module = wasmtime::Module::new(&engine, &wasm).expect("compile WAT module");
-    let linker = wasmtime::Linker::<crate::runtime::HostState>::new(&engine);
+    let linker = wasmtime::Linker::<HostState>::new(&engine);
     let instance = linker
         .instantiate(&mut store, &module)
         .expect("instantiate WAT module");
@@ -469,9 +470,9 @@ fn memory_growth_beyond_cap_is_refused() {
 /// cap and the guest's own 1-page memory, and it does so promptly.
 #[test]
 fn a_huge_log_length_does_not_allocate_host_memory() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
-    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+    let engine = build_engine().unwrap();
+    let mut store = build_store(&engine, None, None).unwrap();
+    let linker = build_linker(&engine).expect("linker");
 
     // One page of memory, and a call passing the largest u32 length there is.
     let wat_src = r#"
@@ -509,9 +510,9 @@ fn a_huge_log_length_does_not_allocate_host_memory() {
 /// still reaches the log path even when the declared length exceeds the cap.
 #[test]
 fn a_log_within_memory_is_read() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
-    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+    let engine = build_engine().unwrap();
+    let mut store = build_store(&engine, None, None).unwrap();
+    let linker = build_linker(&engine).expect("linker");
 
     let wat_src = r#"
         (module
@@ -544,9 +545,9 @@ fn a_log_within_memory_is_read() {
 /// through. Two calls to the WASI clock, separated by a sleep, must agree.
 #[test]
 fn the_wasi_clock_is_pinned_like_odal_now_ms() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let mut store = crate::runtime::build_store(&engine, None, None).unwrap();
-    let linker = crate::host_funcs::build_linker(&engine).expect("linker");
+    let engine = build_engine().unwrap();
+    let mut store = build_store(&engine, None, None).unwrap();
+    let linker = build_linker(&engine).expect("linker");
 
     // clock_time_get(id=0 /* realtime */, precision, result_ptr) -> errno
     let wat_src = r#"
@@ -593,10 +594,10 @@ fn the_wasi_clock_is_pinned_like_odal_now_ms() {
 /// it was made at boot.
 #[test]
 fn a_new_store_gets_a_new_instant() {
-    let engine = crate::runtime::build_engine().unwrap();
-    let a = crate::runtime::build_store(&engine, None, None).unwrap();
+    let engine = build_engine().unwrap();
+    let a = build_store(&engine, None, None).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(5));
-    let b = crate::runtime::build_store(&engine, None, None).unwrap();
+    let b = build_store(&engine, None, None).unwrap();
     assert!(
         b.data().now_ms_pinned >= a.data().now_ms_pinned,
         "a later store must not report an earlier instant"

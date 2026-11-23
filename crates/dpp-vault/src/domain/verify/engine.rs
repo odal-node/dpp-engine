@@ -350,7 +350,7 @@ fn component_graph_status(report: &serde_json::Value) -> CheckStatus {
     }) {
         let path = bad
             .get("path")
-            .map(std::string::ToString::to_string)
+            .map(ToString::to_string)
             .unwrap_or_else(|| "unknown".into());
         return CheckStatus::Fail(format!("component tree integrity violation at {path}"));
     }

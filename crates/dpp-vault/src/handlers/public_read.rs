@@ -126,7 +126,7 @@ pub async fn public_read_handler(
             "This passport has been suspended.",
         ),
         Ok(_) => not_found_error("DPP not found or not published."),
-        Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
+        Err(DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(e) => internal_error(e),
     }
 }
@@ -234,7 +234,7 @@ pub(crate) fn respond_public_view(
             "This passport has no product_group data to re-view.",
         ),
         Err(SchemaViewError::Upcast(UpcastError::Transform(e))) => {
-            internal_error(dpp_domain::DppError::Internal(e.to_string()))
+            internal_error(DppError::Internal(e.to_string()))
         }
         Err(SchemaViewError::Upcast(e)) => api_error(
             StatusCode::UNPROCESSABLE_ENTITY,

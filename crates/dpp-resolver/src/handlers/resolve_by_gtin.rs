@@ -514,19 +514,19 @@ async fn fetch_by_gtin(
     // passport; folding that into the catch-all below turned the one signal a
     // scanner of a recalled product needs into `502 Bad Gateway` — a message
     // about our infrastructure, addressed to someone holding the product.
-    if resp.status() == reqwest::StatusCode::GONE {
+    if resp.status() == StatusCode::GONE {
         return Err(StatusCode::GONE);
     }
     // The vault checks what this edge cannot: the GTIN's check digit. Its `422`
     // is the caller's malformed request, so it is a `400` here. Left to the
     // catch-all below it became a `502`, a fault in this node's infrastructure
     // reported to someone who had only mistyped a code.
-    if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+    if resp.status() == StatusCode::UNPROCESSABLE_ENTITY {
         return Err(StatusCode::BAD_REQUEST);
     }
     if matches!(
         resp.status(),
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::BAD_REQUEST
+        StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
     ) {
         return Err(StatusCode::NOT_FOUND);
     }
