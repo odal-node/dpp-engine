@@ -440,3 +440,87 @@ mod template_publishes {
         }
     }
 }
+
+/// What the template route refuses, and how: the two answers a client can get
+/// instead of a template.
+#[cfg(test)]
+mod template_refusals {
+    use axum::{Router, body::Body, http::Request, routing::get};
+    use tower::ServiceExt;
+
+    use super::{StatusCode, get_template};
+
+    async fn get_refusal(uri: &str, expected: StatusCode) -> serde_json::Value {
+        let app = Router::new().route("/api/v1/templates/{productGroup}", get(get_template));
+        let resp = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected, "{uri}");
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/problem+json"),
+            "a refusal is an RFC 9457 problem, not a bare string"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 100_000)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_xlsx_template_is_not_implemented_and_points_at_the_csv() {
+        let problem = get_refusal(
+            "/api/v1/templates/battery-ev?format=xlsx",
+            StatusCode::NOT_IMPLEMENTED,
+        )
+        .await;
+
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("CSV template")),
+            "the problem tells the caller what to download instead: {problem}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_xlsx_refusal_does_not_depend_on_the_product_group_existing() {
+        // The format is checked before the group, so a caller asking for a
+        // spreadsheet of nothing in particular is told about the format.
+        get_refusal(
+            "/api/v1/templates/no-such-group?format=xlsx",
+            StatusCode::NOT_IMPLEMENTED,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_unknown_product_group_is_not_found_and_lists_what_is_served() {
+        let problem = get_refusal("/api/v1/templates/no-such-group", StatusCode::NOT_FOUND).await;
+
+        let detail = problem["detail"].as_str().expect("a detail");
+        assert!(detail.contains("'no-such-group'"), "{detail}");
+        assert!(
+            detail.contains("battery-ev"),
+            "the refusal lists the keys that are served: {detail}"
+        );
+        assert!(
+            !detail.contains("choose `battery-ev`"),
+            "only a request for `battery` earns the explanation: {detail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_for_the_bare_battery_template_is_told_to_choose_a_category() {
+        let problem = get_refusal("/api/v1/templates/battery", StatusCode::NOT_FOUND).await;
+
+        let detail = problem["detail"].as_str().expect("a detail");
+        assert!(
+            detail.contains("choose `battery-ev`, `battery-lmt` or `battery-industrial`"),
+            "{detail}"
+        );
+    }
+}

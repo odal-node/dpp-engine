@@ -2359,6 +2359,136 @@ mod tests {
         assert_eq!(store.claims.load(Ordering::SeqCst), 1);
         assert_eq!(store.completes.load(Ordering::SeqCst), 1);
     }
+
+    /// The `detail` of a refusal, after checking the status it came with.
+    async fn refusal_detail(
+        resp: axum::response::Response,
+        expected: axum::http::StatusCode,
+    ) -> String {
+        assert_eq!(resp.status(), expected);
+        response_json(resp).await["detail"]
+            .as_str()
+            .expect("a refusal carries a detail")
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn a_file_named_xlsx_that_is_not_a_workbook_is_refused_as_unprocessable() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let body = multipart_body_bytes(
+            "X",
+            "batteries.xlsx",
+            b"this is not a zip archive",
+            "application/octet-stream",
+            None,
+        );
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::UNPROCESSABLE_ENTITY).await;
+        assert!(detail.starts_with("XLSX parse error"), "{detail}");
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn an_empty_csv_file_is_refused_as_unprocessable() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let body = multipart_body("X", "battery.csv", "", None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::UNPROCESSABLE_ENTITY).await;
+        assert!(detail.starts_with("CSV parse error"), "{detail}");
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_csv_with_a_header_and_no_rows_is_refused_as_unprocessable() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let body = multipart_body("X", "battery.csv", &battery_csv(0), None);
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::UNPROCESSABLE_ENTITY).await;
+        assert_eq!(detail, "The uploaded file contains no data rows.");
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// The file field ends where the stream does, with no closing boundary: the
+    /// multipart reader cannot say where the file stops, so the upload is refused
+    /// rather than imported as far as it got.
+    #[tokio::test]
+    async fn an_upload_cut_off_inside_the_file_is_a_bad_request() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let body = format!(
+            "--X\r\nContent-Disposition: form-data; name=\"file\"; filename=\"battery.csv\"\r\n\
+             Content-Type: text/csv\r\n\r\n{}",
+            battery_csv(2)
+        )
+        .into_bytes();
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::BAD_REQUEST).await;
+        assert!(
+            detail.starts_with("Failed to read uploaded file"),
+            "{detail}"
+        );
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    /// A body that opens with something other than the boundary the header
+    /// declared is not a multipart message at all.
+    #[tokio::test]
+    async fn a_body_that_is_not_multipart_is_a_bad_request() {
+        let (state, mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let body = b"productName,gtin\r\nWidget,09506000134352\r\n".to_vec();
+        let resp = app.oneshot(import_request("battery", body)).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::BAD_REQUEST).await;
+        assert!(detail.starts_with("Multipart read error"), "{detail}");
+        assert_eq!(mock.create_hits.load(Ordering::SeqCst), 0);
+    }
+
+    fn job_request(job_id: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(format!("/api/v1/imports/{job_id}"))
+            .header("authorization", "Bearer test-token")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_job_id_that_is_not_a_uuid_is_a_bad_request() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let resp = app.oneshot(job_request("not-a-job-id")).await.unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::BAD_REQUEST).await;
+        assert_eq!(detail, "Invalid job ID format.");
+    }
+
+    #[tokio::test]
+    async fn a_job_id_no_import_was_given_is_not_found() {
+        let (state, _mock) = live_vault_state().await;
+        let app = build_router(state);
+
+        let resp = app
+            .oneshot(job_request(&uuid::Uuid::now_v7().to_string()))
+            .await
+            .unwrap();
+
+        let detail = refusal_detail(resp, axum::http::StatusCode::NOT_FOUND).await;
+        assert_eq!(detail, "Job not found.");
+    }
 }
 
 #[cfg(test)]

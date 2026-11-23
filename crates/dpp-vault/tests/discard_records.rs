@@ -206,6 +206,25 @@ async fn recording_a_discard_needs_a_write_key() {
     assert_eq!(resp.status(), 403);
 }
 
+/// A day that is shaped like a date and is not one on the calendar is refused by
+/// the schema's `date` format, naming the field, before core's record type is
+/// asked to read it. So the record type's own refusal is not reached this way.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_day_that_is_not_on_the_calendar_is_refused_by_the_schema() {
+    let s = setup(None).await;
+    let resp = TestClient::new(&s.base, &s.write)
+        .post_json("/api/v1/discard-records", discard("2026-02-30", None))
+        .await;
+    assert_eq!(resp.status(), 422);
+    let problem: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("/discardedOn:") && d.contains("is not a \"date\"")),
+        "{problem}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn recording_a_discard_needs_a_credential() {
     let s = setup(None).await;

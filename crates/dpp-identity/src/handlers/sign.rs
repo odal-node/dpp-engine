@@ -109,7 +109,165 @@ pub async fn sign_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_operator_id;
+    use std::sync::Arc;
+
+    use axum::{Router, body::Body, http::Request, routing::post};
+    use base64::Engine as _;
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    use super::{StatusCode, is_valid_operator_id, sign_handler};
+    use crate::state::AppState;
+
+    /// A router with only the signing route, over a throwaway keystore.
+    ///
+    /// The store comes back too, so a test can ask whether a refused request
+    /// provisioned a key: the keystore is never pruned, so one that did would be
+    /// permanent. The `TempDir` owns the directory the store writes into.
+    fn sign_app() -> (
+        Router,
+        Arc<dpp_crypto::keystore::KeyStore>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(
+            dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test")
+                .expect("open store"),
+        );
+        let state = AppState {
+            store: Arc::clone(&store),
+            did_web_base_url: "http://localhost".into(),
+        };
+        let app = Router::new()
+            .route("/internal/sign", post(sign_handler))
+            .with_state(state);
+        (app, store, dir)
+    }
+
+    /// Post `body` to the signing route; the status and the RFC 9457 body.
+    async fn sign_problem(app: &Router, body: Value) -> (StatusCode, Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/internal/sign")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/problem+json"),
+            "a refusal is an RFC 9457 problem"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 10_000)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    fn payload_b64(value: &Value) -> String {
+        base64::engine::general_purpose::STANDARD.encode(value.to_string())
+    }
+
+    #[tokio::test]
+    async fn an_operator_id_outside_the_key_name_alphabet_is_refused_without_provisioning_a_key() {
+        let (app, store, _dir) = sign_app();
+
+        let (status, problem) = sign_problem(
+            &app,
+            json!({
+                "operator_id": "a/b",
+                "passport_id": "dpp:1",
+                "payload": payload_b64(&json!({"id": "dpp:1"}))
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("operator_id")),
+            "the problem names the field: {problem}"
+        );
+        assert!(
+            !store.has_key("a/b"),
+            "a refused operator id must not grow the key store"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_passport_id_or_payload_is_refused_as_unprocessable() {
+        let (app, store, _dir) = sign_app();
+        let payload = payload_b64(&json!({"id": "dpp:1"}));
+
+        for body in [
+            json!({"operator_id": "op", "passport_id": "", "payload": payload}),
+            json!({"operator_id": "op", "passport_id": "dpp:1", "payload": ""}),
+        ] {
+            let (status, problem) = sign_problem(&app, body.clone()).await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+            assert!(
+                problem["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("required")),
+                "the problem says what is missing: {problem}"
+            );
+        }
+        assert!(
+            !store.has_key("op"),
+            "no key for a request that was refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_payload_that_is_not_base64_is_a_bad_request_not_a_provisioned_key() {
+        let (app, store, _dir) = sign_app();
+
+        let (status, problem) = sign_problem(
+            &app,
+            json!({"operator_id": "op", "passport_id": "dpp:1", "payload": "!!!not base64!!!"}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("base64")),
+            "the problem names the encoding: {problem}"
+        );
+        assert!(
+            !store.has_key("op"),
+            "no key for a request that was refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_base64_payload_that_is_not_json_is_a_bad_request_not_a_provisioned_key() {
+        let (app, store, _dir) = sign_app();
+        let not_json = base64::engine::general_purpose::STANDARD.encode("this is not json");
+
+        let (status, problem) = sign_problem(
+            &app,
+            json!({"operator_id": "op", "passport_id": "dpp:1", "payload": not_json}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("JSON")),
+            "the problem names the format: {problem}"
+        );
+        assert!(
+            !store.has_key("op"),
+            "no key for a request that was refused"
+        );
+    }
 
     #[test]
     fn operator_id_validation_bounds_provisioning() {

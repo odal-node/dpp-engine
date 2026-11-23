@@ -31,6 +31,8 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/evidence/VerificationReport.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '404':

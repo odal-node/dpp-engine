@@ -150,6 +150,43 @@ mod tests {
         (store, dir)
     }
 
+    #[tokio::test]
+    async fn an_operator_id_outside_the_key_name_alphabet_is_refused_and_nothing_is_rotated() {
+        let (store, _dir) = temp_store();
+        let state = AppState {
+            store: Arc::new(store),
+            did_web_base_url: "http://localhost".into(),
+        };
+
+        let resp = rotate_key_handler(
+            State(state.clone()),
+            Json(InternalRotateKeyRequest {
+                operator_id: "../etc".into(),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let problem: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .expect("response body"),
+        )
+        .expect("response is JSON");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("operator_id")),
+            "the problem names the field: {problem}"
+        );
+        // Rotation archives and then generates; a refused id must do neither.
+        assert!(
+            !state.store.has_key("../etc"),
+            "a refused operator id must not provision a key"
+        );
+    }
+
     /// Regression (custody runbook §"key rotation"): a JWS signed before a key
     /// rotation must still verify afterwards, via `kid`-based lookup against
     /// the archived key the rotation appends to the DID document's

@@ -34,6 +34,10 @@ post:
       $ref: ../../components/responses/Unauthorized.yaml
     '403':
       description: A non-admin credential attempted to reload the ruleset.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '422':
       description: >-
         The bundle was refused and the ruleset in force is unchanged. The
@@ -47,6 +51,10 @@ post:
       description: >-
         This node has no signed ruleset channel configured; it is running its
         compiled-in baseline and there is nothing to re-read.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
     '503':
       description: >-
         The channel could not be read at all: the bundle file is missing or
