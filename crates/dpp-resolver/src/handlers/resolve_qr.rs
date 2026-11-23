@@ -31,11 +31,11 @@ async fn fetch_passport(state: &AppState, dpp_id: &str) -> Result<Value, StatusC
 
     if matches!(
         resp.status(),
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::BAD_REQUEST
+        StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
     ) {
         return Err(StatusCode::NOT_FOUND);
     }
-    if resp.status() == reqwest::StatusCode::GONE {
+    if resp.status() == StatusCode::GONE {
         return Err(StatusCode::GONE);
     }
     if !resp.status().is_success() {

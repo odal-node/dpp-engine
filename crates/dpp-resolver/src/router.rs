@@ -113,7 +113,7 @@ async fn content_negotiation_handler(
 ) -> axum::response::Response {
     let accept = request
         .headers()
-        .get(axum::http::header::ACCEPT)
+        .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
@@ -174,7 +174,7 @@ async fn content_negotiation_handler(
 
     response
         .headers_mut()
-        .insert(axum::http::header::VARY, HeaderValue::from_static("Accept"));
+        .insert(header::VARY, HeaderValue::from_static("Accept"));
 
     response
 }
@@ -266,12 +266,12 @@ fn not_acceptable(accept: &str) -> axum::response::Response {
     ));
     let mut response = (
         axum::http::StatusCode::NOT_ACCEPTABLE,
-        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        [(header::CONTENT_TYPE, "application/problem+json")],
         serde_json::to_string(&problem).unwrap_or_default(),
     )
         .into_response();
     response
         .headers_mut()
-        .insert(axum::http::header::VARY, HeaderValue::from_static("Accept"));
+        .insert(header::VARY, HeaderValue::from_static("Accept"));
     response
 }

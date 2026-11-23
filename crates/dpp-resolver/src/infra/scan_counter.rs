@@ -405,14 +405,14 @@ mod tests {
         assert!(c.has_pending());
     }
 
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
 
     use axum::{Json, Router, http::StatusCode, routing::post};
 
     /// Spawn a mock ingest server that records every batch it receives and
     /// replies with `reply`. Returns its base URL and the shared capture slot.
-    async fn mock_ingest(reply: StatusCode) -> (String, Arc<std::sync::Mutex<Vec<ScanBatch>>>) {
-        let captured = Arc::new(std::sync::Mutex::new(Vec::<ScanBatch>::new()));
+    async fn mock_ingest(reply: StatusCode) -> (String, Arc<Mutex<Vec<ScanBatch>>>) {
+        let captured = Arc::new(Mutex::new(Vec::<ScanBatch>::new()));
         let sink = captured.clone();
         let app = Router::new().route(
             "/scan-batch",
@@ -565,11 +565,11 @@ mod tests {
     /// and the additive ingest double-counts.
     #[tokio::test]
     async fn every_attempt_at_one_batch_carries_the_same_key() {
-        let keys: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let keys: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = keys.clone();
         // Fails the first two attempts, then succeeds — the shape of a flaky
         // link, which is where the double-count used to happen.
-        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts = Arc::new(AtomicUsize::new(0));
 
         let app = Router::new().route(
             "/scan-batch",
@@ -585,7 +585,7 @@ mod tests {
                                 .unwrap_or("<none>")
                                 .to_owned(),
                         );
-                        if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 {
+                        if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
                             StatusCode::INTERNAL_SERVER_ERROR
                         } else {
                             StatusCode::NO_CONTENT
