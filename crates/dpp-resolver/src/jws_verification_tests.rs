@@ -2,6 +2,11 @@
 //! assembled router (mock vault + mock did:web server), not just the
 //! `resolve_json` handler in isolation.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use axum::{
     Router,
     body::Body,
@@ -549,12 +554,34 @@ async fn aas_refusal(resp: axum::response::Response, status: StatusCode) -> Stri
 /// An id that is not a UUID is refused before the vault is asked.
 #[tokio::test]
 async fn the_aas_door_refuses_an_id_that_is_not_a_uuid() {
-    let app = aas_app_serving(battery_passport_json()).await;
-    let resp = get_aas(app, "not-a-uuid").await;
+    // A vault that serves a passport for any path, and counts what it is asked.
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&asked);
+    let vault = Router::new().fallback(move || {
+        let counter = Arc::clone(&counter);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            axum::Json(battery_passport_json())
+        }
+    });
+    let port = start_mock_vault(vault).await;
+    let app = router::build(test_state(format!("http://127.0.0.1:{port}")));
+
+    let resp = get_aas(app.clone(), "not-a-uuid").await;
     assert_eq!(
         aas_refusal(resp, StatusCode::NOT_FOUND).await,
         "DPP not found"
     );
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "the vault is not asked about an id that is not a UUID"
+    );
+
+    // The count is wired to the vault the resolver reads: an id that is a UUID
+    // reaches it.
+    get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
 /// A payload the resolver cannot read as a passport is the vault's fault, not the

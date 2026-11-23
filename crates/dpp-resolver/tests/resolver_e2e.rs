@@ -17,7 +17,10 @@
 //! cargo test -p dpp-resolver -- --nocapture
 //! ```
 
-use std::sync::OnceLock;
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use axum::{
     Router,
@@ -1195,12 +1198,32 @@ async fn vault_answering(status: StatusCode, body: &'static str) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// A base URL nothing listens on: bind a port, then let it go.
-async fn unreachable_vault() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    format!("http://127.0.0.1:{port}")
+/// A vault that answers every request with `200` and `{}`, and counts the requests
+/// it was asked.
+async fn vault_counting_requests() -> (String, Arc<AtomicUsize>) {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&asked);
+    let vault = Router::new().fallback(move || {
+        let counter = Arc::clone(&counter);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            (StatusCode::OK, "{}")
+        }
+    });
+    let port = start_mock_vault(vault).await;
+    (format!("http://127.0.0.1:{port}"), asked)
+}
+
+/// A base URL nothing listens on, and the socket that holds its port.
+///
+/// The port is bound and never listened on, so a connection is refused. Dropping
+/// the socket would free the port for another test's mock vault, and the request
+/// would then reach it: the caller keeps the socket until the request is done.
+fn unreachable_vault() -> (String, tokio::net::TcpSocket) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
+    (format!("http://127.0.0.1:{port}"), socket)
 }
 
 /// GET `uri` through a resolver whose vault is at `vault`.
@@ -1259,7 +1282,8 @@ async fn each_door_reports_a_vault_that_cannot_be_reached_as_a_bad_gateway() {
         ("html", format!("/dpp/{PASSPORT_ID}"), Some("text/html")),
         ("qr", format!("/dpp/{PASSPORT_ID}/qr"), None),
     ] {
-        let resp = resolve(unreachable_vault().await, &uri, accept).await;
+        let (vault, _port_held) = unreachable_vault();
+        let resp = resolve(vault, &uri, accept).await;
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY, "{door}");
     }
 }
@@ -1286,7 +1310,7 @@ async fn a_vault_answer_that_is_not_json_is_a_bad_gateway_for_the_json_and_qr_do
 #[tokio::test]
 async fn an_id_that_is_not_a_uuid_is_not_found_in_each_doors_medium() {
     // A vault that would answer anything: the point is that it is never asked.
-    let vault = vault_answering(StatusCode::OK, "{}").await;
+    let (vault, asked) = vault_counting_requests().await;
 
     let resp = resolve(vault.clone(), "/dpp/not-a-uuid", Some("text/html")).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -1309,7 +1333,7 @@ async fn an_id_that_is_not_a_uuid_is_not_found_in_each_doors_medium() {
         "application/problem+json"
     );
 
-    let resp = resolve(vault, "/dpp/not-a-uuid/qr", None).await;
+    let resp = resolve(vault.clone(), "/dpp/not-a-uuid/qr", None).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     assert_eq!(
         resp.headers()["content-type"].to_str().unwrap(),
@@ -1319,6 +1343,17 @@ async fn an_id_that_is_not_a_uuid_is_not_found_in_each_doors_medium() {
         text_of(resp).await.is_empty(),
         "a refused id prints no image"
     );
+
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "no door asks the vault about an id that is not a UUID"
+    );
+
+    // The count is wired to the vault the resolver reads: an id that is a UUID
+    // reaches it.
+    resolve(vault, &format!("/dpp/{PASSPORT_ID}"), Some("text/html")).await;
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
 /// The label route's refusals once the vault has been asked: a passport that
