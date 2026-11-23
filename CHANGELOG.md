@@ -12,6 +12,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **The OpenAPI schema `OperatorIdentifier` is renamed `OperatorIdentifierRecord`.**
+  The node's stored identifier (id, scheme, value, label, primary flag) shared a name
+  with dpp-core's `OperatorIdentifier`, the registry's submission identifier, which
+  holds other things. The wire body is unchanged; what changes is the schema's name in
+  the description, and so the type name in a client generated from it.
+  **Migration:** regenerate the client from the description, and replace references
+  to `OperatorIdentifier` with `OperatorIdentifierRecord`. (#717)
+
 - **A battery CSV row without `placedOnMarketDate` is refused at import** wherever
   core's publish gate would refuse it: an EV or LMT battery, or an industrial battery
   over 2 kWh or with no stated `ratedCapacityKwh`, whatever its Art. 47 declaration,
@@ -153,12 +161,6 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `NOTICE`. A `lintResult` core cannot read is an error and no longer prints as "No
   findings". A publish blocker is reported as the field and message the node sends,
   and no longer as a finding with a made-up `blocking` severity. (#717)
-- **The OpenAPI schema `OperatorIdentifier` is renamed `OperatorIdentifierRecord`.**
-  The node's stored identifier (id, scheme, value, label, primary flag) shared a
-  name with dpp-core's `OperatorIdentifier`, the registry's submission identifier,
-  which holds other things. The wire body is unchanged; a client generated from the
-  description sees the new type name. The CLI's `KeyEntry` and `Verdict` are
-  renamed `ApiKeyEntry` and `SealVerdict` for the same reason. (#717)
 - **A credential may be narrowed to a product category an earlier schema version
   allowed.** The category check now reads core's
   `ProductGroup::product_category_values_any_version`, so a credential narrowed

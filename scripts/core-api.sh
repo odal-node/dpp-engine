@@ -53,7 +53,7 @@ core_crates() {
   local locked=(--locked)
   [[ -f "$root/.cargo/config.toml" ]] && locked=()
   local meta
-  meta="$(cd "$root" && cargo metadata --format-version 1 "${locked[@]}" --offline)"
+  meta="$(cd "$root" && cargo metadata --format-version 1 "${locked[@]}" --offline)" || return 1
   # A dpp-core crate is a dpp-* package this workspace does not own, whether cargo
   # resolved it from the registry or from a local override.
   jq -r '
@@ -67,12 +67,34 @@ core_crates() {
     | join("|")' <<<"$meta" | sort
 }
 
+# The crates, read once and refused when there are none. A process substitution
+# that fails reads as an empty list, and an empty inventory would clear the JSON,
+# write a stamp for it, and let a later run trust that stamp; so the rows are
+# captured here and a failure stops the caller.
+crates_or_die() {
+  local rows
+  rows="$(core_crates)" || {
+    echo "core-api: cargo metadata could not be read" >&2
+    return 1
+  }
+  [[ -n "$rows" ]] || {
+    echo "core-api: no dpp-core crate in the engine's build" >&2
+    return 1
+  }
+  printf '%s\n' "$rows"
+}
+
 cmd_json() {
   # The pinned sources never change under a version, so the JSON is a function of
   # the lock and of how it is built. Rebuilding it is minutes of nightly rustdoc;
   # skip that when neither has moved.
+  #
+  # The stamp covers the resolved crates as well as the lock: a change to a
+  # manifest's features alters what is documented and leaves `Cargo.lock` as it was.
+  local crates
+  crates="$(crates_or_die)" || return 1
   local stamp
-  stamp="$({ cat "$root/Cargo.lock"; declare -f cmd_json core_crates; } | sha256sum | cut -d' ' -f1)"
+  stamp="$({ cat "$root/Cargo.lock"; printf '%s\n' "$crates"; declare -f cmd_json core_crates; } | sha256sum | cut -d' ' -f1)"
   # With the local-core override the sources are a working tree that changes
   # without the lock moving, so there is no stamp to trust.
   if [[ ! -f "$root/.cargo/config.toml" && -f "$json/.stamp" && "$(cat "$json/.stamp")" == "$stamp" ]]; then
@@ -91,10 +113,17 @@ cmd_json() {
   while IFS="|" read -r name version _ dir; do
     if [[ "$dir" == */registry/src/* ]]; then
       cp -r "$dir" "$ws/$name"
+      # Cargo resolves a workspace member's dev-dependencies even to document its
+      # library, and the engine's lock holds none of core's: they are not in its
+      # build, so an offline run cannot fetch them (`tracing-test`, on a runner
+      # whose cache was only ever filled by the engine). Documenting a library
+      # needs only what it depends on, so they go.
+      awk '/^\[/ { skip = ($0 ~ /^\[.*dev-dependencies/) } !skip' "$ws/$name/Cargo.toml" >"$ws/$name/Cargo.toml.stripped"
+      mv "$ws/$name/Cargo.toml.stripped" "$ws/$name/Cargo.toml"
       members+=("\"$name\"")
       patches+=("$name = { path = \"$name\" }")
     fi
-  done < <(core_crates)
+  done <<<"$crates"
 
   if [[ ${#members[@]} -gt 0 ]]; then
     {
@@ -117,7 +146,7 @@ cmd_json() {
     CARGO_TARGET_DIR="$out/target" cargo +nightly rustdoc "${args[@]}" -- \
       -Z unstable-options --output-format json
     cp "$out/target/doc/${name//-/_}.json" "$json/$name.json"
-  done < <(core_crates)
+  done <<<"$crates"
   echo "$stamp" >"$json/.stamp"
 }
 
@@ -219,10 +248,11 @@ public_of() {
 }
 
 cmd_public() {
-  local crate
+  local crates crate
+  crates="$(crates_or_die)" || return 1
   while IFS="|" read -r crate _ _ _; do
     public_of "$crate" | awk -F'\t' -v via="$crate" '{print $0 "\t" via}'
-  done < <(core_crates) |
+  done <<<"$crates" |
     # One row per (definer, kind, name): the shortest path wins, and every other
     # crate that exports it is named.
     awk -F'\t' '
@@ -427,7 +457,9 @@ shapes() {
       kind = w[n - 1]; tname = w[n]; tloc = FILENAME ":" FNR
       members = ""; depth = 0; rename = ""
       if (line ~ /\{/) { intype = 1; started = 1 }
-      else if (line ~ /;[[:space:]]*$/ || line ~ /\)[[:space:]]*;?[[:space:]]*$/) { next }
+      # A tuple or unit struct holds no named member, and its name is still one core
+      # may own: it is recorded with none.
+      else if (line ~ /\(/ || line ~ /;[[:space:]]*$/) { print kind, tname, tloc, ""; next }
       else { await = 1; next }
     }
     await {
@@ -455,7 +487,7 @@ shapes() {
       o = gsub(/\{/, "{", line); c = gsub(/\}/, "}", line)
       depth += o - c
       if (depth <= 0) {
-        if (members != "") print kind, tname, tloc, members
+        print kind, tname, tloc, members
         intype = 0
       }
     }'
@@ -513,11 +545,18 @@ join_shadows() {
     {
       kind = $1; name = $2; loc = $3; mem = $4
       if (kind == "const") {
-        if (length($4) < 6) next
-        nv = split(byvalue[$4], vs, " ")
-        for (i = 1; i <= nv; i++) print "same-value", 1, "const", name, loc, ck[vs[i]], cn[vs[i]], $4, "", ""
+        # The name comes first, whatever the value: a short one says nothing of itself,
+        # but a name core owns carrying another value is the drift this looks for.
         nn = split(bycname[norm(name)], ns, " ")
-        for (i = 1; i <= nn; i++) if (cv[ns[i]] != $4) print "same-name-other-value", 1, "const", name, loc, ck[ns[i]], cn[ns[i]], "engine " $4, "", "core " cv[ns[i]]
+        for (i = 1; i <= nn; i++) {
+          if (cv[ns[i]] != $4) print "same-name-other-value", 1, "const", name, loc, ck[ns[i]], cn[ns[i]], "engine " $4, "", "core " cv[ns[i]]
+          else print "same-value", 1, "const", name, loc, ck[ns[i]], cn[ns[i]], $4, "", ""
+        }
+        # By value alone, a short one is too common to mean anything.
+        if (length($4) >= 6) {
+          nv = split(byvalue[$4], vs, " ")
+          for (i = 1; i <= nv; i++) if (norm(cn[vs[i]]) != norm(name)) print "same-value", 1, "const", name, loc, ck[vs[i]], cn[vs[i]], $4, "", ""
+        }
         next
       }
       # Named for a core type of another kind: a struct here, an enum there.
@@ -567,11 +606,12 @@ cmd_shadows() {
   shapes <"$engine_files" | sed "s|$root/||" >"$out/shapes.engine"
 
   : >"$out/shapes.core"
-  local name dir
+  local crates name dir
+  crates="$(crates_or_die)" || return 1
   while IFS="|" read -r name _ _ dir; do
     find "$dir/src" -name '*.rs' ! -name '*tests.rs' ! -name '*_test.rs' |
       shapes | awk -F'\t' -v OFS='\t' -v crate="$name" '{ print crate, $0 }' >>"$out/shapes.core"
-  done < <(core_crates)
+  done <<<"$crates"
 
   join_shadows "$out/public.tsv" "$out/shapes.core" "$out/shapes.engine"
 }
