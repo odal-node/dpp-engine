@@ -7,7 +7,7 @@
 
 use axum::{
     Json,
-    extract::{Multipart, State},
+    extract::{Multipart, State, multipart::MultipartRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -36,8 +36,16 @@ pub async fn install_plugin_handler(
     // deliberately: axum runs body-less extractors first, so a wrong-scope
     // caller is refused before the body is buffered or parsed.
     RequireAdmin(_auth): RequireAdmin,
-    mut multipart: Multipart,
+    // Taken as a `Result` so a body that is not multipart is answered with the
+    // same problem document as every other refusal here, not axum's plain text.
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> Response {
+    let mut multipart = match multipart {
+        Ok(multipart) => multipart,
+        Err(rejection) => {
+            return api_error(rejection.status(), "BAD_REQUEST", &rejection.body_text());
+        }
+    };
     let Some(admin) = state.plugin_admin.clone() else {
         return api_error(
             StatusCode::NOT_IMPLEMENTED,

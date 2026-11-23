@@ -1283,3 +1283,53 @@ async fn a_moment_before_the_first_publish_is_not_served_without_a_draft_version
         "{body}"
     );
 }
+
+/// A passport whose end of life has been declared serves no credential: neither
+/// its live view nor the one it had "now", because the state at that moment is
+/// deactivated and a past read answers only for a passport that was serving.
+/// A passport this node never held is the same `404`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_passport_that_no_longer_serves_is_not_found_on_the_credential_route() {
+    let pg = start_postgres().await;
+    let (directory, trust) = wiring();
+    let base = start_vault_with_credentials(pg.dal.clone(), directory, trust).await;
+    seed_complete_operator(&pg.dal).await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000002");
+    let client = TestClient::new(&base, &token);
+    let id = publish_battery(&client).await;
+    let header = credential_header(CredentialRole::MarketSurveillanceAuthority, &["battery"]);
+
+    let resp = client
+        .post_json(
+            &format!("/api/v1/dpp/{id}/eol"),
+            json!({"reason": {"kind": "recycled"}}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200, "declare end of life");
+
+    let (status, body) = refusal(get_with_credential(&base, &id, Some(&header)).await).await;
+    assert_eq!(status, 404, "the live read: {body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("not found or not published")),
+        "{body}"
+    );
+
+    let moment = db_now(&pg.dal).await;
+    let (status, body) = refusal(get_as_of(&base, &id, moment, Some(&header)).await).await;
+    assert_eq!(
+        status, 404,
+        "the past read of a deactivated passport: {body}"
+    );
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("No published version")),
+        "{body}"
+    );
+
+    let unknown = "00000000-0000-0000-0000-000000000099";
+    let (status, body) = refusal(get_with_credential(&base, unknown, Some(&header)).await).await;
+    assert_eq!(status, 404, "a passport this node never held: {body}");
+}

@@ -550,12 +550,55 @@ type CredentialWiring = (
     Arc<dyn dpp_vc::TrustedIssuerRegistry>,
 );
 
+/// The ports a node may or may not have, none of which the harness wires by
+/// default. A test that is about what a node answers when one is **present**
+/// names it here; every other test keeps the node the harness has always built.
+#[derive(Default)]
+pub struct OptionalPorts {
+    /// The runtime plugin installer. `None` is a node with no plugin host.
+    pub plugin_admin: Option<Arc<dyn dpp_common::plugin_admin::PluginAdmin>>,
+    /// The signer of access credentials. `None` is a node with no key in reach.
+    pub credential_issuer: Option<Arc<dyn dpp_vault::state::CredentialIssuer>>,
+}
+
+/// A vault with `ports` wired, and the harness's usual signer and registry.
+pub async fn start_vault_with_ports(dal: PgDal, ports: OptionalPorts) -> String {
+    start_vault_wired(
+        dal,
+        Arc::new(MockIdentity),
+        None,
+        SealWiring::default(),
+        RegistryWiring::default(),
+        ports,
+    )
+    .await
+}
+
 async fn start_vault_with_identity(
     dal: PgDal,
     identity: Arc<dyn IdentityPort>,
     credentials: Option<CredentialWiring>,
     seal: SealWiring,
     registry: RegistryWiring,
+) -> String {
+    start_vault_wired(
+        dal,
+        identity,
+        credentials,
+        seal,
+        registry,
+        OptionalPorts::default(),
+    )
+    .await
+}
+
+async fn start_vault_wired(
+    dal: PgDal,
+    identity: Arc<dyn IdentityPort>,
+    credentials: Option<CredentialWiring>,
+    seal: SealWiring,
+    registry: RegistryWiring,
+    ports: OptionalPorts,
 ) -> String {
     struct PgPing(PgDal);
     #[async_trait]
@@ -664,7 +707,7 @@ async fn start_vault_with_identity(
         local_auth_provider: None,
         credential_directory: credentials.as_ref().map(|(d, _)| d.clone()),
         trusted_issuers: credentials.as_ref().map(|(_, t)| t.clone()),
-        credential_issuer: None,
+        credential_issuer: ports.credential_issuer,
         cors_allowed_origins: Vec::new(),
         scan_repo,
         discard_records,
@@ -672,7 +715,7 @@ async fn start_vault_with_identity(
         personal_data,
         obligation_notices,
         obligation_schedule: Arc::new(dpp_vault::state::BuiltInObligationSchedule),
-        plugin_admin: None,
+        plugin_admin: ports.plugin_admin,
         // These tests exercise the vault in isolation, with no composition
         // root resolving trust ports or a ruleset.
         trust: None,

@@ -147,6 +147,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_operator_id_outside_the_key_name_alphabet_is_refused_as_unprocessable() {
+        let (store, _dir) = temp_store();
+        // Kept, so the test can ask whether the refused request left a key behind.
+        let store = Arc::new(store);
+        let app = Router::new()
+            .route("/internal/verify", post(verify_handler))
+            .with_state(AppState {
+                store: Arc::clone(&store),
+                did_web_base_url: "http://localhost".into(),
+            });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/internal/verify")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"operator_id": "a b", "jws": "a.b.c", "payload": {"id": "dpp:1"}})
+                    .to_string(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+
+        // Not `{"valid": false}`: an operator id that could never name a key is a
+        // malformed request, told apart from a well-formed one with no key on file.
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/problem+json")
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 10_000)
+            .await
+            .unwrap();
+        let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("operator_id")),
+            "the problem names the field: {problem}"
+        );
+        assert!(
+            !store.has_key("a b"),
+            "a refused operator id must not provision a key"
+        );
+    }
+
+    #[tokio::test]
     async fn a_signature_this_service_issued_verifies_true() {
         let (store, _dir) = temp_store();
         store.generate_key("root").expect("provision key");

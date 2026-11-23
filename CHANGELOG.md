@@ -150,6 +150,15 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Fixed
 
+- **`POST /api/v1/plugins` answers a body that is not multipart with a problem
+  document.** Axum refused it before the handler ran, with a plain-text `400`
+  ("Invalid `boundary` for `multipart/form-data` request"); it is now an
+  `application/problem+json` `400`, like every other refusal on the route. The
+  API description also documents the problem body of the route's `400`, `403`,
+  `422` and `501`, of `POST /ruleset/reload`'s `403` and `501`, and a `400` for an
+  id that is not a UUID on `GET /evidence/{id}` and `POST /evidence/{id}/verify`.
+  (#708)
+
 - **The API description now documents the redacted passport reads with a schema a
   served read satisfies, and vault test responses are validated against the
   description.** The public reads, the audience-scoped credential read and the

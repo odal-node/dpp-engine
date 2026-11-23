@@ -1614,6 +1614,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EvidenceDossier'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1663,6 +1665,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VerificationReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -3241,16 +3245,32 @@ paths:
                 $ref: '#/components/schemas/InstalledPlugin'
         '400':
           description: Malformed multipart body (missing `wasm`/`sig`, or the product group could not be determined).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           description: A non-admin credential attempted to install a plugin.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '409':
           $ref: '#/components/responses/IdempotentRequestInFlight'
         '422':
           description: 'The artifact was rejected: bad signature, incompatible ABI, or a non-instantiable/incompatible module.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '501':
           description: This node has no plugin host configured; runtime install is unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /vault/api/v1/ruleset/reload:
     post:
       operationId: reloadRuleset
@@ -3287,10 +3307,18 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           description: A non-admin credential attempted to reload the ruleset.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           description: 'The bundle was refused and the ruleset in force is unchanged. The problem `code` says which refusal: `RULESET_REJECTED` (bad signature, content-hash mismatch, or a malformed manifest; distrust the bytes), `RULESET_NOT_YET_EFFECTIVE` (authentic but its rules start later; leave it staged and re-offer it once the date arrives), or `RULESET_SUPERSEDED` (authentic but older than what is running; this is the rollback refusal, and something served a stale bundle).'
         '501':
           description: This node has no signed ruleset channel configured; it is running its compiled-in baseline and there is nothing to re-read.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '503':
           description: 'The channel could not be read at all: the bundle file is missing or unreadable, or what arrived was not a bundle. Transport-level; retry once the drop is fixed.'
   /vault/api/v1/node/state:
