@@ -531,6 +531,54 @@ async fn get_aas(app: Router, id: &str) -> axum::response::Response {
     app.oneshot(req).await.unwrap()
 }
 
+/// What the AAS door answers in place of an environment, as a problem document
+/// typed as one (never as the AAS media type the caller asked for).
+async fn aas_refusal(resp: axum::response::Response, status: StatusCode) -> String {
+    assert_eq!(resp.status(), status);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        "application/problem+json"
+    );
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    problem["detail"].as_str().unwrap_or_default().to_owned()
+}
+
+/// An id that is not a UUID is refused before the vault is asked.
+#[tokio::test]
+async fn the_aas_door_refuses_an_id_that_is_not_a_uuid() {
+    let app = aas_app_serving(battery_passport_json()).await;
+    let resp = get_aas(app, "not-a-uuid").await;
+    assert_eq!(
+        aas_refusal(resp, StatusCode::NOT_FOUND).await,
+        "DPP not found"
+    );
+}
+
+/// A payload the resolver cannot read as a passport is the vault's fault, not the
+/// caller's: there is no projection to build from it.
+#[tokio::test]
+async fn the_aas_door_reports_a_payload_it_cannot_read_as_a_bad_gateway() {
+    let app = aas_app_serving(json!({"id": "00000000-0000-4000-8000-0000000000aa"})).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    let detail = aas_refusal(resp, StatusCode::BAD_GATEWAY).await;
+    assert!(detail.contains("could not be read"), "{detail}");
+}
+
+/// A passport that identifies no product has no AAS representation, so the door
+/// answers `406` and does not invent an asset identity.
+#[tokio::test]
+async fn the_aas_door_answers_406_for_a_passport_that_identifies_no_product() {
+    let mut passport = battery_passport_json();
+    passport.as_object_mut().unwrap().remove("productGroupData");
+    let app = aas_app_serving(passport).await;
+    let resp = get_aas(app, "00000000-0000-4000-8000-0000000000aa").await;
+    let detail = aas_refusal(resp, StatusCode::NOT_ACCEPTABLE).await;
+    assert!(detail.contains("no product identifier"), "{detail}");
+}
+
 #[tokio::test]
 async fn aas_accept_returns_an_environment() {
     let app = aas_app_serving(battery_passport_json()).await;

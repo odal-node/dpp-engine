@@ -1171,3 +1171,173 @@ async fn a_failing_vault_is_still_a_gateway_error() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 }
+
+// ---------------------------------------------------------------------------
+// What a scan is told when the vault says no, or says nothing it can read
+// ---------------------------------------------------------------------------
+
+const PASSPORT_ID: &str = "00000000-0000-4000-9000-000000000001";
+const A_GTIN: &str = "09506000134352";
+
+/// A vault that answers every public read, by id or by GTIN, with `status` and
+/// `body`.
+async fn vault_answering(status: StatusCode, body: &'static str) -> String {
+    let vault = Router::new()
+        .route(
+            "/public/dpp/{id}",
+            get(move || async move { (status, body) }),
+        )
+        .route(
+            "/public/dpp/by-gtin/{gtin}",
+            get(move || async move { (status, body) }),
+        );
+    let port = start_mock_vault(vault).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A base URL nothing listens on: bind a port, then let it go.
+async fn unreachable_vault() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
+/// GET `uri` through a resolver whose vault is at `vault`.
+async fn resolve(vault: String, uri: &str, accept: Option<&str>) -> axum::response::Response {
+    let app = router::build(test_state(vault));
+    let mut req = Request::builder().uri(uri);
+    if let Some(accept) = accept {
+        req = req.header("accept", accept);
+    }
+    app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+}
+
+async fn text_of(resp: axum::response::Response) -> String {
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// The three doors a person scanning a code can reach by id. Each answers what the
+/// vault said, in its own medium, and none of them turns a refusal into a page.
+#[tokio::test]
+async fn each_door_reports_what_the_vault_said_in_its_own_medium() {
+    let doors: [(&str, String, Option<&str>); 3] = [
+        ("html", format!("/dpp/{PASSPORT_ID}"), Some("text/html")),
+        (
+            "json",
+            format!("/dpp/{PASSPORT_ID}"),
+            Some("application/ld+json"),
+        ),
+        ("qr", format!("/dpp/{PASSPORT_ID}/qr"), None),
+    ];
+
+    for (door, uri, accept) in &doors {
+        for (vault_says, resolver_says) in [
+            (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND),
+            (StatusCode::BAD_REQUEST, StatusCode::NOT_FOUND),
+            (StatusCode::GONE, StatusCode::GONE),
+            (StatusCode::INTERNAL_SERVER_ERROR, StatusCode::BAD_GATEWAY),
+            (StatusCode::SERVICE_UNAVAILABLE, StatusCode::BAD_GATEWAY),
+        ] {
+            let vault = vault_answering(vault_says, "").await;
+            let resp = resolve(vault, uri, *accept).await;
+            assert_eq!(
+                resp.status(),
+                resolver_says,
+                "{door}: the vault said {vault_says}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn each_door_reports_a_vault_that_cannot_be_reached_as_a_bad_gateway() {
+    for (door, uri, accept) in [
+        ("html", format!("/dpp/{PASSPORT_ID}"), Some("text/html")),
+        ("qr", format!("/dpp/{PASSPORT_ID}/qr"), None),
+    ] {
+        let resp = resolve(unreachable_vault().await, &uri, accept).await;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY, "{door}");
+    }
+}
+
+/// A `200` that is not JSON is the vault failing, not the passport being absent.
+#[tokio::test]
+async fn a_vault_answer_that_is_not_json_is_a_bad_gateway_for_the_json_and_qr_doors() {
+    for (door, uri, accept) in [
+        (
+            "json",
+            format!("/dpp/{PASSPORT_ID}"),
+            Some("application/ld+json"),
+        ),
+        ("qr", format!("/dpp/{PASSPORT_ID}/qr"), None),
+    ] {
+        let vault = vault_answering(StatusCode::OK, "this is not json").await;
+        let resp = resolve(vault, &uri, accept).await;
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY, "{door}");
+    }
+}
+
+/// An id that is not a UUID is refused at the resolver's edge, in the medium the
+/// caller asked for, without the vault being asked.
+#[tokio::test]
+async fn an_id_that_is_not_a_uuid_is_not_found_in_each_doors_medium() {
+    // A vault that would answer anything: the point is that it is never asked.
+    let vault = vault_answering(StatusCode::OK, "{}").await;
+
+    let resp = resolve(vault.clone(), "/dpp/not-a-uuid", Some("text/html")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert!(
+        resp.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+
+    let resp = resolve(
+        vault.clone(),
+        "/dpp/not-a-uuid",
+        Some("application/ld+json"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        "application/problem+json"
+    );
+
+    let resp = resolve(vault, "/dpp/not-a-uuid/qr", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()["content-type"].to_str().unwrap(),
+        "image/png"
+    );
+    assert!(
+        text_of(resp).await.is_empty(),
+        "a refused id prints no image"
+    );
+}
+
+/// The label route's refusals once the vault has been asked: a passport that
+/// carries no id, an answer that is not JSON, and a `422` for a GTIN that is
+/// well formed to the resolver.
+#[tokio::test]
+async fn the_label_route_reports_a_vault_answer_it_cannot_use() {
+    let uri = format!("/01/{A_GTIN}");
+
+    let vault = vault_answering(StatusCode::OK, r#"{"productName": "No Id"}"#).await;
+    let resp = resolve(vault, &uri, None).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    assert!(text_of(resp).await.contains("The passport carries no id."));
+
+    let vault = vault_answering(StatusCode::OK, "this is not json").await;
+    let resp = resolve(vault, &uri, None).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+
+    let vault = vault_answering(StatusCode::UNPROCESSABLE_ENTITY, "").await;
+    let resp = resolve(vault, &uri, None).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
