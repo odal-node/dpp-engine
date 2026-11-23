@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -21,7 +22,7 @@ use dpp_seal::{
     CadesInspector, SealError, TimestampSource,
     local::{LocalIdentity, LocalTimestampSource},
 };
-use dpp_types::{SealOutbox, SealOutboxCounts, SealRow, SealedPassport};
+use dpp_types::{SealOutbox, SealOutboxCounts, SealRow, SealedPassport, UnsealedCounts};
 
 use super::*;
 use crate::infra::seal_drain::audit_seals_once;
@@ -35,7 +36,7 @@ fn shorten_archive_authority(seal: &[u8], days: i64) -> Vec<u8> {
 
     let archive_oid = x509_cert::spki::ObjectIdentifier::new_unwrap("0.4.0.1733.2.4");
     let secs = |offset_days: i64| {
-        std::time::Duration::from_secs(
+        Duration::from_secs(
             u64::try_from(Utc::now().timestamp() + offset_days * 86_400).expect("after 1970"),
         )
     };
@@ -204,8 +205,8 @@ impl SealOutbox for Seals {
     async fn status_counts(&self) -> Result<SealOutboxCounts, DppError> {
         Ok(SealOutboxCounts::default())
     }
-    async fn unsealed_published_counts(&self) -> Result<dpp_types::UnsealedCounts, DppError> {
-        Ok(dpp_types::UnsealedCounts::default())
+    async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError> {
+        Ok(UnsealedCounts::default())
     }
     async fn rearm_sealed(&self, _: PassportId, _: &str, _: &str) -> Result<bool, DppError> {
         unreachable!("the audit never repairs")

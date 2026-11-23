@@ -23,7 +23,7 @@ pub async fn run_import(file: &str, product_group: Option<String>) -> Result<()>
         ProgressStyle::with_template(
             "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
         )
-        .unwrap()
+        .map_err(|e| anyhow::anyhow!("progress style template error: {e}"))?
         .progress_chars("=>-"),
     );
     let pb2 = pb.clone();

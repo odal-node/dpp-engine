@@ -399,6 +399,9 @@ impl TapHeader for Response {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::future;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
 
     fn secret_policy() -> RoutePolicy {
         policy_for(&axum::http::Method::POST, "/vault/api/v1/api-keys").unwrap()
@@ -553,11 +556,11 @@ mod tests {
             &self,
             _: &RequestKey,
             _: &str,
-            _: std::time::Duration,
-            _: std::time::Duration,
+            _: Duration,
+            _: Duration,
         ) -> Result<Claim, IdempotencyError> {
             if self.claim {
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
             Ok(Claim::Claimed(ClaimToken::mint()))
         }
@@ -568,7 +571,7 @@ mod tests {
             _: &StoredResponse,
         ) -> Result<Settled, IdempotencyError> {
             if self.complete {
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
             Ok(Settled::Applied)
         }
@@ -578,7 +581,7 @@ mod tests {
             _: &ClaimToken,
         ) -> Result<Settled, IdempotencyError> {
             if self.release {
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
             }
             Ok(Settled::Applied)
         }
@@ -597,8 +600,8 @@ mod tests {
             &self,
             _: &RequestKey,
             _: &str,
-            _: std::time::Duration,
-            _: std::time::Duration,
+            _: Duration,
+            _: Duration,
         ) -> Result<Claim, IdempotencyError> {
             Ok(Claim::Claimed(ClaimToken::mint()))
         }
@@ -627,9 +630,9 @@ mod tests {
     fn keyed_app(
         store: impl IdempotencyStore + 'static,
         status: StatusCode,
-    ) -> (axum::Router, Arc<std::sync::atomic::AtomicUsize>) {
+    ) -> (axum::Router, Arc<AtomicUsize>) {
         use axum::routing::post;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::Ordering;
 
         let ran = Arc::new(AtomicUsize::new(0));
         let counted = ran.clone();

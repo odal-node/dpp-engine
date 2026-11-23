@@ -457,7 +457,7 @@ impl SealOutbox for PgSealOutboxRepo {
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let id: uuid::Uuid = row.get("id");
+            let id: Uuid = row.get("id");
             let jws: String = row.get("jws");
             let seal: serde_json::Value = row.get("seal");
             // A seal member that will not deserialise is skipped rather than

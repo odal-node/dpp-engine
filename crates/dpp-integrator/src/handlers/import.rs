@@ -15,6 +15,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use std::collections::{BTreeSet, HashMap};
+use std::future::Future;
 
 use crate::{
     admission::Admitted,
@@ -337,8 +338,7 @@ pub async fn import_file(
     // Advisory plausibility lint on every accepted row — non-gating
     // (never removes a row from valid_rows, never invalidates it), same
     // contract as the vault's own lint step.
-    let mut lint_findings: std::collections::HashMap<usize, Vec<RowFinding>> =
-        std::collections::HashMap::new();
+    let mut lint_findings: HashMap<usize, Vec<RowFinding>> = HashMap::new();
     for (row_num, req) in &valid_rows {
         let Some(ref sd) = req.product_group_data else {
             continue;
@@ -544,7 +544,7 @@ struct JobSummary {
 /// `queued` or `processing` for ever, with no event to say it stopped.
 async fn run_to_outcome<F>(batch: F) -> Result<BatchResult, String>
 where
-    F: std::future::Future<Output = BatchResult> + Send + 'static,
+    F: Future<Output = BatchResult> + Send + 'static,
 {
     match tokio::spawn(batch).await {
         Ok(result) => Ok(result),
@@ -680,13 +680,12 @@ fn build_report_rows(
     total_rows: usize,
     valid_rows: &[(usize, CreatePassportRequest)],
     row_errors: &[ErrorEntry],
-    mut lint_findings: std::collections::HashMap<usize, Vec<RowFinding>>,
+    mut lint_findings: HashMap<usize, Vec<RowFinding>>,
     classifications: &HashMap<usize, Classification>,
 ) -> Vec<ReportRow> {
     let valid_row_nums: std::collections::HashSet<usize> =
         valid_rows.iter().map(|(n, _)| *n).collect();
-    let mut findings_by_row: std::collections::HashMap<usize, Vec<RowFinding>> =
-        std::collections::HashMap::new();
+    let mut findings_by_row: HashMap<usize, Vec<RowFinding>> = HashMap::new();
     for e in row_errors {
         findings_by_row.entry(e.row).or_default().push(RowFinding {
             kind: FindingKind::Validation,

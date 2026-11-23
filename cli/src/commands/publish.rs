@@ -34,7 +34,7 @@ pub async fn run_publish(id: Option<&str>) -> Result<()> {
     render_publish_summary(&result, single);
 
     if result.failed > 0 {
-        anyhow::bail!("{} passport(s) failed to publish", result.failed);
+        bail!("{} passport(s) failed to publish", result.failed);
     }
     Ok(())
 }

@@ -132,9 +132,9 @@ async fn a_due_seal_is_renewed_and_nothing_else_about_it_changes() {
         cades::attested_sealing_time(&old).expect("readable"),
         "the signature timestamp is untouched"
     );
-    assert!(
-        cades::signer_certificate_thumbprint(&renewed.seal_der).expect("readable")
-            == cades::signer_certificate_thumbprint(&old).expect("readable"),
+    assert_eq!(
+        cades::signer_certificate_thumbprint(&renewed.seal_der).expect("readable"),
+        cades::signer_certificate_thumbprint(&old).expect("readable"),
         "the same signing certificate"
     );
 }

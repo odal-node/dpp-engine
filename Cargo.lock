@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "abi-echo"
+version = "0.0.0"
+dependencies = [
+ "dpp-plugin-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2232,7 +2240,6 @@ dependencies = [
  "axum",
  "chrono",
  "criterion",
- "dotenvy",
  "futures",
  "hex",
  "metrics",
@@ -2283,7 +2290,6 @@ dependencies = [
 name = "dpp-dal"
 version = "0.16.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "criterion",
@@ -2292,14 +2298,12 @@ dependencies = [
  "dpp-domain",
  "dpp-types",
  "hex",
- "metrics",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "sqlx",
  "testcontainers",
  "testcontainers-modules",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "uuid",
@@ -2342,11 +2346,7 @@ version = "0.16.0"
 dependencies = [
  "chrono",
  "dpp-calc",
- "hex",
  "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2356,24 +2356,19 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.23.1",
- "chrono",
  "dotenvy",
  "dpp-common",
  "dpp-crypto",
- "dpp-domain",
  "dpp-vc",
  "serde",
  "serde_json",
  "serial_test",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tower",
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
- "uuid",
 ]
 
 [[package]]
@@ -2383,7 +2378,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base64 0.23.1",
  "calamine",
  "chrono",
  "criterion",
@@ -2457,7 +2451,6 @@ dependencies = [
  "sqlx",
  "tempfile",
  "testcontainers",
- "thiserror 2.0.21",
  "time",
  "tokio",
  "tower",
@@ -2484,17 +2477,26 @@ dependencies = [
  "dpp-plugin-traits",
  "ed25519-dalek 3.0.0",
  "metrics",
- "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
- "thiserror 2.0.21",
- "tokio",
  "tracing",
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
  "wat",
+]
+
+[[package]]
+name = "dpp-plugin-sdk"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be2b8134cc009284c510a202503ba1f82412627021f3dfa748ba8d0a4b4db02b"
+dependencies = [
+ "dpp-plugin-traits",
+ "dpp-rules",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2531,11 +2533,9 @@ version = "0.16.0"
 dependencies = [
  "chrono",
  "criterion",
- "dpp-digital-link",
  "dpp-domain",
  "qrcode",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -2567,7 +2567,6 @@ dependencies = [
  "rqrr",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tower",
  "tower-http 0.7.1",
@@ -2680,8 +2679,6 @@ dependencies = [
  "sha2 0.11.1",
  "subtle",
  "tempfile",
- "testcontainers",
- "testcontainers-modules",
  "thiserror 2.0.21",
  "tokio",
  "tower",
@@ -5268,7 +5265,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6969,7 +6966,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -7451,27 +7448,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-test"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19a4c448db514d4f24c5ddb9f73f2ee71bfb24c526cf0c570ba142d1119e0051"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad06847b7afb65c7866a36664b75c40b895e318cea4f71299f013fb22965329d"
-dependencies = [
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

@@ -78,7 +78,7 @@ pub(super) async fn passports() -> Result<()> {
                         ProgressStyle::with_template(
                             "{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len}",
                         )
-                        .unwrap()
+                        .map_err(|e| anyhow::anyhow!("progress style template error: {e}"))?
                         .progress_chars("=>-"),
                     );
                     let pb2 = pb.clone();

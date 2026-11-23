@@ -38,6 +38,7 @@
 //! invariant forbids.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 
 use dpp_common::event_codes;
@@ -267,7 +268,7 @@ impl EuRegistrySync {
     pub(super) async fn with_retry<F, Fut, T>(&self, operation: F) -> Result<T, RetryableError>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T, RetryableError>>,
+        Fut: Future<Output = Result<T, RetryableError>>,
     {
         let mut attempt = 0;
         loop {

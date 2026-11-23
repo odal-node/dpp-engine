@@ -10,6 +10,7 @@ members = [
     "crates/dpp-integrator",
     "crates/dpp-common",
     "crates/dpp-plugin-host",
+    "crates/dpp-plugin-host/tests/fixtures/abi-echo",
     "crates/dpp-node",
     "crates/dpp-seal",
     "crates/dpp-factor-data",

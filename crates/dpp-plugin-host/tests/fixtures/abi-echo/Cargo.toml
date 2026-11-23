@@ -1,5 +1,3 @@
-[workspace]
-
 # Minimal `export_plugin!` fixture for the `wasm-fixture-tests` integration test.
 # It is NOT a product group plugin — it exists only to prove that a real SDK-generated
 # Wasm ABI round-trips through the wasmtime host (the other host tests hand-roll

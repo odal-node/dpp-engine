@@ -818,11 +818,11 @@ mod tests {
         scaffold_install(root.path()).unwrap();
 
         let compose = root.path().join("docker").join(COMPOSE_FILE);
-        std::fs::write(&compose, "# edited by the operator\n").unwrap();
+        fs::write(&compose, "# edited by the operator\n").unwrap();
 
         assert!(scaffold_install(root.path()).unwrap().is_empty());
         assert_eq!(
-            std::fs::read_to_string(&compose).unwrap(),
+            fs::read_to_string(&compose).unwrap(),
             "# edited by the operator\n"
         );
     }
@@ -836,7 +836,7 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         scaffold_install(root.path()).unwrap();
 
-        let example = std::fs::read_to_string(root.path().join(".env.example")).unwrap();
+        let example = fs::read_to_string(root.path().join(".env.example")).unwrap();
         assert_eq!(example, ENV_EXAMPLE_TEMPLATE);
         for var in [
             "DATABASE_POSTGRES_PASS",
@@ -861,7 +861,7 @@ mod tests {
     fn an_install_without_the_example_env_still_starts() {
         let root = tempfile::TempDir::new().unwrap();
         scaffold_install(root.path()).unwrap();
-        std::fs::remove_file(root.path().join(".env.example")).unwrap();
+        fs::remove_file(root.path().join(".env.example")).unwrap();
 
         assert!(missing_scaffold_files(root.path()).is_empty());
     }
@@ -875,8 +875,8 @@ mod tests {
         scaffold_install(root.path()).unwrap();
 
         let hook = root.path().join("ops/bootstrap/pg-init.sh");
-        std::fs::remove_file(&hook).unwrap();
-        std::fs::create_dir_all(&hook).unwrap();
+        fs::remove_file(&hook).unwrap();
+        fs::create_dir_all(&hook).unwrap();
 
         assert_eq!(
             missing_scaffold_files(root.path()),
@@ -891,7 +891,7 @@ mod tests {
     fn a_start_is_refused_while_a_mounted_file_is_missing() {
         let root = tempfile::TempDir::new().unwrap();
         scaffold_install(root.path()).unwrap();
-        std::fs::remove_file(root.path().join("ops/bootstrap/pg-init.sh")).unwrap();
+        fs::remove_file(root.path().join("ops/bootstrap/pg-init.sh")).unwrap();
 
         let compose = root.path().join("docker").join(COMPOSE_FILE);
         let refused = preflight_start(&compose, EnvKind::Dev)
@@ -920,8 +920,8 @@ mod tests {
             .join("dpp-engine")
             .join("docker")
             .join("node.Dockerfile");
-        std::fs::create_dir_all(dockerfile.parent().unwrap()).unwrap();
-        std::fs::write(&dockerfile, "FROM scratch\n").unwrap();
+        fs::create_dir_all(dockerfile.parent().unwrap()).unwrap();
+        fs::write(&dockerfile, "FROM scratch\n").unwrap();
         assert!(source_tree_present(&compose));
     }
     #[test]
