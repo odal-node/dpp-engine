@@ -405,7 +405,10 @@ mod tests {
         assert!(c.has_pending());
     }
 
-    use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use axum::{Json, Router, http::StatusCode, routing::post};
 

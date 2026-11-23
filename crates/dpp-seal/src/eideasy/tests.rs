@@ -136,7 +136,7 @@ mod mock_server {
 use mock_server::MockState;
 
 fn adapter_for(base_url: &str, hmac_key: &str) -> QtspSealAdapter {
-    let mut cfg = crate::eideasy::config::test_config(base_url);
+    let mut cfg = test_config(base_url);
     cfg.hmac_key = zeroize::Zeroizing::new(hmac_key.to_owned());
     QtspSealAdapter::new(crate::eideasy::EideasyClient::new(cfg).unwrap())
 }

@@ -889,10 +889,10 @@ mod tests {
         ) -> Result<bool, DppError> {
             unreachable!("the drain never renews")
         }
-        async fn unsealed_published_counts(&self) -> Result<dpp_types::UnsealedCounts, DppError> {
+        async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
-            Ok(dpp_types::UnsealedCounts::default())
+            Ok(UnsealedCounts::default())
         }
     }
 

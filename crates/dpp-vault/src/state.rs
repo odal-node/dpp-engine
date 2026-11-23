@@ -109,8 +109,7 @@ pub struct AppState {
     /// Network lookups for credential verification — issuer DID documents and
     /// revocation status lists. `None` when credentialed access is unconfigured,
     /// in which case the audience-scoped route serves the public view.
-    pub credential_directory:
-        Option<Arc<dyn crate::middleware::credential::CredentialDirectory>>,
+    pub credential_directory: Option<Arc<dyn crate::middleware::credential::CredentialDirectory>>,
     /// Which issuers may attest which audience. `None` alongside
     /// `credential_directory`; the node reports the capability absent.
     pub trusted_issuers: Option<Arc<dyn dpp_vc::TrustedIssuerRegistry>>,

@@ -24,7 +24,7 @@ async fn a_backend_that_says_nothing_about_verify_refuses() {
 
     #[async_trait]
     impl SealBackend for Minimal {
-        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, crate::SealError> {
+        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, SealError> {
             unreachable!("this test never seals")
         }
         fn capabilities(&self) -> SealCapabilities {
@@ -38,7 +38,7 @@ async fn a_backend_that_says_nothing_about_verify_refuses() {
     }
 
     let env = SealedEnvelope {
-        format: dpp_domain::seal::SealFormat::Cades,
+        format: SealFormat::Cades,
         seal_value: "p7s".into(),
         signing_cert_ref: None,
         // Not recorded: this fixture asserts nothing about the level.
@@ -65,7 +65,7 @@ async fn a_seal_the_backend_cannot_produce_is_refused_before_dispatch() {
 
     #[async_trait]
     impl SealBackend for OnlyBaselineB {
-        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, crate::SealError> {
+        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, SealError> {
             unreachable!("the capability check must refuse before reaching the backend")
         }
         fn capabilities(&self) -> SealCapabilities {
@@ -115,7 +115,7 @@ async fn a_seal_the_backend_advertises_reaches_it() {
 
     #[async_trait]
     impl SealBackend for Accepting {
-        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, crate::SealError> {
+        async fn seal(&self, _req: SealRequest) -> Result<SealedEnvelope, SealError> {
             Ok(SealedEnvelope {
                 format: SealFormat::Cades,
                 seal_value: "p7s".into(),

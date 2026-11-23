@@ -13,9 +13,9 @@ use dpp_plugin_traits::{
 
 use dpp_common::plugin_admin::{PluginAdmin, PluginInstallError};
 
-use crate::loader::LoadedPlugin;
-use crate::runtime::{build_engine, build_store, DEFAULT_FUEL, HostState};
 use crate::host_funcs::build_linker;
+use crate::loader::LoadedPlugin;
+use crate::runtime::{DEFAULT_FUEL, HostState, build_engine, build_store};
 use crate::{WasmPluginHost, plugin_result_to_compliance};
 
 // ProductGroup → catalog key mapping is `ProductGroup::catalog_key()` in dpp-core (tested there).

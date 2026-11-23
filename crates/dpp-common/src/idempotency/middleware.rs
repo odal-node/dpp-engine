@@ -666,7 +666,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(5),
             app.oneshot(
-                axum::extract::Request::post("/vault/api/v1/dpp")
+                Request::post("/vault/api/v1/dpp")
                     .header(IDEMPOTENCY_KEY_HEADER, "k-1")
                     .body(Body::from("{}"))
                     .unwrap(),
