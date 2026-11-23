@@ -2,6 +2,12 @@
 # It is NOT a product group plugin — it exists only to prove that a real SDK-generated
 # Wasm ABI round-trips through the wasmtime host (the other host tests hand-roll
 # WAT and never exercise the macro's linear-memory packing).
+#
+# Deliberately not a workspace member: the `sdk_abi` test builds it into its own
+# `target/` directory to avoid contention with the workspace target. The empty
+# `[workspace]` table keeps Cargo from looking for a parent workspace.
+[workspace]
+
 [package]
 name    = "abi-echo"
 version = "0.0.0"
