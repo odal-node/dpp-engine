@@ -23,6 +23,8 @@
 //! cargo bench -p dpp-vault --features integration-tests --bench publish_serve
 //! ```
 
+#![cfg(feature = "integration-tests")]
+
 #[path = "../tests/helpers/mod.rs"]
 mod helpers;
 

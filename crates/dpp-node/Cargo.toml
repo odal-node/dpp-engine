@@ -87,7 +87,6 @@ dpp-dal        = { path = "../dpp-dal", features = ["test-harness"] }
 # coverage gets away with scanning `router.rs` as text; a struct's wire shape
 # cannot be read that way and must come from serde.
 dpp-resolver   = { path = "../dpp-resolver" }
-tower          = { version = "0.5", features = ["util"] }
 serial_test    = "4"
 wat            = "1"
 futures        = "0.3"
