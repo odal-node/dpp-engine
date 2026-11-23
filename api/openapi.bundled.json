@@ -2689,7 +2689,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/OperatorIdentifier"
+                    "$ref": "#/components/schemas/OperatorIdentifierRecord"
                   }
                 }
               }
@@ -2739,7 +2739,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperatorIdentifier"
+                  "$ref": "#/components/schemas/OperatorIdentifierRecord"
                 }
               }
             }
@@ -9535,7 +9535,7 @@
           }
         }
       },
-      "OperatorIdentifier": {
+      "OperatorIdentifierRecord": {
         "type": "object",
         "required": [
           "id",

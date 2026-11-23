@@ -5,8 +5,8 @@ use reqwest::StatusCode;
 use serde_json::json;
 
 use super::types::{
-    BootstrapParams, BootstrapResult, KeyCreateParams, KeyCreateResult, KeyEntry, KeyRevokeParams,
-    NodeState, OperatorUpdateParams, WhoAmI,
+    ApiKeyEntry, BootstrapParams, BootstrapResult, KeyCreateParams, KeyCreateResult,
+    KeyRevokeParams, NodeState, OperatorUpdateParams, WhoAmI,
 };
 use crate::{
     config::Config,
@@ -239,7 +239,7 @@ pub async fn action_key_create(
 }
 
 /// List API keys (prefix only; secrets are never returned by the vault).
-pub async fn action_key_list(client: &OdalClient, cfg: &Config) -> Result<Vec<KeyEntry>> {
+pub async fn action_key_list(client: &OdalClient, cfg: &Config) -> Result<Vec<ApiKeyEntry>> {
     let url = format!("{}/api/v1/api-keys", cfg.vault_url);
     let (status, body) = client.get(&url).await?;
     if !status.is_success() {
@@ -253,7 +253,7 @@ pub async fn action_key_list(client: &OdalClient, cfg: &Config) -> Result<Vec<Ke
 
     Ok(arr
         .iter()
-        .map(|k| KeyEntry {
+        .map(|k| ApiKeyEntry {
             id: k
                 .get("id")
                 .and_then(|v| v.as_str())

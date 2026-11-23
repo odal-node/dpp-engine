@@ -1,0 +1,28 @@
+# Engine types that restate dpp-core, recorded so the check in CI can tell a new
+# one from one already known.
+#
+# `scripts/core-api.sh check` lists every engine struct, enum and literal constant
+# that has a core namesake or core's shape, and fails for any not recorded here.
+# It fails for a record that is no longer found, too: when a shadow is fixed its
+# line is deleted, and the list only shrinks. Read the finding's detail with
+# `scripts/core-api.sh shadows`.
+#
+# One tab-separated record per line:
+#
+#   relation  engine-type  core-crate::core-type  reason
+#
+# A reason that starts `pending:` says what is planned and is not an acceptance.
+# A reason that does not is an exception someone decided, and says why: an
+# adapter that delegates to core, a request body that deliberately holds less than
+# core's type, a name that core happens to use for another thing. Do not record a
+# copy to make the check pass. Use core's item, or change core so it can be used.
+same-name-other-kind	PassportScope	dpp-rules::PassportScope (enum)	pending: the CLI carries core's enum as a status string; use the enum
+same-name-other-value	IDEMPOTENCY_KEY_HEADER	dpp-registry::IDEMPOTENCY_KEY_HEADER	pending: one header defined twice, spelled differently
+same-shape	PersonalDataErasureReceipt	dpp-domain::ErasureReceipt	pending: needs serde (camelCase) on core's receipt, a core change
+same-shape	LabelLevel	dpp-domain::CarrierQualifier	pending: needs a payload-less level on core's qualifier, a core change
+same-shape	PassportResponse	dpp-domain::Passport	pending: a documented anti-corruption mirror, 39 of 39 members; keep as an exception or retire
+same-shape	IdentityQuery	dpp-domain::ProductIdentity	the lookup is exact on a serial number that no passport this API creates carries (create sets serial_number to None until a delegated act fixes a granularity), so it takes none; when granularity lands this becomes core's ProductIdentity and gains a serialNumber parameter
+same-shape	CreateOperatorIdentifierRequest	dpp-registry::ProductIdentifier	a request body for an operator identifier (Art. 13): its scheme, value and label coincide with the registry's product identifier, but the concept is the operator's and the primary flag is the node's, so core's type would be the wrong thing to reuse
+same-shape	OperatorIdCreateParams	dpp-registry::ProductIdentifier	CLI parameters for the request above, as typed on the command line
+same-shape	FacilityCreateParams	dpp-registry::FacilityIdentifier	CLI parameters for adding a facility: a registry facility identifier plus the name, address and the default flag the node keeps, as typed on the command line
+same-shape	KeyStoreCredentialIssuer	dpp-vc::LocalIdentityService	an adapter, not a copy: it holds the three inputs core's local identity service holds because it needs them, but it signs a credential, which that service's passport port cannot, and the signing itself is core's sign_access_credential

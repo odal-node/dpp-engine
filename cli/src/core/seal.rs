@@ -35,7 +35,7 @@ pub enum SealStatus {
 
 /// What a pair of route outcomes means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Verdict {
+enum SealVerdict {
     /// Read and render the seal body.
     Sealed,
     /// The passport is real and simply has no seal.
@@ -58,12 +58,12 @@ enum Verdict {
 /// Keyed on status codes, never on the error prose. The route's wording is
 /// written for a human reading it and is free to change; matching a substring
 /// of it would make this command break on a copy edit.
-fn classify(seal: StatusCode, passport: Option<StatusCode>) -> Verdict {
+fn classify(seal: StatusCode, passport: Option<StatusCode>) -> SealVerdict {
     match (seal, passport) {
-        (s, _) if s.is_success() => Verdict::Sealed,
-        (StatusCode::NOT_FOUND, Some(p)) if p.is_success() => Verdict::Unsealed,
-        (StatusCode::NOT_FOUND, Some(StatusCode::NOT_FOUND)) => Verdict::NoSuchPassport,
-        _ => Verdict::Failed,
+        (s, _) if s.is_success() => SealVerdict::Sealed,
+        (StatusCode::NOT_FOUND, Some(p)) if p.is_success() => SealVerdict::Unsealed,
+        (StatusCode::NOT_FOUND, Some(StatusCode::NOT_FOUND)) => SealVerdict::NoSuchPassport,
+        _ => SealVerdict::Failed,
     }
 }
 
@@ -85,13 +85,13 @@ pub async fn action_seal_status(id: &str, client: &OdalClient, cfg: &Config) -> 
     };
 
     match classify(status, passport_status) {
-        Verdict::Sealed => {
+        SealVerdict::Sealed => {
             let doc: Value = serde_json::from_str(&body).context("seal response was not JSON")?;
             Ok(SealStatus::Present(Box::new(doc)))
         }
-        Verdict::Unsealed => Ok(SealStatus::Absent),
-        Verdict::NoSuchPassport => bail!("No passport with id {id}."),
-        Verdict::Failed => bail!(
+        SealVerdict::Unsealed => Ok(SealStatus::Absent),
+        SealVerdict::NoSuchPassport => bail!("No passport with id {id}."),
+        SealVerdict::Failed => bail!(
             "Failed to fetch the seal: {}",
             describe_error(status, &body)
         ),
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn a_seal_body_is_a_seal() {
-        assert_eq!(classify(StatusCode::OK, None), Verdict::Sealed);
+        assert_eq!(classify(StatusCode::OK, None), SealVerdict::Sealed);
     }
 
     /// The distinction this command exists to make: both are `404` from the
@@ -154,11 +154,11 @@ mod tests {
     fn the_two_404s_are_told_apart_by_the_passport_not_the_prose() {
         assert_eq!(
             classify(StatusCode::NOT_FOUND, Some(StatusCode::OK)),
-            Verdict::Unsealed
+            SealVerdict::Unsealed
         );
         assert_eq!(
             classify(StatusCode::NOT_FOUND, Some(StatusCode::NOT_FOUND)),
-            Verdict::NoSuchPassport
+            SealVerdict::NoSuchPassport
         );
     }
 
@@ -167,14 +167,17 @@ mod tests {
     /// there — so anything that is not a clean 404 pair is a transport failure.
     #[test]
     fn an_auth_failure_is_not_a_missing_passport() {
-        assert_eq!(classify(StatusCode::UNAUTHORIZED, None), Verdict::Failed);
+        assert_eq!(
+            classify(StatusCode::UNAUTHORIZED, None),
+            SealVerdict::Failed
+        );
         assert_eq!(
             classify(StatusCode::NOT_FOUND, Some(StatusCode::UNAUTHORIZED)),
-            Verdict::Failed
+            SealVerdict::Failed
         );
         assert_eq!(
             classify(StatusCode::INTERNAL_SERVER_ERROR, None),
-            Verdict::Failed
+            SealVerdict::Failed
         );
     }
 }

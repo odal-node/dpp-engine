@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use dpp_domain::LintResult;
 use serde::Serialize;
 
 // ── Infrastructure ───────────────────────────────────────────────────────────
@@ -155,9 +156,10 @@ pub struct TransferOutcome {
 // ── Plausibility lint ────────────────────────────────────────────────────────
 
 pub struct LintReport {
-    pub pack_version: Option<String>,
-    pub assessed_at: Option<String>,
-    pub findings: Vec<LintFinding>,
+    /// What the node persisted, in the shape dpp-core states it: the pack
+    /// version, when it was assessed, and each finding with its code and severity.
+    /// `None` from a node that returned no `lintResult`.
+    pub result: Option<LintResult>,
     /// Whether publish would clear the gates that can be answered without
     /// attempting it. `None` from a node that predates the field.
     ///
@@ -169,8 +171,12 @@ pub struct LintReport {
     pub publish_readiness: Option<PublishReadiness>,
 }
 
-pub struct LintFinding {
-    pub severity: String,
+/// A field the publish is blocked on, addressed to it.
+///
+/// Not a lint finding: it has no code and no severity of its own, because every
+/// one of them stops the publish, which is what makes it a blocker. The node
+/// sends `field` and `message` and nothing else.
+pub struct PublishBlocker {
     pub field: String,
     pub message: String,
 }
@@ -178,7 +184,7 @@ pub struct LintFinding {
 /// The publish-readiness half of a lint response.
 pub struct PublishReadiness {
     pub ready: bool,
-    pub blockers: Vec<LintFinding>,
+    pub blockers: Vec<PublishBlocker>,
     pub scope: Option<PassportScope>,
 }
 
@@ -429,7 +435,7 @@ pub struct KeyCreateResult {
     pub scope: String,
 }
 
-pub struct KeyEntry {
+pub struct ApiKeyEntry {
     pub id: String,
     pub name: String,
     pub prefix: String,

@@ -66,7 +66,7 @@ pub use operator::{
 pub use passport_request::{CreatePassportRequest, carrier_serial_problem};
 pub use qualification::{IssuerStanding, SealQualification, TimestampStanding, UncheckedTerritory};
 pub use registry_identity::{
-    CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
+    CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifierRecord,
     RegistryIdentityRepository,
 };
 pub use registry_sync::{

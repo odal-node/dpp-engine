@@ -323,7 +323,9 @@ cp .env.example .env
 just check          # THE gate: fmt-check, clippy over every target (the Docker-gated
                     # suites included), the guard scripts (debug/subject/mod-rs,
                     # vocabulary, outbound, grants, migrations, harness, the RSA
-                    # claim, ci-guard), spec-version check, unit tests, security audit
+                    # claim, ci-guard, core-shadows (skipped without a nightly
+                    # toolchain; CI always runs it)), spec-version check, unit
+                    # tests, security audit
 just openapi-check  # lints the bundle; needs Node, so NOT in `just check` — CI
                     # runs it. Regenerates the bundle and fails if it drifted
 just openapi-bundle # regenerate api/openapi.bundled.yaml from the api/ tree
@@ -659,6 +661,7 @@ Not debt — rules that hold, stated once so they are not re-derived.
 
   `scripts/vocabulary-check.sh` (in `just check` and CI) refuses any route path, `api/paths/` file name, event subject or client-built URL containing `archiv`, and any `"archive"` / `"archived"` value in production source. Compound uses are fine and untouched: the keystore's *archived keys*, a seal's *archival timestamp*, *retiring* a facility or an operator identifier.
 
+- **Core's names are used as core spells them.** A struct, enum or constant that `dpp-core` already publishes is used from core, not declared again here, renamed, or mirrored field for field; and a vocabulary core fixes (an enum's variants, a wire name) is not retyped as strings. `core-shadows` in `just check` and CI (`scripts/core-api.sh check`) reads the public API of the pinned core crates from rustdoc JSON and fails for an engine type that has a core namesake, core's shape, or a literal core already names. When core's item cannot be used as it is (it derives no `Serialize`, it carries a payload the engine does not want), the fix is in core, then consume it: the engine adapts to core, not the reverse. A shadow that is deliberate (an adapter that delegates to core, a request body that holds less than core's type, a name core uses for another thing) is recorded in `scripts/core-shadows.tsv` with the reason; a record that no longer matches anything fails too, so the list only shrinks. A reason beginning `pending:` is a plan, not an acceptance.
 - **Errors are RFC 9457.** `dpp-common::http_problem::Problem` is the error shape for every HTTP surface (vault, integrator, identity, resolver). A new error path uses `Problem`, not an ad-hoc body.
 - **A cited RFC or Internet-Draft has a row in `docs/architecture/STANDARDS.md`.** `crates/dpp-node/tests/standard_citations.rs` fails a citation with no row, a still-cited specification whose row says it is obsoleted (cite the successor, or give the row a `kept:` reason), and a draft cited without its revision. Read the status at `https://www.rfc-editor.org/info/rfcNNNN` and write the date. Re-check a section number against the text actually cited, never by renumbering: this repository cited two obsoleted RFCs, thirty-nine times between them, after RFC 9457 and RFC 9110 had replaced them, and the section numbers happened to survive.
 - **IDs are UUID v7.** `PassportId`, audit, API-key, event and job IDs all use `now_v7()` so they are time-sortable. Use `now_v7()` for any new identifier; `new_v4()` is acceptable only for throwaway values that are not identifiers (a temp filename).

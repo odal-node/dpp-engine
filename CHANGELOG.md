@@ -138,6 +138,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **`odal passport lint` reads the findings as dpp-core states them.** The CLI kept
+  its own copy of the finding and dropped core's `code`, and typed the severity as
+  a free string. It now reads the node's `lintResult` with core's type, so each
+  finding carries its `code` in `--json` and the severity is core's `WARNING` or
+  `NOTICE`. A `lintResult` core cannot read is an error and no longer prints as "No
+  findings". A publish blocker is reported as the field and message the node sends,
+  and no longer as a finding with a made-up `blocking` severity. (#717)
+- **The OpenAPI schema `OperatorIdentifier` is renamed `OperatorIdentifierRecord`.**
+  The node's stored identifier (id, scheme, value, label, primary flag) shared a
+  name with dpp-core's `OperatorIdentifier`, the registry's submission identifier,
+  which holds other things. The wire body is unchanged; a client generated from the
+  description sees the new type name. The CLI's `KeyEntry` and `Verdict` are
+  renamed `ApiKeyEntry` and `SealVerdict` for the same reason. (#717)
 - **A credential may be narrowed to a product category an earlier schema version
   allowed.** The category check now reads core's
   `ProductGroup::product_category_values_any_version`, so a credential narrowed
