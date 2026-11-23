@@ -22,7 +22,7 @@ use crate::extract::{Json, Query};
 #[serde(rename_all = "camelCase")]
 pub struct PassportListResponse {
     /// This page of passports, in the repository's order.
-    pub dpps: Vec<crate::api::PassportResponse>,
+    pub dpps: Vec<dpp_domain::passport::Passport>,
     /// Total matching the filter, across every page — not the length of `dpps`.
     pub total: u64,
     /// The page size actually applied, after clamping.
@@ -76,10 +76,7 @@ pub async fn list_handler(
     (
         StatusCode::OK,
         Json(PassportListResponse {
-            dpps: passports
-                .iter()
-                .map(crate::api::PassportResponse::from)
-                .collect(),
+            dpps: passports,
             total,
             limit,
             skip: offset,

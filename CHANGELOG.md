@@ -146,6 +146,14 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Changed
 
+- **`odal passport lint` says what the passport-scope status means from dpp-core's
+  own answer.** The CLI kept a table of its own for the status. It labelled
+  `voluntary`, which the node had stopped sending, and printed the raw word for
+  `notCovered`, `belowThreshold`, `capacityUnknown` and `notYetBinding`. It now reads
+  core's `PassportScope` and says what each outcome means. The node serves the same
+  words, taken from core's enum and no longer translated by hand, so an outcome core
+  adds later is reported under core's name, where it used to be reported as
+  `required`; the content gate still treats it as in scope. (#718)
 - **`odal passport lint` reads the findings as dpp-core states them.** The CLI kept
   its own copy of the finding and dropped core's `code`, and typed the severity as
   a free string. It now reads the node's `lintResult` with core's type, so each

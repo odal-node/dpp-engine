@@ -432,16 +432,13 @@ fn object_cases() -> Vec<ObjectCase> {
         };
     }
 
-    // ── the API's own response shape, and the core parts it embeds ───────
+    // ── the passport as served, and the core parts it embeds ──────────────
     //
-    // `PassportResponse` is this service's type, not the core aggregate. It was
-    // the aggregate until the API model was cut, which meant this gate proved
-    // the spec matched a *library's internal shape* — so a rename inside core
-    // rewrote the published API with no step where anyone agreed to it.
-    case!(
-        "PassportResponse",
-        dpp_vault::api::PassportResponse::from(&fixtures::passport())
-    );
+    // The node serves core's `Passport` as it is. This gate is therefore the one
+    // place a rename inside core meets the published API: the description is
+    // checked against the aggregate's serialised keys, so the change fails here
+    // and somebody decides whether the API moves with it.
+    case!("PassportResponse", fixtures::passport());
     case!("InstrumentRef", fixtures::instrument_ref());
     case!("ManufacturerInfo", fixtures::manufacturer());
     case!("MaterialEntry", fixtures::material());
@@ -481,13 +478,15 @@ fn object_cases() -> Vec<ObjectCase> {
         "PublishReadiness",
         dpp_vault::handlers::lint::PublishReadiness {
             ready: false,
-            blockers: vec![dpp_vault::handlers::lint::PublishBlocker {
+            blockers: vec![dpp_domain::FieldError {
                 field: "/productGroupData/batteryModelId".to_owned(),
                 message: "'batteryModelId' is mandatory for an 'ev' battery and is absent"
                     .to_owned(),
             }],
             passport_scope: dpp_vault::handlers::lint::PassportScopeReport {
-                status: "required",
+                status: dpp_types::passport_scope::ScopeStatus::Art77(
+                    dpp_types::passport_scope::PassportScope::Required,
+                ),
                 note: None,
             },
         }
@@ -495,7 +494,9 @@ fn object_cases() -> Vec<ObjectCase> {
     case!(
         "PassportScopeReport",
         dpp_vault::handlers::lint::PassportScopeReport {
-            status: "notCovered",
+            status: dpp_types::passport_scope::ScopeStatus::Art77(
+                dpp_types::passport_scope::PassportScope::NotCovered,
+            ),
             note: Some(
                 "Art. 77(1) requires a battery passport for LMT, electric-vehicle and \
                  industrial batteries above 2 kWh."
@@ -505,7 +506,7 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!(
         "PublishBlocker",
-        dpp_vault::handlers::lint::PublishBlocker {
+        dpp_domain::FieldError {
             field: "/productGroupData/batteryModelId".to_owned(),
             message: "'batteryModelId' is mandatory for an 'ev' battery and is absent".to_owned(),
         }
@@ -1588,12 +1589,11 @@ fn every_responsibility_basis_serialises_as_documented() {
 
 /// Every `passportScope.status` the server can emit is in the published enum.
 ///
-/// `status` crosses the API as a plain string, so `object_schemas_match_the_types_behind_them`
-/// compares the field's *type* and `enum_schemas_list_every_variant_the_server_can_emit`
-/// cannot reach it at all — that one enumerates Rust enums, and this is a `&str`.
-///
-/// A stale value survived exactly that gap: the fixture below went on emitting
-/// `"voluntary"` after the vocabulary widened, and every check passed.
+/// `status` is core's `PassportScope` plus the one word the node adds, as a
+/// `ScopeStatus`, so the words are the enum's and this enumerates them from
+/// core's own `PassportScope::ALL`. It used to be a plain string kept in step by
+/// hand, and a stale value survived that: a fixture went on emitting `"voluntary"`
+/// after the vocabulary widened, and every check passed.
 #[test]
 fn every_passport_scope_status_is_in_the_schema() {
     let spec = spec();
@@ -1604,9 +1604,20 @@ fn every_passport_scope_status_is_in_the_schema() {
             .iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect();
-    let emitted: BTreeSet<String> = dpp_vault::domain::passport_scope::ALL_WIRE_STATUSES
+    // Core's own five outcomes, from core's own list, and the one word the node
+    // adds for a record that is not a battery.
+    use dpp_types::passport_scope::{PassportScope, ScopeStatus};
+    let emitted: BTreeSet<String> = PassportScope::ALL
         .iter()
-        .map(|s| (*s).to_owned())
+        .map(|s| ScopeStatus::from(Some(*s)))
+        .chain(std::iter::once(ScopeStatus::from(None)))
+        .map(|status| {
+            serde_json::to_value(status)
+                .expect("a status serialises")
+                .as_str()
+                .expect("a status is a string")
+                .to_owned()
+        })
         .collect();
 
     assert_eq!(
@@ -3070,7 +3081,7 @@ mod fixtures {
         unsold_goods::{DiscardReason, EnterpriseSize},
     };
     use dpp_integrator::handlers::product_groups::{
-        InstrumentRefView, ObligationDateView, PassportObligationView, ProductGroupObligation,
+        InstrumentRefView, PassportObligationView, ProductGroupObligation,
         ProductGroupObligationList, RetentionView,
     };
     use dpp_types::{
@@ -3110,7 +3121,6 @@ mod fixtures {
             list::PassportListResponse,
             node_health::{NodeHealth, NodeSignal, RegistryOutboxHealth, signals_view},
             node_state::NodeState,
-            personal_data::PersonalDataErasureReceipt,
             registry_abandon::{AbandonRegistrationRequest, AbandonRegistrationResponse},
             registry_handle::{RecordHandleRequest, RecordHandleResponse},
             registry_status::{
@@ -4197,10 +4207,11 @@ mod fixtures {
         }
     }
 
-    pub fn personal_data_erasure_receipt() -> PersonalDataErasureReceipt {
-        PersonalDataErasureReceipt {
-            record: "0198f2c4-7a3e-7c1d-9b52-3e8f6a1d4c70".into(),
-            passport_id: uuid(),
+    /// Core's own receipt: the node answers an erasure with it as it is.
+    pub fn personal_data_erasure_receipt() -> dpp_domain::ErasureReceipt {
+        dpp_domain::ErasureReceipt {
+            record: dpp_domain::PersonalDataRecordId::new("0198f2c4-7a3e-7c1d-9b52-3e8f6a1d4c70"),
+            passport_id: PassportId(uuid()),
             field: "usageHistory.negativeEvents".into(),
             erased_at: ts(),
         }
@@ -4216,7 +4227,7 @@ mod fixtures {
 
     pub fn passport_list_response() -> PassportListResponse {
         PassportListResponse {
-            dpps: vec![dpp_vault::api::PassportResponse::from(&passport())],
+            dpps: vec![passport()],
             total: 42,
             limit: 20,
             skip: 0,
@@ -4703,9 +4714,9 @@ mod fixtures {
         }
     }
 
-    pub fn obligation_date() -> ObligationDateView {
+    pub fn obligation_date() -> dpp_domain::ObligationDate {
         use dpp_domain::instrument::DateBasis;
-        ObligationDateView {
+        dpp_domain::ObligationDate {
             date: "2030-08-01".into(),
             basis: DateBasis::Sourced,
         }

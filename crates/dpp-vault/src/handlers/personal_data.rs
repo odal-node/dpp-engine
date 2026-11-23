@@ -44,45 +44,12 @@
 
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse as _, Response};
-use chrono::{DateTime, Utc};
-use dpp_domain::{DppError, ErasureReceipt, PersonalDataRecordId};
-use serde::Serialize;
-use uuid::Uuid;
+use dpp_domain::{DppError, PersonalDataRecordId};
 
 use crate::extract::Json;
 use crate::handlers::error::{internal_error, not_found_error};
 use crate::middleware::scope::RequireAdmin;
 use crate::state::AppState;
-
-/// What is left of an erased record: which record it was, which passport and
-/// field it related to, and when it was erased. None of the erased content.
-///
-/// The same receipt on every call after the first.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PersonalDataErasureReceipt {
-    /// The erased record's identifier, as the passport's statement names it.
-    pub record: String,
-    /// The passport the record related to. Still related to whoever owns the
-    /// item, so this receipt is kept like the passport's individual-item data.
-    pub passport_id: Uuid,
-    /// The marked field the record related to, as a dotted path inside
-    /// `productGroupData`.
-    pub field: String,
-    /// When the record's content was erased.
-    pub erased_at: DateTime<Utc>,
-}
-
-impl From<ErasureReceipt> for PersonalDataErasureReceipt {
-    fn from(receipt: ErasureReceipt) -> Self {
-        Self {
-            record: receipt.record.to_string(),
-            passport_id: receipt.passport_id.0,
-            field: receipt.field,
-            erased_at: receipt.erased_at,
-        }
-    }
-}
 
 /// `DELETE /api/v1/personal-data/{record}` — erase one record, keeping its
 /// tombstone, and answer with the receipt.
@@ -108,7 +75,7 @@ pub async fn personal_data_erase_handler(
                 record = %record,
                 "erased a personal data record"
             );
-            Json(PersonalDataErasureReceipt::from(receipt)).into_response()
+            Json(receipt).into_response()
         }
         Err(DppError::NotFound(_)) => {
             not_found_error(&format!("No personal data record {record} is held here."))

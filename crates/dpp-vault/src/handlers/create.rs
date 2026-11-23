@@ -60,11 +60,7 @@ pub async fn create_handler(
     };
 
     match state.service.create(passport, &auth).await {
-        Ok(p) => (
-            StatusCode::CREATED,
-            Json(crate::api::PassportResponse::from(&p)),
-        )
-            .into_response(),
+        Ok(p) => (StatusCode::CREATED, Json(&p)).into_response(),
         // What the service refuses on the assembled record rather than on the
         // request: a field able to hold personal data that has a value and no
         // statement, which names the field.

@@ -3,11 +3,12 @@
 //! business identity rather than by ID.
 
 use anyhow::{Context as _, Result};
-use dpp_domain::LintResult;
+use dpp_domain::{FieldError, LintResult};
+use dpp_types::passport_scope::ScopeStatus;
 use serde_json::{Value, json};
 
 use super::super::types::{
-    LintReport, PassportScope, PassportSummary, PublishBlocker, PublishReadiness, TreeReport,
+    LintReport, PassportScopeReport, PassportSummary, PublishReadiness, TreeReport,
 };
 use crate::{
     config::Config,
@@ -74,7 +75,7 @@ fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
                             .unwrap_or_default()
                             .to_owned()
                     };
-                    PublishBlocker {
+                    FieldError {
                         field: s("field"),
                         message: s("message"),
                     }
@@ -86,12 +87,15 @@ fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
     Some(PublishReadiness {
         ready: r.get("ready").and_then(Value::as_bool).unwrap_or(false),
         blockers,
-        scope: r.get("passportScope").map(|s| PassportScope {
+        scope: r.get("passportScope").map(|s| PassportScopeReport {
+            // Core's own words, read as the enum. One this build does not know is
+            // carried as it came, and one that is not a string at all reads as
+            // nothing said, as it always has.
             status: s
                 .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_else(|| ScopeStatus::Other(String::new())),
             note: s.get("note").and_then(Value::as_str).map(str::to_owned),
         }),
     })
@@ -279,6 +283,7 @@ pub async fn action_find_by_identity(
 mod publish_readiness {
     use super::{lint_result_of, parse_publish_readiness};
     use dpp_domain::LintSeverity;
+    use dpp_types::passport_scope::{PassportScope, ScopeStatus};
     use serde_json::json;
 
     /// The findings come out as core states them: with the `code` the CLI used to
@@ -358,7 +363,7 @@ mod publish_readiness {
         assert!(r.ready);
         assert!(r.blockers.is_empty());
         let scope = r.scope.expect("passportScope is reported");
-        assert_eq!(scope.status, "required");
+        assert_eq!(scope.status, ScopeStatus::Art77(PassportScope::Required));
         assert!(scope.note.is_some());
     }
 

@@ -72,8 +72,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dpp_common::http_problem;
+use dpp_domain::ObligationDate;
 use dpp_domain::catalog::{Granularity, ProductGroupCatalog, RegulatoryStatus, RetentionBasis};
-use dpp_domain::instrument::{DateBasis, InstrumentCatalog, InstrumentStatus, RecordedBasis};
+use dpp_domain::instrument::{InstrumentCatalog, InstrumentStatus, RecordedBasis};
 use serde::Serialize;
 
 /// One product group's passport obligation, as served.
@@ -111,30 +112,11 @@ pub struct PassportObligationView {
     pub required: bool,
     /// `None` where no instrument fixes a date. Serialised as an explicit
     /// `null`: an obligation with no date is not one starting today.
-    pub from: Option<ObligationDateView>,
+    pub from: Option<ObligationDate>,
 }
 
-/// A date and the basis it rests on. The two are one type so that neither can
-/// be served without the other.
-///
-/// This is the same shape as core's `ObligationDate`, field for field, and the
-/// copy is the point rather than an oversight. Publishing core's type directly
-/// would tie a public field name to a library's field name, so a rename there
-/// would rewrite this endpoint's output with nobody deciding to. Copying it
-/// means such a rename stops `describe` from compiling instead.
-///
-/// That is a stricter choice than the passport response makes for its nested
-/// types, which are core's and are guarded by the contract gate alone. Both are
-/// legitimate; this one is worth its transcription because the endpoint is new
-/// and its field names have no consumers to protect yet.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ObligationDateView {
-    pub date: String,
-    pub basis: DateBasis,
-}
-
-/// A retention period and the basis it rests on, paired for the same reason.
+/// A retention period and the basis it rests on, paired so that neither can be
+/// served without the other.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RetentionView {
@@ -258,12 +240,7 @@ fn describe(
         title: catalog.get(key).map(|d| d.title.clone()),
         passport: PassportObligationView {
             required: instruments.passport_required_for(key),
-            from: instruments
-                .passport_due_for(key)
-                .map(|d| ObligationDateView {
-                    date: d.date.clone(),
-                    basis: d.basis,
-                }),
+            from: instruments.passport_due_for(key).cloned(),
         },
         determinable: !instruments.determinable_for(key).is_empty(),
         granularity: instruments.granularity_for(key),

@@ -2,6 +2,7 @@
 //! CLI had no command for.
 
 use anyhow::Result;
+use dpp_types::passport_scope::{PassportScope, ScopeStatus};
 
 use crate::core::passport::{
     action_eol, action_find_by_identity, action_lint, action_verify_tree, eol_payload,
@@ -96,13 +97,7 @@ pub async fn run_lint(id: &str, json: bool) -> Result<()> {
         // are what an operator acts on, and the scope is context for why they
         // are being asked at all.
         if let Some(s) = &r.scope {
-            let label = match s.status.as_str() {
-                "required" => "required by Art. 77(1)",
-                "voluntary" => "voluntary — Art. 77(1) does not reach this record",
-                "notApplicable" => "not a battery — Art. 77(1) has nothing to say",
-                other => other,
-            };
-            println!("\nPassport scope: {label}");
+            println!("\nPassport scope: {}", scope_label(&s.status));
             if let Some(note) = &s.note {
                 println!("  {note}");
             }
@@ -113,6 +108,36 @@ pub async fn run_lint(id: &str, json: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// What the passport-scope status means to the person reading it.
+///
+/// Matched on dpp-core's own enum, so a status core words differently does not
+/// quietly stop matching. The enum is `#[non_exhaustive]`, and the last arm is the
+/// outcome this build has never heard of: it is printed as the node said it, which
+/// is honest, and the test below fails for any outcome core lists that has no label
+/// of its own here.
+fn scope_label(status: &ScopeStatus) -> String {
+    match status {
+        ScopeStatus::Art77(PassportScope::Required) => "required by Art. 77(1)".to_owned(),
+        ScopeStatus::Art77(PassportScope::NotCovered) => {
+            "not covered — Art. 77(1) does not name this battery category".to_owned()
+        }
+        ScopeStatus::Art77(PassportScope::BelowThreshold) => {
+            "below the threshold Art. 77(1) sets for industrial batteries".to_owned()
+        }
+        ScopeStatus::Art77(PassportScope::CapacityUnknown) => {
+            "capacity not stated — treated as in scope".to_owned()
+        }
+        ScopeStatus::Art77(PassportScope::NotYetBinding) => {
+            "not yet binding — placed on the market before Art. 77(1) applies".to_owned()
+        }
+        ScopeStatus::NotApplicable(_) => "not a battery — Art. 77(1) has nothing to say".to_owned(),
+        other => serde_json::to_value(other)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+    }
 }
 
 pub async fn run_eol(
@@ -220,5 +245,41 @@ pub async fn run_find(
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scope_label;
+    use dpp_types::passport_scope::{PassportScope, ScopeStatus};
+
+    /// Every outcome core lists has a sentence of its own, so one added to core is
+    /// a failure here and not a raw word on an operator's screen. The word is what
+    /// the last arm of `scope_label` falls back to, and it is core's, spelt
+    /// camelCase, so a label that equals it is a label nobody wrote.
+    #[test]
+    fn every_outcome_core_lists_has_a_label_of_its_own() {
+        for scope in PassportScope::ALL {
+            let status = ScopeStatus::Art77(scope);
+            let word = serde_json::to_value(&status).unwrap();
+            let label = scope_label(&status);
+            assert_ne!(
+                word.as_str(),
+                Some(label.as_str()),
+                "{scope:?} prints as its raw word"
+            );
+        }
+        assert!(scope_label(&ScopeStatus::from(None)).starts_with("not a battery"));
+    }
+
+    /// The stale table once labelled `voluntary`, a word the node had stopped
+    /// sending, and printed the raw word for four it had started. A word nobody
+    /// knows prints as it came.
+    #[test]
+    fn a_word_this_build_does_not_know_prints_as_it_came() {
+        assert_eq!(
+            scope_label(&ScopeStatus::Other("somethingNew".to_owned())),
+            "somethingNew"
+        );
     }
 }

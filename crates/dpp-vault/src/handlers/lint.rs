@@ -5,21 +5,14 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use dpp_domain::FieldError;
+use dpp_types::passport_scope::ScopeStatus;
 use serde::Serialize;
 
 use crate::domain::passport_scope;
 use crate::{extract::Json, middleware::scope::RequireWrite, state::AppState};
 
 use super::error::{internal_error, not_found_error, parse_passport_id};
-
-/// One reason a publish would be refused, addressed to the field that causes it.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PublishBlocker {
-    /// JSON-Pointer-ish path, e.g. `/productGroupData/batteryModelId`.
-    pub field: String,
-    pub message: String,
-}
 
 /// Whether this passport would clear the publish gates that can be answered
 /// without attempting the transition.
@@ -43,7 +36,7 @@ pub struct PublishReadiness {
     /// `true` when the gates below would pass right now.
     pub ready: bool,
     /// Every blocking field, named individually. Empty when `ready`.
-    pub blockers: Vec<PublishBlocker>,
+    pub blockers: Vec<FieldError>,
     /// Whether Art. 77(1) requires a passport for this record at all.
     ///
     /// Reported beside the gates rather than instead of them. A caller being
@@ -58,17 +51,13 @@ pub struct PublishReadiness {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassportScopeReport {
-    /// One of [`ALL_WIRE_STATUSES`](crate::domain::passport_scope::ALL_WIRE_STATUSES):
-    /// `required`, `notCovered`, `belowThreshold`, `capacityUnknown`,
-    /// `notYetBinding`, or `notApplicable` for a record that is not a battery.
+    /// Core's own answer, spelt as core spells it (`required`, `notCovered`,
+    /// `belowThreshold`, `capacityUnknown`, `notYetBinding`), or `notApplicable`
+    /// for a record that is not a battery. See [`ScopeStatus`].
     ///
-    /// Named by reference rather than restated, because this is the third place
-    /// the list could go stale: it crosses the wire as a plain string, so the
-    /// contract suite's enum gate cannot reach it — that one enumerates Rust
-    /// enums — and `ALL_WIRE_STATUSES` is what
-    /// `every_passport_scope_status_is_in_the_schema` actually checks against the
-    /// published schema.
-    pub status: &'static str,
+    /// A typed value and not a string, so the words are the enum's and the
+    /// contract suite enumerates them from it.
+    pub status: ScopeStatus,
     /// Present when the answer needs justifying: an industrial battery with no
     /// declared capacity, or a passport outside the article that this node still
     /// gates.
@@ -84,7 +73,7 @@ pub struct PassportScopeReport {
 #[serde(rename_all = "camelCase")]
 pub struct LintResponse {
     #[serde(flatten)]
-    pub passport: crate::api::PassportResponse,
+    pub passport: dpp_domain::passport::Passport,
     pub publish_readiness: PublishReadiness,
 }
 
@@ -93,10 +82,7 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
     let mut blockers = Vec::new();
 
     if let Err(dpp_domain::DppError::Validation(errors)) = passport.check_mandatory_content() {
-        blockers.extend(errors.errors.iter().map(|e| PublishBlocker {
-            field: e.field.clone(),
-            message: e.message.clone(),
-        }));
+        blockers.extend(errors.errors.iter().cloned());
     }
 
     let scope = passport_scope::scope_of(passport);
@@ -104,7 +90,7 @@ fn readiness_of(passport: &dpp_domain::passport::Passport) -> PublishReadiness {
         ready: blockers.is_empty(),
         blockers,
         passport_scope: PassportScopeReport {
-            status: passport_scope::wire_status(scope),
+            status: ScopeStatus::from(scope),
             note: passport_scope::scope_note(scope, passport.product_group_data.as_ref()),
         },
     }
@@ -143,7 +129,7 @@ pub async fn lint_handler(
             StatusCode::OK,
             Json(LintResponse {
                 publish_readiness: readiness_of(&p),
-                passport: crate::api::PassportResponse::from(&p),
+                passport: p,
             }),
         )
             .into_response(),
