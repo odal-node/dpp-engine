@@ -9,7 +9,11 @@
 # reads plus the router and middleware files. Inside it, a line holding one of
 # `openapi_contract::CODE_TOKENS` is a site that can produce that code. The tokens
 # are read from that test, so the two cannot disagree about what a handler can
-# return; test modules are skipped.
+# return; test modules are skipped. A token that only reads a status is not a
+# site: one on the left of a `=>` (a match arm or an or-pattern), on the right of
+# `==` or `!=`, inside `matches!(`, or on a line of nothing but `StatusCode::A |
+# StatusCode::B` (the arguments of a `matches!` split over lines). The contract
+# test does not make that distinction, so it counts such a line as a return.
 #
 # # Usage
 #
@@ -163,7 +167,26 @@ function region_count(f, T,   k, i, fn, S, E, sz, bsz, bct, pE, pct, nS, nct, lo
     return any ? mx : -1
 }
 
-function flush(   i, k, r, h, inh, intest, src, line, kind, st, t, ln, col, j, emitted, rc, lh, bs) {
+# The column of the first use of `token` on `line` that builds a response, or 0.
+# A token that only reads a status is not a site: the left side of a `=>` (a match
+# arm or an or-pattern), the right side of `==` or `!=`, inside `matches!(`, or a
+# line that is nothing but `StatusCode::A | StatusCode::B` (the arguments of a
+# `matches!` split over lines).
+function site_col(line, token,   pos, p, col, before, arrow, t) {
+    t = line; sub(/^[ \t]+/, "", t)
+    if (t ~ /^StatusCode::[A-Z_]+([ \t]*\|[ \t]*StatusCode::[A-Z_]+)*[ \t]*\|?[ \t]*$/) return 0
+    arrow = index(line, "=>")
+    pos = 0
+    while ((p = index(substr(line, pos + 1), token)) > 0) {
+        col = pos + p
+        before = substr(line, 1, col - 1)
+        if (!(before ~ /(==|!=)[ \t]*$/) && !(before ~ /matches!\(/) && !(arrow && arrow > col)) return col
+        pos = col + length(token) - 1
+    }
+    return 0
+}
+
+function flush(   i, k, r, h, inh, intest, src, line, kind, st, t, ln, col, c0, j, emitted, rc, lh, bs) {
     r = rel(file)
     inh = 0
     for (i = 1; i <= nl; i++) {
@@ -182,11 +205,12 @@ function flush(   i, k, r, h, inh, intest, src, line, kind, st, t, ln, col, j, e
             if (t ~ /^\/\//) { if (line ~ /^}/) inh = 0; continue }
             split("", emitted)
             for (k = 1; k <= ntok; k++) {
-                if (!index(line, tok[k])) continue
+                c0 = site_col(line, tok[k])
+                if (!c0) continue
                 # a definition line is not a use
                 if (t ~ /^(pub(\([a-z]+\))? )?(async )?fn /  && tok[k] !~ /^Require/) continue
                 if (emitted[code[k]]++) continue
-                ln = i; col = index(line, tok[k]); kind = "SITE"
+                ln = i; col = c0; kind = "SITE"
                 if (tok[k] ~ /^require_/) {
                     kind = "GUARD"
                     for (j = i; j <= i + 4 && j <= nl; j++) if (L[j] ~ /return/) { ln = j; col = index(L[j], "return"); break }
