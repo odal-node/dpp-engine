@@ -1174,6 +1174,55 @@ fn battery_sample() -> serde_json::Value {
     })
 }
 
+/// Values the battery schema bounds: a create that carries one is refused with
+/// `422`. Core's own validation notices each of these before the schema check in
+/// `validate_create_request` runs, so that check is not what answers here.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_battery_value_the_schema_bounds_is_refused_at_create() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+    let client = TestClient::new(&base, make_jwt(&op()));
+
+    // Each case sets the named fields on an otherwise valid battery. The three
+    // carbon-footprint fields are one claim, so the over-long ruleset id comes
+    // with a class and a version.
+    let cases = [
+        (
+            "dueDiligenceUrl",
+            vec![("dueDiligenceUrl", serde_json::json!("not a uri"))],
+        ),
+        (
+            "batteryModelId",
+            vec![("batteryModelId", serde_json::json!(""))],
+        ),
+        (
+            "batteryPassportNumber",
+            vec![("batteryPassportNumber", serde_json::json!(""))],
+        ),
+        (
+            "carbonFootprintClassRulesetId",
+            vec![
+                ("carbonFootprintClass", serde_json::json!("B")),
+                (
+                    "carbonFootprintClassRulesetId",
+                    serde_json::json!("x".repeat(129)),
+                ),
+                ("carbonFootprintClassRulesetVersion", serde_json::json!("1")),
+            ],
+        ),
+    ];
+    for (name, fields) in cases {
+        let mut body = battery_sample();
+        for (field, value) in fields {
+            body["productGroupData"][field] = value;
+        }
+        let resp = client.post_json("/api/v1/dpp", body).await;
+        let status = resp.status();
+        let problem: serde_json::Value = resp.json().await.unwrap_or_default();
+        assert_eq!(status, 422, "{name}: {problem}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_percentage_over_100_is_refused_at_create_and_an_unknown_schema_view_is_unavailable() {
     let pg = start_postgres().await;

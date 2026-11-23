@@ -206,6 +206,29 @@ async fn recording_a_discard_needs_a_write_key() {
     assert_eq!(resp.status(), 403);
 }
 
+/// A count too large for the number core's record type holds. The schema asks
+/// only that it be a whole number, so it is the record type that cannot read it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_count_too_large_for_the_record_type_is_refused_as_unprocessable() {
+    let s = setup(None).await;
+    for (path, field) in [("units", "value"), ("weight", "grams")] {
+        let mut body = discard("2026-08-01", None);
+        body["record"][path][field] = serde_json::json!(1.0e30);
+        let resp = TestClient::new(&s.base, &s.write)
+            .post_json("/api/v1/discard-records", body)
+            .await;
+        let status = resp.status();
+        let problem: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(status, 422, "{path}.{field}: {problem}");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("could not be read")),
+            "{path}.{field}: {problem}"
+        );
+    }
+}
+
 /// A day that is shaped like a date and is not one on the calendar is refused by
 /// the schema's `date` format, naming the field, before core's record type is
 /// asked to read it. So the record type's own refusal is not reached this way.
