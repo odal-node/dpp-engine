@@ -47,15 +47,23 @@ json="$out/json"
 
 # `name|version|features|manifest-dir` for every dpp-core crate in the engine's build.
 core_crates() {
+  # `--locked` is what keeps the pin honest, and it is wrong when the local-core
+  # override is active: that rewrites the lock by design (see `LOCKED` in the
+  # justfile).
+  local locked=(--locked)
+  [[ -f "$root/.cargo/config.toml" ]] && locked=()
   local meta
-  meta="$(cd "$root" && cargo metadata --format-version 1 --locked --offline)"
+  meta="$(cd "$root" && cargo metadata --format-version 1 "${locked[@]}" --offline)"
+  # A dpp-core crate is a dpp-* package this workspace does not own, whether cargo
+  # resolved it from the registry or from a local override.
   jq -r '
     . as $m
     | .resolve.nodes[]
-    | select(.id | test("registry\\+.*#dpp-"))
-    | (.id | capture("#(?<name>[^@]+)@(?<version>.+)$")) as $id
-    | ($m.packages[] | select(.name == $id.name and .version == $id.version).manifest_path) as $manifest
-    | [$id.name, $id.version, (.features | join(",")), ($manifest | sub("/Cargo.toml$"; ""))]
+    | . as $n
+    | ($m.packages[] | select(.id == $n.id)) as $p
+    | select($p.name | startswith("dpp-"))
+    | select(($m.workspace_members | index($n.id)) == null)
+    | [$p.name, $p.version, ($n.features | join(",")), ($p.manifest_path | sub("/Cargo.toml$"; ""))]
     | join("|")' <<<"$meta" | sort
 }
 
@@ -65,7 +73,9 @@ cmd_json() {
   # skip that when neither has moved.
   local stamp
   stamp="$({ cat "$root/Cargo.lock"; declare -f cmd_json core_crates; } | sha256sum | cut -d' ' -f1)"
-  if [[ -f "$json/.stamp" && "$(cat "$json/.stamp")" == "$stamp" ]]; then
+  # With the local-core override the sources are a working tree that changes
+  # without the lock moving, so there is no stamp to trust.
+  if [[ ! -f "$root/.cargo/config.toml" && -f "$json/.stamp" && "$(cat "$json/.stamp")" == "$stamp" ]]; then
     echo "core-api: the rustdoc JSON is current."
     return 0
   fi
@@ -73,26 +83,36 @@ cmd_json() {
   rm -rf "$ws" "$json"
   mkdir -p "$ws" "$json"
 
+  # A crate resolved from the registry is a published, self-contained package:
+  # it is copied into a scratch workspace and patched in for the others. One
+  # resolved from a local checkout is a member of that checkout's own workspace,
+  # whose manifests inherit from its root, so it is documented where it stands.
   local members=() patches=()
   while IFS="|" read -r name version _ dir; do
-    cp -r "$dir" "$ws/$name"
-    members+=("\"$name\"")
-    patches+=("$name = { path = \"$name\" }")
+    if [[ "$dir" == */registry/src/* ]]; then
+      cp -r "$dir" "$ws/$name"
+      members+=("\"$name\"")
+      patches+=("$name = { path = \"$name\" }")
+    fi
   done < <(core_crates)
 
-  {
-    echo '[workspace]'
-    echo 'resolver = "2"'
-    echo "members = [$(IFS=,; echo "${members[*]}")]"
-    echo
-    echo '[patch.crates-io]'
-    printf '%s\n' "${patches[@]}"
-  } >"$ws/Cargo.toml"
-  cp "$root/Cargo.lock" "$ws/Cargo.lock"
+  if [[ ${#members[@]} -gt 0 ]]; then
+    {
+      echo '[workspace]'
+      echo 'resolver = "2"'
+      echo "members = [$(IFS=,; echo "${members[*]}")]"
+      echo
+      echo '[patch.crates-io]'
+      printf '%s\n' "${patches[@]}"
+    } >"$ws/Cargo.toml"
+    cp "$root/Cargo.lock" "$ws/Cargo.lock"
+  fi
 
-  while IFS="|" read -r name version features _; do
+  while IFS="|" read -r name version features dir; do
     echo "== $name $version features=[$features]"
-    local args=(--manifest-path "$ws/Cargo.toml" -p "$name" --lib --offline)
+    local manifest="$ws/Cargo.toml"
+    [[ "$dir" != */registry/src/* ]] && manifest="$dir/../../Cargo.toml"
+    local args=(--manifest-path "$manifest" -p "$name" --lib --offline)
     [[ -n "$features" ]] && args+=(--features "$features")
     CARGO_TARGET_DIR="$out/target" cargo +nightly rustdoc "${args[@]}" -- \
       -Z unstable-options --output-format json
@@ -523,7 +543,9 @@ join_shadows() {
         minshared = (kind == "enum") ? 2 : 3
         rel = ""
         if (samename) rel = "same-name"
-        if (jac >= 0.75 && shared >= minshared) rel = (rel == "" ? "same-shape" : rel "+same-shape")
+        # A type of two members has little to be a shape of, so it counts only when
+        # it is the other side exactly: every member there, and nothing else.
+        if ((jac >= 0.75 && shared >= minshared) || (jac == 1 && shared >= 2)) rel = (rel == "" ? "same-shape" : rel "+same-shape")
         if (rel == "") continue
         # What is on each side only.
         eo = ""; co = ""

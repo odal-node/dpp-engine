@@ -3,7 +3,6 @@
 //! Exposes internal modules so integration tests and dependent crates can
 //! construct `AppState`, the router, and test helpers without duplicating code.
 
-pub mod api;
 pub mod config;
 pub mod domain;
 pub mod extract;

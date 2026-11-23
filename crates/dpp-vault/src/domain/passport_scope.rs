@@ -109,7 +109,7 @@ pub fn scope_of(passport: &Passport) -> Option<PassportScope> {
     // first: a category nobody has heard of, reported as exempt.
     //
     // Treated as in scope for the same reason an undeclared capacity is, and the
-    // same reason `wire_status` treats an unknown `PassportScope` that way:
+    // same reason `gate_applies` treats an unknown `PassportScope` that way:
     // exempting on an unknown is the one error that silently stops asking for
     // content the law requires.
     if !matches!(
@@ -150,9 +150,8 @@ pub fn scope_of(passport: &Passport) -> Option<PassportScope> {
 /// an unrecognised category does. `PassportScope` is `#[non_exhaustive]`, so a
 /// later `dpp-rules` can add one; `is_required()` and `is_undetermined()` would
 /// both answer `false` for it, and the gate would switch itself off on a variant
-/// nobody here can name — while [`wire_status`] reported the same record as
-/// `required`. Listing the *exemptions* rather than the inclusions keeps the two
-/// answering the same question.
+/// nobody here can name. Listing the *exemptions* rather than the inclusions is what
+/// makes an outcome nobody here can name run the gate.
 #[must_use]
 pub fn gate_applies(scope: Option<PassportScope>) -> bool {
     match scope {
@@ -164,58 +163,6 @@ pub fn gate_applies(scope: Option<PassportScope>) -> bool {
         ) => false,
         // `Required`, `CapacityUnknown`, and anything added later.
         Some(_) => true,
-    }
-}
-
-/// Every wire value [`wire_status`] can return.
-///
-/// Exists because `status` crosses the API as a plain string, so neither the
-/// Rust type system nor the OpenAPI enum gate — which can only enumerate a Rust
-/// enum — connects the two. A stale value survived exactly that gap once: the
-/// contract fixture went on emitting `"voluntary"` after this module stopped
-/// producing it, and every check passed.
-///
-/// `every_passport_scope_status_is_in_the_schema` in the contract suite asserts
-/// this list against the published enum.
-pub const ALL_WIRE_STATUSES: &[&str] = &[
-    "required",
-    "notCovered",
-    "belowThreshold",
-    "capacityUnknown",
-    "notYetBinding",
-    "notApplicable",
-];
-
-/// The wire value for [`PassportScopeReport`](crate::handlers::lint::PassportScopeReport).
-///
-/// Core's vocabulary, one-for-one, plus `notApplicable` for a record that is not
-/// a battery — which core's function cannot answer because it takes a battery
-/// type. Collapsing core's five into fewer would put a translation layer back
-/// between the rule and the answer, which is the thing this module stopped
-/// doing.
-#[must_use]
-pub fn wire_status(scope: Option<PassportScope>) -> &'static str {
-    let Some(scope) = scope else {
-        return "notApplicable";
-    };
-    match scope {
-        PassportScope::Required => "required",
-        PassportScope::NotCovered => "notCovered",
-        PassportScope::BelowThreshold => "belowThreshold",
-        PassportScope::CapacityUnknown => "capacityUnknown",
-        PassportScope::NotYetBinding => "notYetBinding",
-        // `PassportScope` is `#[non_exhaustive]`, so a newer `dpp-rules` can add
-        // an outcome this build has never heard of. Reported as in scope and
-        // said out loud, for the same reason an undeclared capacity is: a
-        // variant this build cannot name is not evidence of an exemption, and
-        // absorbing it silently is how a statutory gate switches itself off.
-        other => {
-            tracing::warn!(
-                scope = ?other,
-                "Art. 77(1) outcome not recognised by this build; reporting it as in scope"
-            );
-            "required"
-        }
     }
 }
 
@@ -272,6 +219,7 @@ pub fn scope_note(scope: Option<PassportScope>, data: Option<&ProductGroupData>)
 mod tests {
     use super::*;
     use dpp_domain::product_group::{BatteryChemistry, BatteryData};
+    use dpp_types::passport_scope::{NotApplicable, ScopeStatus};
 
     /// Comfortably inside the binding period, so a case about type or capacity
     /// is not silently also a case about the date.
@@ -438,39 +386,39 @@ mod tests {
             scope, None,
             "Art. 77(1) is a battery article; absence of a battery is not exemption"
         );
-        assert_eq!(wire_status(scope), "notApplicable");
+        assert_eq!(
+            ScopeStatus::from(scope),
+            ScopeStatus::NotApplicable(NotApplicable::NotApplicable)
+        );
         assert!(!gate_applies(scope));
         assert!(scope_note(scope, None).is_none());
     }
 
-    /// Every answer this node can emit has a distinct wire value, and none is
-    /// the collapsed "voluntary" this module used to report. Three different
+    /// Every answer this node can emit goes out under a word of its own, and none
+    /// is the collapsed "voluntary" this module used to report. Three different
     /// reasons a passport is not owed are three different things to tell an
     /// operator.
     #[test]
     fn each_outcome_has_its_own_wire_value() {
-        let seen = [
-            wire_status(None),
-            wire_status(Some(PassportScope::Required)),
-            wire_status(Some(PassportScope::NotCovered)),
-            wire_status(Some(PassportScope::BelowThreshold)),
-            wire_status(Some(PassportScope::CapacityUnknown)),
-            wire_status(Some(PassportScope::NotYetBinding)),
-        ];
-        let mut unique = seen.to_vec();
+        let mut seen: Vec<String> = PassportScope::ALL
+            .iter()
+            .map(|s| serde_json::to_value(ScopeStatus::from(Some(*s))).unwrap())
+            .map(|v| v.as_str().expect("a string").to_owned())
+            .collect();
+        seen.push(
+            serde_json::to_value(ScopeStatus::from(None))
+                .unwrap()
+                .as_str()
+                .expect("a string")
+                .to_owned(),
+        );
+        let mut unique = seen.clone();
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(
             unique.len(),
             seen.len(),
             "two outcomes share a wire value: {seen:?}"
-        );
-
-        let mut declared = ALL_WIRE_STATUSES.to_vec();
-        declared.sort_unstable();
-        assert_eq!(
-            unique, declared,
-            "ALL_WIRE_STATUSES is what the contract suite checks the schema against, so a              value this function can return and that list cannot is invisible to it"
         );
     }
 

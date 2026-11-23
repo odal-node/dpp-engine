@@ -7,7 +7,7 @@ use dpp_domain::{
     FieldError, Gtin, ProductIdentifier,
     catalog::ProductGroupCatalog,
     error::DppError,
-    passport::{CarrierQualifier, Passport, PassportId},
+    passport::{CarrierLevel, CarrierQualifier, Passport, PassportId},
     ports::passport_repo::{MAX_SUCCESSION_HOPS, PassportRepository},
     product::ProductIdentity,
     schemas::LensRegistry,
@@ -283,19 +283,22 @@ async fn resolve_label(
     // than by matching on `CarrierQualifier`, which is `#[non_exhaustive]`: a
     // match from here needs a wildcard, and a wildcard would file a level core
     // adds later under one of these three without anyone deciding that it should.
-    let mut ladder: Vec<(LabelLevel, CarrierQualifier<'_>)> = Vec::with_capacity(3);
+    let mut ladder: Vec<(CarrierLevel, CarrierQualifier<'_>)> = Vec::with_capacity(3);
     if let Some(serial) = serial {
-        ladder.push((LabelLevel::Serial, CarrierQualifier::Serial(serial.into())));
+        ladder.push((
+            CarrierLevel::Serial,
+            CarrierQualifier::Serial(serial.into()),
+        ));
     }
     if let Some(batch) = batch {
-        ladder.push((LabelLevel::Batch, CarrierQualifier::Batch(batch.into())));
+        ladder.push((CarrierLevel::Batch, CarrierQualifier::Batch(batch.into())));
     }
-    ladder.push((LabelLevel::Model, CarrierQualifier::Model));
+    ladder.push((CarrierLevel::Model, CarrierQualifier::Model));
     let requested = ladder[0].0;
 
     for (level, qualifier) in &ladder {
         let mut named = repo.find_by_carrier(&identifier, qualifier).await?;
-        if *level == LabelLevel::Model {
+        if *level == CarrierLevel::Model {
             // A bare GTIN names a model-level carrier, or is what someone holding
             // only the GTIN typed: both are the model.
             named.extend(repo.find_by_identifier(&identifier, None, None).await?);
@@ -510,39 +513,16 @@ async fn current_record(
     })
 }
 
-/// The level a printed label identifies: what follows its GTIN.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LabelLevel {
-    /// The GTIN alone: every unit of a model.
-    Model,
-    /// AI 10: one production run.
-    Batch,
-    /// AI 21: one unit.
-    Serial,
-}
-
-impl LabelLevel {
-    /// The value this level takes as a metric label.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Model => "model",
-            Self::Batch => "batch",
-            Self::Serial => "serial",
-        }
-    }
-}
-
 /// The passport a printed label reached, and how it got there.
 #[derive(Debug, Clone)]
 pub struct LabelResolution {
     /// The passport the label resolves to.
     pub passport: Passport,
     /// The most specific level the label named.
-    pub requested: LabelLevel,
+    pub requested: CarrierLevel,
     /// The level the passport was found at. Equal to `requested` for an exact
     /// match, less specific when the label's own level had no record.
-    pub resolved: LabelLevel,
+    pub resolved: CarrierLevel,
 }
 
 impl LabelResolution {
@@ -691,7 +671,7 @@ mod label_resolution {
     };
 
     use super::{
-        LabelLevel, LabelResolution, carrier_serial_is_taken, held_elsewhere, resolve_label,
+        CarrierLevel, LabelResolution, carrier_serial_is_taken, held_elsewhere, resolve_label,
     };
 
     const GTIN: &str = "09506000134352";
@@ -1045,8 +1025,8 @@ mod label_resolution {
             .await
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
-        assert_eq!(found.requested, LabelLevel::Serial);
-        assert_eq!(found.resolved, LabelLevel::Model);
+        assert_eq!(found.requested, CarrierLevel::Serial);
+        assert_eq!(found.resolved, CarrierLevel::Model);
         assert!(found.inherited());
     }
 
@@ -1062,8 +1042,8 @@ mod label_resolution {
             .await
             .expect("inherits the lot");
         assert_eq!(found.passport.id, lot.id);
-        assert_eq!(found.requested, LabelLevel::Serial);
-        assert_eq!(found.resolved, LabelLevel::Batch);
+        assert_eq!(found.requested, CarrierLevel::Serial);
+        assert_eq!(found.resolved, CarrierLevel::Batch);
     }
 
     /// A lot with no passport of its own is passed over on the way up, not a
@@ -1078,8 +1058,8 @@ mod label_resolution {
             .await
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
-        assert_eq!(found.requested, LabelLevel::Serial);
-        assert_eq!(found.resolved, LabelLevel::Model);
+        assert_eq!(found.requested, CarrierLevel::Serial);
+        assert_eq!(found.resolved, CarrierLevel::Model);
     }
 
     /// A lot-only label with no passport for that lot inherits the model.
@@ -1093,8 +1073,8 @@ mod label_resolution {
             .await
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
-        assert_eq!(found.requested, LabelLevel::Batch);
-        assert_eq!(found.resolved, LabelLevel::Model);
+        assert_eq!(found.requested, CarrierLevel::Batch);
+        assert_eq!(found.resolved, CarrierLevel::Model);
     }
 
     /// Inheritance needs something to inherit from. A product with a unit on
@@ -1120,7 +1100,7 @@ mod label_resolution {
 
         let found = resolution(&repo, None, Some(&serial)).await.expect("found");
         assert_eq!(found.passport.id, unit.id);
-        assert_eq!(found.resolved, LabelLevel::Serial);
+        assert_eq!(found.resolved, CarrierLevel::Serial);
         assert!(!found.inherited());
     }
 
@@ -1196,7 +1176,7 @@ mod label_resolution {
             .await
             .expect("inherits the model");
         assert_eq!(found.passport.id, model.id);
-        assert_eq!(found.resolved, LabelLevel::Model);
+        assert_eq!(found.resolved, CarrierLevel::Model);
     }
 
     /// A passport that attributes `serial` to its carrier.

@@ -64,11 +64,7 @@ pub async fn amend_handler(
         .amend(passport_id, body.patch, body.reason, &auth)
         .await
     {
-        Ok(p) => (
-            StatusCode::CREATED,
-            Json(crate::api::PassportResponse::from(&p)),
-        )
-            .into_response(),
+        Ok(p) => (StatusCode::CREATED, Json(&p)).into_response(),
         Err(dpp_domain::DppError::NotFound(_)) => not_found_error("DPP not found."),
         Err(dpp_domain::DppError::InvalidTransition { .. }) => conflict_error(
             "Only a published DPP can be amended. A draft is edited in place; a suspended, \

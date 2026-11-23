@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use dpp_domain::LintResult;
+use dpp_domain::{FieldError, LintResult};
+use dpp_types::passport_scope::ScopeStatus;
 use serde::Serialize;
 
 // ── Infrastructure ───────────────────────────────────────────────────────────
@@ -171,32 +172,28 @@ pub struct LintReport {
     pub publish_readiness: Option<PublishReadiness>,
 }
 
-/// A field the publish is blocked on, addressed to it.
-///
-/// Not a lint finding: it has no code and no severity of its own, because every
-/// one of them stops the publish, which is what makes it a blocker. The node
-/// sends `field` and `message` and nothing else.
-pub struct PublishBlocker {
-    pub field: String,
-    pub message: String,
-}
-
 /// The publish-readiness half of a lint response.
 pub struct PublishReadiness {
     pub ready: bool,
-    pub blockers: Vec<PublishBlocker>,
-    pub scope: Option<PassportScope>,
+    /// Each one a field the publish is blocked on and why, as dpp-core words it:
+    /// not a lint finding, which has a code and a severity, because every one of
+    /// these stops the publish.
+    pub blockers: Vec<FieldError>,
+    pub scope: Option<PassportScopeReport>,
 }
 
 /// Whether Art. 77(1) requires a battery passport for this record at all.
 ///
 /// Distinct from the blockers, and reported beside them rather than folded in:
-/// the node applies the content gate whatever this says, so a `voluntary`
-/// passport is still held to the full category content. Saying so is the point
-/// — an operator being asked for forty-six data points on a battery the article
-/// does not reach deserves to know that is the node's choice and not the law's.
-pub struct PassportScope {
-    pub status: String,
+/// the node applies the content gate whatever this says, so a passport the
+/// article does not require is still held to the full category content. Saying so
+/// is the point — an operator being asked for forty-six data points on a battery
+/// the article does not reach deserves to know that is the node's choice and not
+/// the law's.
+///
+/// The status is dpp-core's own answer, as the node sends it.
+pub struct PassportScopeReport {
+    pub status: ScopeStatus,
     pub note: Option<String>,
 }
 

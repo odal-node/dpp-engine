@@ -40,6 +40,7 @@ dpp-domain${T}struct${T}Foo${T}dpp_domain::Foo${T}
 dpp-domain${T}enum${T}Level${T}dpp_domain::Level${T}
 dpp-domain${T}struct${T}Renamed${T}dpp_domain::Renamed${T}
 dpp-domain${T}const${T}URN_PREFIX${T}dpp_domain::URN_PREFIX${T}
+dpp-domain${T}struct${T}FieldErr${T}dpp_domain::FieldErr${T}
 EOF
 
 cat >"$TMP/core.tsv" <<EOF
@@ -48,6 +49,7 @@ dpp-domain${T}enum${T}Level${T}f.rs:9${T}Model,Batch,Serial
 dpp-domain${T}const${T}URN_PREFIX${T}f.rs:20${T}"urn:odal-node:"
 dpp-domain${T}struct${T}Hidden${T}f.rs:30${T}alpha,beta,gamma,delta
 dpp-domain${T}struct${T}Renamed${T}f.rs:40${T}nothing=none,outside=out,tag
+dpp-domain${T}struct${T}FieldErr${T}f.rs:50${T}field,message
 EOF
 
 cat >"$TMP/engine.tsv" <<EOF
@@ -60,6 +62,8 @@ struct${T}Duplicate${T}e.rs:30${T}alpha,beta,gamma,delta
 struct${T}WireCopy${T}e.rs:40${T}none,out,tag
 enum${T}Small${T}e.rs:50${T}Model,Batch
 const${T}SHORT${T}e.rs:60${T}"ab"
+struct${T}Blocker${T}e.rs:70${T}field,message
+struct${T}Lopsided${T}e.rs:80${T}field,hint
 EOF
 
 join_shadows "$TMP/public.tsv" "$TMP/core.tsv" "$TMP/engine.tsv" >"$TMP/found.tsv"
@@ -83,6 +87,8 @@ refuse "Unrelated" "a type that shares nothing is not a finding"
 refuse "Duplicate" "a copy of a type core does not publish is not a finding"
 refuse "Small" "two variants of three is below the line"
 refuse "SHORT" "a short constant value is too common to mean anything"
+expect "same-shape Blocker FieldErr" "a two-member type that is exactly core's is a finding"
+refuse "Lopsided" "two members of which one is core's is not"
 
 # ── The record ───────────────────────────────────────────────────────────────
 

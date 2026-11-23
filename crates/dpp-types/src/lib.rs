@@ -33,6 +33,7 @@ pub mod node_signal;
 pub mod obligation_notice;
 pub mod operator;
 pub mod passport_request;
+pub mod passport_scope;
 pub mod qualification;
 pub mod registry_identity;
 pub mod registry_sync;
