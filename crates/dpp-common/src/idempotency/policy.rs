@@ -208,6 +208,21 @@ mod tests {
         assert!(policy_for(&Method::GET, "/vault/api/v1/dpp").is_none());
     }
 
+    /// A route that takes personal data creates a thing and is still not keyed.
+    ///
+    /// The store keeps a SHA-256 of the raw request body for a day. For this route
+    /// the body is the personal data, so the hash would outlive the erasure of the
+    /// record it was made from, and the hash of a short or guessable value is not
+    /// anonymous. A retry stores a second record, which the passport's listing
+    /// finds. Adding the route to [`KEYED`] fails here, and the reason is above.
+    #[test]
+    fn a_route_that_takes_personal_data_is_never_keyed() {
+        assert!(
+            policy_for(&Method::POST, "/vault/api/v1/dpp/{dppId}/personal-data").is_none(),
+            "the idempotency store would keep a hash of the personal data"
+        );
+    }
+
     #[test]
     fn only_the_two_secret_bearing_creates_redact() {
         let redacting: Vec<&str> = KEYED

@@ -1,0 +1,9 @@
+type: string
+description: |-
+  Whether a record's content is still held.
+
+  `present`: the content is held and can be erased. `erased`: the content is gone
+  and the tombstone remains.
+enum:
+  - present
+  - erased

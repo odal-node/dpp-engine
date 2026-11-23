@@ -72,7 +72,7 @@
     },
     {
       "name": "Personal Data",
-      "description": "Erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route reads one."
+      "description": "Storing, listing and erasing the records a passport's `personalData` statements name. A record is held outside the passport so it can be erased, and no route returns a record's content."
     },
     {
       "name": "Plugins",
@@ -1755,6 +1755,162 @@
         }
       }
     },
+    "/vault/api/v1/dpp/{dppId}/personal-data": {
+      "post": {
+        "operationId": "storePersonalDataRecord",
+        "summary": "Hold personal data for a draft passport, where it can be erased",
+        "description": "Holds personal data related to one marked field of a draft passport in a\nrecord outside the passport, and answers the record's identifier. A published\npassport is signed, frozen, archived and copied to the back-up provider, so\npersonal data it is not required to carry cannot live in it: withdrawn\nconsent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)), and nothing the\npassport is copied to can be erased from.\n\n**Order.** The statement in the passport names the record, and the record is\nstored for a passport, so a client creates the draft first (stating\n`{\"held\": \"nothing\"}` for the field, or leaving it out while the field is\nempty), stores the record here, then patches the statement in with\n`{\"held\": \"outside\", \"lawfulBasis\": …, \"record\": \"<id>\"}`\n(`PUT /api/v1/dpp/{dppId}`).\n\n**Only a draft.** A passport that is no longer a draft has a statement that\ncan no longer be changed to name a new record, so it is refused with `409`.\n\n**Only a marked field.** `field` must be one the passport's product group\nschema marks as able to hold personal data. A statement can only be made\nabout such a field, so a record for any other could never be named; it is\nrefused with `422`, and the detail lists the fields that are marked.\n\n**A retry stores a second record.** The route takes no `Idempotency-Key`, and\na key sent to it is refused with `400`. The key store keeps a hash of the raw\nrequest body, which here is the personal data, and nothing could erase that\nhash once the record is erased. A caller that lost the answer lists the\npassport's records (`GET`, below), finds the first and erases it with\n`DELETE /api/v1/personal-data/{record}`.\n\n**The content is never returned.** The answer carries the record's\nidentifier, the field and when it was stored, and no route of this node\nreturns a record's content. It is not logged either: the node records who\nstored a record, and the record's identifier, and nothing about the passport\nor the data.\n\n**Size.** The body may be at most 64 KiB. A larger one is refused with\n`413`.\n\nAdmin-scoped, like every other route of this tag: the identifiers it handles\nrelate to whoever owns the item (GDPR Recital 26).\n",
+        "tags": [
+          "Personal Data"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorePersonalDataRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The record is held. Its identifier is what the passport's statement names in `personalData.<field>.record`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataRecordSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This node holds no passport with that identifier.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The passport is not a draft. Only a draft takes a new record, because the statement of any other cannot be changed to name one.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body is larger than 64 KiB.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`field` is not one the passport's product group schema marks as able to hold personal data (the detail lists the ones it marks), or `content` is `null`. A body that is not the JSON object described here is also `422`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listPersonalDataRecords",
+        "summary": "List the records of personal data held for a passport",
+        "description": "Every record held for the passport, present or erased, oldest first: the\nidentifier, the field, whether the content is still held, and the instant\n(stored, or erased). Never the content, which no route of this node returns.\n\nThis is how an operator learns the identifier of a record whose statement was\nnever written (an orphan), or of one whose answer was lost, and erases it\nwith `DELETE /api/v1/personal-data/{record}`.\n\n**A passport that has no records is a `200` with none.** A passport this node\ndoes not hold is `404`, so an operator can tell a mistyped identifier from a\npassport with nothing stored. Any status of passport can be listed: a record\noutlives the draft it was stored for.\n\n**A listing is as sensitive as the passport's individual-item data.** An\nidentifier relates to whoever owns the item, and information that can be\nlinked to a person is personal data (GDPR Recital 26), so the route is\nadmin-scoped like the one that erases.\n",
+        "tags": [
+          "Personal Data"
+        ],
+        "security": [
+          {
+            "BearerApiKey": []
+          },
+          {
+            "BasicAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dppId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/DppId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The passport's records, oldest first. Empty when it has none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalDataRecordList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This node holds no passport with that identifier.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vault/api/v1/evidence/{id}": {
       "get": {
         "operationId": "getEvidenceDossier",
@@ -3151,7 +3307,7 @@
       "delete": {
         "operationId": "erasePersonalDataRecord",
         "summary": "Erase a record of personal data",
-        "description": "Erases a record that a passport's `personalData` statement names\n(`{\"held\": \"outside\", \"record\": \"<id>\"}`), keeping a tombstone. This is how\na withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is\nsigned, frozen, archived and copied to the back-up provider, so the personal\ndata is held in a record that can be erased instead.\n\n**Erasing touches nothing else.** Not the passport, which is signed and\nfrozen. Not the statement in it, which keeps naming the record, so a reader\nfollowing the statement learns that the record is gone rather than that it\nnever existed. Not any other record.\n\n**Idempotent.** Erasing a record that is already erased returns the receipt\nit was given the first time, so a caller that lost the answer asks again. It\ntakes no `Idempotency-Key`.\n\n**The tombstone is not free of personal data.** It keeps the identifier, the\npassport and field the record belonged to, and when it was erased: none of\nthe content. A passport identifier can relate to whoever owns the item, and\ninformation that can be linked to a person is personal data (GDPR Recital\n26). The receipt is therefore as sensitive as the passport's individual-item\ndata, and the operator needs a basis for keeping the tombstone; to show that\nit erased (Art. 5(2)) is one. Nothing in this node deletes it.\n\n**No route reads a record.** A record is served by no resolver, public,\ncredentialed or authenticated view of a passport, and is never part of the\narchive of past versions or of the back-up copy. Serving one is a disclosure\nthat needs a basis of its own, which only the controller can establish for\neach purpose.\n\nAdmin-scoped, like every other route that removes something: the write scope\nproduces and moves passports, and none of that destroys anything.\n",
+        "description": "Erases a record that a passport's `personalData` statement names\n(`{\"held\": \"outside\", \"record\": \"<id>\"}`), keeping a tombstone. This is how\na withdrawn consent (GDPR Art. 7(3)) is honoured: a published passport is\nsigned, frozen, archived and copied to the back-up provider, so the personal\ndata is held in a record that can be erased instead.\n\n**Erasing touches nothing else.** Not the passport, which is signed and\nfrozen. Not the statement in it, which keeps naming the record, so a reader\nfollowing the statement learns that the record is gone rather than that it\nnever existed. Not any other record.\n\n**Idempotent.** Erasing a record that is already erased returns the receipt\nit was given the first time, so a caller that lost the answer asks again. It\ntakes no `Idempotency-Key`.\n\n**The tombstone is not free of personal data.** It keeps the identifier, the\npassport and field the record belonged to, and when it was erased: none of\nthe content. A passport identifier can relate to whoever owns the item, and\ninformation that can be linked to a person is personal data (GDPR Recital\n26). The receipt is therefore as sensitive as the passport's individual-item\ndata, and the operator needs a basis for keeping the tombstone; to show that\nit erased (Art. 5(2)) is one. Nothing in this node deletes it.\n\n**No route returns a record's content.** A record is served by no resolver,\npublic, credentialed or authenticated view of a passport, and is never part of\nthe archive of past versions or of the back-up copy. Serving one is a\ndisclosure that needs a basis of its own, which only the controller can\nestablish for each purpose. A record is stored with\n`POST /api/v1/dpp/{dppId}/personal-data` and found, to be erased, with\n`GET` on the same path, which lists identifiers and instants and no content.\n\nAdmin-scoped, like every other route that removes something: the write scope\nproduces and moves passports, and none of that destroys anything.\n",
         "tags": [
           "Personal Data"
         ],
@@ -7692,6 +7848,86 @@
             "description": "When the record's content was erased."
           }
         }
+      },
+      "PersonalDataRecordSummary": {
+        "type": "object",
+        "description": "A record of personal data held for a passport: which record it is, which field\nit relates to, whether its content is still held, and when. Never the content.\n\nA present record carries when it was stored. An erased one carries when it was\nerased, since that is all its tombstone keeps.\n\nThe identifier relates to whoever owns the item, so this is as sensitive as the\npassport's individual-item data (GDPR Recital 26).",
+        "required": [
+          "record",
+          "field",
+          "state"
+        ],
+        "properties": {
+          "record": {
+            "type": "string",
+            "description": "The record's identifier, as the passport's statement names it."
+          },
+          "field": {
+            "type": "string",
+            "description": "The marked field the record relates to, as a dotted path inside `productGroupData`.",
+            "example": "usageHistory.negativeEvents"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PersonalDataRecordState"
+          },
+          "storedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was stored. Absent once it is erased."
+          },
+          "erasedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record's content was erased. Absent while it is present."
+          }
+        }
+      },
+      "PersonalDataRecordList": {
+        "type": "object",
+        "description": "Every record of personal data held for a passport, present or erased, oldest\nfirst. None of their content.",
+        "required": [
+          "records"
+        ],
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Empty when no record was ever stored for the passport.",
+            "items": {
+              "$ref": "#/components/schemas/PersonalDataRecordSummary"
+            }
+          }
+        }
+      },
+      "PersonalDataRecordState": {
+        "type": "string",
+        "description": "Whether a record's content is still held.\n\n`present`: the content is held and can be erased. `erased`: the content is gone\nand the tombstone remains.",
+        "enum": [
+          "present",
+          "erased"
+        ]
+      },
+      "StorePersonalDataRequest": {
+        "type": "object",
+        "description": "Personal data to hold for one marked field of a draft passport, outside the\npassport, where it can be erased.\n\nThe body may be at most 64 KiB; a larger one is refused with `413`.",
+        "required": [
+          "field",
+          "content"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The field the data relates to, as a dotted path inside `productGroupData` (`usageHistory.negativeEvents`). It must be one the passport's product group schema marks as able to hold personal data (`x-personal-data`): a statement can only name a record for such a field, so a record for any other would be held for nothing and is refused with `422`.",
+            "example": "repairHistoryUrl"
+          },
+          "content": {
+            "description": "The personal data, in whatever shape the controller keeps it. Any JSON value except `null`. It is never returned by any route of this node.",
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "ValidateResponse": {
         "type": "object",

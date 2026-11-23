@@ -165,6 +165,14 @@ components:
       $ref: components/schemas/passport-reports/PassportListResponse.yaml
     PersonalDataErasureReceipt:
       $ref: components/schemas/passport-reports/PersonalDataErasureReceipt.yaml
+    PersonalDataRecordSummary:
+      $ref: components/schemas/passport-reports/PersonalDataRecordSummary.yaml
+    PersonalDataRecordList:
+      $ref: components/schemas/passport-reports/PersonalDataRecordList.yaml
+    PersonalDataRecordState:
+      $ref: components/schemas/passport-reports/PersonalDataRecordState.yaml
+    StorePersonalDataRequest:
+      $ref: components/schemas/passport-requests/StorePersonalDataRequest.yaml
     ValidateResponse:
       $ref: components/schemas/passport-reports/ValidateResponse.yaml
     PassportAuditEntry:
@@ -428,6 +436,8 @@ paths:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_transfer_cancel.yaml
   /vault/api/v1/dpp/{dppId}/evidence:
     $ref: paths/vault/vault_api_v1_dpp_{dppId}_evidence.yaml
+  /vault/api/v1/dpp/{dppId}/personal-data:
+    $ref: paths/vault/vault_api_v1_dpp_{dppId}_personal-data.yaml
   /vault/api/v1/evidence/{id}:
     $ref: paths/vault/vault_api_v1_evidence_{id}.yaml
   /vault/api/v1/evidence/{id}/verify:
@@ -603,8 +613,9 @@ tags:
     description: "Signed outbound event delivery: subscribe, list, remove, test."
   - name: Personal Data
     description: >-
-      Erasing the records a passport's `personalData` statements name. A record
-      is held outside the passport so it can be erased, and no route reads one.
+      Storing, listing and erasing the records a passport's `personalData`
+      statements name. A record is held outside the passport so it can be
+      erased, and no route returns a record's content.
   - name: Plugins
     description: >-
       Signed product group plugin installation: verify, persist, hot-swap

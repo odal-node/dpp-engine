@@ -39,7 +39,10 @@ use crate::{
         node_state::node_state_handler,
         obligations::obligations_handler,
         operator::{operator_get_handler, operator_patch_handler},
-        personal_data::personal_data_erase_handler,
+        personal_data::{
+            personal_data_body_limit, personal_data_erase_handler, personal_data_list_handler,
+            personal_data_store_handler,
+        },
         plugins::install_plugin_handler,
         public_read::public_read_handler,
         public_read_by_gtin::public_read_by_gtin_handler,
@@ -185,9 +188,17 @@ pub fn build(state: AppState) -> Router {
         )
         .route("/api-keys/{id}", delete(api_keys_delete_handler))
         .route("/credentials", post(issue_credential_handler))
-        // Erases a record a passport's `personalData` statement names. The only
-        // route that touches the records: there is deliberately none that reads
-        // one, and nothing under `/public` or `/credential` reaches the store.
+        // The records a passport's `personalData` statements name: store one for
+        // a draft, list what is held, erase one. No route returns a record's
+        // content, and nothing under `/public` or `/credential` reaches the
+        // store. The store takes a body capped well below the node's, since what
+        // it holds is a note or a contact and not a document.
+        .route(
+            "/dpp/{dppId}/personal-data",
+            get(personal_data_list_handler)
+                .post(personal_data_store_handler)
+                .layer(personal_data_body_limit()),
+        )
         .route(
             "/personal-data/{record}",
             delete(personal_data_erase_handler),
