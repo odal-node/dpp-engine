@@ -26,3 +26,6 @@ same-shape	CreateOperatorIdentifierRequest	dpp-registry::ProductIdentifier	a req
 same-shape	OperatorIdCreateParams	dpp-registry::ProductIdentifier	CLI parameters for the request above, as typed on the command line
 same-shape	FacilityCreateParams	dpp-registry::FacilityIdentifier	CLI parameters for adding a facility: a registry facility identifier plus the name, address and the default flag the node keeps, as typed on the command line
 same-shape	KeyStoreCredentialIssuer	dpp-vc::LocalIdentityService	an adapter, not a copy: it holds the three inputs core's local identity service holds because it needs them, but it signs a credential, which that service's passport port cannot, and the signing itself is core's sign_access_credential
+same-shape	ObligationDateView	dpp-domain::ObligationDate	pending: a documented transcription of core's date and basis; core's type is already serialisable, so the view can go
+same-shape	PublishBlocker	dpp-domain::FieldError	pending: core's field error under another name, in the node and in the CLI; needs serde on core's FieldError, a core change
+same-shape	ProblemFieldError	dpp-domain::FieldError	an RFC 9457 field error: dpp-common is the shared infrastructure crate and carries no dependency on the domain crate, so it declares the two members it puts in a problem document itself. The CLI's copy only reads that document
