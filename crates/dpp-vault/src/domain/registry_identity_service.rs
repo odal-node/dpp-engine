@@ -13,7 +13,7 @@ use uuid::Uuid;
 use dpp_domain::error::DppError;
 use dpp_types::operator::STANDALONE_OPERATOR_ID;
 use dpp_types::registry_identity::{
-    CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
+    CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifierRecord,
     RegistryIdentityAuditEntry, RegistryIdentityRepository,
 };
 
@@ -151,7 +151,9 @@ impl RegistryIdentityService {
 
     // ── Operator identifiers ─────────────────────────────────────────────────
 
-    pub async fn list_operator_identifiers(&self) -> Result<Vec<OperatorIdentifier>, DppError> {
+    pub async fn list_operator_identifiers(
+        &self,
+    ) -> Result<Vec<OperatorIdentifierRecord>, DppError> {
         self.repo
             .list_operator_identifiers(STANDALONE_OPERATOR_ID)
             .await
@@ -162,9 +164,9 @@ impl RegistryIdentityService {
         req: CreateOperatorIdentifierRequest,
         operator_country: &str,
         actor: &str,
-    ) -> Result<OperatorIdentifier, DppError> {
+    ) -> Result<OperatorIdentifierRecord, DppError> {
         validate_operator_identifier(&req, operator_country)?;
-        let identifier = OperatorIdentifier {
+        let identifier = OperatorIdentifierRecord {
             id: Uuid::now_v7(),
             scheme: req.scheme.trim().to_lowercase(),
             value: req.value.trim().to_owned(),

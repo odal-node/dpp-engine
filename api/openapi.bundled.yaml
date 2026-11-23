@@ -2346,7 +2346,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/OperatorIdentifier'
+                  $ref: '#/components/schemas/OperatorIdentifierRecord'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2381,7 +2381,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OperatorIdentifier'
+                $ref: '#/components/schemas/OperatorIdentifierRecord'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -8259,7 +8259,7 @@ components:
           type: boolean
           default: false
           description: Make this the default facility on creation (unsets any previous default).
-    OperatorIdentifier:
+    OperatorIdentifierRecord:
       type: object
       required:
         - id

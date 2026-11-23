@@ -54,7 +54,7 @@ pub struct CreateFacilityRequest {
 /// passports.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OperatorIdentifier {
+pub struct OperatorIdentifierRecord {
     pub id: Uuid,
     /// Identifier scheme (e.g. `"vat"`, `"lei"`, `"eori"`, `"duns"`).
     pub scheme: String,
@@ -161,12 +161,12 @@ pub trait RegistryIdentityRepository: Send + Sync {
     async fn list_operator_identifiers(
         &self,
         operator_id: &str,
-    ) -> Result<Vec<OperatorIdentifier>, DppError>;
+    ) -> Result<Vec<OperatorIdentifierRecord>, DppError>;
     async fn add_operator_identifier(
         &self,
         operator_id: &str,
-        identifier: OperatorIdentifier,
-    ) -> Result<OperatorIdentifier, DppError>;
+        identifier: OperatorIdentifierRecord,
+    ) -> Result<OperatorIdentifierRecord, DppError>;
     /// Make the identifier `id` the sole primary for this operator. `false` if
     /// no such **live** identifier exists.
     async fn set_primary_operator_identifier(
@@ -182,7 +182,7 @@ pub trait RegistryIdentityRepository: Send + Sync {
         &self,
         operator_id: &str,
         id: Uuid,
-    ) -> Result<Option<OperatorIdentifier>, DppError>;
+    ) -> Result<Option<OperatorIdentifierRecord>, DppError>;
 
     // ── Registry-identity audit (append-only) ────────────────────────────────
     /// Append an immutable audit record for a registry-identity mutation.

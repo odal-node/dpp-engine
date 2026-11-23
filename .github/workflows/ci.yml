@@ -569,6 +569,44 @@ jobs:
         working-directory: dpp-engine
         run: bash scripts/ci-guard-check.test.sh
 
+  core-shadows:
+    name: No engine type restates dpp-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      # Nightly, because rustdoc's JSON output is unstable and the check reads the
+      # public API of the pinned core crates from it. Only the check does: the
+      # engine itself builds on the stable toolchain `rust-toolchain.toml` pins,
+      # and `cargo metadata` below runs on that one.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The check reads the pinned core sources out of the cargo registry cache
+      # and runs cargo `--offline`, so they have to be there first.
+      - name: Fetch the pinned crates
+        working-directory: dpp-engine
+        run: cargo fetch --locked
+      # Every struct, enum and literal constant the engine declares, against the
+      # public API core exposes at the version `Cargo.lock` resolves: by name, by
+      # shape, and by value. One the engine restates is either used from core
+      # instead, or recorded in scripts/core-shadows.tsv with the reason. A record
+      # that no longer matches anything fails too, so the list only shrinks.
+      - name: No engine type restates a dpp-core one
+        working-directory: dpp-engine
+        run: bash scripts/core-api.sh check
+      # A matcher that stops folding case reads every camelCase copy as a
+      # different type and leaves the check green over it, so it is itself tested.
+      - name: Gate self-test
+        working-directory: dpp-engine
+        run: bash scripts/core-api.test.sh
+
   check-tree:
     name: Pre-commit hook self-test
     runs-on: ubuntu-latest

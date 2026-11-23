@@ -18,44 +18,58 @@ pub async fn run_lint(id: &str, json: bool) -> Result<()> {
     let (client, cfg) = crate::http::load_client()?;
     let report = action_lint(id, &client, &cfg).await?;
 
+    // The findings, as dpp-core serialises them: the same document the node
+    // stored, with `code` and the severity spelt as the wire spells it.
+    let findings = report
+        .result
+        .as_ref()
+        .map_or(&[][..], |r| r.findings.as_slice());
+
     if json {
-        println!(
-            "{}",
+        let mut doc = report
+            .result
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or_else(|| serde_json::json!({}));
+        // Core leaves an empty list out; this output has always carried it.
+        doc["findings"] = doc
+            .get("findings")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        doc["publishReadiness"] = serde_json::json!(report.publish_readiness.as_ref().map(|r| {
             serde_json::json!({
-                "packVersion": report.pack_version,
-                "assessedAt": report.assessed_at,
-                "findings": report.findings.iter().map(|f| serde_json::json!({
-                    "severity": f.severity, "field": f.field, "message": f.message,
+                "ready": r.ready,
+                "blockers": r.blockers.iter().map(|b| serde_json::json!({
+                    "field": b.field, "message": b.message,
                 })).collect::<Vec<_>>(),
-                "publishReadiness": report.publish_readiness.as_ref().map(|r| serde_json::json!({
-                    "ready": r.ready,
-                    "blockers": r.blockers.iter().map(|b| serde_json::json!({
-                        "field": b.field, "message": b.message,
-                    })).collect::<Vec<_>>(),
-                    "passportScope": r.scope.as_ref().map(|s| serde_json::json!({
-                        "status": s.status, "note": s.note,
-                    })),
+                "passportScope": r.scope.as_ref().map(|s| serde_json::json!({
+                    "status": s.status, "note": s.note,
                 })),
             })
-        );
+        }));
+        println!("{doc}");
         return Ok(());
     }
 
     println!("Lint: {id}");
-    if let Some(v) = &report.pack_version {
-        println!("  Pack:     {v}");
-    }
-    if let Some(t) = &report.assessed_at {
-        println!("  Assessed: {t}");
+    if let Some(r) = &report.result {
+        println!("  Pack:     {}", r.pack_version);
+        println!("  Assessed: {}", r.assessed_at.to_rfc3339());
     }
 
-    if report.findings.is_empty() {
+    if findings.is_empty() {
         println!("\nNo findings.");
     } else {
-        println!("\n{} finding(s):", report.findings.len());
-        for f in &report.findings {
+        println!("\n{} finding(s):", findings.len());
+        for f in findings {
             let where_ = if f.field.is_empty() { "-" } else { &f.field };
-            println!("  [{}] {where_}  {}", f.severity, f.message);
+            let severity = serde_json::to_value(f.severity)?;
+            println!(
+                "  [{}] {where_}  {}",
+                severity.as_str().unwrap_or_default(),
+                f.message
+            );
         }
     }
     // Said every time, because a list of findings that gates nothing is

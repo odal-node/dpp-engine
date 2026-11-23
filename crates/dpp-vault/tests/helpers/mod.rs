@@ -775,7 +775,9 @@ pub async fn seed_operator_config(dal: &PgDal) {
 /// `publish` now requires for in-force product groups. Use in publish-flow tests.
 pub async fn seed_complete_operator(dal: &PgDal) {
     use dpp_types::operator::STANDALONE_OPERATOR_ID;
-    use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};
+    use dpp_types::registry_identity::{
+        Facility, OperatorIdentifierRecord, RegistryIdentityRepository,
+    };
 
     seed_operator_config(dal).await;
 
@@ -797,7 +799,7 @@ pub async fn seed_complete_operator(dal: &PgDal) {
     .expect("seed default facility");
     repo.add_operator_identifier(
         STANDALONE_OPERATOR_ID,
-        OperatorIdentifier {
+        OperatorIdentifierRecord {
             id: uuid::Uuid::now_v7(),
             // An LEI: a registration carries only a scheme with an EN 18219
             // clause 6 route, so a VAT number here would refuse every publish

@@ -2,11 +2,12 @@
 //! the component-tree walk, the end-of-life declaration, and the lookup by
 //! business identity rather than by ID.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use dpp_domain::LintResult;
 use serde_json::{Value, json};
 
 use super::super::types::{
-    LintFinding, LintReport, PassportScope, PassportSummary, PublishReadiness, TreeReport,
+    LintReport, PassportScope, PassportSummary, PublishBlocker, PublishReadiness, TreeReport,
 };
 use crate::{
     config::Config,
@@ -25,42 +26,27 @@ pub async fn action_lint(id: &str, client: &OdalClient, cfg: &Config) -> Result<
     if !status.is_success() {
         anyhow::bail!("lint failed: {}", describe_error(status, &body));
     }
-    // The route returns the whole refreshed passport, not a lint document —
-    // the findings it persisted live under `lintResult`.
+    // The route returns the whole refreshed passport, not a lint document.
     let passport: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-    let v = passport.get("lintResult").cloned().unwrap_or(Value::Null);
-    let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
-
-    let findings = v
-        .get("findings")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .map(|f| {
-                    let s = |k: &str| {
-                        f.get(k)
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned()
-                    };
-                    LintFinding {
-                        severity: s("severity"),
-                        field: s("field"),
-                        message: s("message"),
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let publish_readiness = parse_publish_readiness(&passport);
 
     Ok(LintReport {
-        pack_version: text("packVersion"),
-        assessed_at: text("assessedAt"),
-        findings,
-        publish_readiness,
+        result: lint_result_of(&passport)?,
+        publish_readiness: parse_publish_readiness(&passport),
     })
+}
+
+/// The findings a lint response persisted, which live under `lintResult` in
+/// core's own shape, so core's type reads them.
+///
+/// One it cannot read is an error and not an empty list: a node whose findings do
+/// not parse has told us nothing, and "No findings" would say it had.
+fn lint_result_of(passport: &Value) -> Result<Option<LintResult>> {
+    match passport.get("lintResult") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => serde_json::from_value(v.clone())
+            .map(Some)
+            .context("the node's lintResult is not the shape dpp-core states"),
+    }
 }
 
 /// Read `publishReadiness` off a lint response.
@@ -88,11 +74,7 @@ fn parse_publish_readiness(passport: &Value) -> Option<PublishReadiness> {
                             .unwrap_or_default()
                             .to_owned()
                     };
-                    LintFinding {
-                        // Blockers carry no severity of their own: every one of
-                        // them stops the publish, which is what makes them
-                        // blockers rather than findings.
-                        severity: "blocking".to_owned(),
+                    PublishBlocker {
                         field: s("field"),
                         message: s("message"),
                     }
@@ -295,8 +277,65 @@ pub async fn action_find_by_identity(
 
 #[cfg(test)]
 mod publish_readiness {
-    use super::parse_publish_readiness;
+    use super::{lint_result_of, parse_publish_readiness};
+    use dpp_domain::LintSeverity;
     use serde_json::json;
+
+    /// The findings come out as core states them: with the `code` the CLI used to
+    /// drop, and a severity that is core's enum and not whatever string arrived.
+    #[test]
+    fn findings_are_read_as_core_states_them() {
+        let response = json!({
+            "lintResult": {
+                "packVersion": "1.2.0",
+                "assessedAt": "2026-11-23T10:00:00Z",
+                "findings": [{
+                    "code": "BATTERY_CAPACITY_WH_MISMATCH",
+                    "field": "/productGroupData/ratedCapacityKwh",
+                    "severity": "WARNING",
+                    "message": "does not match the Wh figure"
+                }]
+            }
+        });
+        let result = lint_result_of(&response)
+            .expect("core's own shape parses")
+            .expect("a lint result is present");
+        assert_eq!(result.pack_version, "1.2.0");
+        assert_eq!(result.findings.len(), 1);
+        assert_eq!(result.findings[0].code, "BATTERY_CAPACITY_WH_MISMATCH");
+        assert_eq!(result.findings[0].severity, LintSeverity::Warning);
+    }
+
+    /// A finding core cannot read is an error, not "No findings": the list would
+    /// otherwise be empty because the parse failed, which reads as a clean bill.
+    #[test]
+    fn a_lint_result_core_cannot_read_is_an_error_not_an_empty_list() {
+        let response = json!({
+            "lintResult": {
+                "packVersion": "1.2.0",
+                "assessedAt": "2026-11-23T10:00:00Z",
+                "findings": [{
+                    "code": "X", "field": "/a", "severity": "blocking", "message": "m"
+                }]
+            }
+        });
+        let err = lint_result_of(&response).expect_err("`blocking` is not a lint severity");
+        assert!(
+            err.to_string().contains("not the shape dpp-core states"),
+            "{err}"
+        );
+    }
+
+    /// A node that sent no lint result sent none: nothing to report, nothing wrong.
+    #[test]
+    fn no_lint_result_is_reported_as_none() {
+        assert!(lint_result_of(&json!({ "id": "x" })).unwrap().is_none());
+        assert!(
+            lint_result_of(&json!({ "lintResult": null }))
+                .unwrap()
+                .is_none()
+        );
+    }
 
     /// The shape a node actually returns, captured from a live `/lint` call
     /// against an imported battery rather than written from the schema.
@@ -389,7 +428,7 @@ mod publish_readiness {
         assert!(!r.ready);
         assert_eq!(r.blockers.len(), 1);
         assert_eq!(r.blockers[0].field, "/productGroupData/batteryModelId");
-        assert_eq!(r.blockers[0].severity, "blocking");
+        assert_eq!(r.blockers[0].message, "is mandatory");
         assert!(r.scope.is_none(), "a node may omit the scope report");
     }
 
