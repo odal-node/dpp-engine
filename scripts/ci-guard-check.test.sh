@@ -24,7 +24,9 @@ scaffold() {
         "$root/scripts/capture-upgrade-fixture.sh" \
         "$root/scripts/check-tree.sh" \
         "$root/scripts/ci-timing.sh" \
-        "$root/scripts/coderabbit-check.sh" "$root/scripts/shared-test-pg.sh" \
+        "$root/scripts/coderabbit-check.sh" \
+        "$root/scripts/coverage-gaps.sh" "$root/scripts/coverage.sh" \
+        "$root/scripts/shared-test-pg.sh" \
         "$root/scripts/test-changed.sh"
     cat > "$root/.github/workflows/ci.yml" <<'EOF'
 jobs:
