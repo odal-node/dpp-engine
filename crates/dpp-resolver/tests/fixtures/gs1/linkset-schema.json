@@ -27,7 +27,7 @@
                     }
                 },
                 "patternProperties": {
-                    "^(?!(?:anchor|itemDescription|description)$)(?:[a-z-]+|https?:\\/\\/[a-zA-z0-9./]+)$": {
+                    "(?!(anchor|itemDescription|description))^([a-z-]+$)|(^https?:\/\/[a-zA-z0-9./]+$)": {
                         "title": "Link object schema",
                         "description": "The schema for each link context object for each link relation",
                         "type": "array",
