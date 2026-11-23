@@ -134,7 +134,7 @@ impl PassportService {
     pub async fn update(
         &self,
         id: PassportId,
-        patch: serde_json::Value,
+        patch: Value,
         auth: &AuthContext,
     ) -> Result<Passport, DppError> {
         let mut passport = self.find_by_id(id).await?;
@@ -442,7 +442,7 @@ fn delta_for(passport: &Passport, applied: &[&'static str]) -> serde_json::Map<S
 /// still applies.
 pub(super) fn apply_patch(
     passport: &mut Passport,
-    patch: &serde_json::Value,
+    patch: &Value,
 ) -> Result<Vec<&'static str>, DppError> {
     let obj = match patch.as_object() {
         Some(o) => o,

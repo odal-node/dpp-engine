@@ -110,10 +110,10 @@ pub struct AppState {
     /// revocation status lists. `None` when credentialed access is unconfigured,
     /// in which case the audience-scoped route serves the public view.
     pub credential_directory:
-        Option<std::sync::Arc<dyn crate::middleware::credential::CredentialDirectory>>,
+        Option<Arc<dyn crate::middleware::credential::CredentialDirectory>>,
     /// Which issuers may attest which audience. `None` alongside
     /// `credential_directory`; the node reports the capability absent.
-    pub trusted_issuers: Option<std::sync::Arc<dyn dpp_vc::TrustedIssuerRegistry>>,
+    pub trusted_issuers: Option<Arc<dyn dpp_vc::TrustedIssuerRegistry>>,
     /// Minting access credentials with this node's own key. `None` on
     /// deployments with no key store in reach (the standalone vault binary),
     /// where the issuance route answers `501`.

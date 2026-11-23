@@ -1158,7 +1158,7 @@ fn cited_record() -> dpp_domain::unsold_goods::DiscardRecord {
 }
 
 /// A destruction of a published passport that joins it to `record`, in one change.
-fn destruction_citing(id: PassportId, record: uuid::Uuid) -> StateChange {
+fn destruction_citing(id: PassportId, record: Uuid) -> StateChange {
     StateChange::new(PassportAuditEntry::new(
         &id.to_string(),
         "deactivated",
