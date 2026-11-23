@@ -3,14 +3,6 @@
 version = 4
 
 [[package]]
-name = "abi-echo"
-version = "0.0.0"
-dependencies = [
- "dpp-plugin-sdk",
- "serde_json",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2485,18 +2477,6 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wat",
-]
-
-[[package]]
-name = "dpp-plugin-sdk"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be2b8134cc009284c510a202503ba1f82412627021f3dfa748ba8d0a4b4db02b"
-dependencies = [
- "dpp-plugin-traits",
- "dpp-rules",
- "serde",
- "serde_json",
 ]
 
 [[package]]
