@@ -40,6 +40,9 @@ dpp-domain${T}struct${T}Foo${T}dpp_domain::Foo${T}
 dpp-domain${T}enum${T}Level${T}dpp_domain::Level${T}
 dpp-domain${T}struct${T}Renamed${T}dpp_domain::Renamed${T}
 dpp-domain${T}const${T}URN_PREFIX${T}dpp_domain::URN_PREFIX${T}
+dpp-domain${T}struct${T}FieldErr${T}dpp_domain::FieldErr${T}
+dpp-domain${T}struct${T}Token${T}dpp_domain::Token${T}
+dpp-domain${T}const${T}MAX_RETRIES${T}dpp_domain::MAX_RETRIES${T}
 EOF
 
 cat >"$TMP/core.tsv" <<EOF
@@ -48,6 +51,9 @@ dpp-domain${T}enum${T}Level${T}f.rs:9${T}Model,Batch,Serial
 dpp-domain${T}const${T}URN_PREFIX${T}f.rs:20${T}"urn:odal-node:"
 dpp-domain${T}struct${T}Hidden${T}f.rs:30${T}alpha,beta,gamma,delta
 dpp-domain${T}struct${T}Renamed${T}f.rs:40${T}nothing=none,outside=out,tag
+dpp-domain${T}struct${T}FieldErr${T}f.rs:50${T}field,message
+dpp-domain${T}struct${T}Token${T}f.rs:60${T}
+dpp-domain${T}const${T}MAX_RETRIES${T}f.rs:70${T}10
 EOF
 
 cat >"$TMP/engine.tsv" <<EOF
@@ -60,6 +66,10 @@ struct${T}Duplicate${T}e.rs:30${T}alpha,beta,gamma,delta
 struct${T}WireCopy${T}e.rs:40${T}none,out,tag
 enum${T}Small${T}e.rs:50${T}Model,Batch
 const${T}SHORT${T}e.rs:60${T}"ab"
+struct${T}Blocker${T}e.rs:70${T}field,message
+struct${T}Lopsided${T}e.rs:80${T}field,hint
+struct${T}Token${T}e.rs:90${T}
+const${T}MAX_RETRIES${T}e.rs:100${T}3
 EOF
 
 join_shadows "$TMP/public.tsv" "$TMP/core.tsv" "$TMP/engine.tsv" >"$TMP/found.tsv"
@@ -83,6 +93,54 @@ refuse "Unrelated" "a type that shares nothing is not a finding"
 refuse "Duplicate" "a copy of a type core does not publish is not a finding"
 refuse "Small" "two variants of three is below the line"
 refuse "SHORT" "a short constant value is too common to mean anything"
+expect "same-shape Blocker FieldErr" "a two-member type that is exactly core's is a finding"
+refuse "Lopsided" "two members of which one is core's is not"
+expect "same-name Token Token" "a tuple struct with core's name is a finding, though it has no named member"
+expect "same-name-other-value MAX_RETRIES MAX_RETRIES" "a short value does not hide a name core owns with another value"
+
+# ── The reader of source ─────────────────────────────────────────────────────
+#
+# The matcher above is fed rows. What produces them is `shapes`, which reads
+# rustfmt-ed source, and a reader that quietly drops a kind of declaration leaves
+# the check green over it: a tuple struct named for a core type escaped, once,
+# because it was never turned into a row.
+
+cat >"$TMP/sample.rs" <<'RS'
+pub struct Wrapper(String);
+pub struct Marker;
+pub struct Empty {}
+pub struct Wire {
+    #[serde(rename = "kind")]
+    pub variant: String,
+    pub plain_name: u8,
+}
+pub enum Choice {
+    A,
+    #[serde(rename = "bee")]
+    B(u8),
+}
+pub const NAME: &str = "a-long-enough-value";
+
+#[cfg(test)]
+mod tests {
+    pub struct InTest {
+        pub x: u8,
+    }
+}
+RS
+
+read_source="$(printf '%s\n' "$TMP/sample.rs" | shapes | awk -F'\t' '{ print $1 " " $2 " [" $4 "]" }')"
+
+source_has() {
+  if grep -qxF "$1" <<<"$read_source"; then ok "$2"; else bad "$2 (wanted: $1; read: $read_source)"; fi
+}
+source_has "struct Wrapper []" "a tuple struct is read, with no members"
+source_has "struct Marker []" "a unit struct is read, with no members"
+source_has "struct Empty []" "an empty braced struct is read, with no members"
+source_has "struct Wire [variant=kind,plain_name]" "a serde rename is read as the member's wire name"
+source_has "enum Choice [A,B=bee]" "variants are read, with a rename"
+source_has 'const NAME ["a-long-enough-value"]' "a literal constant is read with its value"
+if grep -q "InTest" <<<"$read_source"; then bad "a type after #[cfg(test)] was read"; else ok "a type after #[cfg(test)] is not read"; fi
 
 # ── The record ───────────────────────────────────────────────────────────────
 
