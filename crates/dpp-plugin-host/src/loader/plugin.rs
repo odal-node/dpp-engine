@@ -603,11 +603,11 @@ mod tests {
     fn unsigned_allowed_only_when_explicitly_opted_in() {
         // The refusal decision is a pure function of the env value, so it can be
         // asserted deterministically without racing the process-global env.
-        assert!(super::unsigned_allowed(Some("true")));
-        assert!(super::unsigned_allowed(Some("TRUE")));
-        assert!(!super::unsigned_allowed(Some("false")));
-        assert!(!super::unsigned_allowed(Some("1")));
-        assert!(!super::unsigned_allowed(Some("")));
+        assert!(unsigned_allowed(Some("true")));
+        assert!(unsigned_allowed(Some("TRUE")));
+        assert!(!unsigned_allowed(Some("false")));
+        assert!(!unsigned_allowed(Some("1")));
+        assert!(!unsigned_allowed(Some("")));
         assert!(!super::unsigned_allowed(None));
     }
 

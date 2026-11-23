@@ -400,7 +400,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::future;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     fn secret_policy() -> RoutePolicy {
@@ -632,8 +632,6 @@ mod tests {
         status: StatusCode,
     ) -> (axum::Router, Arc<AtomicUsize>) {
         use axum::routing::post;
-        use std::sync::atomic::Ordering;
-
         let ran = Arc::new(AtomicUsize::new(0));
         let counted = ran.clone();
         let inner = axum::Router::new()
@@ -666,7 +664,7 @@ mod tests {
         use tower::ServiceExt;
 
         tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            Duration::from_secs(5),
             app.oneshot(
                 axum::extract::Request::post("/vault/api/v1/dpp")
                     .header(IDEMPOTENCY_KEY_HEADER, "k-1")
@@ -695,7 +693,7 @@ mod tests {
         let response = send_keyed(app).await;
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(ran.load(Ordering::SeqCst), 0);
     }
 
     /// 🚨 The handler has already committed by the time its outcome is recorded,
@@ -715,7 +713,7 @@ mod tests {
         let response = send_keyed(app).await;
 
         assert_eq!(response.status(), StatusCode::CREATED);
-        assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(ran.load(Ordering::SeqCst), 1);
     }
 
     /// The same for the release a `5xx` or a `429` makes.
@@ -736,12 +734,12 @@ mod tests {
             let response = send_keyed(app).await;
 
             assert_eq!(response.status(), status);
-            assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(ran.load(Ordering::SeqCst), 1);
         }
     }
 
     /// Counts the `WARN` events emitted while it is a subscriber's only layer.
-    struct WarnCounter(Arc<std::sync::atomic::AtomicUsize>);
+    struct WarnCounter(Arc<AtomicUsize>);
 
     impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for WarnCounter {
         fn on_event(
@@ -750,7 +748,7 @@ mod tests {
             _: tracing_subscriber::layer::Context<'_, S>,
         ) {
             if *event.metadata().level() == tracing::Level::WARN {
-                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.0.fetch_add(1, Ordering::SeqCst);
             }
         }
     }
@@ -772,16 +770,16 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR,
             StatusCode::TOO_MANY_REQUESTS,
         ] {
-            let warned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let warned = Arc::new(AtomicUsize::new(0));
             let subscriber = tracing_subscriber::registry().with(WarnCounter(warned.clone()));
             let (app, ran) = keyed_app(SupersededStore, status);
 
             let response = send_keyed(app).with_subscriber(subscriber).await;
 
             assert_eq!(response.status(), status);
-            assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(ran.load(Ordering::SeqCst), 1);
             assert!(
-                warned.load(std::sync::atomic::Ordering::SeqCst) > 0,
+                warned.load(Ordering::SeqCst) > 0,
                 "{status}: a superseded claim must be warned about"
             );
         }

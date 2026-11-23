@@ -327,8 +327,8 @@ mod template_publishes {
 
             let json = serde_json::to_value(&*data).expect("battery data serialises");
             for facts in [
-                crate::domain::battery_template::facts_before_due_diligence(),
-                crate::domain::battery_template::facts_from_due_diligence(),
+                battery_template::facts_before_due_diligence(),
+                battery_template::facts_from_due_diligence(),
             ] {
                 let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
                     category.as_str(),
@@ -390,7 +390,7 @@ mod template_publishes {
     fn the_three_templates_differ_from_one_another() {
         let rendered: Vec<String> = BatteryCategory::ALL
             .iter()
-            .map(|c| crate::domain::battery_template::render_csv(*c))
+            .map(|c| battery_template::render_csv(*c))
             .collect();
         assert_ne!(rendered[0], rendered[1], "ev and lmt must differ");
         assert_ne!(rendered[1], rendered[2], "lmt and industrial must differ");

@@ -3921,7 +3921,7 @@ mod fixtures {
             product_group: Some(ProductGroup::Textile),
             // Populated per the maximal-fixture rule: `None` would emit nothing
             // and the schema check would pass by not looking at the field.
-            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
+            supersedes_id: Some(PassportId::new()),
             manufacturer: manufacturer(),
             materials: Some(vec![material()]),
             co2e_per_unit: Some(45.2),
@@ -3937,13 +3937,13 @@ mod fixtures {
             // body that omitted it would check the key set and never compare the
             // value against `LifeStatus.yaml`. `Repurposed` also matches the
             // derivation edge beside it, so the fixture is internally coherent.
-            life_status: Some(dpp_domain::passport::LifeStatus::Repurposed),
+            life_status: Some(LifeStatus::Repurposed),
             // Populated, for the same rule as the fields around it: an empty map
             // emits no key, and the schema check would pass without ever
             // comparing the field.
-            personal_data: std::collections::BTreeMap::from([(
+            personal_data: BTreeMap::from([(
                 "usageHistory.negativeEvents".to_owned(),
-                dpp_domain::PersonalDataStatement::NothingHeld,
+                PersonalDataStatement::NothingHeld,
             )]),
             // Populated, for the same rule: `None` emits no key, and the schema
             // check would pass without ever comparing the field.
@@ -4088,7 +4088,7 @@ mod fixtures {
     /// replaces.
     pub fn supersede_request() -> SupersedeRequest {
         SupersedeRequest {
-            superseded_by: uuid::Uuid::now_v7().to_string(),
+            superseded_by: Uuid::now_v7().to_string(),
             reason: Some("Reissued on schema 2.6.0 after the product group's lens changed".into()),
         }
     }
@@ -4696,8 +4696,8 @@ mod fixtures {
         }
     }
 
-    pub fn job_progress() -> dpp_integrator::handlers::job_status::JobProgress {
-        dpp_integrator::handlers::job_status::JobProgress {
+    pub fn job_progress() -> JobProgress {
+        JobProgress {
             processed: 120,
             total: 500,
         }
