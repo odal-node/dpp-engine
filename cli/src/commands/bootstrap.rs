@@ -101,5 +101,5 @@ fn from_flag_or_env(flag: Option<String>, env_var: &str, what: &str) -> Result<S
     {
         return Ok(v);
     }
-    anyhow::bail!("{what} is required — set ${env_var} or pass the corresponding flag")
+    bail!("{what} is required — set ${env_var} or pass the corresponding flag")
 }

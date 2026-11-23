@@ -69,6 +69,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use dpp_domain::schemas;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -463,7 +464,7 @@ fn object_cases() -> Vec<ObjectCase> {
     // serialises it beside the passport.
     case!(
         "DerivedView",
-        dpp_domain::schemas::DerivedView {
+        schemas::DerivedView {
             data: serde_json::json!({ "ratedEnergyWh": 4800.0 }),
             derived: true,
             from: "1.0.0".to_owned(),
@@ -1534,8 +1535,8 @@ fn every_responsibility_basis_serialises_as_documented() {
         .map(|b| {
             let v = serde_json::to_value(b).expect("ResponsibilityBasis failed to serialise");
             match v {
-                serde_json::Value::String(s) => s,
-                serde_json::Value::Object(o) => o
+                Value::String(s) => s,
+                Value::Object(o) => o
                     .keys()
                     .next()
                     .cloned()
@@ -1565,7 +1566,7 @@ fn every_responsibility_basis_serialises_as_documented() {
 
     assert_eq!(
         payload["required"].as_array().map(Vec::as_slice),
-        Some(&[serde_json::json!("citation")][..]),
+        Some(&[json!("citation")][..]),
         "the otherUnionLaw payload must require exactly `citation`"
     );
     assert_eq!(
@@ -3058,6 +3059,7 @@ mod fixtures {
             ComponentRef, DerivationRef, FacilitySnapshot, LifeStatus, ManufacturerInfo,
             MaterialEntry, Passport, PassportId, PassportRef, Quantity, SecondLifeOperation,
         },
+        personal_data::PersonalDataStatement,
         product_group::{
             CarbonFootprint, CarbonFootprintClass, LifecycleStage, ProductGroup, RepairCriterion,
             RepairabilityScore, SystemBoundary,
@@ -3120,6 +3122,7 @@ mod fixtures {
             supersede::SupersedeRequest,
             suspend::SuspendRequest,
             transfer::TransferInitiateRequest,
+            unsold_goods::{CreateDiscardRecordRequest, MissingEvidence},
             validate::ValidateResponse,
             webhooks::CreatedWebhookResponse,
             whoami::WhoamiResponse,
@@ -3477,9 +3480,9 @@ mod fixtures {
             // Populated, for the same rule as the fields around it: an empty map
             // emits no key, and the schema check would pass without ever
             // comparing the field.
-            personal_data: std::collections::BTreeMap::from([(
+            personal_data: BTreeMap::from([(
                 "usageHistory.negativeEvents".to_owned(),
-                dpp_domain::PersonalDataStatement::NothingHeld,
+                PersonalDataStatement::NothingHeld,
             )]),
             retention_until: Some(ts()),
             product_id: Some(uuid()),
@@ -3548,9 +3551,8 @@ mod fixtures {
         ]
     }
 
-    pub fn create_discard_record_request()
-    -> dpp_vault::handlers::unsold_goods::CreateDiscardRecordRequest {
-        dpp_vault::handlers::unsold_goods::CreateDiscardRecordRequest {
+    pub fn create_discard_record_request() -> CreateDiscardRecordRequest {
+        CreateDiscardRecordRequest {
             record: serde_json::json!({
                 "discardedOn": "2026-08-01",
                 "cnCodes": ["420300"],
@@ -3592,9 +3594,9 @@ mod fixtures {
         }
     }
 
-    pub fn missing_evidence() -> dpp_vault::handlers::unsold_goods::MissingEvidence {
-        dpp_vault::handlers::unsold_goods::MissingEvidence {
-            enterprise_size: dpp_domain::unsold_goods::EnterpriseSize::Large,
+    pub fn missing_evidence() -> MissingEvidence {
+        MissingEvidence {
+            enterprise_size: EnterpriseSize::Large,
             missing_evidence: vec![evidence_requirement()],
         }
     }
@@ -3919,7 +3921,7 @@ mod fixtures {
             product_group: Some(ProductGroup::Textile),
             // Populated per the maximal-fixture rule: `None` would emit nothing
             // and the schema check would pass by not looking at the field.
-            supersedes_id: Some(dpp_domain::passport::PassportId::new()),
+            supersedes_id: Some(PassportId::new()),
             manufacturer: manufacturer(),
             materials: Some(vec![material()]),
             co2e_per_unit: Some(45.2),
@@ -3935,13 +3937,13 @@ mod fixtures {
             // body that omitted it would check the key set and never compare the
             // value against `LifeStatus.yaml`. `Repurposed` also matches the
             // derivation edge beside it, so the fixture is internally coherent.
-            life_status: Some(dpp_domain::passport::LifeStatus::Repurposed),
+            life_status: Some(LifeStatus::Repurposed),
             // Populated, for the same rule as the fields around it: an empty map
             // emits no key, and the schema check would pass without ever
             // comparing the field.
-            personal_data: std::collections::BTreeMap::from([(
+            personal_data: BTreeMap::from([(
                 "usageHistory.negativeEvents".to_owned(),
-                dpp_domain::PersonalDataStatement::NothingHeld,
+                PersonalDataStatement::NothingHeld,
             )]),
             // Populated, for the same rule: `None` emits no key, and the schema
             // check would pass without ever comparing the field.
@@ -4086,7 +4088,7 @@ mod fixtures {
     /// replaces.
     pub fn supersede_request() -> SupersedeRequest {
         SupersedeRequest {
-            superseded_by: uuid::Uuid::now_v7().to_string(),
+            superseded_by: Uuid::now_v7().to_string(),
             reason: Some("Reissued on schema 2.6.0 after the product group's lens changed".into()),
         }
     }
@@ -4694,8 +4696,8 @@ mod fixtures {
         }
     }
 
-    pub fn job_progress() -> dpp_integrator::handlers::job_status::JobProgress {
-        dpp_integrator::handlers::job_status::JobProgress {
+    pub fn job_progress() -> JobProgress {
+        JobProgress {
             processed: 120,
             total: 500,
         }

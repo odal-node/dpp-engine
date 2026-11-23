@@ -42,7 +42,6 @@ base64        = { workspace = true }
 ed25519-dalek = { workspace = true }
 uuid          = { workspace = true }
 chrono        = { workspace = true }
-thiserror     = { workspace = true }
 anyhow        = { workspace = true }
 dotenvy       = { workspace = true }
 tracing             = { workspace = true }

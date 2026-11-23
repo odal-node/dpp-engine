@@ -185,7 +185,7 @@ mod tests {
     /// absent, but a stored document can carry an explicit null.
     #[test]
     fn null_values_are_omitted() {
-        let p = json!({ "productGroupData": { "productGroup": "x", "a": serde_json::Value::Null }});
+        let p = json!({ "productGroupData": { "productGroup": "x", "a": Value::Null }});
         assert_eq!(build_remainder_section(&p, &[]), "");
     }
 

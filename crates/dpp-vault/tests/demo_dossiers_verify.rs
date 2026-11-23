@@ -354,8 +354,8 @@ fn each_readable_view_is_its_signed_payload() {
                 .expect("the payload segment is base64url");
             let readable = dpp_crypto::jws::canonicalize(&doc[view]["payload"])
                 .expect("canonicalise the readable copy");
-            assert!(
-                readable == signed,
+            assert_eq!(
+                readable, signed,
                 "{file}: the readable {view} payload is not what its JWS signed; {REGENERATE}"
             );
         }
@@ -374,8 +374,8 @@ fn every_dossier_file_lists_its_keys_in_signed_order() {
         };
         let rewritten =
             serde_json::to_string_pretty(&SignedKeyOrder(&doc)).expect("serialise the dossier");
-        assert!(
-            rewritten == text,
+        assert_eq!(
+            rewritten, text,
             "{file} is not written in signed key order; {REGENERATE}"
         );
     }

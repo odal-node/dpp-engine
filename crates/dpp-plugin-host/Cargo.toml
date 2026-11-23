@@ -21,13 +21,10 @@ dpp-common        = { path = "../dpp-common" }
 wasmtime      = { workspace = true }
 wasmtime-wasi = { workspace = true }
 chrono        = { workspace = true }
-serde         = { workspace = true }
 serde_json    = { workspace = true }
 anyhow        = { workspace = true }
-thiserror     = { workspace = true }
 tracing       = { workspace = true }
 metrics       = { workspace = true }
-tokio         = { workspace = true }
 ed25519-dalek = { workspace = true }
 base64        = { workspace = true }
 sha2          = { workspace = true }
@@ -40,7 +37,6 @@ integration-tests = []
 wasm-fixture-tests = []
 
 [dev-dependencies]
-tokio     = { workspace = true }
 uuid      = { workspace = true }
 wat       = "1"
 tempfile  = "3"

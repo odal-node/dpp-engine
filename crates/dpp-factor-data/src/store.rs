@@ -1,5 +1,7 @@
 //! `FactorStore` trait — abstracts where encrypted factor tables come from.
 
+use std::future::Future;
+
 use crate::manifest::FactorDatasetManifest;
 
 /// Retrieves and decrypts a licensed factor table from storage.
@@ -15,5 +17,5 @@ pub trait FactorStore: Send + Sync {
     fn load(
         &self,
         dataset_id: &str,
-    ) -> impl std::future::Future<Output = Result<(Vec<u8>, FactorDatasetManifest), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<(Vec<u8>, FactorDatasetManifest), Self::Error>> + Send;
 }

@@ -817,7 +817,7 @@ mod tests {
         passport::PassportId,
         seal::{SealCapabilities, SealVerification, SealedEnvelope},
     };
-    use dpp_types::{SealOutboxCounts, SealRow};
+    use dpp_types::{SealOutboxCounts, SealRow, UnsealedCounts};
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -889,10 +889,10 @@ mod tests {
         ) -> Result<bool, DppError> {
             unreachable!("the drain never renews")
         }
-        async fn unsealed_published_counts(&self) -> Result<dpp_types::UnsealedCounts, DppError> {
+        async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError> {
             // These tests drive the drain, which never asks. A passport-level
             // count has no meaning against a fake holding only rows.
-            Ok(dpp_types::UnsealedCounts::default())
+            Ok(UnsealedCounts::default())
         }
     }
 
@@ -1162,13 +1162,11 @@ mod tests {
             async fn mark_exhausted(&self, _i: uuid::Uuid, _m: String) -> Result<(), DppError> {
                 unreachable!("the audit must not write")
             }
-            async fn status_counts(&self) -> Result<dpp_types::SealOutboxCounts, DppError> {
-                Ok(dpp_types::SealOutboxCounts::default())
+            async fn status_counts(&self) -> Result<SealOutboxCounts, DppError> {
+                Ok(SealOutboxCounts::default())
             }
-            async fn unsealed_published_counts(
-                &self,
-            ) -> Result<dpp_types::UnsealedCounts, DppError> {
-                Ok(dpp_types::UnsealedCounts::default())
+            async fn unsealed_published_counts(&self) -> Result<UnsealedCounts, DppError> {
+                Ok(UnsealedCounts::default())
             }
         }
 

@@ -111,7 +111,11 @@ pub(super) async fn operator() -> Result<()> {
                         .with_validator(valid_optional_days)
                         .prompt())?
                     {
-                        Some(s) if !s.trim().is_empty() => Some(s.trim().parse::<i64>().unwrap()),
+                        Some(s) if !s.trim().is_empty() => Some(
+                            s.trim()
+                                .parse::<i64>()
+                                .map_err(|e| anyhow::anyhow!("Invalid retention policy: {e}"))?,
+                        ),
                         Some(_) => None,
                         None => continue,
                     };

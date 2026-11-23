@@ -295,6 +295,7 @@ mod template_validator_pairing {
 #[cfg(test)]
 mod template_publishes {
     use super::{BatteryCategory, Source, templates};
+    use crate::domain::battery_template;
     use crate::domain::{csv_parser, validate};
     use dpp_domain::product_group::ProductGroupData;
 
@@ -326,8 +327,8 @@ mod template_publishes {
 
             let json = serde_json::to_value(&*data).expect("battery data serialises");
             for facts in [
-                crate::domain::battery_template::facts_before_due_diligence(),
-                crate::domain::battery_template::facts_from_due_diligence(),
+                battery_template::facts_before_due_diligence(),
+                battery_template::facts_from_due_diligence(),
             ] {
                 let missing: Vec<&str> = dpp_rules::batteries::passport_content::mandatory_fields(
                     category.as_str(),
@@ -355,7 +356,7 @@ mod template_publishes {
     fn the_example_fills_the_due_diligence_columns_for_a_battery_placed_from_the_date() {
         let from = chrono::NaiveDate::from_ymd_opt(2027, 8, 18).expect("a real date");
         for category in BatteryCategory::ALL {
-            let csv = crate::domain::battery_template::render_csv(*category);
+            let csv = battery_template::render_csv(*category);
             let rows = crate::domain::csv_parser::parse_csv(csv.as_bytes()).expect("parses");
             let row = rows.first().expect("template has an example row");
 
@@ -389,7 +390,7 @@ mod template_publishes {
     fn the_three_templates_differ_from_one_another() {
         let rendered: Vec<String> = BatteryCategory::ALL
             .iter()
-            .map(|c| crate::domain::battery_template::render_csv(*c))
+            .map(|c| battery_template::render_csv(*c))
             .collect();
         assert_ne!(rendered[0], rendered[1], "ev and lmt must differ");
         assert_ne!(rendered[1], rendered[2], "lmt and industrial must differ");
@@ -413,7 +414,7 @@ mod template_publishes {
     #[test]
     fn no_two_templates_import_as_the_same_passport() {
         let identity_of = |category: BatteryCategory| -> (String, String) {
-            let csv = crate::domain::battery_template::render_csv(category);
+            let csv = battery_template::render_csv(category);
             let rows = crate::domain::csv_parser::parse_csv(csv.as_bytes()).expect("parses");
             let row = rows.first().expect("template has an example row").clone();
             let get = |key: &str| {

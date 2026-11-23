@@ -406,8 +406,8 @@ mod tests {
         fn validate_agrees_with_range_predicate_v4(
             a in any::<u8>(), b in any::<u8>(), c in any::<u8>(), d in any::<u8>()
         ) {
-            let ip = std::net::Ipv4Addr::new(a, b, c, d);
-            let disallowed = ip_is_disallowed(std::net::IpAddr::V4(ip));
+            let ip = Ipv4Addr::new(a, b, c, d);
+            let disallowed = ip_is_disallowed(IpAddr::V4(ip));
             let rejected = validate_webhook_url(&format!("https://{ip}/hook"), false).is_err();
             prop_assert_eq!(rejected, disallowed);
         }
@@ -418,8 +418,8 @@ mod tests {
         fn validate_agrees_with_range_predicate_v6(
             segs in proptest::array::uniform8(any::<u16>())
         ) {
-            let ip = std::net::Ipv6Addr::from(segs);
-            let disallowed = ip_is_disallowed(std::net::IpAddr::V6(ip));
+            let ip = Ipv6Addr::from(segs);
+            let disallowed = ip_is_disallowed(IpAddr::V6(ip));
             let rejected = validate_webhook_url(&format!("https://[{ip}]/hook"), false).is_err();
             prop_assert_eq!(rejected, disallowed);
         }

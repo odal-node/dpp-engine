@@ -9,11 +9,8 @@ description = "Shared HTML rendering of the public passport view"
 publish = false
 
 [dependencies]
-dpp-digital-link = { workspace = true }
-
 serde_json = { workspace = true }
 qrcode     = { workspace = true }
-uuid       = { workspace = true }
 chrono     = { workspace = true }
 
 [dev-dependencies]

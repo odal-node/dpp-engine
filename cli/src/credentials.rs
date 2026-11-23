@@ -187,7 +187,7 @@ fn parse_stdin_secret(raw: &str) -> Result<String> {
 /// by another account, say, where the write would otherwise have been refused
 /// with its contents intact.
 #[cfg(unix)]
-pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, content: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut file = fs::OpenOptions::new()
@@ -202,7 +202,7 @@ pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::
 }
 
 #[cfg(not(unix))]
-pub(crate) fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, content: &[u8]) -> std::io::Result<()> {
     // Windows: the file lives under %USERPROFILE%\.config\odal, which carries a
     // per-user ACL by default. No portable chmod equivalent is applied here.
     fs::write(path, content)

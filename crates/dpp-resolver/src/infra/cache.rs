@@ -59,10 +59,8 @@ impl Cache {
     /// Test-only helper; not part of the supported public API.
     #[doc(hidden)]
     pub fn new_noop() -> Arc<Self> {
-        let cfg = deadpool_redis::Config::from_url("redis://127.0.0.1:1");
-        let pool = cfg
-            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("noop pool");
+        let cfg = RedisConfig::from_url("redis://127.0.0.1:1");
+        let pool = cfg.create_pool(Some(Runtime::Tokio1)).expect("noop pool");
         Arc::new(Self { pool, ttl_secs: 0 })
     }
 }
