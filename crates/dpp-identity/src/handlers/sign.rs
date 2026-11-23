@@ -129,9 +129,21 @@ mod tests {
         Arc<dpp_crypto::keystore::KeyStore>,
         tempfile::TempDir,
     ) {
-        let dir = tempfile::tempdir().expect("temp dir");
+        // The passphrase is the directory's own random name: a fresh one per
+        // fixture, and not a literal in the source.
+        let dir = tempfile::Builder::new()
+            .prefix("odal-keystore-")
+            .rand_bytes(24)
+            .tempdir()
+            .expect("temp dir");
+        let passphrase = dir
+            .path()
+            .file_name()
+            .expect("a named directory")
+            .to_string_lossy()
+            .into_owned();
         let store = Arc::new(
-            dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), "test")
+            dpp_crypto::keystore::KeyStore::open(dir.path().join("keystore.json"), &passphrase)
                 .expect("open store"),
         );
         let state = AppState {

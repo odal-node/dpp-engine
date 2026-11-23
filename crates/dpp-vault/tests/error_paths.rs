@@ -1031,6 +1031,27 @@ async fn plugin_install_refuses_an_incomplete_upload_and_reports_what_the_host_d
     assert!(detail.contains("not enabled on this node"), "{detail}");
 }
 
+/// The multipart extractor refuses a body that is not multipart before the
+/// handler runs. That refusal is a problem document like every other `400` here,
+/// not axum's plain-text one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_upload_that_is_not_multipart_is_refused_with_a_problem() {
+    let pg = start_postgres().await;
+    let base = start_vault(pg.dal.clone()).await;
+
+    let resp = helpers::send_checked(
+        reqwest::Client::new()
+            .post(format!("{base}/api/v1/plugins"))
+            .bearer_auth(make_jwt(&op()))
+            .header("content-type", "application/json")
+            .body("{}"),
+    )
+    .await;
+
+    let detail = refused(resp, 400, "POST /plugins with a JSON body").await;
+    assert!(detail.contains("boundary"), "{detail}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn credential_issue_refuses_a_holder_that_is_not_a_did_has_no_name_or_a_bad_country() {
     let pg = start_postgres().await;

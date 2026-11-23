@@ -149,7 +149,14 @@ mod tests {
     #[tokio::test]
     async fn an_operator_id_outside_the_key_name_alphabet_is_refused_as_unprocessable() {
         let (store, _dir) = temp_store();
-        let app = app(store);
+        // Kept, so the test can ask whether the refused request left a key behind.
+        let store = Arc::new(store);
+        let app = Router::new()
+            .route("/internal/verify", post(verify_handler))
+            .with_state(AppState {
+                store: Arc::clone(&store),
+                did_web_base_url: "http://localhost".into(),
+            });
 
         let req = Request::builder()
             .method("POST")
@@ -180,6 +187,10 @@ mod tests {
                 .as_str()
                 .is_some_and(|d| d.contains("operator_id")),
             "the problem names the field: {problem}"
+        );
+        assert!(
+            !store.has_key("a b"),
+            "a refused operator id must not provision a key"
         );
     }
 
