@@ -7,6 +7,13 @@
 # line is deleted, and the list only shrinks. Read the finding's detail with
 # `scripts/core-api.sh shadows`.
 #
+# A `same-words` record is of another kind: a file that writes two or more of one
+# core enum's words as strings, at least one where it decides on them (a match
+# pattern, a comparison, a list element, the value of an arm). Its engine-type is
+# the file path, and it is one record for the file and the enum however many words
+# there are. Read the words, and the one-word hits that are not gated, with
+# `scripts/core-api.sh literals`.
+#
 # One tab-separated record per line:
 #
 #   relation  engine-type  core-crate::core-type  reason
@@ -29,3 +36,24 @@ same-shape	KeyStoreCredentialIssuer	dpp-vc::LocalIdentityService	an adapter, not
 same-shape	ObligationDateView	dpp-domain::ObligationDate	pending: a documented transcription of core's date and basis; core's type is already serialisable, so the view can go
 same-shape	PublishBlocker	dpp-domain::FieldError	pending: core's field error under another name, in the node and in the CLI; needs serde on core's FieldError, a core change
 same-shape	ProblemFieldError	dpp-domain::FieldError	an RFC 9457 field error: dpp-common is the shared infrastructure crate and carries no dependency on the domain crate, so it declares the two members it puts in a problem document itself. The CLI's copy only reads that document
+same-words	cli/src/cli_args.rs	dpp-domain::OperatorRole	pending: the role list of the clap argument is core's OperatorRole::ALL, spelt as its wire form
+same-words	cli/src/cli_args.rs	dpp-domain::TransferReason	pending: the reason list of the clap argument is core's TransferReason::ALL, spelt by its wire_str
+same-words	cli/src/console/menu/passports.rs	dpp-domain::PassportStatus	pending: the menu colours a status string; read it as core's PassportStatus and match the variant
+same-words	cli/src/core/credential.rs	dpp-vc::CredentialRole	pending: a role is named or custom by asking core's CredentialRole to read it, not by a list kept here; the authority roles stay named so the node refuses them with its reason
+same-words	cli/src/stateless/render.rs	dpp-domain::SubmissionReport	pending: the registry outcome is read as a string; read it with core's SubmissionReport
+same-words	crates/dpp-integrator/src/domain/battery_fields.rs	dpp-domain::BatteryStatus	pending: a hand-written parse of a CSV cell into core's BatteryStatus, which derives Deserialize; read the cell with it
+same-words	crates/dpp-integrator/src/domain/battery_template.rs	dpp-domain::BatteryType	pending: BatteryCategory is the three battery types a template exists for, spelt here; hold core's BatteryType and spell it with core's wire form
+same-words	crates/dpp-integrator/src/domain/battery_template.rs	dpp-rules::MissingFact	the names of passport data fields, which are the template's rows; core's MissingFact names a missing fact by the field it lacks, so it spells the same fields, and the template is not writing that enum out
+same-words	crates/dpp-integrator/src/domain/validate/battery.rs	dpp-rules::MissingFact	the names of passport data fields read from a CSV row; core's MissingFact names a missing fact by the same field, and the import is not writing that enum out
+same-words	crates/dpp-integrator/src/domain/validate/mod.rs	dpp-domain::ProductGroup	pending: the integrator switches on product group names typed here; core keys a group by string and lists them in ProductGroupCatalog, so the columns and templates follow the catalog, not a list kept here
+same-words	crates/dpp-integrator/src/handlers/templates.rs	dpp-domain::ProductGroup	pending: the template routes are a list of product groups typed here; take them from core's ProductGroupCatalog
+same-words	crates/dpp-plugin-host/src/host.rs	dpp-plugin-traits::AbiResult	the values of the outcome label on the plugin_invocations_total metric; they name what the host observed of a call, not the ABI's result type, and a metric label is not a wire word
+same-words	crates/dpp-render/src/carrier.rs	dpp-domain::ProductIdentifier	pending: reads the scheme keys of a signed view as untyped JSON (such a view cannot be rewritten); the key names should come from core's ProductIdentifier, so only the reading stays here
+same-words	crates/dpp-render/src/sections/electronics.rs	dpp-domain::DeviceType	pending: a label for each device type, matched on its wire string; read the string as core's DeviceType and match the variant
+same-words	crates/dpp-render/src/sections/mod.rs	dpp-domain::ProductGroup	pending: the page sections are chosen by matching product group names typed here; follow core's ProductGroupCatalog
+same-words	crates/dpp-resolver/src/router.rs	dpp-digital-link::DppMediaType	pending: compares the negotiated media type with strings core's DppMediaType already names; parse it with DppMediaType::parse and compare the type
+same-words	crates/dpp-types/src/registry_sync.rs	dpp-registry::RegistryStatusCode	pending: decide. The node's own sync state, spelt as the status column's CHECK spells it, adds submitted and abandoned that core has no code for; its four other words are the registry's status codes, so they could come from RegistryStatusCode instead of being spelt again, or the state is recorded as the node's own
+same-words	crates/dpp-types/src/registry_transfer.rs	dpp-registry::RegistryStatusCode	pending: decide. The queue state of a transfer notification, spelt as the status column's CHECK spells it, adds notified that core has no code for; pending and rejected are two of the registry's status codes. Same question as the sync state
+same-words	crates/dpp-vault/src/domain/service/lifecycle.rs	dpp-domain::PassportStatus	pending: the event payload writes the status as a string where the audit entry two lines above spells it with PassportStatus; do the same. The audit action names are the node's own and stay
+same-words	crates/dpp-vault/src/domain/service/query.rs	dpp-domain::Granularity	pending: LabelLevel, which core's CarrierLevel replaces; goes with the follow-up that waits for dpp-core 0.25.0
+same-words	crates/dpp-vault/src/domain/service/transfer.rs	dpp-domain::TransferStatus	pending: the phase of a transfer event is written as a string; serialise core's TransferStatus, which derives it
