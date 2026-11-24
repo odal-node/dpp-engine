@@ -43,6 +43,7 @@ dpp-domain${T}const${T}URN_PREFIX${T}dpp_domain::URN_PREFIX${T}
 dpp-domain${T}struct${T}FieldErr${T}dpp_domain::FieldErr${T}
 dpp-domain${T}struct${T}Token${T}dpp_domain::Token${T}
 dpp-domain${T}const${T}MAX_RETRIES${T}dpp_domain::MAX_RETRIES${T}
+dpp-domain${T}struct${T}Aliased${T}dpp_domain::Aliased${T}
 EOF
 
 cat >"$TMP/core.tsv" <<EOF
@@ -54,6 +55,7 @@ dpp-domain${T}struct${T}Renamed${T}f.rs:40${T}nothing=none,outside=out,tag
 dpp-domain${T}struct${T}FieldErr${T}f.rs:50${T}field,message
 dpp-domain${T}struct${T}Token${T}f.rs:60${T}
 dpp-domain${T}const${T}MAX_RETRIES${T}f.rs:70${T}10
+dpp-domain${T}struct${T}Aliased${T}f.rs:90${T}red=crimson,blue
 EOF
 
 cat >"$TMP/engine.tsv" <<EOF
@@ -70,6 +72,7 @@ struct${T}Blocker${T}e.rs:70${T}field,message
 struct${T}Lopsided${T}e.rs:80${T}field,hint
 struct${T}Token${T}e.rs:90${T}
 const${T}MAX_RETRIES${T}e.rs:100${T}3
+struct${T}AliasPair${T}e.rs:110${T}red,crimson
 EOF
 
 join_shadows "$TMP/public.tsv" "$TMP/core.tsv" "$TMP/engine.tsv" >"$TMP/found.tsv"
@@ -95,6 +98,7 @@ refuse "Small" "two variants of three is below the line"
 refuse "SHORT" "a short constant value is too common to mean anything"
 expect "same-shape Blocker FieldErr" "a two-member type that is exactly core's is a finding"
 refuse "Lopsided" "two members of which one is core's is not"
+refuse "AliasPair" "two members that both answer to one of core's, with core's other member unmatched, are not a copy"
 expect "same-name Token Token" "a tuple struct with core's name is a finding, though it has no named member"
 expect "same-name-other-value MAX_RETRIES MAX_RETRIES" "a short value does not hide a name core owns with another value"
 

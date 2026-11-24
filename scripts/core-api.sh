@@ -582,15 +582,17 @@ join_shadows() {
         minshared = (kind == "enum") ? 2 : 3
         rel = ""
         if (samename) rel = "same-name"
-        # A type of two members has little to be a shape of, so it counts only when
-        # it is the other side exactly: every member there, and nothing else.
-        if ((jac >= 0.75 && shared >= minshared) || (jac == 1 && shared >= 2)) rel = (rel == "" ? "same-shape" : rel "+same-shape")
-        if (rel == "") continue
         # What is on each side only.
         eo = ""; co = ""
         for (i = 1; i <= m; i++) { mk = keys(ms[i]); k = split(mk, kk, "|"); hit = 0; for (j = 1; j <= k; j++) if ((id, kk[j]) in tm) hit = 1; if (!hit) { split(ms[i], a, "="); eo = eo (eo == "" ? "" : ",") a[1] } }
         cm = split(tmembers[id], cms, ",")
         for (i = 1; i <= cm; i++) { mk = keys(cms[i]); k = split(mk, kk, "|"); hit = 0; for (j = 1; j <= k; j++) { for (q2 = 1; q2 <= m; q2++) { ek = keys(ms[q2]); ke = split(ek, ee, "|"); for (z = 1; z <= ke; z++) if (ee[z] == kk[j]) hit = 1 } } if (!hit) { split(cms[i], a, "="); co = co (co == "" ? "" : ",") a[1] } }
+        # A type of two members has little to be a shape of, so it counts only when
+        # it is the other side exactly: every member on each side matched, and nothing
+        # else. Two members answering to one core member (an alias) leave the other
+        # core member unmatched, and that is not a copy.
+        if ((jac >= 0.75 && shared >= minshared) || (jac == 1 && shared >= 2 && eo == "" && co == "")) rel = (rel == "" ? "same-shape" : rel "+same-shape")
+        if (rel == "") continue
         printf "%s\t%.2f\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", rel, jac, kind, name, loc, tcrate[id], tname[id], shared, eo, co
       }
     }' "$engine" | sort -t$'\t' -k1,1 -k2,2nr -k4,4
