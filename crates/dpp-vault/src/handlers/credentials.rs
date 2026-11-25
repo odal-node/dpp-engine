@@ -513,6 +513,21 @@ mod tests {
         assert_eq!(problem(&["furniture"], &["bed"]), None);
     }
 
+    /// A category an earlier schema version allowed and the current one withdrew
+    /// is still one a stored passport may state, so a credential may be narrowed
+    /// to it. Electronics' `laptop` is one: reading the current list alone would
+    /// refuse a credential for passports that exist.
+    #[test]
+    fn a_category_an_earlier_schema_allowed_is_accepted() {
+        assert!(
+            !ProductGroup::from_wire_tag("electronics")
+                .product_category_values()
+                .is_some_and(|current| current.iter().any(|c| c == "laptop")),
+            "premise: `laptop` is no longer in the current schema"
+        );
+        assert_eq!(problem(&["electronics"], &["laptop"]), None);
+    }
+
     /// Without named groups the list would narrow every group, and shut out
     /// each one with no category axis.
     #[test]

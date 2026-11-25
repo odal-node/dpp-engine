@@ -119,12 +119,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   under `unsold-goods` still reads, as an unknown product group with its payload
   as written, and `passport_doc_compat` keeps its frozen document to hold that.
   The fixture capture for the group is removed. The unsold-goods disclosure route
-  is unchanged until #597 replaces it. (#600, #616)
-
-- **`dpp-core` 0.24.0: the resolver's authority view no longer carries
-  `jwsSignature`.** Core's whole-passport filter now drops the root proofs for
-  every audience, since none of them covers the filtered body beside it. Whether
-  the authority view should carry a proof that covers it is open on #600. (#600, #616)
+  is replaced in the same release, by the entry below. (#600, #616)
 
 - **The unsold-goods disclosure line is replaced by discard records (#597, #632).**
   `POST /vault/api/v1/unsold-goods` and `GET /vault/api/v1/unsold-goods` are
@@ -218,6 +213,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   `ProductGroup::product_category_values_any_version`, so a credential narrowed
   to a withdrawn value such as electronics `laptop` is issued, matching the stored
   passports that state it. (#600, #616)
+- **`dpp-core` 0.24.0: its whole-passport filter drops the root proofs for every
+  audience, and no view this node serves changes.** Core removes them because none
+  of them covers the filtered body beside it. The resolver serves the public view
+  alone and re-attaches `publicJwsSignature`, the proof over it. A credentialed
+  read, an authority's included, already carried neither `jwsSignature` nor
+  `publicJwsSignature` and carries `disclosureJwsSignature`, the proof over the
+  view it serves. (#600, #616)
 - **The QR error-correction level is named, not left to the library default.**
   Both carrier renderers, the passport page's SVG and the resolver's PNG route,
   now pass M explicitly through one constant beside the quiet-zone constant. The
