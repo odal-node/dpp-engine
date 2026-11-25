@@ -66,7 +66,7 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, FromRequest, Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse as _, Response};
 use chrono::{DateTime, Utc};
@@ -263,19 +263,27 @@ fn marked_fields(group: &ProductGroup) -> BTreeSet<String> {
 ///
 /// Refuses, in this order: `404` for a passport this node does not hold, `409`
 /// for one that is not a draft (its statement is signed, or about to be, and can
-/// no longer be changed to name a new record), then `422` for a `field` the
-/// passport's schema does not mark and for `content` that is `null`. A body over
-/// [`PERSONAL_DATA_BODY_MAX_BYTES`] is `413`.
+/// no longer be changed to name a new record), and only then reads the body. A
+/// body over [`PERSONAL_DATA_BODY_MAX_BYTES`] is `413`, one that is not the JSON
+/// object described is `400` or `422`, and a `field` the passport's schema does
+/// not mark and `content` that is `null` are `422`.
+///
+/// The body is taken as the request and read by hand, because an extractor in the
+/// signature runs before the handler does. A body missing `content`, or naming a
+/// member the request does not have, would be refused for that before the
+/// passport was looked at, and a retired passport would answer `422` here where
+/// it answers `409` to every other body.
 ///
 /// Every call stores a new record. A retry after a lost answer stores a second,
 /// which the listing finds.
 pub async fn personal_data_store_handler(
     State(state): State<AppState>,
-    // The gate precedes the body extractor, so a refused caller's body is never
-    // buffered or parsed.
+    // The gate precedes the body, so a refused caller's body is never buffered or
+    // parsed.
     RequireAdmin(auth): RequireAdmin,
     Path(dpp_id): Path<String>,
-    Json(body): Json<StorePersonalDataRequest>,
+    // Last, and unread until the passport has been judged: see above.
+    request: Request,
 ) -> Response {
     let passport_id = match parse_passport_id(&dpp_id) {
         Ok(id) => id,
@@ -293,6 +301,15 @@ pub async fn personal_data_store_handler(
              draft cannot be changed to name one.",
         );
     }
+
+    // The same extractor the other routes name in their signature, and refusing
+    // in the same shape, run by hand once the passport is known to take a record.
+    // The body limit the router sets travels with the request, so `413` is
+    // decided here exactly as it was when the extractor ran first.
+    let Json(body) = match Json::<StorePersonalDataRequest>::from_request(request, &state).await {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
 
     let marks = marked_fields(&passport.product_group);
     if !marks.contains(&body.field) {

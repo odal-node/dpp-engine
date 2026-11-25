@@ -15,9 +15,10 @@
 //!    refuses would send an operator into a draft that cannot be stored.
 //! 6. **Storing and listing.** `POST` and `GET /api/v1/dpp/{dppId}/personal-data`:
 //!    the path an operator takes through the API alone, a retry that stores a
-//!    second record, the refusals (`409` against `422`, `404` against an empty
-//!    listing, `413`, the scope gate), that a refusal stores nothing, and that the
-//!    node's log of a store names the record and never the data.
+//!    second record, the refusals (`409` against `422`, a body that cannot be
+//!    read judged after the passport, `404` against an empty listing, `413`, the
+//!    scope gate), that a refusal stores nothing, and that the node's log of a
+//!    store names the record and never the data.
 
 #![cfg(feature = "integration-tests")]
 
@@ -679,6 +680,77 @@ async fn only_a_draft_takes_a_record_and_a_passport_of_any_status_can_be_listed(
     let records = listed(&client, &id).await;
     assert_eq!(records.len(), 1, "the refused store held nothing");
     assert_eq!(records[0]["state"], "present");
+}
+
+/// 🚨 The passport is judged before the body is read, and not only before it is
+/// checked. A body the JSON extractor refuses on its own (a member missing, a
+/// member the request does not have, text that is not JSON) used to be refused
+/// before the handler ran, so a retired passport answered `422` where it answers
+/// `409` to every other body, and an unknown one lost its `404`.
+///
+/// A draft reads the body and refuses it, each in its own way. A retired passport
+/// and an unknown one do not read it, so the same three bodies get `409` and
+/// `404`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_that_cannot_be_read_is_judged_after_the_passport() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let token = make_jwt("00000000-0000-0000-0000-0000000000a1");
+    let id = a_draft(&client).await;
+    let unknown = uuid::Uuid::now_v7().to_string();
+
+    // Sent as text, because what is under test is what the node does with bytes
+    // it cannot read.
+    let send = |passport: String, body: &'static str| {
+        let request = reqwest::Client::new()
+            .post(format!("{url}{}", records_path(&passport)))
+            .bearer_auth(&token)
+            .header("content-type", "application/json")
+            .body(body);
+        async move { helpers::send_checked(request).await.status().as_u16() }
+    };
+    // What is wrong with the body, the body, and what a draft says to it.
+    let unreadable: [(&str, &str, u16); 3] = [
+        ("no `content`", r#"{"field":"repairHistoryUrl"}"#, 422),
+        (
+            "a member the request does not have",
+            r#"{"field":"repairHistoryUrl","content":"x","owner":"someone"}"#,
+            422,
+        ),
+        ("not JSON", "{not json", 400),
+    ];
+
+    for (what, body, on_a_draft) in unreadable {
+        assert_eq!(
+            send(id.clone(), body).await,
+            on_a_draft,
+            "a draft refuses a body with {what}"
+        );
+    }
+
+    let retired = client
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), json!({}))
+        .await;
+    assert_eq!(retired.status(), 200, "a draft may be retired");
+
+    for (what, body, _) in unreadable {
+        assert_eq!(
+            send(id.clone(), body).await,
+            409,
+            "a retired passport is a `409` whatever the body, even one with {what}"
+        );
+        assert_eq!(
+            send(unknown.clone(), body).await,
+            404,
+            "an unknown passport is a `404` whatever the body, even one with {what}"
+        );
+    }
+
+    assert!(
+        listed(&client, &id).await.is_empty(),
+        "no refusal stored anything"
+    );
 }
 
 /// `404` means this node holds no such passport; a passport with nothing stored

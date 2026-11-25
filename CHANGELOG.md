@@ -113,12 +113,19 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   the ones it marks: a statement could never name a record for it), `null` content
   (`422`) and a body over 64 KiB (`413`). A passport this node does not hold is
   `404` on both routes, which a listing with nothing in it (`200`) tells apart.
+  The store judges the passport before it reads the body, so an unknown passport
+  is `404` and one that is not a draft is `409` whatever the body holds, a body
+  that is not the JSON object described included.
   Both are admin-scoped, like the erase route: the identifiers relate to whoever
   owns the item (GDPR Recital 26).
   **The store takes no `Idempotency-Key`**, and a key sent to it is refused
   `400`. The key store keeps a SHA-256 of the raw request body, which here is the
   personal data, so a hash of it would outlive the record's erasure. A retry
   stores a second record, and the listing finds the first. (#711)
+  The refusal of a key on an unkeyed route used to say that repeating the request
+  reaches the same state and to retry it directly, which is false for this route.
+  It now says only that a key records nothing and that a retry is not protected
+  by one.
 
 - **Battery CSV templates carry the placing date and the due diligence columns.**
   Every battery template gains `placedOnMarketDate` (now required; see
