@@ -12,7 +12,7 @@ use dpp_vc::SnapshotBound;
 
 use crate::config::{Config, EnvKind};
 use crate::core::types::{
-    BootstrapResult, DryRunVerdict, ExportResult, ImportSummary, KeyCreateResult, KeyEntry,
+    ApiKeyEntry, BootstrapResult, DryRunVerdict, ExportResult, ImportSummary, KeyCreateResult,
     NodeState, PassportAuditEntry, PassportPage, PublishSummary, SchemaCheckResult, ServiceStatus,
     StatusReport, ValidationReport, WhoAmI,
 };
@@ -714,7 +714,7 @@ pub fn render_key_create(result: &KeyCreateResult) {
     println!("  {}", result.secret);
 }
 
-pub fn render_key_list(keys: &[KeyEntry]) {
+pub fn render_key_list(keys: &[ApiKeyEntry]) {
     if keys.is_empty() {
         println!("No API keys.");
         return;

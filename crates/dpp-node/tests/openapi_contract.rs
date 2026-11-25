@@ -563,7 +563,7 @@ fn object_cases() -> Vec<ObjectCase> {
     case!("PassportVersion", fixtures::passport_version());
     case!("Facility", fixtures::facility());
     case!("CreateFacilityRequest", fixtures::create_facility_request());
-    case!("OperatorIdentifier", fixtures::operator_identifier());
+    case!("OperatorIdentifierRecord", fixtures::operator_identifier());
     case!(
         "CreateOperatorIdentifierRequest",
         fixtures::create_operator_identifier_request()
@@ -3105,8 +3105,8 @@ mod fixtures {
         node_signal::{Signal, SignalState},
         operator::{OperatorConfig, UpdateOperatorConfig},
         registry_identity::{
-            CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
-            RegistryIdentityAuditEntry,
+            CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility,
+            OperatorIdentifierRecord, RegistryIdentityAuditEntry,
         },
         scan::{DailyScanCount, OperatorScanStats, PassportScanStats},
         trust::{NodeProfile, NodeTrustReport, TrustMode, TrustPort},
@@ -3705,8 +3705,8 @@ mod fixtures {
         }
     }
 
-    pub fn operator_identifier() -> OperatorIdentifier {
-        OperatorIdentifier {
+    pub fn operator_identifier() -> OperatorIdentifierRecord {
+        OperatorIdentifierRecord {
             id: uuid(),
             scheme: "eori".into(),
             value: "DE123456789".into(),

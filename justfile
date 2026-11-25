@@ -418,6 +418,26 @@ migrations-check-self-test:
 ci-guard-check:
     bash scripts/ci-guard-check.sh
 
+# No engine type restates one dpp-core already has: by name, by shape, by value.
+#
+# Reads the public API of the pinned core crates from rustdoc JSON, which only a
+# nightly toolchain writes, and holds the engine's own structs, enums and literal
+# constants to the record in scripts/core-shadows.tsv. Without nightly it is
+# skipped here, because the pinned stable toolchain is all the rest of this file
+# needs. CI always has it and always runs this, so a skip is never a pass there.
+core-shadows:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+        echo "core-shadows: no nightly toolchain — skipped (CI runs it)."
+        exit 0
+    fi
+    bash scripts/core-api.sh check
+
+# Prove core-shadows still refuses what it claims to.
+core-shadows-self-test:
+    bash scripts/core-api.test.sh
+
 # Prove ci-guard-check still refuses what it claims to.
 ci-guard-check-self-test:
     bash scripts/ci-guard-check.test.sh
@@ -523,7 +543,7 @@ doc:
 # Fast gate (no Docker): fmt, clippy over every target (the Docker-gated suites
 # included — see `lint`), the repository's guard scripts, unit tests and the audit
 # `check-tree` runs last so it only records the tree when every other gate passed.
-check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test check-plugins test audit check-tree-self-test check-tree
+check: fmt-check lint debug-check no-rsa-private-key no-xml-entity-resolution no-xml-entity-resolution-self-test subjects-check vocabulary-check vocabulary-check-self-test mod-rs-check harness-check contract-fixture-check contract-fixture-check-self-test spec-version-check outbound-check grants-check migrations-check migrations-check-self-test ci-guard-check ci-guard-check-self-test changelog-check-self-test release-tag-check-self-test fuzz-targets-check fuzz-targets-check-self-test core-shadows core-shadows-self-test check-plugins test audit check-tree-self-test check-tree
 
 # Full local CI mirror — adds the Docker tiers (needs Docker running)
 ci: check test-integration test-pg

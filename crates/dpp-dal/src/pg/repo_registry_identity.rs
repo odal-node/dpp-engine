@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use dpp_domain::DppError;
 use dpp_types::registry_identity::{
-    Facility, OperatorIdentifier, RegistryIdentityAuditEntry, RegistryIdentityRepository,
+    Facility, OperatorIdentifierRecord, RegistryIdentityAuditEntry, RegistryIdentityRepository,
 };
 
 use super::{PgDal, db_err};
@@ -50,8 +50,8 @@ impl PgRegistryIdentityRepo {
         }
     }
 
-    fn operator_id_from_row(r: &sqlx::postgres::PgRow) -> OperatorIdentifier {
-        OperatorIdentifier {
+    fn operator_id_from_row(r: &sqlx::postgres::PgRow) -> OperatorIdentifierRecord {
+        OperatorIdentifierRecord {
             id: r.get("id"),
             scheme: r.get("scheme"),
             value: r.get("value"),
@@ -196,7 +196,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     async fn list_operator_identifiers(
         &self,
         operator_id: &str,
-    ) -> Result<Vec<OperatorIdentifier>, DppError> {
+    ) -> Result<Vec<OperatorIdentifierRecord>, DppError> {
         let rows = sqlx::query(
             "SELECT id, scheme, value, label, is_primary, created_at \
              FROM odal.operator_identifier WHERE operator_id = $1 AND retired_at IS NULL \
@@ -212,8 +212,8 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
     async fn add_operator_identifier(
         &self,
         operator_id: &str,
-        identifier: OperatorIdentifier,
-    ) -> Result<OperatorIdentifier, DppError> {
+        identifier: OperatorIdentifierRecord,
+    ) -> Result<OperatorIdentifierRecord, DppError> {
         let row = sqlx::query(
             "INSERT INTO odal.operator_identifier \
                (id, operator_id, scheme, value, label, is_primary, created_at) \
@@ -286,7 +286,7 @@ impl RegistryIdentityRepository for PgRegistryIdentityRepo {
         &self,
         operator_id: &str,
         id: Uuid,
-    ) -> Result<Option<OperatorIdentifier>, DppError> {
+    ) -> Result<Option<OperatorIdentifierRecord>, DppError> {
         // Soft-delete: the value is stamped by value onto immutable passports
         // (Art. 13), so the row is preserved as provenance — only marked retired
         // and stripped of its primary flag. A DB DELETE would fail anyway (grant
