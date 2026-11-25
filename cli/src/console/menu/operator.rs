@@ -146,6 +146,13 @@ pub(super) async fn operator() -> Result<()> {
                                 Ok(_) => {
                                     println!("\n  {} Operator updated.", style("✓").green());
                                     hint("odal operator set ...");
+                                    // The one thing this menu does not ask, because it
+                                    // is two facts the node must never guess. Publishing
+                                    // a battery is refused without it.
+                                    hint(
+                                        "odal operator set --responsible-role … \
+                                         --responsible-basis …   (who is answerable for a product)",
+                                    );
                                     println!();
                                 }
                                 Err(e) => print_err(e),

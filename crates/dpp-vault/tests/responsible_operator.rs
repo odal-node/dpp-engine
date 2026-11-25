@@ -23,9 +23,16 @@
 
 mod helpers;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use async_trait::async_trait;
+use dpp_domain::{DppError, FacilitySnapshot};
+use dpp_types::operator::{OperatorConfig, OperatorConfigRepository, UpdateOperatorConfig};
 use helpers::{
-    TestClient, make_jwt, seed_complete_operator_stating, seed_operator_config_stating,
-    seeded_responsibility, start_postgres, start_vault,
+    OptionalPorts, TestClient, make_jwt, seed_complete_operator_stating,
+    seed_operator_config_stating, seeded_responsibility, start_postgres, start_vault,
+    start_vault_with_ports,
 };
 use serde_json::{Value, json};
 
@@ -322,12 +329,26 @@ async fn a_statement_the_node_cannot_make_is_refused_and_not_dropped() {
 
     let mut asked = plain();
     asked["responsibility"] = json!({ "role": "importer", "basis": "generalProductSafety" });
-    let refused = client.post_json("/api/v1/dpp", asked).await;
+    let refused = client.post_json("/api/v1/dpp", asked.clone()).await;
     assert_eq!(refused.status(), 422);
     let reason = refused.text().await.unwrap();
     assert!(
         reason.contains("operator legalName") && reason.contains("operator country"),
         "the refusal names what the node lacks: {reason}"
+    );
+
+    // The dry run says what create says, in the same words: a preview that passed
+    // this body would send a caller into a draft that cannot be stored.
+    let previewed = client.post_json("/api/v1/dpp/validate", asked).await;
+    assert_eq!(
+        previewed.status(),
+        422,
+        "the preview refuses what create refuses"
+    );
+    let previewed = previewed.text().await.unwrap();
+    assert!(
+        previewed.contains("operator legalName") && previewed.contains("operator country"),
+        "{previewed}"
     );
 
     let unasked = created(&client, plain()).await;
@@ -430,6 +451,147 @@ async fn an_unrelated_edit_of_the_operator_leaves_the_statement_in_place() {
     assert_eq!(
         config["responsibility"],
         json!({ "role": "manufacturer", "basis": "marketSurveillanceArt4" })
+    );
+}
+
+/// 🚨 A draft that states who is answerable is not signed on what it was told once
+/// the operator can no longer say it. The route refuses an incomplete operator
+/// identity before publish is reached, for every product group, so a name that has
+/// gone blank stops the draft and restoring it is the whole remedy: the same draft
+/// then publishes under the name as it stands, and not the one it was created with.
+///
+/// This pins the premise the service relies on. If that gate were ever dropped, a
+/// stated draft would be signed on a name the node no longer states.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stated_draft_is_not_signed_on_a_name_the_operator_has_lost() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    seed_complete_operator_stating(&pg.dal, Some(seeded_responsibility())).await;
+    let client = admin(&url);
+
+    for body in [portable_battery(), plain()] {
+        let draft = created(&client, body).await;
+        let id = id_of(&draft);
+        assert_eq!(
+            draft["responsibleOperator"]["operator"]["name"], "Test Operator GmbH",
+            "stated at create: {draft}"
+        );
+
+        let blanked = client
+            .patch_json("/api/v1/operator", json!({ "legalName": "" }))
+            .await;
+        assert_eq!(blanked.status(), 200, "the node accepts a blank name");
+        let refused = publish(&client, &id).await;
+        assert_eq!(refused.status(), 422);
+        let problem = refused.text().await.unwrap();
+        assert!(
+            problem.contains("Operator identity is incomplete") && problem.contains("legalName"),
+            "{problem}"
+        );
+
+        let restored = client
+            .patch_json(
+                "/api/v1/operator",
+                json!({ "legalName": "Test Operator GmbH" }),
+            )
+            .await;
+        assert_eq!(restored.status(), 200);
+    }
+
+    // And a renamed operator is what a draft states once it is published.
+    let draft = created(&client, plain()).await;
+    let renamed = client
+        .patch_json("/api/v1/operator", json!({ "legalName": "Renamed GmbH" }))
+        .await;
+    assert_eq!(renamed.status(), 200);
+    let published: Value = publish(&client, &id_of(&draft)).await.json().await.unwrap();
+    assert_eq!(
+        published["responsibleOperator"]["operator"]["name"], "Renamed GmbH",
+        "signed under the operator as it stands, not as the draft was created"
+    );
+}
+
+/// What reads the operator's primary identifier, wrapped to count the reads. The
+/// whole of the service's view of the operator goes through it.
+struct CountingReader {
+    inner: dpp_dal::pg::PgOperatorConfigRepo,
+    primary_reads: AtomicUsize,
+}
+
+#[async_trait]
+impl OperatorConfigRepository for CountingReader {
+    async fn get(&self, operator_id: &str) -> Result<Option<OperatorConfig>, DppError> {
+        self.inner.get(operator_id).await
+    }
+
+    async fn upsert(&self, config: OperatorConfig) -> Result<OperatorConfig, DppError> {
+        self.inner.upsert(config).await
+    }
+
+    async fn update(
+        &self,
+        operator_id: &str,
+        patch: &UpdateOperatorConfig,
+    ) -> Result<OperatorConfig, DppError> {
+        self.inner.update(operator_id, patch).await
+    }
+
+    async fn default_facility(
+        &self,
+        operator_id: &str,
+    ) -> Result<Option<FacilitySnapshot>, DppError> {
+        self.inner.default_facility(operator_id).await
+    }
+
+    async fn primary_operator_identifier(
+        &self,
+        operator_id: &str,
+    ) -> Result<Option<(String, String)>, DppError> {
+        self.primary_reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.primary_operator_identifier(operator_id).await
+    }
+}
+
+/// 🚨 The primary operator identifier is read once by a create and once by a
+/// publish, and the statement and `operatorIdentifier` are stamped from that one
+/// read. A second read, after the node's DID is awaited, would let an admin who
+/// changes the primary in between sign a passport naming two identifiers, which a
+/// retention-locked record cannot correct.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_primary_identifier_is_read_once_per_call_and_names_the_same_operator_twice() {
+    let pg = start_postgres().await;
+    seed_complete_operator_stating(&pg.dal, Some(seeded_responsibility())).await;
+    let reader = Arc::new(CountingReader {
+        inner: dpp_dal::pg::PgOperatorConfigRepo::new(pg.dal.clone()),
+        primary_reads: AtomicUsize::new(0),
+    });
+    let url = start_vault_with_ports(
+        pg.dal.clone(),
+        OptionalPorts {
+            registry_reader: Some(reader.clone()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let client = admin(&url);
+
+    let draft = created(&client, plain()).await;
+    assert_eq!(
+        reader.primary_reads.load(Ordering::SeqCst),
+        1,
+        "a create reads the primary identifier once, for the field and the statement"
+    );
+
+    let published: Value = publish(&client, &id_of(&draft)).await.json().await.unwrap();
+    assert_eq!(
+        reader.primary_reads.load(Ordering::SeqCst),
+        2,
+        "and a publish reads it once more, not twice"
+    );
+    assert_eq!(
+        published["operatorIdentifier"],
+        published["responsibleOperator"]["operator"]["euOperatorId"],
+        "one primary selection, named the same in both places: {published}"
     );
 }
 

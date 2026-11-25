@@ -34,7 +34,13 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
   basis it was told. Where the product group's passport obligation is live (the
   test `missing_registry_identity` already uses), a statement that cannot be made
   is refused at publish with `422`, naming what the node lacks, and counted as
-  `missing_responsible_operator` on `passport_publish_rejected_total`. Any other
+  `missing_responsible_operator` on `passport_publish_rejected_total`. A draft
+  stated at create is stated again at publish from the operator as it stands, and
+  one whose operator has since lost its name or country is refused by the route's
+  incomplete-identity `422`, as before. The primary
+  identifier is read once per create and once per publish and is the one the
+  statement and `operatorIdentifier` both name. `POST /vault/api/v1/dpp/validate`
+  refuses a body whose `responsibility` the node cannot state, as create does. Any other
   product group publishes without one, and its lint result carries the notice
   `operator.responsible_operator_unstated`. A role the basis cannot name is
   refused (under `marketSurveillanceArt4` only a manufacturer, an importer, an

@@ -67,6 +67,17 @@ pub async fn validate_handler(
     if let Some(rejection) = super::create::carrier_serial_conflict(&state, &body).await {
         return rejection;
     }
+    // The other: a statement sent with the body that the node cannot make is
+    // refused, never dropped, and that depends on the operator's configuration,
+    // which a body alone does not show. Without it the preview would pass a body
+    // create refuses with `422`.
+    if let Some(sent) = &body.responsibility {
+        match state.service.check_responsibility_statable(sent).await {
+            Ok(()) => {}
+            Err(DppError::Validation(errors)) => return field_validation_error(&errors),
+            Err(e) => return super::error::internal_error(e),
+        }
+    }
     // The draft create would store, and what the service asks of it before it
     // does: core's own invariants, then the personal-data check. Both are judged
     // on the assembled passport, not the body, so the preview builds the same

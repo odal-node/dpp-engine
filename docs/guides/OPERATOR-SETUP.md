@@ -71,6 +71,7 @@ odal --profile prod operator set --legal-name "Example GmbH" --country DE \
 odal --profile prod facility add --name "Berlin plant" --scheme gln \
   --value 4012345000009 --country DE --default
 odal --profile prod operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
+# State YOUR role and the law that makes you answerable; a manufacturer is the example.
 odal --profile prod operator set --responsible-role manufacturer \
   --responsible-basis marketSurveillanceArt4
 ```
@@ -296,7 +297,7 @@ Serve the resolver (port 8003) on the `RESOLVER_BASE_URL` host.
 | Node stays `starting`; logs repeat *"password authentication failed for user odal_app"* | The role-provisioning hook was not mounted on first start | Make sure `ops/bootstrap/` is beside `docker/`, then recreate the database volume (the hook runs only on first initialisation) |
 | *"No profile configured yet"* | Nothing configured on this machine | `odal init` or `odal profile create <name> --node-url <url>` |
 | Publish fails `422` *"missing required registry identity"* | No default facility or primary operator identifier | `odal facility add … --default`, `odal operator-id add … --primary` |
-| Publish fails `422` *"the responsible operator cannot be stated"* | No role and legal basis were stated for the node or with the passport, or the operator's `legalName` or `country` is not configured | `odal operator set --responsible-role manufacturer --responsible-basis marketSurveillanceArt4`, and `odal operator set --legal-name … --country …` |
+| Publish fails `422` *"the responsible operator cannot be stated"* | The message names what is missing: no role and legal basis were stated for the node or with the passport, or the operator's `legalName` or `country` is not configured, or has since gone blank | Set only what it names. State **your own** role and legal basis, as in step 3 (`odal operator set --responsible-role <your role> --responsible-basis <the law>`), and `--legal-name`/`--country` only if they are the missing ones. A role stated already is yours: do not overwrite it |
 | Publish fails `422` *"the operator identifier cannot be registered"* | The primary operator identifier is a VAT or EORI number, which the EU registry does not take | Make an LEI or a D-U-N-S number primary: `odal operator-id add --scheme lei … --primary` |
 | Import rejects every row on `gtin` | 13-digit GTINs, or wrong check digits | Use GTIN-14; the error names the expected digit |
 | Retire fails *"retention policy forbids retiring before …"* | The retention window is still running | Suspend instead |

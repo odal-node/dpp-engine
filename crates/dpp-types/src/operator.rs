@@ -185,10 +185,12 @@ pub struct OperatorConfig {
     /// stated once for the node: what a passport says under ESPR Annex III
     /// point (k) when its create request sends none of its own.
     ///
-    /// `None` means not stated, and the node never fills one in. A passport for a
-    /// product group whose passport obligation is live is then refused at
-    /// publish, and any other publishes without the statement and carries a lint
-    /// notice saying so. See [`OperatorResponsibility`].
+    /// `None` means not stated, and the node never fills one in. A passport can
+    /// state its own on its create request, which wins for that passport. One that
+    /// carries none and finds none here is refused at publish when its product
+    /// group's passport obligation is live, and any other publishes without the
+    /// statement and carries a lint notice saying so. See
+    /// [`OperatorResponsibility`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub responsibility: Option<OperatorResponsibility>,
     /// Row creation timestamp.

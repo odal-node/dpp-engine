@@ -100,9 +100,11 @@ properties:
     description: >-
       The role this operator answers in and the law that makes it answerable,
       stated once for the node (ESPR Annex III point (k)). Absent means not
-      stated, and the node never fills one in: publish refuses a passport of a
-      product group whose passport obligation is live, and any other publishes
-      without a `responsibleOperator`.
+      stated, and the node never fills one in. A passport can state its own with
+      `responsibility` on its create request, and that wins for the passport. A
+      passport that carries none of its own and finds none here is refused at
+      publish for a product group whose passport obligation is live, and any
+      other publishes without a `responsibleOperator`.
     anyOf:
       - $ref: ./OperatorResponsibility.yaml
       - type: 'null'

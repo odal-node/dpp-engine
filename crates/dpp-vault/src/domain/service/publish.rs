@@ -290,12 +290,18 @@ impl PassportService {
         // an edit. Anywhere else the passport publishes without one and its lint
         // notice stays.
         let stated_already = passport.responsible_operator.is_some();
+        let live = super::passport_obligation_live(passport.product_group.catalog_key());
         if passport.status == PassportStatus::Draft {
             let kept = passport
                 .responsible_operator
                 .as_ref()
                 .map(OperatorResponsibility::from);
-            let statement = match self.responsible_operator_statement(kept, None).await {
+            // The identifier read above, so the statement and `operatorIdentifier`
+            // name the same one.
+            let statement = match self
+                .responsible_operator_statement(kept, None, primary_identifier.as_ref())
+                .await
+            {
                 Ok(statement) => statement,
                 // The identity service could not say who the node is. That is the
                 // signer failing a step early, so it is counted as one: an outage
@@ -313,6 +319,28 @@ impl PassportService {
                 }
                 Err(e) => return Err(e),
             };
+            let refused = |missing: &[&str]| {
+                tracing::warn!(
+                    passport_id = %id,
+                    missing = %missing.join("; "),
+                    "publish blocked — no responsible operator can be stated"
+                );
+                reject(
+                    REASON_MISSING_RESPONSIBLE_OPERATOR,
+                    DppError::Validation(
+                        format!(
+                            "cannot publish: the responsible operator cannot be stated — \
+                             this node lacks {}. State the role and legal basis once with \
+                             `odal operator set --responsible-role … --responsible-basis …` \
+                             (`PATCH /api/v1/operator`, `responsibility`), or with the \
+                             passport when it is created, and keep the operator's \
+                             `legalName` and `country` configured.",
+                            missing.join(", ")
+                        )
+                        .into(),
+                    ),
+                )
+            };
             match statement {
                 Statement::Made(statement) => {
                     if !stated_already {
@@ -321,32 +349,13 @@ impl PassportService {
                     }
                     passport.responsible_operator = Some(*statement);
                 }
-                // What the draft was told stands when it cannot be read again.
+                // What the draft was told stands when the operator cannot be read
+                // again. Through the route this is the draft's own statement and
+                // nothing else: it refuses an incomplete operator identity before
+                // publish is reached, so the operator's name cannot have gone
+                // blank under a statement made earlier.
                 Statement::Missing(_) if stated_already => {}
-                Statement::Missing(missing)
-                    if super::passport_obligation_live(passport.product_group.catalog_key()) =>
-                {
-                    tracing::warn!(
-                        passport_id = %id,
-                        missing = %missing.join("; "),
-                        "publish blocked — no responsible operator can be stated"
-                    );
-                    return Err(reject(
-                        REASON_MISSING_RESPONSIBLE_OPERATOR,
-                        DppError::Validation(
-                            format!(
-                                "cannot publish: the responsible operator cannot be stated — \
-                                 this node lacks {}. State the role and legal basis once with \
-                                 `odal operator set --responsible-role … --responsible-basis …` \
-                                 (`PATCH /api/v1/operator`, `responsibility`), or with the \
-                                 passport when it is created, and keep the operator's \
-                                 `legalName` and `country` configured.",
-                                missing.join(", ")
-                            )
-                            .into(),
-                        ),
-                    ));
-                }
+                Statement::Missing(missing) if live => return Err(refused(&missing)),
                 Statement::Missing(_) => {}
             }
         }

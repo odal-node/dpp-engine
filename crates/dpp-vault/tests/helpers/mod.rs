@@ -559,6 +559,10 @@ pub struct OptionalPorts {
     pub plugin_admin: Option<Arc<dyn dpp_common::plugin_admin::PluginAdmin>>,
     /// The signer of access credentials. `None` is a node with no key in reach.
     pub credential_issuer: Option<Arc<dyn dpp_vault::state::CredentialIssuer>>,
+    /// What the service reads the operator's configuration, facility and
+    /// identifier through. `None` is the real one, over the same database; a test
+    /// that wants to see what is read, and how often, hands in a wrapper of it.
+    pub registry_reader: Option<Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
 }
 
 /// A vault with `ports` wired, and the harness's usual signer and registry.
@@ -641,7 +645,9 @@ async fn start_vault_wired(
         },
         "https://resolver.example.com".to_owned(),
     )
-    .with_registry_reader(operator_repo.clone())
+    .with_registry_reader(ports.registry_reader.clone().unwrap_or_else(|| {
+        operator_repo.clone() as Arc<dyn dpp_types::operator::OperatorConfigRepository>
+    }))
     // Same reasoning again, and it had already cost something: without a
     // transfer store the seal route's `responsibilityMayHaveTransferred`
     // took its `None => false` branch, so a test asserting the flag was

@@ -53,6 +53,35 @@ pub(super) enum Statement {
 /// What is missing when no role and basis were stated.
 pub(super) const NO_RESPONSIBILITY: &str = "responsibility (the role and legal basis)";
 
+/// What is missing for a statement to be made, each named as the operator would
+/// look for it. Empty when nothing is.
+fn gaps(
+    responsibility: Option<&OperatorResponsibility>,
+    config: Option<&OperatorConfig>,
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if responsibility.is_none() {
+        missing.push(NO_RESPONSIBILITY);
+    }
+    match config {
+        Some(config) => missing.extend(config_gaps(config)),
+        None => missing.push("operator configuration"),
+    }
+    missing
+}
+
+/// The refusal of a statement that was asked for and cannot be made, the same
+/// words wherever it is raised: a create, and the dry run that previews one.
+pub(super) fn cannot_be_stated(missing: &[&str]) -> DppError {
+    DppError::Validation(
+        format!(
+            "the responsible operator cannot be stated: this node lacks {}",
+            missing.join(", ")
+        )
+        .into(),
+    )
+}
+
 impl PassportService {
     /// The statement the node makes about its responsible operator.
     ///
@@ -60,6 +89,12 @@ impl PassportService {
     /// default, and `sent` is what a create request just told it, which wins
     /// over both. Only the role and the basis come from either: everything else is
     /// read here, from the node.
+    ///
+    /// `primary` is the primary operator identifier **as the caller already read
+    /// it**, and it is read nowhere else. The passport's own `operatorIdentifier`
+    /// is stamped from that same read, so the two cannot name different
+    /// identifiers if an admin changes the primary while the node's DID is being
+    /// fetched, which is a mismatch a retention-locked passport cannot correct.
     ///
     /// # Errors
     /// The node's DID cannot be read from the identity service. That is not
@@ -69,6 +104,7 @@ impl PassportService {
         &self,
         kept: Option<OperatorResponsibility>,
         sent: Option<&OperatorResponsibility>,
+        primary: Option<&(String, String)>,
     ) -> Result<Statement, DppError> {
         let Some(reader) = &self.registry_reader else {
             return Ok(Statement::Missing(vec!["operator configuration"]));
@@ -82,14 +118,7 @@ impl PassportService {
 
         // Everything the statement cannot be made without, named at once, so an
         // operator fixes the lot and not one thing per refusal.
-        let mut missing = Vec::new();
-        if responsibility.is_none() {
-            missing.push(NO_RESPONSIBILITY);
-        }
-        match &config {
-            Some(config) => missing.extend(config_gaps(config)),
-            None => missing.push("operator configuration"),
-        }
+        let missing = gaps(responsibility.as_ref(), config.as_ref());
         let (Some(responsibility), Some(config), true) =
             (responsibility, config, missing.is_empty())
         else {
@@ -97,16 +126,39 @@ impl PassportService {
         };
 
         let did = self.own_did().await?;
-        let primary = reader
-            .primary_operator_identifier(STANDALONE_OPERATOR_ID)
-            .await
-            .unwrap_or(None);
         Ok(Statement::Made(Box::new(assemble(
             &config,
             &responsibility,
             &did,
-            primary.as_ref(),
+            primary,
         ))))
+    }
+
+    /// Whether a statement sent with a create request can be made, for the dry
+    /// run that previews one. The same refusal, in the same words, that create
+    /// raises: a preview that passed a body create refuses would send a caller
+    /// into a draft that cannot be stored.
+    ///
+    /// Reads the operator configuration and nothing else. Whether the identity
+    /// service can say who the node is is the node's availability and not a fact
+    /// about the body, so it is left to create.
+    ///
+    /// # Errors
+    /// [`DppError::Validation`] naming what the node lacks.
+    pub async fn check_responsibility_statable(
+        &self,
+        sent: &OperatorResponsibility,
+    ) -> Result<(), DppError> {
+        let Some(reader) = &self.registry_reader else {
+            return Err(cannot_be_stated(&["operator configuration"]));
+        };
+        let config = reader.get(STANDALONE_OPERATOR_ID).await?;
+        let missing = gaps(Some(sent), config.as_ref());
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(cannot_be_stated(&missing))
+        }
     }
 
     /// The node's own DID, from its DID document.

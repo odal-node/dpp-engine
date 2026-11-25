@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use super::PassportService;
 use super::catalog;
-use super::responsible_operator::Statement;
+use super::responsible_operator::{Statement, cannot_be_stated};
 
 impl PassportService {
     /// Create a new passport in `Draft` status.
@@ -78,6 +78,17 @@ impl PassportService {
         // facility + Art. 13 operator identifier) when the caller didn't supply
         // them, so EU registry payloads are complete. Read live from the operator
         // config so identifiers managed via the API/CLI apply without a restart.
+        //
+        // The primary identifier is read **once** and used for the field below and
+        // for the statement after it, so a passport cannot name two identifiers if
+        // an admin changes the primary in between.
+        let primary = match &self.registry_reader {
+            Some(reader) => reader
+                .primary_operator_identifier(STANDALONE_OPERATOR_ID)
+                .await
+                .unwrap_or(None),
+            None => None,
+        };
         if let Some(reader) = &self.registry_reader {
             if passport.facility.is_none() {
                 passport.facility = reader
@@ -89,11 +100,8 @@ impl PassportService {
                 // The passport stamps the identifier's value; its scheme is an
                 // operator fact resolved at publish, where the registration is
                 // built.
-                passport.operator_identifier = reader
-                    .primary_operator_identifier(STANDALONE_OPERATOR_ID)
-                    .await
-                    .unwrap_or(None)
-                    .map(|(_scheme, value)| value);
+                passport.operator_identifier =
+                    primary.as_ref().map(|(_scheme, value)| value.clone());
             }
         }
 
@@ -101,18 +109,12 @@ impl PassportService {
         // shows what it will say. Publish makes the statement again, because a
         // draft takes the operator as it stands then.
         match self
-            .responsible_operator_statement(None, responsibility)
+            .responsible_operator_statement(None, responsibility, primary.as_ref())
             .await
         {
             Ok(Statement::Made(statement)) => passport.responsible_operator = Some(*statement),
             Ok(Statement::Missing(missing)) if responsibility.is_some() => {
-                return Err(DppError::Validation(
-                    format!(
-                        "the responsible operator cannot be stated: this node lacks {}",
-                        missing.join(", ")
-                    )
-                    .into(),
-                ));
+                return Err(cannot_be_stated(&missing));
             }
             // Nothing was said and nothing can be made: publish decides what that
             // means for this passport.
