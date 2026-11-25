@@ -24,6 +24,15 @@ post:
     arrive together can both pass it; this is where the label goes live, so
     the second to publish stays a draft rather than making one label name two
     passports.
+
+    A draft states its `responsibleOperator` here, from the operator as it
+    stands now and the role and legal basis it was given. Where the product
+    group's passport obligation is live, a passport whose responsible operator
+    cannot be stated is refused with `422`, naming what the node lacks: no role
+    and basis were stated for the node or with the passport, or the operator's
+    `legalName` or `country` is not configured. Nothing is defaulted, because a
+    published passport is corrected by a successor and not an edit. Any other
+    product group publishes without one.
   tags:
     - DPP Lifecycle
   security:

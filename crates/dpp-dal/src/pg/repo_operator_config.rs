@@ -49,6 +49,12 @@ impl PgOperatorConfigRepo {
             enterprise_size: r
                 .get::<Option<String>, _>("enterprise_size")
                 .and_then(|size| serde_json::from_value(serde_json::Value::String(size)).ok()),
+            // The column holds what a write put there, which was a statement
+            // that read. One that does not read now (a role or basis a later
+            // build no longer knows) is not stated rather than guessed at.
+            responsibility: r
+                .get::<Option<serde_json::Value>, _>("responsibility")
+                .and_then(|statement| serde_json::from_value(statement).ok()),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         }
@@ -188,8 +194,9 @@ macro_rules! insert_row {
              (operator_id, legal_name, trade_name, address, country, contact_email,
               did_web_url, product_categories, brand_primary, brand_secondary,
               brand_logo_url, custom_domain, data_residency, retention_policy_days,
-              feature_flags, registry_verified_at, enterprise_size, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now(),now())"#
+              feature_flags, registry_verified_at, enterprise_size, responsibility,
+              created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),now())"#
     };
 }
 
@@ -222,6 +229,12 @@ const UPSERT_SQL: &str = concat!(
                  -- not carry one must not reset it to "not stated".
                  enterprise_size =
                    COALESCE(EXCLUDED.enterprise_size, odal.operator_config.enterprise_size),
+                 -- COALESCE for the same reason, and a stronger one: an operator
+                 -- that has stated no role and basis is refused at publish for a
+                 -- product group with a live passport obligation, so an edit of
+                 -- the branding must not put it back there.
+                 responsibility =
+                   COALESCE(EXCLUDED.responsibility, odal.operator_config.responsibility),
                  updated_at = now()
                RETURNING *"#
 );
@@ -275,5 +288,11 @@ fn bind_row<'q>(
                 .enterprise_size
                 .and_then(|size| serde_json::to_value(size).ok())
                 .and_then(|wire| wire.as_str().map(str::to_owned)),
+        )
+        .bind(
+            config
+                .responsibility
+                .as_ref()
+                .and_then(|statement| serde_json::to_value(statement).ok()),
         ))
 }

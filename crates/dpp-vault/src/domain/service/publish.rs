@@ -20,10 +20,12 @@ use dpp_types::{
     audit::PassportAuditEntry,
     auth::AuthContext,
     node_signal::{Outcome, Signal},
+    operator::OperatorResponsibility,
     snapshot::snapshot_json_key,
     state_change::{PassportWrite, StateChange},
 };
 
+use super::responsible_operator::Statement;
 use super::{PassportService, retention_deadline, retention_years_for};
 use super::{catalog, schema_registry};
 
@@ -34,6 +36,11 @@ use super::{catalog, schema_registry};
 mod reason {
     pub const INVALID_TRANSITION: &str = "invalid_transition";
     pub const MISSING_REGISTRY_IDENTITY: &str = "missing_registry_identity";
+    /// The passport's product group has a live passport obligation and the
+    /// node has no responsible operator to state for it: no role and legal
+    /// basis were stated, or the operator's name or country is not configured.
+    /// Distinct from `missing_registry_identity`, which is the identifiers.
+    pub const MISSING_RESPONSIBLE_OPERATOR: &str = "missing_responsible_operator";
     /// The operator or facility identifier is there, under a scheme with no
     /// EN 18219 clause 6 route, so the registration this publish owes would be
     /// refused. Distinct from `missing_registry_identity`, where it is absent.
@@ -72,6 +79,7 @@ use reason::{
     COMPLIANCE_VIOLATIONS as REASON_COMPLIANCE_VIOLATIONS,
     INVALID_TRANSITION as REASON_INVALID_TRANSITION, MANDATORY_CONTENT as REASON_MANDATORY_CONTENT,
     MISSING_REGISTRY_IDENTITY as REASON_MISSING_REGISTRY_IDENTITY,
+    MISSING_RESPONSIBLE_OPERATOR as REASON_MISSING_RESPONSIBLE_OPERATOR,
     SCHEMA_INVALID as REASON_SCHEMA_INVALID, SECTOR_DATA_INVALID as REASON_SECTOR_DATA_INVALID,
     SIGNING_FAILED as REASON_SIGNING_FAILED,
     UNREGISTRABLE_IDENTITY as REASON_UNREGISTRABLE_IDENTITY,
@@ -263,6 +271,83 @@ impl PassportService {
                         .into(),
                     ),
                 ));
+            }
+        }
+
+        // ESPR Annex III point (k): who is answerable for the product. A draft
+        // takes the operator as it stands now, as the identifier above does, and
+        // keeps the role and basis it was told.
+        //
+        // Only a draft. A passport that was published once is retention-locked, and
+        // the database refuses any change to its content, so re-activating one
+        // keeps what it was signed with, which for a passport published before the
+        // operator could state one is nothing. Refusing it for that would turn an
+        // upgrade into a suspended passport nobody can re-activate.
+        //
+        // Where the passport obligation is live, a statement that cannot be made is
+        // a refusal: the role and basis are never defaulted, so there is nothing
+        // honest to sign, and a published passport is corrected by a successor, not
+        // an edit. Anywhere else the passport publishes without one and its lint
+        // notice stays.
+        let stated_already = passport.responsible_operator.is_some();
+        if passport.status == PassportStatus::Draft {
+            let kept = passport
+                .responsible_operator
+                .as_ref()
+                .map(OperatorResponsibility::from);
+            let statement = match self.responsible_operator_statement(kept, None).await {
+                Ok(statement) => statement,
+                // The identity service could not say who the node is. That is the
+                // signer failing a step early, so it is counted as one: an outage
+                // that reads as a signing failure when it stops the signature must
+                // not read as nothing when it stops the statement before it.
+                Err(e @ DppError::Signing(_)) => {
+                    self.note_signing(Outcome::Failed).await;
+                    metrics::counter!("passport_publish_rejected_total", "reason" => REASON_SIGNING_FAILED).increment(1);
+                    tracing::error!(
+                        code = event_codes::JWS_UNSIGNED_PUBLISH_BLOCKED,
+                        error = %e,
+                        "publish aborted — the node's own DID could not be read; passport remains draft"
+                    );
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            };
+            match statement {
+                Statement::Made(statement) => {
+                    if !stated_already {
+                        // True of the draft, false of what is about to be signed.
+                        super::lint::drop_unstated_notice(&mut passport);
+                    }
+                    passport.responsible_operator = Some(*statement);
+                }
+                // What the draft was told stands when it cannot be read again.
+                Statement::Missing(_) if stated_already => {}
+                Statement::Missing(missing)
+                    if super::passport_obligation_live(passport.product_group.catalog_key()) =>
+                {
+                    tracing::warn!(
+                        passport_id = %id,
+                        missing = %missing.join("; "),
+                        "publish blocked — no responsible operator can be stated"
+                    );
+                    return Err(reject(
+                        REASON_MISSING_RESPONSIBLE_OPERATOR,
+                        DppError::Validation(
+                            format!(
+                                "cannot publish: the responsible operator cannot be stated — \
+                                 this node lacks {}. State the role and legal basis once with \
+                                 `odal operator set --responsible-role … --responsible-basis …` \
+                                 (`PATCH /api/v1/operator`, `responsibility`), or with the \
+                                 passport when it is created, and keep the operator's \
+                                 `legalName` and `country` configured.",
+                                missing.join(", ")
+                            )
+                            .into(),
+                        ),
+                    ));
+                }
+                Statement::Missing(_) => {}
             }
         }
 
@@ -903,6 +988,7 @@ mod rejection_reasons {
         let all = [
             reason::INVALID_TRANSITION,
             reason::MISSING_REGISTRY_IDENTITY,
+            reason::MISSING_RESPONSIBLE_OPERATOR,
             reason::SECTOR_DATA_INVALID,
             reason::SCHEMA_INVALID,
             reason::COMPLIANCE_VIOLATIONS,
@@ -926,6 +1012,7 @@ mod rejection_reasons {
         for r in [
             reason::INVALID_TRANSITION,
             reason::MISSING_REGISTRY_IDENTITY,
+            reason::MISSING_RESPONSIBLE_OPERATOR,
             reason::SECTOR_DATA_INVALID,
             reason::SCHEMA_INVALID,
             reason::COMPLIANCE_VIOLATIONS,

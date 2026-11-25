@@ -255,6 +255,8 @@ components:
       $ref: components/schemas/operator/UpdateOperatorConfig.yaml
     EnterpriseSize:
       $ref: components/schemas/operator/EnterpriseSize.yaml
+    OperatorResponsibility:
+      $ref: components/schemas/operator/OperatorResponsibility.yaml
     Facility:
       $ref: components/schemas/operator/Facility.yaml
     CreateFacilityRequest:

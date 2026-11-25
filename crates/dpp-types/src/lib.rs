@@ -61,7 +61,8 @@ pub use evidence::{
 };
 pub use obligation_notice::{AnnouncedNotice, NoticeRecord, ObligationNoticeStore};
 pub use operator::{
-    OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID, UpdateOperatorConfig,
+    OperatorConfig, OperatorConfigRepository, OperatorResponsibility, STANDALONE_OPERATOR_ID,
+    UpdateOperatorConfig,
 };
 pub use passport_request::{CreatePassportRequest, carrier_serial_problem};
 pub use qualification::{IssuerStanding, SealQualification, TimestampStanding, UncheckedTerritory};

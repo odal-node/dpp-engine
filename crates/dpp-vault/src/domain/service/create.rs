@@ -21,6 +21,7 @@ use dpp_types::{
     STANDALONE_OPERATOR_ID,
     audit::PassportAuditEntry,
     auth::AuthContext,
+    operator::OperatorResponsibility,
     state_change::{PassportWrite, StateChange},
 };
 use serde_json::Value;
@@ -28,6 +29,7 @@ use uuid::Uuid;
 
 use super::PassportService;
 use super::catalog;
+use super::responsible_operator::Statement;
 
 impl PassportService {
     /// Create a new passport in `Draft` status.
@@ -35,11 +37,32 @@ impl PassportService {
     /// Assigns a fresh `PassportId`, normalises `schema_version` from the product group
     /// catalog, runs compliance enrichment, persists, appends an audit entry,
     /// and emits `dpp.passport.created` (non-blocking — failure is logged only).
-    #[tracing::instrument(skip(self, passport), fields(passport_id = tracing::field::Empty))]
     pub async fn create(
+        &self,
+        passport: Passport,
+        auth: &AuthContext,
+    ) -> Result<Passport, DppError> {
+        self.create_stating(passport, auth, None).await
+    }
+
+    /// As [`create`](Self::create), for a request that states the role and legal
+    /// basis of the economic operator responsible for this one passport.
+    ///
+    /// What is stated is kept or refused, and never dropped: a statement the node
+    /// cannot make (no operator name or country configured, or no way to read its
+    /// own DID) refuses the create, because a draft that silently lost what the
+    /// caller said would publish saying something else. With nothing stated, the
+    /// node's own statement is made when it can be, and left to publish when it
+    /// cannot.
+    #[tracing::instrument(
+        skip(self, passport, responsibility),
+        fields(passport_id = tracing::field::Empty)
+    )]
+    pub async fn create_stating(
         &self,
         mut passport: Passport,
         auth: &AuthContext,
+        responsibility: Option<&OperatorResponsibility>,
     ) -> Result<Passport, DppError> {
         passport.id = PassportId::new();
         tracing::Span::current().record("passport_id", passport.id.to_string().as_str());
@@ -72,6 +95,33 @@ impl PassportService {
                     .unwrap_or(None)
                     .map(|(_scheme, value)| value);
             }
+        }
+
+        // ESPR Annex III point (k): who is answerable for the product, so a draft
+        // shows what it will say. Publish makes the statement again, because a
+        // draft takes the operator as it stands then.
+        match self
+            .responsible_operator_statement(None, responsibility)
+            .await
+        {
+            Ok(Statement::Made(statement)) => passport.responsible_operator = Some(*statement),
+            Ok(Statement::Missing(missing)) if responsibility.is_some() => {
+                return Err(DppError::Validation(
+                    format!(
+                        "the responsible operator cannot be stated: this node lacks {}",
+                        missing.join(", ")
+                    )
+                    .into(),
+                ));
+            }
+            // Nothing was said and nothing can be made: publish decides what that
+            // means for this passport.
+            Ok(Statement::Missing(_)) => {}
+            Err(e) if responsibility.is_some() => return Err(e),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "the responsible operator was not stated at create; publish will try again"
+            ),
         }
 
         // Core's own account of what must be true of a passport, run against the

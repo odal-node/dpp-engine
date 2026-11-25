@@ -58,6 +58,7 @@ fn nothing() -> UpdateOperatorConfig {
         feature_flags: None,
         registry_verified_at: None,
         enterprise_size: None,
+        responsibility: None,
     }
 }
 
@@ -299,4 +300,112 @@ async fn a_retention_beyond_the_column_leaves_the_stored_config_unchanged() {
         .expect("exists");
     assert_eq!(after.brand_primary, before.brand_primary);
     assert_eq!(after.retention_policy_days, before.retention_policy_days);
+}
+
+/// Every basis core defines, with a role, is stored as stated and read back as
+/// stated: the three wire shapes, one of them an object carrying a citation.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_basis_is_stored_and_read_back_as_stated() {
+    use dpp_domain::{OperatorRole, ResponsibilityBasis};
+    use dpp_types::operator::OperatorResponsibility;
+
+    let pg = start_pg().await;
+    let repo = seeded(&pg).await;
+    assert_eq!(
+        repo.get(STANDALONE_OPERATOR_ID)
+            .await
+            .expect("read")
+            .expect("exists")
+            .responsibility,
+        None,
+        "an operator that has stated nothing reads as not stated"
+    );
+
+    for basis in [
+        ResponsibilityBasis::MarketSurveillanceArt4,
+        ResponsibilityBasis::GeneralProductSafety,
+        ResponsibilityBasis::OtherUnionLaw {
+            citation: "Article 7 of Regulation (EU) 2017/745".into(),
+        },
+    ] {
+        let stated = OperatorResponsibility {
+            role: OperatorRole::Importer,
+            basis,
+        };
+        let written = repo
+            .update(
+                STANDALONE_OPERATOR_ID,
+                &UpdateOperatorConfig {
+                    responsibility: Some(stated.clone()),
+                    ..nothing()
+                },
+            )
+            .await
+            .expect("state it");
+        assert_eq!(written.responsibility, Some(stated.clone()));
+        assert_eq!(
+            repo.get(STANDALONE_OPERATOR_ID)
+                .await
+                .expect("read")
+                .expect("exists")
+                .responsibility,
+            Some(stated),
+            "what is stored is what was stated"
+        );
+    }
+}
+
+/// 🚨 An edit that does not carry the statement must not unstate it. A product
+/// group whose passport obligation is live is refused at publish without one, so
+/// an operator that re-branded would find its publishes refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_edit_that_does_not_carry_the_statement_leaves_it_and_one_that_does_replaces_it() {
+    use dpp_domain::{OperatorRole, ResponsibilityBasis};
+    use dpp_types::operator::OperatorResponsibility;
+
+    let pg = start_pg().await;
+    let repo = seeded(&pg).await;
+    let first = OperatorResponsibility {
+        role: OperatorRole::Manufacturer,
+        basis: ResponsibilityBasis::MarketSurveillanceArt4,
+    };
+    let second = OperatorResponsibility {
+        role: OperatorRole::AuthorisedRepresentative,
+        basis: ResponsibilityBasis::GeneralProductSafety,
+    };
+    repo.update(
+        STANDALONE_OPERATOR_ID,
+        &UpdateOperatorConfig {
+            responsibility: Some(first.clone()),
+            ..nothing()
+        },
+    )
+    .await
+    .expect("state it");
+
+    // Through `update`, the way the route patches.
+    let rebranded = repo
+        .update(STANDALONE_OPERATOR_ID, &rebranding())
+        .await
+        .expect("rebrand");
+    assert_eq!(rebranded.responsibility, Some(first.clone()));
+
+    // And through `upsert`, whose whole-row write is the other path a config
+    // changes by: a row read before the statement, written after it.
+    let mut stale = OperatorConfig::empty(STANDALONE_OPERATOR_ID);
+    stale.legal_name = "Acme GmbH".into();
+    let upserted = repo.upsert(stale).await.expect("upsert");
+    assert_eq!(upserted.responsibility, Some(first));
+
+    let replaced = repo
+        .update(
+            STANDALONE_OPERATOR_ID,
+            &UpdateOperatorConfig {
+                responsibility: Some(second.clone()),
+                ..nothing()
+            },
+        )
+        .await
+        .expect("correct it");
+    assert_eq!(replaced.responsibility, Some(second));
 }

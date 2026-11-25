@@ -31,6 +31,7 @@ just cli -- bootstrap --legal-name "Example GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 just cli -- facility add --name "Main plant" --value 4012345000009 --country DE --default
 just cli -- operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
+just cli -- operator set --responsible-role manufacturer --responsible-basis marketSurveillanceArt4
 just cli -- passport import ops/demo/samples/battery-full.json
 just cli -- passport validate
 just cli -- passport publish

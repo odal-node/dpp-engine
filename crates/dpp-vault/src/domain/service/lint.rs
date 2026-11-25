@@ -29,14 +29,19 @@ pub(super) fn compute_lint(passport: &Passport) -> Option<LintResult> {
         .as_ref()
         .map(LintResult::compute);
 
-    if let Some(finding) = life_status_finding(passport) {
+    for finding in [
+        life_status_finding(passport),
+        responsible_operator_finding(passport),
+    ]
+    .into_iter()
+    .flatten()
+    {
         result
             .get_or_insert_with(|| LintResult {
                 // Names the product-group pack, which is the only versioned
                 // rule set here — the envelope checks below are plain functions
-                // in `dpp_rules::lineage` with no version of their own. Stamped
-                // even on a result the pack did not contribute to, so the field
-                // never reads as absent.
+                // with no version of their own. Stamped even on a result the
+                // pack did not contribute to, so the field never reads as absent.
                 pack_version: dpp_rules::lint::LINT_PACK_VERSION.to_owned(),
                 findings: Vec::new(),
                 assessed_at: Utc::now(),
@@ -46,6 +51,49 @@ pub(super) fn compute_lint(passport: &Passport) -> Option<LintResult> {
     }
 
     result
+}
+
+/// The code of the finding for a passport that states no responsible operator.
+pub(super) const RESPONSIBLE_OPERATOR_UNSTATED: &str = "operator.responsible_operator_unstated";
+
+/// Does the passport say who is answerable for the product?
+///
+/// ESPR Annex III point (k) asks for the name, contact details and identifier of
+/// the economic operator responsible for the tasks of Art. 4 of Regulation (EU)
+/// 2019/1020 and its counterparts. A passport states it from the role and legal
+/// basis the operator gave the node, or sent with the passport. With neither,
+/// there is nothing to state, and the node does not guess: a wrong basis is a
+/// false claim, and a published passport is corrected by a successor.
+///
+/// A notice and never a refusal here. Publish refuses where the product group's
+/// passport obligation is live, and that is the gate; this is what a draft says
+/// while there is still time to state it. The wording holds whether or not the
+/// node has a default, because a draft created before the default was set has not
+/// picked it up until publish.
+fn responsible_operator_finding(passport: &Passport) -> Option<LintFinding> {
+    if passport.responsible_operator.is_some() {
+        return None;
+    }
+    Some(LintFinding {
+        code: RESPONSIBLE_OPERATOR_UNSTATED.to_owned(),
+        field: "responsibleOperator".to_owned(),
+        severity: LintSeverity::Notice,
+        message: "no responsible operator is stated on this passport. It is stated at publish \
+                  from the role and legal basis set on this node (`PATCH /operator`, \
+                  `responsibility`) or sent with the passport; a product group whose passport \
+                  obligation is live is refused at publish when neither exists"
+            .to_owned(),
+    })
+}
+
+/// Take back the notice that no responsible operator is stated, once publish
+/// has stated one: the finding is true of a draft and false of the passport
+/// about to be signed, and it would be signed into the record.
+pub(super) fn drop_unstated_notice(passport: &mut Passport) {
+    if let Some(lint) = passport.lint_result.as_mut() {
+        lint.findings
+            .retain(|finding| finding.code != RESPONSIBLE_OPERATOR_UNSTATED);
+    }
 }
 
 /// Does the passport's claimed life status agree with its derivation edges?
@@ -141,6 +189,7 @@ mod tests {
     //! `dpp-core` owns the rule itself and tests it exhaustively; these pin the
     //! wiring, which is the part that can silently not run.
 
+    use dpp_domain::LintSeverity;
     use dpp_domain::passport::{DerivationRef, LifeStatus, PassportRef, SecondLifeOperation};
 
     use super::compute_lint;
@@ -216,6 +265,28 @@ mod tests {
         );
     }
 
+    /// What a passport carries once the node has stated its responsible operator.
+    fn stating() -> dpp_domain::ResponsibleOperatorSnapshot {
+        use dpp_domain::{OperatorRole, ResponsibilityBasis, ResponsibleOperator};
+
+        dpp_types::operator::OperatorResponsibility {
+            role: OperatorRole::Manufacturer,
+            basis: ResponsibilityBasis::MarketSurveillanceArt4,
+        }
+        .of(ResponsibleOperator {
+            did: "did:web:acme.example".to_owned(),
+            name: "Acme Cells GmbH".to_owned(),
+            role: OperatorRole::Manufacturer,
+            eu_operator_id: None,
+            eu_operator_id_scheme: None,
+            identifier: None,
+            country: "DE".to_owned(),
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
+        })
+    }
+
     /// A clean passport with nothing to say leaves any existing result alone
     /// rather than replacing it with an empty one.
     #[test]
@@ -224,8 +295,63 @@ mod tests {
         p.product_group_data = None;
         p.life_status = None;
         p.derived_from = Vec::new();
+        p.responsible_operator = Some(stating());
 
         assert!(compute_lint(&p).is_none());
+    }
+
+    /// A notice and never more: publish is where a missing statement is refused,
+    /// for a product group whose obligation is live. This is what a draft says in
+    /// the meantime, and it must hold for a passport with no product group data.
+    #[test]
+    fn a_passport_that_states_no_responsible_operator_is_noticed() {
+        let mut p = crate::public_view::tests::stub_passport();
+        p.product_group_data = None;
+        p.responsible_operator = None;
+
+        let result = compute_lint(&p).expect("the notice is a result of its own");
+        let finding = result
+            .findings
+            .iter()
+            .find(|f| f.code == super::RESPONSIBLE_OPERATOR_UNSTATED)
+            .expect("the notice is raised");
+        assert_eq!(finding.field, "responsibleOperator");
+        assert_eq!(finding.severity, LintSeverity::Notice);
+    }
+
+    #[test]
+    fn a_passport_that_states_one_is_not_noticed() {
+        let mut p = crate::public_view::tests::stub_passport();
+        p.responsible_operator = Some(stating());
+
+        assert!(!codes(&p).contains(&super::RESPONSIBLE_OPERATOR_UNSTATED.to_owned()));
+    }
+
+    /// The notice is true of a draft and false of the passport publish is about
+    /// to sign, so publish takes it back. Only that one: the others are findings
+    /// about the content, which stating an operator does not change.
+    #[test]
+    fn taking_the_notice_back_leaves_every_other_finding() {
+        let mut p = crate::public_view::tests::stub_passport();
+        p.product_group_data = None;
+        p.life_status = Some(LifeStatus::Remanufactured);
+        p.derived_from = vec![edge(SecondLifeOperation::Repurposing)];
+        p.responsible_operator = None;
+        p.lint_result = compute_lint(&p);
+        let before = codes(&p);
+        assert!(before.contains(&super::RESPONSIBLE_OPERATOR_UNSTATED.to_owned()));
+        assert!(before.contains(&"lineage.life_status_unsupported".to_owned()));
+
+        super::drop_unstated_notice(&mut p);
+
+        let after: Vec<String> = p
+            .lint_result
+            .expect("the result stays")
+            .findings
+            .into_iter()
+            .map(|f| f.code)
+            .collect();
+        assert_eq!(after, vec!["lineage.life_status_unsupported".to_owned()]);
     }
 }
 

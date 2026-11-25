@@ -401,6 +401,9 @@ pub struct OperatorUpdateParams {
     pub contact_email: Option<String>,
     pub did_web_url: Option<String>,
     pub retention_policy_days: Option<i64>,
+    /// The role and legal basis the operator states for ESPR Annex III point
+    /// (k), as the node reads them. Both halves or neither.
+    pub responsibility: Option<dpp_types::operator::OperatorResponsibility>,
 }
 
 impl OperatorUpdateParams {
@@ -412,6 +415,7 @@ impl OperatorUpdateParams {
             && self.contact_email.is_none()
             && self.did_web_url.is_none()
             && self.retention_policy_days.is_none()
+            && self.responsibility.is_none()
     }
 }
 

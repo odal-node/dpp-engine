@@ -71,6 +71,8 @@ odal --profile prod operator set --legal-name "Example GmbH" --country DE \
 odal --profile prod facility add --name "Berlin plant" --scheme gln \
   --value 4012345000009 --country DE --default
 odal --profile prod operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
+odal --profile prod operator set --responsible-role manufacturer \
+  --responsible-basis marketSurveillanceArt4
 ```
 
 - `bootstrap` mints the first API key, prints it once and saves it to
@@ -89,6 +91,21 @@ odal --profile prod operator-id add --scheme lei --value 984500ODALEXAMPLE069 --
   facility identifier); operatorIdentifier (Annex III responsible-operator
   identifier).
   ```
+
+- The role you answer in and the law that makes you answerable are what ESPR
+  Annex III point (k) asks a passport to state about the responsible economic
+  operator, and the node cannot know either. State them once with
+  `--responsible-role` (`manufacturer`, `importer`, `authorisedRepresentative`,
+  `fulfilmentServiceProvider`, …) and `--responsible-basis`
+  (`marketSurveillanceArt4` or `generalProductSafety`), or `--responsible-law
+  "<the law, cited>"` for another Union law. They are never defaulted: a guessed
+  basis is a false claim, and a published passport is corrected by a successor.
+  Under `marketSurveillanceArt4` only a manufacturer, an importer, an authorised
+  representative or a fulfilment service provider can be named. A passport can
+  state its own with `responsibility` when it is created, because the basis
+  belongs to the pairing of operator and product. For a product group whose
+  passport obligation is in force, publish is refused without a statement; any
+  other group publishes without one and its lint result says so.
 
 Check what the configured key can do with `odal whoami` (identity, scope, key id).
 It is the one route a `read`-scoped key can use to learn its own scope.
@@ -279,6 +296,7 @@ Serve the resolver (port 8003) on the `RESOLVER_BASE_URL` host.
 | Node stays `starting`; logs repeat *"password authentication failed for user odal_app"* | The role-provisioning hook was not mounted on first start | Make sure `ops/bootstrap/` is beside `docker/`, then recreate the database volume (the hook runs only on first initialisation) |
 | *"No profile configured yet"* | Nothing configured on this machine | `odal init` or `odal profile create <name> --node-url <url>` |
 | Publish fails `422` *"missing required registry identity"* | No default facility or primary operator identifier | `odal facility add … --default`, `odal operator-id add … --primary` |
+| Publish fails `422` *"the responsible operator cannot be stated"* | No role and legal basis were stated for the node or with the passport, or the operator's `legalName` or `country` is not configured | `odal operator set --responsible-role manufacturer --responsible-basis marketSurveillanceArt4`, and `odal operator set --legal-name … --country …` |
 | Publish fails `422` *"the operator identifier cannot be registered"* | The primary operator identifier is a VAT or EORI number, which the EU registry does not take | Make an LEI or a D-U-N-S number primary: `odal operator-id add --scheme lei … --primary` |
 | Import rejects every row on `gtin` | 13-digit GTINs, or wrong check digits | Use GTIN-14; the error names the expected digit |
 | Retire fails *"retention policy forbids retiring before …"* | The retention window is still running | Suspend instead |

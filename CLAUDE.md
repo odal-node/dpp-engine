@@ -488,7 +488,7 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/node/state` | Bearer | Node setup state (claimed / configured) |
 | GET | `/vault/api/v1/whoami` | Bearer | The presented credential's `userId`, `scope` and `keyId`. Every scope, including `read` — that is the scope that most needs to discover it is read-only. `keyId` is the key's row id, never the token, and is absent for local Basic auth |
 | GET | `/vault/api/v1/operator` | Bearer | Get operator config |
-| PATCH | `/vault/api/v1/operator` | Bearer (admin) | Update operator branding |
+| PATCH | `/vault/api/v1/operator` | Bearer (admin) | Update the operator configuration: branding, enterprise size and `responsibility`, the role and legal basis a passport states for ESPR Annex III point (k). Never defaulted; a role the basis cannot name is `400` |
 | GET | `/vault/api/v1/api-keys` | Bearer (admin) | List API keys |
 | POST | `/vault/api/v1/api-keys` | Bearer (admin) | Create API key |
 | DELETE | `/vault/api/v1/api-keys/{id}` | Bearer (admin) | Revoke API key |

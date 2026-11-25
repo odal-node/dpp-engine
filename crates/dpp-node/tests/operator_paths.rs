@@ -399,6 +399,17 @@ async fn a_fresh_node_is_onboarded_with_odal() {
         "529900T8BM49AURSDO55",
         "--primary",
     ]);
+    // Who is answerable for the product, which the node cannot know and never
+    // defaults: a battery's passport obligation is live, and publish is refused
+    // without it.
+    odal.ok(&[
+        "operator",
+        "set",
+        "--responsible-role",
+        "manufacturer",
+        "--responsible-basis",
+        "marketSurveillanceArt4",
+    ]);
 
     // The key it minted runs the core flow: create and publish a passport.
     let demo = manifest_dir().join("../../ops/demo/passports/01-battery-industrial-nmc.json");
@@ -420,6 +431,16 @@ async fn a_fresh_node_is_onboarded_with_odal() {
         .await;
     assert_eq!(status, StatusCode::OK, "{published}");
     assert_eq!(published["status"], "active");
+    // What `odal operator set` stated is what the passport says, beside the
+    // operator's own details.
+    assert_eq!(
+        published["responsibleOperator"]["operator"]["role"], "manufacturer",
+        "{published}"
+    );
+    assert_eq!(
+        published["responsibleOperator"]["basis"], "marketSurveillanceArt4",
+        "{published}"
+    );
 
     // A second bootstrap would mint a key nobody asked for.
     let again = odal.run(&bootstrap_args());
@@ -855,7 +876,26 @@ async fn upgrade_from(fixture: &Path) {
 ///   is a VAT or EORI number makes an LEI primary. Its passports keep the
 ///   identifier they were signed with; a draft, an amendment's successor
 ///   among them, is published under the LEI.
+/// - A passport states who is answerable for it, from a role and legal basis
+///   the operator states once and the node never defaults, so an operator
+///   whose product group has a live passport obligation states them.
+///   A draft stored before the upgrade takes the statement when it is published.
 async fn apply_documented_migrations(node: &Node, release: &str) -> String {
+    let (code, body) = node
+        .admin(
+            Method::PATCH,
+            "/vault/api/v1/operator",
+            Some(json!({
+                "responsibility": { "role": "manufacturer", "basis": "marketSurveillanceArt4" }
+            })),
+        )
+        .await;
+    assert_eq!(
+        code,
+        StatusCode::OK,
+        "{release}: state the role and legal basis: {body}"
+    );
+
     const PATH: &str = "/vault/api/v1/operator-identifiers";
     let (code, identifiers) = node.admin(Method::GET, PATH, None).await;
     assert_eq!(

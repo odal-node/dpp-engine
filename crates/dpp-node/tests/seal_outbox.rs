@@ -159,6 +159,28 @@ fn auth() -> AuthContext {
     }
 }
 
+/// The statement of who is answerable that a draft carries once it has one.
+fn stating_operator() -> dpp_domain::ResponsibleOperatorSnapshot {
+    use dpp_domain::{OperatorRole, ResponsibilityBasis, ResponsibleOperator};
+
+    dpp_types::operator::OperatorResponsibility {
+        role: OperatorRole::Manufacturer,
+        basis: ResponsibilityBasis::MarketSurveillanceArt4,
+    }
+    .of(ResponsibleOperator {
+        did: "did:web:seal-sim.example.com".to_owned(),
+        name: "Test Operator GmbH".to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        eu_operator_id_scheme: None,
+        identifier: None,
+        country: "DE".to_owned(),
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
+    })
+}
+
 fn draft_passport() -> Passport {
     Passport {
         id: PassportId::new(),
@@ -227,7 +249,9 @@ fn draft_passport() -> Passport {
         // registry identity. Set here because the simulation has no operator
         // config to backfill from — the gate itself is correct and stays armed.
         operator_identifier: Some("LEI:529900T8BM49AURSDO55".into()),
-        responsible_operator: None,
+        // Likewise for who is answerable: a draft that already states it keeps what
+        // it was told when there is no operator config to read it from.
+        responsible_operator: Some(stating_operator()),
         facility: Some(dpp_domain::passport::FacilitySnapshot {
             scheme: "gln".into(),
             value: "4035600210708".into(),

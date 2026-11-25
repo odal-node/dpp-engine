@@ -29,6 +29,12 @@ patch:
     Requires an admin-scoped key. Reading the configuration back does not:
     `GET` is open to any authenticated caller, since a passport's issuer is
     public information the moment one is published.
+
+    **`responsibility`** is the role the operator answers in and the law that
+    makes it answerable (ESPR Annex III point (k)), stated once for the node.
+    Publish refuses a passport of a product group whose passport obligation is
+    live until one is stated, and never defaults it. A role the basis cannot
+    name is refused with `400`.
   tags:
     - Operator
   security:

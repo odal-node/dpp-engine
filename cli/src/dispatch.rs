@@ -132,6 +132,9 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                     contact_email,
                     did_web_url,
                     retention_policy_days,
+                    responsible_role,
+                    responsible_basis,
+                    responsible_law,
                 },
         } => {
             run_operator_set(
@@ -142,6 +145,7 @@ pub async fn dispatch(cmd: Commands) -> anyhow::Result<()> {
                 contact_email,
                 did_web_url,
                 retention_policy_days,
+                (responsible_role, responsible_basis, responsible_law),
             )
             .await
         }

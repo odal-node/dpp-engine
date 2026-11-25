@@ -48,3 +48,14 @@ properties:
     anyOf:
       - $ref: ./EnterpriseSize.yaml
       - type: 'null'
+  responsibility:
+    description: >-
+      The role this operator answers in and the law that makes it answerable,
+      for the node as a whole: what a passport says under ESPR Annex III point
+      (k) when its create request sends none of its own. Both halves travel
+      together. Omitted or null leaves the current statement unchanged, so one
+      stated is corrected by stating another. A role the basis cannot name is
+      refused with `400`.
+    anyOf:
+      - $ref: ./OperatorResponsibility.yaml
+      - type: 'null'

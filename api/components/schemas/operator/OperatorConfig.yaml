@@ -96,3 +96,13 @@ properties:
     anyOf:
       - $ref: ./EnterpriseSize.yaml
       - type: 'null'
+  responsibility:
+    description: >-
+      The role this operator answers in and the law that makes it answerable,
+      stated once for the node (ESPR Annex III point (k)). Absent means not
+      stated, and the node never fills one in: publish refuses a passport of a
+      product group whose passport obligation is live, and any other publishes
+      without a `responsibleOperator`.
+    anyOf:
+      - $ref: ./OperatorResponsibility.yaml
+      - type: 'null'

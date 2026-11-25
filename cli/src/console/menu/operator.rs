@@ -128,6 +128,10 @@ pub(super) async fn operator() -> Result<()> {
                         contact_email,
                         did_web_url,
                         retention_policy_days,
+                        // Stated with `odal operator set --responsible-role …`: it
+                        // is two facts that belong together, and a menu field
+                        // blank by default is how one gets guessed.
+                        responsibility: None,
                     };
                     if params.is_empty() {
                         println!(

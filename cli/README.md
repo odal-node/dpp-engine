@@ -102,6 +102,7 @@ odal bootstrap --legal-name "Example GmbH" --country DE \
   --address "Musterstrasse 1, 10115 Berlin" --contact-email ops@example.com
 odal facility add --name "Main plant" --value 4012345000009 --country DE --default
 odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
+odal operator set --responsible-role manufacturer --responsible-basis marketSurveillanceArt4
 
 odal passport import ops/demo/samples/battery-full.json  # creates a battery draft
 odal passport validate                                # checks the stored drafts
@@ -149,6 +150,7 @@ directory and each parent, so they work from anywhere inside the deployment.
 | `odal bootstrap [--legal-name …] [--force]` | Mint the first API key with the local admin credential (HTTP Basic, from `ADMIN_USERNAME` / `ADMIN_PASSWORD`) | local admin |
 | `odal operator show` | Print the operator configuration | read |
 | `odal operator set [--legal-name …] [--retention-policy-days …]` | Update operator fields | admin |
+| `odal operator set --responsible-role <role> (--responsible-basis <basis> \| --responsible-law "<law>")` | State the role you answer in and the law that makes you answerable, for ESPR Annex III point (k). Never defaulted; publish is refused without it for a product group whose passport obligation is in force | admin |
 | `odal key create <name> [--scope read\|write\|admin] [--use]` | Mint an API key. The secret is printed once. Without `--scope` the key is an admin key | admin |
 | `odal key list` | List API keys by prefix | admin |
 | `odal key revoke <id>` | Revoke an API key | admin |

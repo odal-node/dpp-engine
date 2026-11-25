@@ -128,6 +128,22 @@ pub struct CreatePassportRequest {
     /// never saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_status: Option<dpp_domain::passport::LifeStatus>,
+    /// The role the operator answers in for **this** product, and the law that
+    /// makes it answerable, for ESPR Annex III point (k).
+    ///
+    /// Optional: the node's own statement (`PATCH /operator`) applies when this
+    /// is omitted. It is here because core ties the basis to the pairing of
+    /// operator and product, so one value for the whole node would make an
+    /// operator with products under different laws sign one of them wrongly.
+    ///
+    /// Only the two facts the node cannot know travel with the request. The name,
+    /// contact details, identifier and DID in the passport's `responsibleOperator`
+    /// are the operator's own and come from the node, read again at publish.
+    ///
+    /// Create-time only. `responsibleOperator` is in core's `PROTECTED_PATCH_FIELDS`,
+    /// so no update reaches it; a different statement for a draft is a new draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsibility: Option<crate::operator::OperatorResponsibility>,
     /// What the operator states about personal data, for each field of
     /// `productGroupData` the product group's schema marks as able to hold it,
     /// keyed by the field's dotted path (for example
