@@ -1,0 +1,27 @@
+type: object
+description: |-
+  Personal data to hold for one marked field of a draft passport, outside the
+  passport, where it can be erased.
+
+  The body may be at most 64 KiB; a larger one is refused with `413`.
+required:
+  - field
+  - content
+properties:
+  field:
+    type: string
+    minLength: 1
+    description: >-
+      The field the data relates to, as a dotted path inside `productGroupData`
+      (`usageHistory.negativeEvents`). It must be one the passport's product
+      group schema marks as able to hold personal data (`x-personal-data`): a
+      statement can only name a record for such a field, so a record for any
+      other would be held for nothing and is refused with `422`.
+    example: repairHistoryUrl
+  content:
+    description: >-
+      The personal data, in whatever shape the controller keeps it. Any JSON
+      value except `null`. It is never returned by any route of this node.
+    not:
+      type: 'null'
+additionalProperties: false

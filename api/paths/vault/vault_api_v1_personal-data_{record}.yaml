@@ -25,11 +25,13 @@ delete:
     data, and the operator needs a basis for keeping the tombstone; to show that
     it erased (Art. 5(2)) is one. Nothing in this node deletes it.
 
-    **No route reads a record.** A record is served by no resolver, public,
-    credentialed or authenticated view of a passport, and is never part of the
-    archive of past versions or of the back-up copy. Serving one is a disclosure
-    that needs a basis of its own, which only the controller can establish for
-    each purpose.
+    **No route returns a record's content.** A record is served by no resolver,
+    public, credentialed or authenticated view of a passport, and is never part of
+    the archive of past versions or of the back-up copy. Serving one is a
+    disclosure that needs a basis of its own, which only the controller can
+    establish for each purpose. A record is stored with
+    `POST /api/v1/dpp/{dppId}/personal-data` and found, to be erased, with
+    `GET` on the same path, which lists identifiers and instants and no content.
 
     Admin-scoped, like every other route that removes something: the write scope
     produces and moves passports, and none of that destroys anything.

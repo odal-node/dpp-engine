@@ -290,6 +290,48 @@ async fn a_key_on_an_unkeyed_route_is_refused() {
     assert_eq!(calls.0.load(Ordering::SeqCst), 0);
 }
 
+/// The refusal is shared by every unkeyed route, and not every one of them
+/// converges: a route that takes personal data is unkeyed because a key would
+/// store a hash of that data, and a repeat of it stores a second record. So the
+/// refusal may not say that repeating an unkeyed request reaches the same state,
+/// or send the caller to retry it.
+#[tokio::test]
+async fn the_refusal_of_a_key_does_not_promise_that_a_retry_is_safe() {
+    let store = Arc::new(MemStore::default());
+    let calls = Calls(Arc::new(AtomicUsize::new(0)));
+
+    let response = app(store, calls)
+        .oneshot(
+            Request::post("/vault/api/v1/dpp/abc/publish")
+                .header("idempotency-key", "k-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = body_of(response).await;
+    assert!(
+        body.contains("does not accept an `Idempotency-Key`"),
+        "it still says the key is refused: {body}"
+    );
+    assert!(
+        body.contains("a retry is not protected"),
+        "it says what the refusal means for a retry: {body}"
+    );
+    for promise in [
+        "reaches the same state",
+        "idempotent by",
+        "Retry it directly",
+    ] {
+        assert!(
+            !body.contains(promise),
+            "a refusal shared with routes that do not converge cannot say `{promise}`: {body}"
+        );
+    }
+}
+
 /// The header is opt-in. A caller that sends none is unaffected, on a keyed
 /// route as much as anywhere else.
 #[tokio::test]

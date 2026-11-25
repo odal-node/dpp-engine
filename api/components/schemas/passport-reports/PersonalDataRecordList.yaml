@@ -1,0 +1,12 @@
+type: object
+description: |-
+  Every record of personal data held for a passport, present or erased, oldest
+  first. None of their content.
+required:
+  - records
+properties:
+  records:
+    type: array
+    description: Empty when no record was ever stored for the passport.
+    items:
+      $ref: ./PersonalDataRecordSummary.yaml
