@@ -30,8 +30,9 @@ no third party sees it.
    for signatures, OpenAPI 3.1 for the HTTP contract, PostgreSQL and NATS JetStream for
    storage and events.
 5. **The database is the source of truth.** Obligations that must not be lost (EU
-   registry registration) are written to an outbox in the same transaction as the
-   change. Events and webhooks are sent after commit and never fail the operation.
+   registry registration, webhook deliveries) are written to an outbox in the same
+   transaction as the change. Events are published after commit and never fail the
+   operation.
 6. **Report what is not real.** Every trust adapter reports whether it is live, a
    sandbox or a stub, and a production profile refuses to start on a stub.
 
@@ -43,13 +44,13 @@ no third party sees it.
 |---|---|
 | Passport lifecycle | Create, validate (dry run), update drafts, publish, amend (successor), supersede, suspend, retire, end of life, transfer of responsibility |
 | Signing and identity | Ed25519 JWS on publish, `did:web` document, key rotation that keeps old signatures valid |
-| Disclosure | Per-field public, legitimate-interest and authority views; access credentials for legitimate-interest roles |
+| Disclosure | Per-field public, legitimate-interest and authority views; access credentials for legitimate-interest roles; personal data a passport names, held outside the passport, listed without its content and erasable |
 | History | Hash-chained append-only audit trail, version history per passport, evidence dossiers verifiable offline |
 | Import | CSV and XLSX with templates per product group, row-level reports, dry run, delta matching |
 | Compliance | Signed Wasm plugins per product group, plausibility lint, signed ruleset channel with hot swap |
-| Regulatory catalog | Which product groups need a passport, from when, under which acts |
+| Regulatory catalog | Which product groups need a passport, from when, under which acts; each dated obligation announced through webhooks and events on the day it takes effect and at lead times before it |
 | Resolver | Digital link resolution (GS1 Digital Link and by passport id), HTML, JSON-LD and AAS views, QR codes, signature verification on every read |
-| Operator administration | API keys with scopes, facilities, operator identifiers, webhooks, unsold-goods discard records and their evidence |
+| Operator administration | API keys with scopes, facilities, operator identifiers, the role and law the operator answers under (ESPR Annex III point (k)), webhooks, unsold-goods discard records and their evidence |
 | Continuity | Signed pre-rendered snapshots of public pages in object storage |
 | Operations | `odal` CLI and console, Prometheus metrics, trust mode reporting |
 

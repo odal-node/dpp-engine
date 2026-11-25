@@ -57,9 +57,13 @@ Prometheus metrics are served on a separate private listener, `METRICS_ADDR`
    `NODE_PROFILE=production` the node refuses to start while a required adapter is
    a stub.
 6. Connect to NATS if `NATS_URL` is set. Without it, events are discarded.
-7. Start the background tasks: the EU registry, transfer, webhook, seal and
-   snapshot outbox drainers, the ruleset poll, and the clean-up jobs. Drainers
-   for an unconfigured backend are not started.
+7. Start the background tasks: the EU registry, transfer and webhook outbox
+   drainers; the seal drainer and sweep when sealing is live, and the stored-seal
+   audit; the snapshot drainer, sweep and refresh when a snapshot store is
+   configured; the ruleset poll; the trusted-list refresh and the dated-obligation
+   notices (`OBLIGATION_NOTICES=on`), each only when switched on; and the clean-up
+   jobs for import jobs, idempotency keys and scan counts. Drainers for an
+   unconfigured backend are not started.
 8. Serve the router and the metrics listener.
 
 ## Modules

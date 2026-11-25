@@ -70,14 +70,14 @@ on how much a lost row would cost:
 
 | Outbox | Delivers | Written |
 |---|---|---|
-| `registry_sync` | EU registry registration of a published passport, and later status changes | Registration: in the publish transaction. Status changes (suspend, retire, end of life): after commit |
+| `registry_sync` | EU registry registration of a published passport, and later status changes | In the transaction of the change: the registration in publish's, a status change (suspend, retire, end of life) in its own |
 | `registry_transfer` | Registry notification of a transfer of responsibility | In the accept transaction |
 | `seal_outbox` | eIDAS seal requests | After commit. A periodic sweep queues any published passport still unsealed |
 | `snapshot_outbox` | Continuity snapshots to object storage | After commit. A periodic sweep re-queues missed reconciles |
-| `webhook_delivery` | Signed webhook deliveries | After commit, best effort, alongside the event bus publish |
+| `webhook_delivery` | Signed webhook deliveries | In the transaction of what raises them: a passport change, an import job's result, an obligation notice's record |
 
-For the two registry outboxes, a crash between commit and delivery loses nothing:
-the row was committed with the passport change. The registration intent is kept
+For the two registry outboxes and the webhook deliveries, a crash between commit and
+delivery loses nothing: the row was committed with the change. The registration intent is kept
 even while the registry adapter is a stub, so switching to a live adapter later
 delivers the backlog. Once any row is queued, delivery is retried until it succeeds
 or exhausts its attempts.
@@ -91,10 +91,9 @@ already succeeded.
 
 Publishing before the write would leave an event for a change that may then fail.
 Publishing after it means an event can be lost if the process dies between commit and
-publish, so the obligations that must not be lost (EU registry registration and
-transfer notification) are written inside the transaction instead (pattern 4).
-Webhook deliveries are queued at the same point as the event publish, so the same
-caveat applies to them until the row is queued. See [EVENT-BUS.md](EVENT-BUS.md).
+publish, so the obligations that must not be lost (EU registry registration,
+transfer notification and webhook deliveries) are written inside the transaction
+instead (pattern 4). See [EVENT-BUS.md](EVENT-BUS.md).
 
 ## 6. Versioned event envelope
 

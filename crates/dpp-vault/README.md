@@ -17,6 +17,10 @@ also exists for running the vault on its own; no deployment uses it today.
 | Reads | `GET /api/v1/dpps`, `/dpp/{id}`, `/history`, `/versions`, `/verify-tree`, `/by-identity` |
 | Evidence and seals | `/evidence`, `/evidence/{id}/verify`, `/seal`, `/seal/repair` |
 | Operator administration | `/operator`, `/api-keys`, `/facilities`, `/operator-identifiers`, `/webhooks`, `/credentials`, `/plugins`, `/ruleset/reload` |
+| Discard records (ESPR Art. 24 and Art. 25) | `/discard-records`, `/discard-records/{id}/evidence`, `/discard-records/{id}/missing-evidence` |
+| Personal data a passport names | `/dpp/{id}/personal-data` (store for a draft, list what is held), `/personal-data/{record}` (erase). No route returns a record's content |
+| EU registry sync | `/registry`, `/dpp/{id}/registry`, `/dpp/{id}/registry/handle`, `/dpp/{id}/registry/abandon` |
+| Node and calendar | `/node/state`, `/node/health`, `/whoami`, `/stats`, `/obligations` |
 | Public and credentialed reads | `GET /public/dpp/{id}`, `/public/dpp/by-gtin/{gtin}`, `/credential/dpp/{id}` |
 
 [`api/openapi.bundled.yaml`](../../api/openapi.bundled.yaml) is the complete,
@@ -28,13 +32,18 @@ tested route list, with each route's scope and error codes.
    rules (from `dpp-core`). Publish fails closed: an unresolvable schema is refused.
 2. For a product group whose passport obligation is in force, the default facility
    and primary operator identifier are filled in if missing, and publish is refused
-   without them.
+   without them. The responsible operator (ESPR Annex III point (k)) is stated from
+   the operator configuration and the role and law the operator gave, for the node
+   or with the passport. Neither is ever defaulted: for such a group, publish is
+   refused when the statement cannot be made, and any other group publishes without
+   one and carries a lint notice.
 3. The public view is computed once (`public_view.rs`) and the passport is signed as
    an Ed25519 JWS through the `IdentityPort`. In the node this is the in-process
    `LocalIdentityService`.
-4. The passport row and its EU registry outbox row are written in one transaction.
-   After the commit, the seal and snapshot outbox rows, the event and any webhook
-   deliveries are queued for the node's drainers.
+4. The passport row, its archived prior version, its audit entry, its EU registry
+   outbox row and its webhook deliveries are written in one transaction. After the
+   commit, the seal and snapshot outbox rows are queued for the node's drainers and
+   the event is published on the bus.
 
 ## Authentication
 

@@ -14,6 +14,7 @@ composed, which the description does not show.
 | Prefix | Router | Mounted with |
 |---|---|---|
 | `/health` | `dpp-node` | |
+| `/.well-known/did.json` | `dpp-node` | The DID document, at the path the `did:web` method resolves the node's pathless DID to; the same document as `/identity/.well-known/did.json` |
 | `/vault/*` | `dpp_vault::router::build` | Auth middleware on `/vault/api/v1/*`; scope checks in the handlers |
 | `/identity/*` | `dpp_identity_service::router::build_public` | Public routes only: the DID document and probes |
 | `/integrator/*` | `dpp_integrator::router::build` | Each handler forwards the caller's `Bearer` token to the vault |
