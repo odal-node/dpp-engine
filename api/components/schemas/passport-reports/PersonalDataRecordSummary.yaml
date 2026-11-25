@@ -1,0 +1,34 @@
+type: object
+description: |-
+  A record of personal data held for a passport: which record it is, which field
+  it relates to, whether its content is still held, and when. Never the content.
+
+  A present record carries when it was stored. An erased one carries when it was
+  erased, since that is all its tombstone keeps.
+
+  The identifier relates to whoever owns the item, so this is as sensitive as the
+  passport's individual-item data (GDPR Recital 26).
+required:
+  - record
+  - field
+  - state
+properties:
+  record:
+    type: string
+    description: The record's identifier, as the passport's statement names it.
+  field:
+    type: string
+    description: >-
+      The marked field the record relates to, as a dotted path inside
+      `productGroupData`.
+    example: usageHistory.negativeEvents
+  state:
+    $ref: ./PersonalDataRecordState.yaml
+  storedAt:
+    type: string
+    format: date-time
+    description: When the record was stored. Absent once it is erased.
+  erasedAt:
+    type: string
+    format: date-time
+    description: When the record's content was erased. Absent while it is present.

@@ -95,6 +95,38 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Added
 
+- **An admin credential can store a record of personal data for a draft passport,
+  and list what is held for any passport (#482).** The records a `held: outside`
+  statement names could be erased but not created or found: nothing in the node
+  called the store, so content could not get in through the API, and a record
+  whose statement was never written, or whose identifier was lost, had no way to
+  be found.
+  `POST /vault/api/v1/dpp/{dppId}/personal-data` takes `{"field", "content"}`,
+  holds the content and answers `201` with the record's identifier, field and when
+  it was stored. `GET` on the same path lists every record held for the passport,
+  present or erased, oldest first: identifier, field, state and the instant. No
+  route returns a record's content, and neither logs it. A client creates the
+  draft, stores the record, then patches the statement that names it into the
+  draft.
+  The store refuses a passport that is not a draft (`409`), a `field` the
+  product group schema does not mark as able to hold personal data (`422`, naming
+  the ones it marks: a statement could never name a record for it), `null` content
+  (`422`) and a body over 64 KiB (`413`). A passport this node does not hold is
+  `404` on both routes, which a listing with nothing in it (`200`) tells apart.
+  The store judges the passport before it reads the body, so an unknown passport
+  is `404` and one that is not a draft is `409` whatever the body holds, a body
+  that is not the JSON object described included.
+  Both are admin-scoped, like the erase route: the identifiers relate to whoever
+  owns the item (GDPR Recital 26).
+  **The store takes no `Idempotency-Key`**, and a key sent to it is refused
+  `400`. The key store keeps a SHA-256 of the raw request body, which here is the
+  personal data, so a hash of it would outlive the record's erasure. A retry
+  stores a second record, and the listing finds the first. (#711)
+  The refusal of a key on an unkeyed route used to say that repeating the request
+  reaches the same state and to retry it directly, which is false for this route.
+  It now says only that a key records nothing and that a retry is not protected
+  by one.
+
 - **Battery CSV templates carry the placing date and the due diligence columns.**
   Every battery template gains `placedOnMarketDate` (now required; see
   Breaking). A battery placed from 18 August 2027 also takes two columns: `dueDiligenceUrl`, the address of the report (Annex XIII

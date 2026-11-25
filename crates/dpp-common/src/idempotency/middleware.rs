@@ -140,9 +140,9 @@ pub async fn idempotency_middleware(
             StatusCode::BAD_REQUEST,
             "Idempotency Key Not Accepted Here",
             &format!(
-                "`{} {template}` does not accept an `Idempotency-Key`. It is idempotent by \
-                 shape — repeating it reaches the same state — so a key would record nothing. \
-                 Retry it directly.",
+                "`{} {template}` does not accept an `Idempotency-Key`, so a key would record \
+                 nothing and a retry is not protected by one. What a repeat of this request \
+                 does is stated for the route in the API description.",
                 request.method()
             ),
         );

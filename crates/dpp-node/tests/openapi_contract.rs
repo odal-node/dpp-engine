@@ -598,6 +598,18 @@ fn object_cases() -> Vec<ObjectCase> {
         "PersonalDataErasureReceipt",
         fixtures::personal_data_erasure_receipt()
     );
+    case!(
+        "PersonalDataRecordSummary",
+        fixtures::personal_data_record_summary()
+    );
+    case!(
+        "PersonalDataRecordList",
+        fixtures::personal_data_record_list()
+    );
+    case!(
+        "StorePersonalDataRequest",
+        fixtures::store_personal_data_request()
+    );
     case!("PassportListResponse", fixtures::passport_list_response());
     case!("WhoamiResponse", fixtures::whoami_response());
     case!("ResolverDescription", fixtures::resolver_description());
@@ -723,6 +735,16 @@ fn enum_cases() -> Vec<EnumCase> {
                 dpp_types::CreationDevice::DeclaresQualifiedDevice,
                 dpp_types::CreationDevice::NoQualifiedDevice,
                 dpp_types::CreationDevice::NotAQualifiedCertificate,
+            ]),
+        },
+        // Exhaustive by hand: a state a client has never been told of is one it
+        // cannot tell apart from an erased record, and that is the question the
+        // listing exists to answer.
+        EnumCase {
+            name: "PersonalDataRecordState",
+            variants: wire(&[
+                dpp_vault::handlers::personal_data::RecordState::Present,
+                dpp_vault::handlers::personal_data::RecordState::Erased,
             ]),
         },
         // These four read `ALL` off the core enum rather than a hand-written
@@ -3110,7 +3132,10 @@ mod fixtures {
             list::PassportListResponse,
             node_health::{NodeHealth, NodeSignal, RegistryOutboxHealth, signals_view},
             node_state::NodeState,
-            personal_data::PersonalDataErasureReceipt,
+            personal_data::{
+                PersonalDataErasureReceipt, PersonalDataRecordList, PersonalDataRecordSummary,
+                RecordState, StorePersonalDataRequest,
+            },
             registry_abandon::{AbandonRegistrationRequest, AbandonRegistrationResponse},
             registry_handle::{RecordHandleRequest, RecordHandleResponse},
             registry_status::{
@@ -4203,6 +4228,31 @@ mod fixtures {
             passport_id: uuid(),
             field: "usageHistory.negativeEvents".into(),
             erased_at: ts(),
+        }
+    }
+
+    /// Both instants are set, though no record has both: a maximal instance is
+    /// how the contract test sees every member the type can emit.
+    pub fn personal_data_record_summary() -> PersonalDataRecordSummary {
+        PersonalDataRecordSummary {
+            record: "0198f2c4-7a3e-7c1d-9b52-3e8f6a1d4c70".into(),
+            field: "usageHistory.negativeEvents".into(),
+            state: RecordState::Present,
+            stored_at: Some(ts()),
+            erased_at: Some(ts()),
+        }
+    }
+
+    pub fn personal_data_record_list() -> PersonalDataRecordList {
+        PersonalDataRecordList {
+            records: vec![personal_data_record_summary()],
+        }
+    }
+
+    pub fn store_personal_data_request() -> StorePersonalDataRequest {
+        StorePersonalDataRequest {
+            field: "usageHistory.negativeEvents".into(),
+            content: json!({ "note": "kept for the contract test" }),
         }
     }
 

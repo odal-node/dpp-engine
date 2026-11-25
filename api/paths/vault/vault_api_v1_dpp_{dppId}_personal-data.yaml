@@ -1,0 +1,162 @@
+post:
+  operationId: storePersonalDataRecord
+  summary: Hold personal data for a draft passport, where it can be erased
+  description: |
+    Holds personal data related to one marked field of a draft passport in a
+    record outside the passport, and answers the record's identifier. A published
+    passport is signed, frozen, archived and copied to the back-up provider, so
+    personal data it is not required to carry cannot live in it: withdrawn
+    consent (GDPR Art. 7(3)) obliges erasure (Art. 17(1)(b)), and nothing the
+    passport is copied to can be erased from.
+
+    **Order.** The statement in the passport names the record, and the record is
+    stored for a passport, so a client creates the draft first (stating
+    `{"held": "nothing"}` for the field, or leaving it out while the field is
+    empty), stores the record here, then patches the statement in with
+    `{"held": "outside", "lawfulBasis": …, "record": "<id>"}`
+    (`PUT /api/v1/dpp/{dppId}`).
+
+    **Only a draft.** A passport that is no longer a draft has a statement that
+    can no longer be changed to name a new record, so it is refused with `409`.
+
+    **The passport is judged before the body is read.** A passport this node does
+    not hold is `404`, and one that is not a draft is `409`, whatever the body
+    holds, including a body that is not the JSON object described here. Only a
+    draft reads the body and refuses it.
+
+    **Only a marked field.** `field` must be one the passport's product group
+    schema marks as able to hold personal data. A statement can only be made
+    about such a field, so a record for any other could never be named; it is
+    refused with `422`, and the detail lists the fields that are marked.
+
+    **A retry stores a second record.** The route takes no `Idempotency-Key`, and
+    a key sent to it is refused with `400`. The key store keeps a hash of the raw
+    request body, which here is the personal data, and nothing could erase that
+    hash once the record is erased. A caller that lost the answer lists the
+    passport's records (`GET`, below), finds the first and erases it with
+    `DELETE /api/v1/personal-data/{record}`.
+
+    **The content is never returned.** The answer carries the record's
+    identifier, the field and when it was stored, and no route of this node
+    returns a record's content. It is not logged either: the node records who
+    stored a record, and the record's identifier, and nothing about the passport
+    or the data.
+
+    **Size.** The body may be at most 64 KiB. A larger one is refused with
+    `413`, once the passport is known to be a draft.
+
+    Admin-scoped, like every other route of this tag: the identifiers it handles
+    relate to whoever owns the item (GDPR Recital 26).
+  tags:
+    - Personal Data
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: ../../components/schemas/passport-requests/StorePersonalDataRequest.yaml
+  responses:
+    '201':
+      description: >-
+        The record is held. Its identifier is what the passport's statement names
+        in `personalData.<field>.record`.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/PersonalDataRecordSummary.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      description: This node holds no passport with that identifier.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '409':
+      description: >-
+        The passport is not a draft. Only a draft takes a new record, because the
+        statement of any other cannot be changed to name one.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '413':
+      description: The request body is larger than 64 KiB.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+    '422':
+      description: >-
+        `field` is not one the passport's product group schema marks as able to
+        hold personal data (the detail lists the ones it marks), or `content` is
+        `null`. A body that is JSON but not the object described here is also
+        `422`, and text that is not JSON at all is `400`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml
+get:
+  operationId: listPersonalDataRecords
+  summary: List the records of personal data held for a passport
+  description: |
+    Every record held for the passport, present or erased, oldest first: the
+    identifier, the field, whether the content is still held, and the instant
+    (stored, or erased). Never the content, which no route of this node returns.
+
+    This is how an operator learns the identifier of a record whose statement was
+    never written (an orphan), or of one whose answer was lost, and erases it
+    with `DELETE /api/v1/personal-data/{record}`.
+
+    **A passport that has no records is a `200` with none.** A passport this node
+    does not hold is `404`, so an operator can tell a mistyped identifier from a
+    passport with nothing stored. Any status of passport can be listed: a record
+    outlives the draft it was stored for.
+
+    **A listing is as sensitive as the passport's individual-item data.** An
+    identifier relates to whoever owns the item, and information that can be
+    linked to a person is personal data (GDPR Recital 26), so the route is
+    admin-scoped like the one that erases.
+  tags:
+    - Personal Data
+  security:
+    - BearerApiKey: []
+    - BasicAuth: []
+  parameters:
+    - name: dppId
+      in: path
+      required: true
+      schema:
+        $ref: ../../components/schemas/passport/DppId.yaml
+  responses:
+    '200':
+      description: The passport's records, oldest first. Empty when it has none.
+      content:
+        application/json:
+          schema:
+            $ref: ../../components/schemas/passport-reports/PersonalDataRecordList.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
+    '401':
+      $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
+    '404':
+      description: This node holds no passport with that identifier.
+      content:
+        application/problem+json:
+          schema:
+            $ref: ../../components/schemas/errors/Problem.yaml

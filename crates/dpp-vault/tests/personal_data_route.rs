@@ -13,6 +13,12 @@
 //!    test: a record this node never held, against one it held and erased.
 //! 5. **The dry run says what create says.** A preview that passed a body create
 //!    refuses would send an operator into a draft that cannot be stored.
+//! 6. **Storing and listing.** `POST` and `GET /api/v1/dpp/{dppId}/personal-data`:
+//!    the path an operator takes through the API alone, a retry that stores a
+//!    second record, the refusals (`409` against `422`, a body that cannot be
+//!    read judged after the passport, `404` against an empty listing, `413`, the
+//!    scope gate), that a refusal stores nothing, and that the node's log of a
+//!    store names the record and never the data.
 
 #![cfg(feature = "integration-tests")]
 
@@ -400,4 +406,512 @@ async fn the_dry_run_refuses_a_draft_core_refuses() {
         created.1
     );
     assert_eq!(previewed, created, "the dry run says what create says");
+}
+
+// ---------------------------------------------------------------------------
+// Storing and listing: `POST` and `GET /api/v1/dpp/{dppId}/personal-data`
+// ---------------------------------------------------------------------------
+
+/// A draft that says nothing is held about its marked field yet, which is the
+/// state a client is in when it stores the record the statement will name.
+async fn a_draft(client: &TestClient) -> String {
+    let created: Value = client
+        .post_json(
+            "/api/v1/dpp",
+            textile_with_a_repair_history(Some(json!({ FIELD: { "held": "nothing" } }))),
+        )
+        .await
+        .json()
+        .await
+        .expect("created");
+    created["id"].as_str().expect("an id").to_owned()
+}
+
+fn records_path(id: &str) -> String {
+    format!("/api/v1/dpp/{id}/personal-data")
+}
+
+/// A store request for the marked field.
+fn a_record_of(content: Value) -> Value {
+    json!({ "field": FIELD, "content": content })
+}
+
+/// The records the route lists for a passport.
+async fn listed(client: &TestClient, id: &str) -> Vec<Value> {
+    let resp = client.get(&records_path(id)).await;
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.expect("a listing");
+    body["records"].as_array().expect("records").clone()
+}
+
+/// 🚨 The whole path an operator takes, through the API and nothing else: store
+/// the record, name it in the statement, list it, erase it. The content goes in
+/// once and comes out of no route: the store answers without it, the listing
+/// carries none in either state, and the passport never held it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_record_is_stored_named_listed_and_erased_by_the_routes_alone() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let content = json!({ "owner": "Ada Lovelace", "note": "named in the repair log" });
+
+    let stored = client
+        .post_json(&records_path(&id), a_record_of(content.clone()))
+        .await;
+    assert_eq!(stored.status(), 201);
+    let stored: Value = stored.json().await.expect("a summary");
+    let record = stored["record"].as_str().expect("an id").to_owned();
+    assert_eq!(stored["field"], FIELD);
+    assert_eq!(stored["state"], "present");
+    assert!(stored["storedAt"].is_string(), "{stored}");
+    assert!(stored.get("erasedAt").is_none(), "{stored}");
+    assert!(
+        !stored.to_string().contains("Ada Lovelace"),
+        "the answer to a store carries no content: {stored}"
+    );
+
+    // The content was kept, as sent, for this passport.
+    let port = PgPersonalDataRepo::new(pg.dal.clone());
+    let held = port
+        .fetch(&dpp_domain::PersonalDataRecordId::new(record.clone()))
+        .await
+        .expect("fetch");
+    let Some(HeldRecord::Present(held)) = held else {
+        panic!("the record is held: {held:?}");
+    };
+    assert_eq!(held.content, content);
+    assert_eq!(held.passport_id.0.to_string(), id);
+
+    // The statement is written after the store, naming the id the store answered.
+    let statement = json!({
+        FIELD: { "held": "outside", "lawfulBasis": "consent", "record": record }
+    });
+    let patched = client
+        .put_json(
+            &format!("/api/v1/dpp/{id}"),
+            json!({ "personalData": statement }),
+        )
+        .await;
+    assert_eq!(
+        patched.status(),
+        200,
+        "the draft may name the stored record"
+    );
+    let passport = client.get(&format!("/api/v1/dpp/{id}")).await.text().await;
+    assert!(
+        !passport.expect("a body").contains("Ada Lovelace"),
+        "the passport never holds the content"
+    );
+
+    let records = listed(&client, &id).await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["record"], record);
+    assert_eq!(records[0]["field"], FIELD);
+    assert_eq!(records[0]["state"], "present");
+    assert!(records[0]["storedAt"].is_string());
+    assert!(records[0].get("erasedAt").is_none());
+
+    let erased = client
+        .delete(&format!("/api/v1/personal-data/{record}"))
+        .await;
+    assert_eq!(erased.status(), 200);
+
+    let records = listed(&client, &id).await;
+    assert_eq!(records.len(), 1, "an erased record is still listed");
+    assert_eq!(records[0]["record"], record);
+    assert_eq!(records[0]["state"], "erased");
+    assert!(records[0]["erasedAt"].is_string());
+    assert!(
+        records[0].get("storedAt").is_none(),
+        "a tombstone keeps when it was erased and nothing else: {}",
+        records[0]
+    );
+    assert!(
+        !serde_json::to_string(&records)
+            .unwrap()
+            .contains("Ada Lovelace"),
+        "no listing carries the content, in either state"
+    );
+}
+
+/// The route takes no `Idempotency-Key`, so a retry is a second record. The
+/// listing is how a caller that lost the first answer finds it, and the order is
+/// the order they were stored.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retried_store_holds_a_second_record_and_the_listing_finds_both() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let body = a_record_of(json!({ "note": "the same request twice" }));
+
+    let first: Value = client
+        .post_json(&records_path(&id), body.clone())
+        .await
+        .json()
+        .await
+        .expect("a summary");
+    let second: Value = client
+        .post_json(&records_path(&id), body)
+        .await
+        .json()
+        .await
+        .expect("a summary");
+    assert_ne!(first["record"], second["record"], "every store mints an id");
+
+    let records = listed(&client, &id).await;
+    let ids: Vec<&Value> = records.iter().map(|r| &r["record"]).collect();
+    assert_eq!(ids, [&first["record"], &second["record"]], "oldest first");
+}
+
+/// Every refusal of a store holds nothing: the listing is empty afterwards, so a
+/// refusal is not merely a status. The `422` names what the caller can do.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_store_holds_nothing() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let path = records_path(&id);
+
+    // A field the schema does not mark: no statement could name a record for it.
+    let (status, problem) = refusal(
+        client
+            .post_json(
+                &path,
+                json!({ "field": "careInstructions", "content": "x" }),
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(status, 422);
+    let detail = problem["detail"].as_str().expect("a detail");
+    assert!(
+        detail.contains("'careInstructions' is not a field"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(FIELD),
+        "the detail lists the fields that are marked: {detail}"
+    );
+
+    // A blank field is not a marked one either.
+    let (status, _) = refusal(
+        client
+            .post_json(&path, json!({ "field": "", "content": "x" }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 422);
+
+    // `null` is no content: a record holds something or is erased.
+    let (status, problem) = refusal(
+        client
+            .post_json(&path, json!({ "field": FIELD, "content": null }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 422);
+    assert!(
+        problem["detail"].as_str().unwrap().contains("null"),
+        "{problem}"
+    );
+
+    // A body that is not the documented one: no content, or a member it does not
+    // define.
+    for body in [
+        json!({ "field": FIELD }),
+        json!({ "field": FIELD, "content": "x", "passportId": id }),
+    ] {
+        let (status, _) = refusal(client.post_json(&path, body.clone()).await).await;
+        assert_eq!(status, 422, "{body}");
+    }
+
+    assert!(
+        listed(&client, &id).await.is_empty(),
+        "five refusals, and nothing was stored"
+    );
+}
+
+/// `409` and `422` are told apart: a passport that is no longer a draft is
+/// refused for that, whatever the body says, and it can still be listed — a
+/// record outlives the draft it was stored for.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_draft_takes_a_record_and_a_passport_of_any_status_can_be_listed() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+
+    let stored = client
+        .post_json(&records_path(&id), a_record_of(json!("held while a draft")))
+        .await;
+    assert_eq!(stored.status(), 201);
+
+    let retired = client
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), json!({}))
+        .await;
+    assert_eq!(retired.status(), 200, "a draft may be retired");
+
+    let (status, problem) = refusal(
+        client
+            .post_json(&records_path(&id), a_record_of(json!("too late")))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 409, "{problem}");
+
+    // A body that would be a `422` on a draft is still a `409` here.
+    let (status, _) = refusal(
+        client
+            .post_json(
+                &records_path(&id),
+                json!({ "field": "careInstructions", "content": null }),
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(
+        status, 409,
+        "the passport's state is judged before the body"
+    );
+
+    let records = listed(&client, &id).await;
+    assert_eq!(records.len(), 1, "the refused store held nothing");
+    assert_eq!(records[0]["state"], "present");
+}
+
+/// 🚨 The passport is judged before the body is read, and not only before it is
+/// checked. A body the JSON extractor refuses on its own (a member missing, a
+/// member the request does not have, text that is not JSON) used to be refused
+/// before the handler ran, so a retired passport answered `422` where it answers
+/// `409` to every other body, and an unknown one lost its `404`.
+///
+/// A draft reads the body and refuses it, each in its own way. A retired passport
+/// and an unknown one do not read it, so the same three bodies get `409` and
+/// `404`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_that_cannot_be_read_is_judged_after_the_passport() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let token = make_jwt("00000000-0000-0000-0000-0000000000a1");
+    let id = a_draft(&client).await;
+    let unknown = uuid::Uuid::now_v7().to_string();
+
+    // Sent as text, because what is under test is what the node does with bytes
+    // it cannot read.
+    let send = |passport: String, body: &'static str| {
+        let request = reqwest::Client::new()
+            .post(format!("{url}{}", records_path(&passport)))
+            .bearer_auth(&token)
+            .header("content-type", "application/json")
+            .body(body);
+        async move { helpers::send_checked(request).await.status().as_u16() }
+    };
+    // What is wrong with the body, the body, and what a draft says to it.
+    let unreadable: [(&str, &str, u16); 3] = [
+        ("no `content`", r#"{"field":"repairHistoryUrl"}"#, 422),
+        (
+            "a member the request does not have",
+            r#"{"field":"repairHistoryUrl","content":"x","owner":"someone"}"#,
+            422,
+        ),
+        ("not JSON", "{not json", 400),
+    ];
+
+    for (what, body, on_a_draft) in unreadable {
+        assert_eq!(
+            send(id.clone(), body).await,
+            on_a_draft,
+            "a draft refuses a body with {what}"
+        );
+    }
+
+    let retired = client
+        .post_json(&format!("/api/v1/dpp/{id}/retire"), json!({}))
+        .await;
+    assert_eq!(retired.status(), 200, "a draft may be retired");
+
+    for (what, body, _) in unreadable {
+        assert_eq!(
+            send(id.clone(), body).await,
+            409,
+            "a retired passport is a `409` whatever the body, even one with {what}"
+        );
+        assert_eq!(
+            send(unknown.clone(), body).await,
+            404,
+            "an unknown passport is a `404` whatever the body, even one with {what}"
+        );
+    }
+
+    assert!(
+        listed(&client, &id).await.is_empty(),
+        "no refusal stored anything"
+    );
+}
+
+/// `404` means this node holds no such passport; a passport with nothing stored
+/// is a `200` with an empty list. The pair an operator needs told apart, to know a
+/// mistyped identifier from a passport that has no records.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_passport_and_one_with_no_records_are_told_apart() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let unknown = uuid::Uuid::now_v7().to_string();
+
+    assert!(
+        listed(&client, &id).await.is_empty(),
+        "nothing stored is a listing with nothing in it"
+    );
+
+    let resp = client.get(&records_path(&unknown)).await;
+    assert_eq!(resp.status(), 404);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+
+    let resp = client
+        .post_json(&records_path(&unknown), a_record_of(json!("x")))
+        .await;
+    assert_eq!(
+        resp.status(),
+        404,
+        "nothing is stored for a passport not held"
+    );
+}
+
+/// The cap is 64 KiB of body, as the description says: a body over it is refused
+/// with a problem document and stores nothing, one under it is held.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_body_over_64_kib_is_refused_and_one_under_it_is_held() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let path = records_path(&id);
+
+    let over = client
+        .post_json(&path, a_record_of(json!("x".repeat(64 * 1024))))
+        .await;
+    assert_eq!(over.status(), 413);
+    assert_eq!(
+        over.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert!(listed(&client, &id).await.is_empty(), "nothing was stored");
+
+    let under = client
+        .post_json(&path, a_record_of(json!("x".repeat(64 * 1024 - 1024))))
+        .await;
+    assert_eq!(under.status(), 201, "a body under the cap is held");
+}
+
+/// A caller that cannot administer neither stores nor lists: the listing is as
+/// sensitive as the records, and the refusal comes before anything is read or
+/// written.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_caller_without_the_admin_scope_stores_and_lists_nothing() {
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+    let path = records_path(&id);
+
+    for scope in ["write", "read"] {
+        let other = TestClient::new(&url, make_jwt_scoped("op", scope));
+        let stored = other.post_json(&path, a_record_of(json!("refused"))).await;
+        assert_eq!(stored.status(), 403, "a {scope}-scoped key must not store");
+        assert_eq!(
+            other.get(&path).await.status(),
+            403,
+            "a {scope}-scoped key must not list"
+        );
+    }
+
+    let unauthenticated =
+        helpers::send_checked(reqwest::Client::new().get(format!("{url}{path}"))).await;
+    assert_eq!(unauthenticated.status(), 401);
+
+    assert!(
+        listed(&client, &id).await.is_empty(),
+        "five refusals, and nothing was stored"
+    );
+}
+
+/// What the node logs when it stores a record: who, and which record. Not the
+/// data, and not the passport — the line is where the actor is kept, and a log is
+/// read by people who are not entitled to the record.
+///
+/// The subscriber is global, because the vault serves from tasks on other
+/// threads; this is the only test in the file that installs one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_store_logs_who_and_which_record_and_never_the_data_or_the_passport() {
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Captured;
+        fn make_writer(&'a self) -> Captured {
+            self.clone()
+        }
+    }
+
+    let captured = Captured::default();
+    tracing_subscriber::fmt()
+        .with_writer(captured.clone())
+        .with_ansi(false)
+        .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
+        .try_init()
+        .expect("no other test in this file installs a subscriber");
+
+    let pg = start_postgres().await;
+    let url = start_vault(pg.dal.clone()).await;
+    let client = admin(&url);
+    let id = a_draft(&client).await;
+
+    let stored: Value = client
+        .post_json(
+            &records_path(&id),
+            a_record_of(json!("marker-for-the-log-test")),
+        )
+        .await
+        .json()
+        .await
+        .expect("a summary");
+    let record = stored["record"].as_str().expect("an id");
+
+    let log = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+    let line = log
+        .lines()
+        .find(|l| l.contains("stored a personal data record"))
+        .unwrap_or_else(|| panic!("a store is logged: {log}"));
+    assert!(line.contains(record), "the line names the record: {line}");
+    assert!(
+        line.contains("00000000-0000-0000-0000-0000000000a1"),
+        "and who stored it: {line}"
+    );
+    assert!(!line.contains(&id), "never the passport: {line}");
+    assert!(
+        !log.contains("marker-for-the-log-test"),
+        "the data is in no log line at all"
+    );
 }
