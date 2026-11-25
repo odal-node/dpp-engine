@@ -323,6 +323,12 @@ async fn seed_complete_operator(repo: &PgOperatorConfigRepo) {
     cfg.country = "DE".into();
     cfg.contact_email = "ops@smoke.example".into();
     cfg.did_web_url = Some("https://test.example.com/.well-known/did.json".into());
+    // A battery's passport obligation is live, and publish is refused for it
+    // without a role and legal basis, which the node never defaults.
+    cfg.responsibility = Some(dpp_types::operator::OperatorResponsibility {
+        role: dpp_domain::OperatorRole::Manufacturer,
+        basis: dpp_domain::ResponsibilityBasis::MarketSurveillanceArt4,
+    });
 
     repo.upsert(cfg).await.expect("seed complete operator");
 }

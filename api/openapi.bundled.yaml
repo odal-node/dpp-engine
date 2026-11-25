@@ -884,6 +884,15 @@ paths:
         arrive together can both pass it; this is where the label goes live, so
         the second to publish stays a draft rather than making one label name two
         passports.
+
+        A draft states its `responsibleOperator` here, from the operator as it
+        stands now and the role and legal basis it was given. Where the product
+        group's passport obligation is live, a passport whose responsible operator
+        cannot be stated is refused with `422`, naming what the node lacks: no role
+        and basis were stated for the node or with the passport, or the operator's
+        `legalName` or `country` is not configured. Nothing is defaulted, because a
+        published passport is corrected by a successor and not an edit. Any other
+        product group publishes without one.
       tags:
         - DPP Lifecycle
       security:
@@ -2303,6 +2312,12 @@ paths:
         Requires an admin-scoped key. Reading the configuration back does not:
         `GET` is open to any authenticated caller, since a passport's issuer is
         public information the moment one is published.
+
+        **`responsibility`** is the role the operator answers in and the law that
+        makes it answerable (ESPR Annex III point (k)), stated once for the node.
+        Publish refuses a passport of a product group whose passport obligation is
+        live until one is stated, and never defaults it. A role the basis cannot
+        name is refused with `400`.
       tags:
         - Operator
       security:
@@ -5844,7 +5859,7 @@ components:
             - $ref: '#/components/schemas/ResponsibleOperatorSnapshot'
           description: |-
             Who is answerable for this product and under which law (Regulation (EU) 2024/1781 Annex III(k)). Frozen at publish for the same reason as `operatorIdentifier`: published content is covered by the signature over it, so a later transfer mints a new version rather than rewriting this one.
-            **Nothing writes this yet**, so it is always absent: the snapshot needs the operator's role and the legal basis that makes them answerable, and neither is operator configuration today.
+            The role and legal basis are what the operator stated, for the node (`PATCH /operator`, `responsibility`) or with the passport when it was created, and are never defaulted. Everything else is the operator's own, read from the node again at publish. **Absent** when none was stated: a product group whose passport obligation is live is refused at publish without one, and any other publishes without it.
         facility:
           allOf:
             - $ref: '#/components/schemas/FacilitySnapshot'
@@ -6633,6 +6648,17 @@ components:
             **`waste` is refused here.** The other four describe how a unit came to be, and Art. 77(7) makes each operation produce a *new* passport, so a repurposed unit is created as `repurposed`. `waste` is the one value that happens to a record which continues, and under that article's second subparagraph it moves responsibility as well, so it belongs to a versioning event on the passport becoming waste rather than to the creation of a new one.
 
             Omitting it is lawful everywhere. For a battery it reads as *not stated* rather than *not applicable*, and publish does not refuse it: the lint result says so instead, because a default would put a claim about a unit onto a record that is about to be signed.
+        responsibility:
+          allOf:
+            - $ref: '#/components/schemas/OperatorResponsibility'
+          description: |-
+            The role the operator answers in for **this** product and the law that makes it answerable (ESPR Annex III point (k)). Optional: the node's own statement (`PATCH /operator`, `responsibility`) applies when this is omitted. It can be sent here because the basis belongs to the pairing of operator and product, so one value for the whole node would make an operator whose products fall under different laws sign one of them wrongly.
+
+            Only these two facts travel with the request. The name, contact details, identifier and DID in the passport's `responsibleOperator` are the operator's own and come from the node, and are read again at publish.
+
+            A role the basis cannot name is refused with `422`, and so is a statement the node cannot make (no operator name or country configured). A statement sent is kept or refused and never dropped.
+
+            **Create-time only.** `responsibleOperator` is protected from patching, so a different statement for a draft is a new draft.
         personalData:
           type: object
           additionalProperties:
@@ -8355,6 +8381,11 @@ components:
           anyOf:
             - $ref: '#/components/schemas/EnterpriseSize'
             - type: 'null'
+        responsibility:
+          description: The role this operator answers in and the law that makes it answerable, stated once for the node (ESPR Annex III point (k)). Absent means not stated, and the node never fills one in. A passport can state its own with `responsibility` on its create request, and that wins for the passport. A passport that carries none of its own and finds none here is refused at publish for a product group whose passport obligation is live, and any other publishes without a `responsibleOperator`.
+          anyOf:
+            - $ref: '#/components/schemas/OperatorResponsibility'
+            - type: 'null'
     UpdateOperatorConfig:
       type: object
       description: Merge-patch update. Supply only the fields being changed.
@@ -8400,6 +8431,11 @@ components:
           anyOf:
             - $ref: '#/components/schemas/EnterpriseSize'
             - type: 'null'
+        responsibility:
+          description: 'The role this operator answers in and the law that makes it answerable, for the node as a whole: what a passport says under ESPR Annex III point (k) when its create request sends none of its own. Both halves travel together. Omitted or null leaves the current statement unchanged, so one stated is corrected by stating another. A role the basis cannot name is refused with `400`.'
+          anyOf:
+            - $ref: '#/components/schemas/OperatorResponsibility'
+            - type: 'null'
     EnterpriseSize:
       type: string
       description: |
@@ -8414,6 +8450,33 @@ components:
         - medium
         - large
       example: large
+    OperatorResponsibility:
+      type: object
+      required:
+        - role
+        - basis
+      additionalProperties: false
+      description: |
+        The role an operator answers in for a product, and the law that makes it
+        answerable: the two facts ESPR Annex III point (k) asks of the economic
+        operator responsible for a product that this node cannot derive. The
+        operator's name, contact details, identifier and DID are its own and come
+        from the node.
+
+        **Stated, never defaulted.** A guessed basis is a false claim and not a
+        missing one, and a published passport is corrected by a successor rather than
+        an edit. An operator that has stated neither has a passport that says
+        nothing about it.
+
+        **The role must be one the basis can name.** Under `marketSurveillanceArt4`,
+        Art. 4(2) of Regulation (EU) 2019/1020 names a manufacturer, an importer, an
+        authorised representative and a fulfilment service provider and no other
+        role, so any other role is refused. The other bases do not narrow the role.
+      properties:
+        role:
+          $ref: '#/components/schemas/OperatorRole'
+        basis:
+          $ref: '#/components/schemas/ResponsibilityBasis'
     Facility:
       type: object
       required:

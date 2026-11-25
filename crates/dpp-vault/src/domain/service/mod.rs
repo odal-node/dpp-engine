@@ -12,6 +12,7 @@
 //! - `publish` — `publish` and its private helpers `validate_schema_for_publish`/`build_carrier_url`
 //! - `amend` — `amend`: issue a corrected successor and supersede its predecessor
 //! - `lint` — `relint` (advisory lint re-check; never blocks publish)
+//! - `responsible_operator` — the statement ESPR Annex III point (k) asks of a passport
 //! - `lifecycle` — `suspend`, `retire`
 //! - `eol` — `declare_eol`
 //! - `transfer` — `initiate_transfer`, `accept_transfer`
@@ -37,6 +38,7 @@ mod label_lock;
 mod lifecycle;
 mod lint;
 mod publish;
+mod responsible_operator;
 /// Public: the demo dossier generator stamps its passport's retention horizon
 /// and carrier URL with the function publish uses, rather than a copy of it.
 pub use publish::stamp_publish_obligations;

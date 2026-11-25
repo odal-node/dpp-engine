@@ -559,6 +559,10 @@ pub struct OptionalPorts {
     pub plugin_admin: Option<Arc<dyn dpp_common::plugin_admin::PluginAdmin>>,
     /// The signer of access credentials. `None` is a node with no key in reach.
     pub credential_issuer: Option<Arc<dyn dpp_vault::state::CredentialIssuer>>,
+    /// What the service reads the operator's configuration, facility and
+    /// identifier through. `None` is the real one, over the same database; a test
+    /// that wants to see what is read, and how often, hands in a wrapper of it.
+    pub registry_reader: Option<Arc<dyn dpp_types::operator::OperatorConfigRepository>>,
 }
 
 /// A vault with `ports` wired, and the harness's usual signer and registry.
@@ -641,7 +645,9 @@ async fn start_vault_wired(
         },
         "https://resolver.example.com".to_owned(),
     )
-    .with_registry_reader(operator_repo.clone())
+    .with_registry_reader(ports.registry_reader.clone().unwrap_or_else(|| {
+        operator_repo.clone() as Arc<dyn dpp_types::operator::OperatorConfigRepository>
+    }))
     // Same reasoning again, and it had already cost something: without a
     // transfer store the seal route's `responsibilityMayHaveTransferred`
     // took its `None => false` branch, so a test asserting the flag was
@@ -755,6 +761,26 @@ async fn start_vault_wired(
 /// `start_vault`: `operator_config.rs` asserts the empty default on a fresh DB,
 /// so seeding must be opt-in, called right after `start_vault`.
 pub async fn seed_operator_config(dal: &PgDal) {
+    seed_operator_config_stating(dal, Some(seeded_responsibility())).await;
+}
+
+/// The role and legal basis a seeded operator states: a manufacturer answerable
+/// under Art. 4 of Regulation (EU) 2019/1020.
+pub fn seeded_responsibility() -> dpp_types::operator::OperatorResponsibility {
+    use dpp_domain::{OperatorRole, ResponsibilityBasis};
+
+    dpp_types::operator::OperatorResponsibility {
+        role: OperatorRole::Manufacturer,
+        basis: ResponsibilityBasis::MarketSurveillanceArt4,
+    }
+}
+
+/// As [`seed_operator_config`], with the operator's statement of its role and
+/// legal basis given, or `None` for an operator that has stated neither.
+pub async fn seed_operator_config_stating(
+    dal: &PgDal,
+    responsibility: Option<dpp_types::operator::OperatorResponsibility>,
+) {
     use dpp_types::operator::{OperatorConfig, OperatorConfigRepository, STANDALONE_OPERATOR_ID};
 
     let mut cfg = OperatorConfig::empty(STANDALONE_OPERATOR_ID);
@@ -763,6 +789,7 @@ pub async fn seed_operator_config(dal: &PgDal) {
     cfg.country = "DE".into();
     cfg.contact_email = "ops@test.example".into();
     cfg.did_web_url = Some("https://test.mock/.well-known/did.json".into());
+    cfg.responsibility = responsibility;
 
     PgOperatorConfigRepo::new(dal.clone())
         .upsert(cfg)
@@ -774,10 +801,25 @@ pub async fn seed_operator_config(dal: &PgDal) {
 /// facility (point (i)) and primary operator identifier (point (k)) that
 /// `publish` now requires for in-force product groups. Use in publish-flow tests.
 pub async fn seed_complete_operator(dal: &PgDal) {
+    seed_operator_config(dal).await;
+    seed_registry_identity(dal).await;
+}
+
+/// As [`seed_complete_operator`], for an operator whose statement of its role and
+/// legal basis is the one given, or `None` for one that has stated neither.
+pub async fn seed_complete_operator_stating(
+    dal: &PgDal,
+    responsibility: Option<dpp_types::operator::OperatorResponsibility>,
+) {
+    seed_operator_config_stating(dal, responsibility).await;
+    seed_registry_identity(dal).await;
+}
+
+/// The default facility and primary operator identifier, which belong to a
+/// config row that already exists.
+async fn seed_registry_identity(dal: &PgDal) {
     use dpp_types::operator::STANDALONE_OPERATOR_ID;
     use dpp_types::registry_identity::{Facility, OperatorIdentifier, RegistryIdentityRepository};
-
-    seed_operator_config(dal).await;
 
     let repo = PgRegistryIdentityRepo::new(dal.clone());
     repo.add_facility(

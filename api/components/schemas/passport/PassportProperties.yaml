@@ -299,9 +299,12 @@ properties:
       signature over it, so a later transfer mints a new version rather than
       rewriting this one.
 
-      **Nothing writes this yet**, so it is always absent: the snapshot needs
-      the operator's role and the legal basis that makes them answerable, and
-      neither is operator configuration today.
+      The role and legal basis are what the operator stated, for the node
+      (`PATCH /operator`, `responsibility`) or with the passport when it was
+      created, and are never defaulted. Everything else is the operator's own,
+      read from the node again at publish. **Absent** when none was stated: a
+      product group whose passport obligation is live is refused at publish
+      without one, and any other publishes without it.
   facility:
     allOf:
       - $ref: ./FacilitySnapshot.yaml

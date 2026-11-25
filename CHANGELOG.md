@@ -12,6 +12,49 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ### Breaking
 
+- **A passport states its responsible operator, and publish refuses a product
+  group with a live passport obligation that cannot (#256).** ESPR Annex III
+  point (k) asks for the name, contact details and unique operator identifier of
+  the economic operator responsible for the tasks of Art. 4 of Regulation (EU)
+  2019/1020 and its counterparts. `responsibleOperator` was served on every
+  passport and written by nothing, so it was always absent.
+  It is now stated from what the node holds (the legal name, the trade name where
+  it differs, the address, the contact email, the country, the primary operator
+  identifier with its scheme, and the node's DID) and from the two facts the node
+  cannot know: the **role** the operator answers in and the **law** that makes it
+  answerable. The operator states those once for the node, as `responsibility` on
+  `PATCH /vault/api/v1/operator` (migration 0053), and may send its own with a
+  create request for one passport, because core ties the basis to the pairing of
+  operator and product, so one value for the node would make an operator with
+  products under different laws sign one of them wrongly.
+  **Role and basis are never defaulted.** A guessed basis is a false claim and
+  not a missing one, and a published passport is corrected by a successor, not
+  an edit. A draft states the operator at create when it can, and again at
+  publish, so it takes the operator as it stands then and keeps the role and
+  basis it was told. Where the product group's passport obligation is live (the
+  test `missing_registry_identity` already uses), a statement that cannot be made
+  is refused at publish with `422`, naming what the node lacks, and counted as
+  `missing_responsible_operator` on `passport_publish_rejected_total`. A draft
+  stated at create is stated again at publish from the operator as it stands, and
+  one whose operator has since lost its name or country is refused by the route's
+  incomplete-identity `422`, as before. The primary
+  identifier is read once per create and once per publish and is the one the
+  statement and `operatorIdentifier` both name. `POST /vault/api/v1/dpp/validate`
+  refuses a body whose `responsibility` the node cannot state, as create does. Any other
+  product group publishes without one, and its lint result carries the notice
+  `operator.responsible_operator_unstated`. A role the basis cannot name is
+  refused (under `marketSurveillanceArt4` only a manufacturer, an importer, an
+  authorised representative or a fulfilment service provider can be named):
+  `400` on the configuration, `422` on a create and on the dry run that
+  previews it.
+  **Migration:** state the role and basis once, before publishing a passport of a
+  product group with a live passport obligation (a battery, for one):
+  `PATCH /vault/api/v1/operator` with
+  `{"responsibility": {"role": "manufacturer", "basis": "marketSurveillanceArt4"}}`.
+  The basis is `marketSurveillanceArt4`, `generalProductSafety`, or
+  `{"otherUnionLaw": {"citation": "..."}}`. A draft created before the statement
+  existed takes it at publish. (#256, #722)
+
 - **A battery CSV row without `placedOnMarketDate` is refused at import** wherever
   core's publish gate would refuse it: an EV or LMT battery, or an industrial battery
   over 2 kWh or with no stated `ratedCapacityKwh`, whatever its Art. 47 declaration,

@@ -202,6 +202,9 @@ pub async fn action_operator_set(
     if let Some(v) = params.retention_policy_days {
         patch["retentionPolicyDays"] = json!(v);
     }
+    if let Some(v) = &params.responsibility {
+        patch["responsibility"] = serde_json::to_value(v)?;
+    }
 
     let url = format!("{}/api/v1/operator", cfg.vault_url);
     let (status, body) = client.patch_json(&url, &patch).await?;

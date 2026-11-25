@@ -54,12 +54,19 @@ pub async fn create_handler(
         return resp;
     }
 
+    // Not a field of the passport. The passport carries the statement the service
+    // builds from it and the operator's own details.
+    let responsibility = body.responsibility.clone();
     let passport = match assemble_passport(body) {
         Ok(passport) => passport,
         Err(resp) => return resp,
     };
 
-    match state.service.create(passport, &auth).await {
+    match state
+        .service
+        .create_stating(passport, &auth, responsibility.as_ref())
+        .await
+    {
         Ok(p) => (
             StatusCode::CREATED,
             Json(crate::api::PassportResponse::from(&p)),
@@ -210,10 +217,10 @@ pub fn assemble_passport(
         // because a default here would be a claim about a unit nobody made and a
         // published passport is corrected by a successor rather than an edit.
         life_status: body.life_status,
-        // Nothing writes this yet, here or anywhere else — the transfer routes
-        // record the chain but do not set it. The snapshot needs the operator's
-        // role and the legal basis that makes them answerable, and neither is
-        // operator configuration today. Served, and always absent, until then.
+        // Stated by the service, which holds the operator's own details: the
+        // request carries only the role and basis it wants stated
+        // (`responsibility`), and the node's default applies when it carries none.
+        // See `PassportService::create_stating`.
         responsible_operator: None,
         retention_until: None,
         product_id: None,
@@ -916,6 +923,17 @@ pub fn validate_create_request(body: &CreatePassportRequest) -> Option<axum::res
         if let Err(e) = crate::domain::service::validate_component_ref(c, i) {
             return api_error(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &e);
         }
+    }
+    // The role must be one the basis can name. Core answers that and the request
+    // is refused on its answer, since the node would sign what the request says.
+    if let Some(responsibility) = &body.responsibility
+        && let Err(reason) = responsibility.check()
+    {
+        return api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!("responsibility: {reason}"),
+        );
     }
 
     // ProductGroup is the dispatch key: explicit if supplied, else derived from the

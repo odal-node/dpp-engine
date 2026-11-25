@@ -574,6 +574,10 @@ fn object_cases() -> Vec<ObjectCase> {
     );
     case!("OperatorConfig", fixtures::operator_config());
     case!("UpdateOperatorConfig", fixtures::update_operator_config());
+    case!(
+        "OperatorResponsibility",
+        fixtures::operator_responsibility()
+    );
 
     // ── dpp-types: the evidence dossier ───────────────────────────────────
     case!("SignedLayer", fixtures::signed_layer());
@@ -3103,7 +3107,7 @@ mod fixtures {
             EvidenceDossierSummary, SignedLayer, VerificationReport,
         },
         node_signal::{Signal, SignalState},
-        operator::{OperatorConfig, UpdateOperatorConfig},
+        operator::{OperatorConfig, OperatorResponsibility, UpdateOperatorConfig},
         registry_identity::{
             CreateFacilityRequest, CreateOperatorIdentifierRequest, Facility, OperatorIdentifier,
             RegistryIdentityAuditEntry,
@@ -3757,8 +3761,19 @@ mod fixtures {
             feature_flags: Some(json!({ "passthroughCompliance": true })),
             registry_verified_at: Some(ts()),
             enterprise_size: Some(EnterpriseSize::Large),
+            responsibility: Some(operator_responsibility()),
             created_at: Some(ts()),
             updated_at: Some(ts()),
+        }
+    }
+
+    /// Not the default of either field: an importer under the market-surveillance
+    /// basis, so the check compares the values against their schemas and does not
+    /// pass by emitting the key.
+    pub fn operator_responsibility() -> OperatorResponsibility {
+        OperatorResponsibility {
+            role: OperatorRole::Importer,
+            basis: ResponsibilityBasis::MarketSurveillanceArt4,
         }
     }
 
@@ -3780,6 +3795,7 @@ mod fixtures {
             feature_flags: Some(json!({ "passthroughCompliance": true })),
             registry_verified_at: Some(ts()),
             enterprise_size: Some(EnterpriseSize::Medium),
+            responsibility: Some(operator_responsibility()),
         }
     }
 
@@ -3963,6 +3979,8 @@ mod fixtures {
             // value against `LifeStatus.yaml`. `Repurposed` also matches the
             // derivation edge beside it, so the fixture is internally coherent.
             life_status: Some(LifeStatus::Repurposed),
+            // Populated, for the same reason as the field above it.
+            responsibility: Some(operator_responsibility()),
             // Populated, for the same rule as the fields around it: an empty map
             // emits no key, and the schema check would pass without ever
             // comparing the field.
@@ -4204,6 +4222,7 @@ mod fixtures {
             // Absent on purpose: this fixture exists to pin the *minimum* a create
             // body needs, and omitting the status is lawful for every product group.
             life_status: None,
+            responsibility: None,
             personal_data: Default::default(),
             supersedes_id: None,
             manufacturer: manufacturer(),

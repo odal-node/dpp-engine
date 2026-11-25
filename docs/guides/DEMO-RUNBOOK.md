@@ -92,12 +92,14 @@ odal bootstrap --legal-name "Demo GmbH" --country DE \
 odal facility add --name "Demo plant" --scheme gln --value 4012345000009 \
   --country DE --default
 odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary
+odal operator set --responsible-role manufacturer --responsible-basis marketSurveillanceArt4
 ```
 
 `bootstrap` prints the first API key once; keep it. The demo passports are batteries,
 whose passport obligation is in force, so publish refuses with `422`
 *"missing required registry identity"* until the facility and operator identifier
-exist. A draft created before them still publishes once they do.
+exist, and *"the responsible operator cannot be stated"* until the role and legal
+basis are stated. A draft created before them still publishes once they do.
 
 ## 4. Publish the demo passports
 

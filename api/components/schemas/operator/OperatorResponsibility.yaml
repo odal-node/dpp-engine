@@ -1,0 +1,26 @@
+type: object
+required:
+  - role
+  - basis
+additionalProperties: false
+description: |
+  The role an operator answers in for a product, and the law that makes it
+  answerable: the two facts ESPR Annex III point (k) asks of the economic
+  operator responsible for a product that this node cannot derive. The
+  operator's name, contact details, identifier and DID are its own and come
+  from the node.
+
+  **Stated, never defaulted.** A guessed basis is a false claim and not a
+  missing one, and a published passport is corrected by a successor rather than
+  an edit. An operator that has stated neither has a passport that says
+  nothing about it.
+
+  **The role must be one the basis can name.** Under `marketSurveillanceArt4`,
+  Art. 4(2) of Regulation (EU) 2019/1020 names a manufacturer, an importer, an
+  authorised representative and a fulfilment service provider and no other
+  role, so any other role is refused. The other bases do not narrow the role.
+properties:
+  role:
+    $ref: ../transfer/OperatorRole.yaml
+  basis:
+    $ref: ../transfer/ResponsibilityBasis.yaml

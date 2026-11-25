@@ -574,6 +574,9 @@ pub enum SchemaCommands {
     },
 }
 
+// `Set` is one `Option<String>` per field it can change, parsed once at start-up and
+// matched once: boxing it would add an allocation and a deref to say nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum OperatorCommands {
     /// Print the current operator configuration
@@ -594,6 +597,20 @@ pub enum OperatorCommands {
         did_web_url: Option<String>,
         #[arg(long)]
         retention_policy_days: Option<i64>,
+        /// The role you answer in for ESPR Annex III point (k), as the node spells
+        /// it: manufacturer, importer, authorisedRepresentative,
+        /// fulfilmentServiceProvider, … Stated with the law that makes you
+        /// answerable, and never defaulted.
+        #[arg(long, requires = "responsible_law_group")]
+        responsible_role: Option<String>,
+        /// The law that makes you answerable: marketSurveillanceArt4 or
+        /// generalProductSafety. For any other Union law, use --responsible-law.
+        #[arg(long, group = "responsible_law_group", requires = "responsible_role")]
+        responsible_basis: Option<String>,
+        /// The other Union law that makes you answerable, cited as it would be:
+        /// "Article 7 of Regulation (EU) 2017/745". Instead of --responsible-basis.
+        #[arg(long, group = "responsible_law_group", requires = "responsible_role")]
+        responsible_law: Option<String>,
     },
 }
 

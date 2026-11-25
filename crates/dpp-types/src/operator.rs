@@ -6,7 +6,10 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use dpp_domain::{DppError, FacilitySnapshot, unsold_goods::EnterpriseSize};
+use dpp_domain::{
+    DppError, FacilitySnapshot, OperatorRole, ResponsibilityBasis, ResponsibleOperator,
+    ResponsibleOperatorSnapshot, unsold_goods::EnterpriseSize,
+};
 use serde::{Deserialize, Serialize};
 
 /// Constant identity of the single operator this node serves.
@@ -15,6 +18,112 @@ use serde::{Deserialize, Serialize};
 /// This is NOT a tenant-isolation key — there is exactly one operator per node
 /// (DECISION-0002). Do not add operator-scoping queries around this value.
 pub const STANDALONE_OPERATOR_ID: &str = "self_hosted";
+
+/// The role an operator answers in for a product, and the law that makes it
+/// answerable: the two facts ESPR Annex III point (k) asks of the economic
+/// operator responsible for a product that nothing on this node can derive.
+///
+/// Held on the operator's configuration as the node's default, and accepted on a
+/// create request for one passport. The rest of the snapshot a passport carries
+/// (name, contact details, identifier, DID) is the operator's own and comes from
+/// the node.
+///
+/// # Why it is stated, and never defaulted
+///
+/// Core's `ResponsibilityBasis` says why the basis is not derived: the same
+/// company can be an Art. 4 operator for one product and a general
+/// product-safety one for another, and inferring it works for a few product
+/// groups and is a guess for the rest. A wrong value is a false claim and not a
+/// missing one, and a published passport is corrected by a successor rather than
+/// an edit. So an operator that has stated neither has a passport that says
+/// nothing about it, and the node never fills one in.
+///
+/// # Why it can be sent with a passport
+///
+/// Core ties the basis to the pairing of operator and product, so one value for
+/// the whole node would make an operator with a battery line and a textile line
+/// sign one of them wrongly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperatorResponsibility {
+    /// The operator's role in the supply chain for the product.
+    pub role: OperatorRole,
+    /// Which law makes the operator the responsible one.
+    pub basis: ResponsibilityBasis,
+}
+
+impl OperatorResponsibility {
+    /// This statement over `operator`, as the passport carries it. The role is
+    /// the statement's, whatever `operator` holds.
+    #[must_use]
+    pub fn of(&self, operator: ResponsibleOperator) -> ResponsibleOperatorSnapshot {
+        ResponsibleOperatorSnapshot {
+            operator: ResponsibleOperator {
+                role: self.role.clone(),
+                ..operator
+            },
+            basis: self.basis.clone(),
+        }
+    }
+
+    /// Whether the role can be the responsible operator under the basis, which
+    /// is a question core answers and this does not re-derive: only an Art. 4
+    /// basis has a closed set of roles, and the check lives with it.
+    ///
+    /// Advisory in core, because the conditions on a role ("established in the
+    /// Union") are facts about the operator it cannot see. Refused here, because
+    /// this is a statement the node would sign, and a role the basis cannot name
+    /// is wrong on its face.
+    ///
+    /// # Errors
+    /// A sentence naming the role and the basis when they do not fit.
+    pub fn check(&self) -> Result<(), String> {
+        // The snapshot is built only to ask core its question; none of what
+        // stands in for the operator is read.
+        let asked = self.of(ResponsibleOperator {
+            did: String::new(),
+            name: String::new(),
+            role: self.role.clone(),
+            eu_operator_id: None,
+            eu_operator_id_scheme: None,
+            identifier: None,
+            country: String::new(),
+            registered_trade_name: None,
+            postal_address: None,
+            electronic_address: None,
+        });
+        if asked.role_fits_basis() {
+            return Ok(());
+        }
+        Err(format!(
+            "the role `{}` cannot be the responsible operator under the basis `{}`: Art. 4(2) of \
+             Regulation (EU) 2019/1020 names a manufacturer, an importer, an authorised \
+             representative and a fulfilment service provider, and no other role",
+            wire_name(&self.role),
+            wire_name(&self.basis),
+        ))
+    }
+}
+
+impl From<&ResponsibleOperatorSnapshot> for OperatorResponsibility {
+    /// What a passport's statement was told: its role and its basis. Everything
+    /// else in it is the operator's own, and is read again where it is wanted.
+    fn from(snapshot: &ResponsibleOperatorSnapshot) -> Self {
+        Self {
+            role: snapshot.operator.role.clone(),
+            basis: snapshot.basis.clone(),
+        }
+    }
+}
+
+/// How a value is spelled on the wire, for a sentence that quotes it.
+fn wire_name<T: Serialize>(value: &T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(name)) => name,
+        Ok(other) => other.to_string(),
+        Err(_) => "?".to_owned(),
+    }
+}
 
 /// Operator configuration as stored in the `operator_config` table.
 ///
@@ -72,6 +181,18 @@ pub struct OperatorConfig {
     /// size nobody declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enterprise_size: Option<EnterpriseSize>,
+    /// The role this operator answers in and the law that makes it answerable,
+    /// stated once for the node: what a passport says under ESPR Annex III
+    /// point (k) when its create request sends none of its own.
+    ///
+    /// `None` means not stated, and the node never fills one in. A passport can
+    /// state its own on its create request, which wins for that passport. One that
+    /// carries none and finds none here is refused at publish when its product
+    /// group's passport obligation is live, and any other publishes without the
+    /// statement and carries a lint notice saying so. See
+    /// [`OperatorResponsibility`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsibility: Option<OperatorResponsibility>,
     /// Row creation timestamp.
     pub created_at: Option<DateTime<Utc>>,
     /// Last-update timestamp.
@@ -163,6 +284,7 @@ impl OperatorConfig {
             feature_flags: None,
             registry_verified_at: None,
             enterprise_size: None,
+            responsibility: None,
             created_at: None,
             updated_at: None,
         }
@@ -229,6 +351,10 @@ pub struct UpdateOperatorConfig {
     /// `large`), which decides whether the ESPR Art. 25(1) destruction ban
     /// reaches it. Set-only, like the rest of this patch type.
     pub enterprise_size: Option<EnterpriseSize>,
+    /// The role this operator answers in and the law that makes it answerable,
+    /// for the node as a whole. Set-only, like the rest of this patch type: both
+    /// halves travel together, because a role without its basis states nothing.
+    pub responsibility: Option<OperatorResponsibility>,
 }
 
 impl UpdateOperatorConfig {
@@ -256,6 +382,11 @@ impl UpdateOperatorConfig {
             return Err(format!(
                 "registryVerifiedAt cannot be in the future; got {at}"
             ));
+        }
+        if let Some(responsibility) = &self.responsibility {
+            responsibility
+                .check()
+                .map_err(|reason| format!("responsibility: {reason}"))?;
         }
         Ok(())
     }
@@ -309,6 +440,9 @@ impl UpdateOperatorConfig {
         }
         if let Some(v) = self.enterprise_size {
             cfg.enterprise_size = Some(v);
+        }
+        if let Some(ref v) = self.responsibility {
+            cfg.responsibility = Some(v.clone());
         }
     }
 }
@@ -376,6 +510,166 @@ pub trait OperatorConfigRepository: Send + Sync {
 }
 
 #[cfg(test)]
+mod responsibility_tests {
+    //! The statement an operator makes about who is answerable, and the one rule
+    //! it is held to before the node will sign it.
+
+    use serde_json::json;
+
+    use super::*;
+
+    fn stating(role: OperatorRole, basis: ResponsibilityBasis) -> OperatorResponsibility {
+        OperatorResponsibility { role, basis }
+    }
+
+    fn other_union_law() -> ResponsibilityBasis {
+        ResponsibilityBasis::OtherUnionLaw {
+            citation: "Article 7 of Regulation (EU) 2017/745".to_owned(),
+        }
+    }
+
+    /// Art. 4(2) of Regulation (EU) 2019/1020 names four roles, and core says which.
+    #[test]
+    fn the_roles_art_4_names_can_hold_the_art_4_basis() {
+        for role in [
+            OperatorRole::Manufacturer,
+            OperatorRole::Importer,
+            OperatorRole::AuthorisedRepresentative,
+            OperatorRole::FulfilmentServiceProvider,
+        ] {
+            assert_eq!(
+                stating(role, ResponsibilityBasis::MarketSurveillanceArt4).check(),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
+    fn every_other_role_is_refused_under_that_basis_and_named_in_the_refusal() {
+        let others: Vec<_> = OperatorRole::ALL
+            .iter()
+            .filter(|role| !role.can_be_art_4_operator())
+            .collect();
+        assert!(!others.is_empty(), "core models roles Art. 4(2) does not");
+        for role in others {
+            let reason = stating(role.clone(), ResponsibilityBasis::MarketSurveillanceArt4)
+                .check()
+                .expect_err("a role Art. 4(2) does not name cannot hold the basis");
+            assert!(reason.contains(&wire_name(role)), "{reason}");
+            assert!(reason.contains("marketSurveillanceArt4"), "{reason}");
+        }
+    }
+
+    /// Only the Art. 4 limb has a closed set of roles. A distributor can be answerable
+    /// under another Union law's similar tasks, and this must not say otherwise.
+    #[test]
+    fn the_other_bases_do_not_narrow_the_role() {
+        for role in OperatorRole::ALL {
+            for basis in [ResponsibilityBasis::GeneralProductSafety, other_union_law()] {
+                assert_eq!(stating(role.clone(), basis).check(), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn a_statement_is_read_and_written_in_core_s_wire_names() {
+        let read: OperatorResponsibility = serde_json::from_value(json!({
+            "role": "importer",
+            "basis": "generalProductSafety"
+        }))
+        .expect("a statement reads");
+        assert_eq!(
+            read,
+            stating(
+                OperatorRole::Importer,
+                ResponsibilityBasis::GeneralProductSafety
+            )
+        );
+
+        let law = stating(OperatorRole::Distributor, other_union_law());
+        let wire = serde_json::to_value(&law).expect("a statement writes");
+        assert_eq!(
+            wire,
+            json!({
+                "role": "distributor",
+                "basis": { "otherUnionLaw": { "citation": "Article 7 of Regulation (EU) 2017/745" } }
+            })
+        );
+    }
+
+    /// A role without its basis states nothing, and a member this build does not
+    /// know is not ignored: either would let a typo read as "not stated".
+    #[test]
+    fn half_a_statement_and_an_unknown_member_are_refused() {
+        assert!(
+            serde_json::from_value::<OperatorResponsibility>(json!({ "role": "importer" }))
+                .is_err()
+        );
+        assert!(
+            serde_json::from_value::<OperatorResponsibility>(
+                json!({ "basis": "generalProductSafety" })
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<OperatorResponsibility>(json!({
+                "role": "importer",
+                "basis": "generalProductSafety",
+                "rol": "importer"
+            }))
+            .is_err()
+        );
+    }
+
+    fn nothing() -> UpdateOperatorConfig {
+        serde_json::from_value(json!({})).expect("an empty patch reads")
+    }
+
+    #[test]
+    fn a_patch_with_a_role_the_basis_cannot_name_is_refused_before_it_is_applied() {
+        let patch = UpdateOperatorConfig {
+            responsibility: Some(stating(
+                OperatorRole::Recycler,
+                ResponsibilityBasis::MarketSurveillanceArt4,
+            )),
+            ..nothing()
+        };
+        let reason = patch
+            .validate()
+            .expect_err("a recycler is not an Art. 4 operator");
+        assert!(reason.starts_with("responsibility: "), "{reason}");
+    }
+
+    #[test]
+    fn a_patch_sets_the_statement_and_one_without_it_leaves_it_alone() {
+        let mut config = OperatorConfig::empty(STANDALONE_OPERATOR_ID);
+        assert_eq!(config.responsibility, None, "not stated until it is");
+
+        let stated = stating(
+            OperatorRole::Manufacturer,
+            ResponsibilityBasis::MarketSurveillanceArt4,
+        );
+        UpdateOperatorConfig {
+            responsibility: Some(stated.clone()),
+            ..nothing()
+        }
+        .apply(&mut config);
+        assert_eq!(config.responsibility, Some(stated.clone()));
+
+        UpdateOperatorConfig {
+            trade_name: Some("Acme".into()),
+            ..nothing()
+        }
+        .apply(&mut config);
+        assert_eq!(
+            config.responsibility,
+            Some(stated),
+            "an edit that does not carry it must not unstate it"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -429,6 +723,7 @@ mod tests {
             feature_flags: None,
             registry_verified_at: None,
             enterprise_size: None,
+            responsibility: None,
         }
     }
 
@@ -533,6 +828,7 @@ mod registry_verification_patch_tests {
             feature_flags: None,
             registry_verified_at: None,
             enterprise_size: None,
+            responsibility: None,
         }
     }
 

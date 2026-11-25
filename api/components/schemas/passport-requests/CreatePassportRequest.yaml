@@ -130,6 +130,31 @@ properties:
       rather than *not applicable*, and publish does not refuse it: the lint
       result says so instead, because a default would put a claim about a unit
       onto a record that is about to be signed.
+  responsibility:
+    allOf:
+      - $ref: ../operator/OperatorResponsibility.yaml
+    description: >-
+      The role the operator answers in for **this** product and the law that
+      makes it answerable (ESPR Annex III point (k)). Optional: the node's own
+      statement (`PATCH /operator`, `responsibility`) applies when this is
+      omitted. It can be sent here because the basis belongs to the pairing of
+      operator and product, so one value for the whole node would make an
+      operator whose products fall under different laws sign one of them
+      wrongly.
+
+
+      Only these two facts travel with the request. The name, contact details,
+      identifier and DID in the passport's `responsibleOperator` are the
+      operator's own and come from the node, and are read again at publish.
+
+
+      A role the basis cannot name is refused with `422`, and so is a statement
+      the node cannot make (no operator name or country configured). A statement
+      sent is kept or refused and never dropped.
+
+
+      **Create-time only.** `responsibleOperator` is protected from patching, so
+      a different statement for a draft is a new draft.
   personalData:
     type: object
     additionalProperties:

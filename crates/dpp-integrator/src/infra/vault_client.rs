@@ -314,6 +314,9 @@ mod tests {
             product_name: "Test Widget".into(),
             product_group: None,
             life_status: None,
+            // A row cannot state the law that makes the operator answerable, so the node's own
+            // statement applies.
+            responsibility: None,
             personal_data: Default::default(),
             supersedes_id: None,
             manufacturer: ManufacturerInfo {

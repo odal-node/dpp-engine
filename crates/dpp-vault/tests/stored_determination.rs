@@ -262,6 +262,28 @@ fn textile_draft(co2e: f64) -> Passport {
     draft_of(ProductGroup::Textile, textile_json(co2e))
 }
 
+/// The statement of who is answerable that a draft carries once it has one.
+fn stating_operator() -> dpp_domain::ResponsibleOperatorSnapshot {
+    use dpp_domain::{OperatorRole, ResponsibilityBasis, ResponsibleOperator};
+
+    dpp_types::operator::OperatorResponsibility {
+        role: OperatorRole::Manufacturer,
+        basis: ResponsibilityBasis::MarketSurveillanceArt4,
+    }
+    .of(ResponsibleOperator {
+        did: "did:web:determination-test.example.com".to_owned(),
+        name: "Test Operator GmbH".to_owned(),
+        role: OperatorRole::Manufacturer,
+        eu_operator_id: None,
+        eu_operator_id_scheme: None,
+        identifier: None,
+        country: "DE".to_owned(),
+        registered_trade_name: None,
+        postal_address: None,
+        electronic_address: None,
+    })
+}
+
 fn draft_of(product_group: ProductGroup, data: serde_json::Value) -> Passport {
     Passport {
         id: PassportId::new(),
@@ -310,7 +332,10 @@ fn draft_of(product_group: ProductGroup, data: serde_json::Value) -> Passport {
         // Set directly, so the Annex III completeness gate at publish is met
         // without a registry reader.
         operator_identifier: Some("did:web:determination-test.example.com".into()),
-        responsible_operator: None,
+        // Likewise: a draft that already states who is answerable keeps what it
+        // was told when no operator configuration can be read, and a battery's
+        // passport obligation is live.
+        responsible_operator: Some(stating_operator()),
         facility: Some(FacilitySnapshot {
             scheme: "gln".into(),
             value: "1234567890128".into(),

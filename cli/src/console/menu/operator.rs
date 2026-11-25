@@ -128,6 +128,10 @@ pub(super) async fn operator() -> Result<()> {
                         contact_email,
                         did_web_url,
                         retention_policy_days,
+                        // Stated with `odal operator set --responsible-role …`: it
+                        // is two facts that belong together, and a menu field
+                        // blank by default is how one gets guessed.
+                        responsibility: None,
                     };
                     if params.is_empty() {
                         println!(
@@ -142,6 +146,13 @@ pub(super) async fn operator() -> Result<()> {
                                 Ok(_) => {
                                     println!("\n  {} Operator updated.", style("✓").green());
                                     hint("odal operator set ...");
+                                    // The one thing this menu does not ask, because it
+                                    // is two facts the node must never guess. Publishing
+                                    // a battery is refused without it.
+                                    hint(
+                                        "odal operator set --responsible-role … \
+                                         --responsible-basis …   (who is answerable for a product)",
+                                    );
                                     println!();
                                 }
                                 Err(e) => print_err(e),
