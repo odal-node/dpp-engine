@@ -8,11 +8,12 @@ How a `dpp-engine` release is prepared, tagged and checked.
 |---|---|
 | Container images `dpp-node` and `dpp-resolver` | `ghcr.io/odal-node/…`, tagged `X.Y.Z`, `X.Y` and `latest` (no `v` prefix) for a git tag `vX.Y.Z` |
 | SBOM and SLSA provenance attestations | Attached to each image |
+| GitHub Release `vX.Y.Z` | This repository's Releases page: the notes and the image digests, no assets |
 | Source | This repository, under BSL-1.1 |
 
-`dpp-engine` is not published to crates.io. No standalone binary and no GitHub Release
-are produced; the images are the distribution. Releases have no fixed schedule, and a
-security fix is released as soon as it is verified.
+`dpp-engine` is not published to crates.io, and no standalone binary is produced: the
+images are the distribution, and the GitHub Release says what is in them. Releases have
+no fixed schedule, and a security fix is released as soon as it is verified.
 
 > [!NOTE]
 > The GHCR packages are not public yet, so pulling the images needs access to the
@@ -152,7 +153,22 @@ the Dockerfiles' build command as a supply-chain change.
    `upgrade_fixture_coverage.rs` requires. It builds the
    tag's own binaries, because a fixture written by later code would agree with that code
    by construction. Skipping it fails the next release's pull request.
-6. The release is announced.
+6. **The GitHub Release is published**, on the tag and marked a pre-release while the
+   node is alpha, pre-production. Its notes link `CHANGELOG.md` and
+   `docs/governance/releases/v<version>.md` at the tag, list the entry titles under
+   **Breaking**, **Added** and **Changed** and point to the changelog for the fixes,
+   and give each image's digest under its three tags. While the GHCR packages are
+   private, the notes say so. [v0.17.0](https://github.com/odal-node/dpp-engine/releases/tag/v0.17.0)
+   is the shape to copy. Create it as a draft and publish it once it reads right.
+   `--verify-tag` aborts unless the tag already exists on `origin`, so the release
+   attaches to the tag that was pushed and never creates one of its own:
+
+   ```bash
+   gh release create v<version> --verify-tag --draft --prerelease --title v<version> --notes-file <notes.md>
+   gh release edit v<version> --draft=false
+   ```
+
+7. The release is announced.
 
 ## Repinning dpp-core
 
