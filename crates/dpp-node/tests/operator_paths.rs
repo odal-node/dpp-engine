@@ -671,6 +671,11 @@ async fn v0_16_0_upgrades_to_this_build() {
     upgrade_from(&fixture("v0.16.0")).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn v0_17_0_upgrades_to_this_build() {
+    upgrade_from(&fixture("v0.17.0")).await;
+}
+
 async fn upgrade_from(fixture: &Path) {
     let release = fixture
         .file_name()
@@ -730,6 +735,21 @@ async fn upgrade_from(fixture: &Path) {
         Some(_) => Some(StoredSigner::of(&node, release, &stored_signatures).await),
         None => None,
     };
+
+    // Booting must leave every stored signature as the release wrote it: the
+    // check above verifies the strings read before the boot, so a boot that
+    // cleared or rewrote one would otherwise go unseen.
+    let after_boot: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id::text, doc->>'jwsSignature' FROM odal.passport \
+         WHERE retention_locked AND doc->>'jwsSignature' IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("re-read the stored signatures after boot");
+    assert_eq!(
+        after_boot, stored_signatures,
+        "{release}: booting this build leaves every stored signature as the release wrote it"
+    );
 
     let applied: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
         .fetch_one(&admin)
