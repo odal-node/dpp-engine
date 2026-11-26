@@ -736,6 +736,21 @@ async fn upgrade_from(fixture: &Path) {
         None => None,
     };
 
+    // Booting must leave every stored signature as the release wrote it: the
+    // check above verifies the strings read before the boot, so a boot that
+    // cleared or rewrote one would otherwise go unseen.
+    let after_boot: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id::text, doc->>'jwsSignature' FROM odal.passport \
+         WHERE retention_locked AND doc->>'jwsSignature' IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(&admin)
+    .await
+    .expect("re-read the stored signatures after boot");
+    assert_eq!(
+        after_boot, stored_signatures,
+        "{release}: booting this build leaves every stored signature as the release wrote it"
+    );
+
     let applied: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
         .fetch_one(&admin)
         .await

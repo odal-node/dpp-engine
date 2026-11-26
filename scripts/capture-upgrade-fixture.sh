@@ -134,9 +134,14 @@ odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary > /dev/
 # From 0.17.0 a product group whose passport obligation is live, a battery among
 # them, does not publish until the operator states the role it answers in and the
 # law that makes it answerable (ESPR Annex III point (k)). Without it every
-# battery in the demo corpus is refused `422` and the capture stops here.
-odal operator set --responsible-role manufacturer \
-    --responsible-basis marketSurveillanceArt4 > /dev/null
+# battery in the demo corpus is refused `422` and the capture stops here. An
+# earlier release has no such flags, and no such refusal, so it is asked only if
+# its own `odal` lists them; when it does, a failure still stops the capture.
+operator_set_help="$(odal operator set --help 2>&1 || true)"
+if grep -q -- '--responsible-role' <<< "$operator_set_help"; then
+    odal operator set --responsible-role manufacturer \
+        --responsible-basis marketSurveillanceArt4 > /dev/null
+fi
 key="$(sed -n 's/^default = "\(.*\)"$/\1/p' "$work/home/.config/odal/credentials.toml")"
 auth="authorization: Bearer $key"
 json='content-type: application/json'
