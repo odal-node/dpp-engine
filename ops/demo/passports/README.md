@@ -37,9 +37,11 @@ Passport — data points by category* guidance, v1.0, 28 Jul 2026).
 ## Load them
 
 `load.sh` creates and publishes every file against a local node. It needs an
-admin or write-scoped API key, and the node needs a default facility and a
-primary operator identifier; without them every create succeeds and every
-publish fails `422` (see the demo runbook's step 3 for the two commands).
+admin or write-scoped API key, and the node needs a default facility, a
+primary operator identifier, and the role and law the operator answers under
+(`odal operator set --responsible-role … --responsible-basis …`); without them
+every create succeeds and every publish fails `422` (see the demo runbook's
+step 3 for the three commands).
 
 ```bash
 # mint a key (admin Basic auth; creds from dpp-engine/.env)

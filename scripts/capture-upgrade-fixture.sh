@@ -131,6 +131,12 @@ odal facility add --name "Demo Plant" --scheme gln --value 4012345000009 \
 # number. The v0.14.0 and v0.15.0 fixtures were seeded with one, as those
 # releases allowed, and the upgrade test makes the documented move to an LEI.
 odal operator-id add --scheme lei --value 984500ODALEXAMPLE069 --primary > /dev/null
+# From 0.17.0 a product group whose passport obligation is live, a battery among
+# them, does not publish until the operator states the role it answers in and the
+# law that makes it answerable (ESPR Annex III point (k)). Without it every
+# battery in the demo corpus is refused `422` and the capture stops here.
+odal operator set --responsible-role manufacturer \
+    --responsible-basis marketSurveillanceArt4 > /dev/null
 key="$(sed -n 's/^default = "\(.*\)"$/\1/p' "$work/home/.config/odal/credentials.toml")"
 auth="authorization: Bearer $key"
 json='content-type: application/json'
