@@ -363,7 +363,7 @@ Router nesting:
 
 ### Database
 
-**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL, and can DELETE only from the tables listed under "The DELETE set" in `ops/pg/README.md` — read the set there rather than a count restated here, which is how this line came to claim "one sanctioned exception" while three tables carried the grant. The README is the one home because `just grants-check` gates it against the actual grants; a migration cannot be, since the set spans several (`0010` and `0025` today) and an applied migration cannot be edited when a grant changes. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
+**PostgreSQL** accessed via `sqlx` through `PgDal` (connection pool). The app role (`odal_app`) cannot run DDL, and can DELETE only from the tables listed under "The DELETE set" in `ops/pg/README.md` — read the set there rather than a count restated here, which is how this line came to claim "one sanctioned exception" while three tables carried the grant. The README is the one home because `just grants-check` gates it against the actual grants; a migration cannot be, since the set spans several (`0010`, `0025` and `0036` today) and an applied migration cannot be edited when a grant changes. Single-tenant: no Row-Level Security — one operator per node, so there is no in-process isolation boundary to enforce.
 
 **Schema:** `ops/pg/*.sql` — a clean, FK-ordered, append-only migration set (see the directory for the current range; new migrations are only ever added, never renumbered), applied via `PgDal::migrate(url)` at boot using a privileged role, or pre-applied by ops tooling. No RLS (single-tenant).
 
@@ -471,6 +471,8 @@ unprotected one. Read the table in the code.
 | GET | `/vault/api/v1/dpp/by-identity` | Bearer | Find by (product group, product identifier, batch) — backs the import delta-matcher |
 | GET | `/vault/api/v1/dpp/{dppId}/verify-tree` | Bearer | Walk and verify the component (BOM) graph |
 | GET | `/vault/api/v1/dpp/{dppId}/registry` | Bearer | EU-registry sync status for one passport |
+| POST | `/vault/api/v1/dpp/{dppId}/registry/handle` | Bearer **(admin)** | Record by hand the correlation identifier of a registry submission whose handle the node lost and could not recover itself |
+| POST | `/vault/api/v1/dpp/{dppId}/registry/abandon` | Bearer **(admin)** | End a registration the registry never accepted. Refuses unless the registry's whole task list was read and none of it reports this passport's identifier; an abandoned row answers `200` with `alreadyAbandoned: true` |
 | GET | `/vault/api/v1/registry` | Bearer | EU-registry sync rollup |
 | GET | `/vault/api/v1/dpp/{dppId}/history` | Bearer | Audit trail |
 | GET | `/vault/api/v1/dpp/{dppId}/versions` | Bearer | Archived historical versions of the passport, oldest first; `?asOf=<RFC 3339>` returns the one current at that instant (as a one-element array), `404` when none covers it. **Not the `retired` lifecycle status** — this is EN 18221 clause 4.2's sense of the word, the history of a passport that is still live |
@@ -486,6 +488,7 @@ unprotected one. Read the table in the code.
 | POST | `/vault/api/v1/evidence/{id}/verify` | Bearer | Verify a stored dossier |
 | POST | `/vault/api/v1/evidence/verify` | Bearer | Verify an uploaded dossier document |
 | GET | `/vault/api/v1/node/state` | Bearer | Node setup state (claimed / configured) |
+| GET | `/vault/api/v1/node/health` | Bearer | What a monitor needs where `/metrics` cannot be scraped: each kept signal (signing, ruleset load) and whether it is failing now, and the registry outbox counts. The signals live in `odal.node_signal`, so a restart does not clear them |
 | GET | `/vault/api/v1/whoami` | Bearer | The presented credential's `userId`, `scope` and `keyId`. Every scope, including `read` — that is the scope that most needs to discover it is read-only. `keyId` is the key's row id, never the token, and is absent for local Basic auth |
 | GET | `/vault/api/v1/operator` | Bearer | Get operator config |
 | PATCH | `/vault/api/v1/operator` | Bearer (admin) | Update the operator configuration: branding, enterprise size and `responsibility`, the role and legal basis a passport states for ESPR Annex III point (k). Never defaulted; a role the basis cannot name is `400` |

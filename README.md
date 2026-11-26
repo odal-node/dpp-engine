@@ -82,9 +82,11 @@ resolver     http://localhost:8003/health           OK       0ms
 ### 4. Register the operator
 
 `odal` does not read `.env`, so export the admin credentials first. EU registry
-registration needs the operator's legal name, and product groups whose passport
-obligation is in force also need a default facility and a primary operator
-identifier before they publish. The values below are valid test values.
+registration needs the operator's legal name. A product group whose passport
+obligation is in force also needs a default facility, a primary operator identifier,
+and the role the operator answers in with the law that makes it answerable (ESPR
+Annex III point (k)) before it publishes. The node never guesses the role or the law.
+The values below are valid test values; on a real node, state your own.
 
 ```bash
 set -a; . ./.env; set +a
@@ -123,7 +125,7 @@ seal                ghost
 industrial LFP battery with its performance, durability, recycled-content,
 hazardous-substance, dismantling and conformity data filled in. The battery passport
 has an obligation in force, which is why step 4 registered a facility and an operator
-identifier. Post the sample as the create body:
+identifier and stated the operator's role and law. Post the sample as the create body:
 
 ```bash
 curl -s -X POST http://localhost:8001/vault/api/v1/dpp \

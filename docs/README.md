@@ -23,7 +23,7 @@ for operators and integrators are on [docs.odal-node.io](https://docs.odal-node.
 | How do auth and API keys work? | [architecture/AUTH.md](architecture/AUTH.md) |
 | Which events does the node emit, and how reliably? | [architecture/EVENT-BUS.md](architecture/EVENT-BUS.md) |
 | How are evidence dossiers built and checked? | [architecture/EVIDENCE-DOSSIER.md](architecture/EVIDENCE-DOSSIER.md) |
-| Which standards does the code cite, at which revision? | [architecture/STANDARDS.md](architecture/STANDARDS.md) |
+| Which standards does the code cite, at which revision? | [architecture/STANDARDS.md](architecture/STANDARDS.md); the resolver against the GS1 resolver standard, criterion by criterion, in [architecture/GS1_RESOLVER_CONFORMANCE.md](architecture/GS1_RESOLVER_CONFORMANCE.md) |
 | What exactly is the HTTP surface? | [../api/openapi.bundled.yaml](../api/openapi.bundled.yaml) (OpenAPI 3.1), browsable at [docs.odal-node.io/api](https://docs.odal-node.io/api/); [../api/README.md](../api/README.md) explains how it is built |
 | How are routes mounted in the node? | [project/ENDPOINTS.md](project/ENDPOINTS.md) |
 | How do I set up and onboard an operator? | [guides/OPERATOR-SETUP.md](guides/OPERATOR-SETUP.md) |
@@ -33,6 +33,7 @@ for operators and integrators are on [docs.odal-node.io](https://docs.odal-node.
 | What are the licence terms? | [legal/LICENSING.md](legal/LICENSING.md), [legal/DPP-RETENTION.md](legal/DPP-RETENTION.md) |
 | What is built, and what is out of scope? | [project/BLUEPRINT.md](project/BLUEPRINT.md) |
 | How are releases cut and versioned? | [governance/RELEASE.md](governance/RELEASE.md), [governance/VERSIONING.md](governance/VERSIONING.md), [governance/GIT-STRATEGY.md](governance/GIT-STRATEGY.md) |
+| What did each release's verification find? | [governance/releases/](governance/releases/): one record per release, tracing every merged pull request to its CHANGELOG entry |
 
 ## What the node guarantees, in one paragraph
 

@@ -38,7 +38,7 @@ migration.
 
 | Table | Holds | Created in |
 |---|---|---|
-| `operator_config` | The operator's identity: legal name, address, country, contact, retention policy, registry verification | `0002`, `0031` |
+| `operator_config` | The operator's identity: legal name, address, country, contact, retention policy, registry verification, enterprise size class, and the role and law it answers under for ESPR Annex III point (k) | `0002`, `0031`, `0049`, `0053` |
 | `operator_identifier` | Economic operator identifiers (VAT, LEI, EORI, DUNS) under ESPR Art. 13; one is primary | `0002` |
 | `facility` | Facilities under ESPR Annex III; one is the default | `0002` |
 | `registry_identity_audit` | Append-only history of facility and identifier changes | `0013` |
@@ -63,6 +63,8 @@ migration.
 | `snapshot_outbox` | Outbox for the static continuity tier | `0023`, `0033` |
 | `webhook_subscription`, `webhook_delivery` | Webhook receivers and the delivery outbox | `0022` |
 | `trusted_list_cache` | EU Trusted Lists the node has verified | `0039` |
+| `node_signal` | Outcomes of the node's own work that leave no other trace (a publish refused at signing, a ruleset load), kept across restarts and served on `GET /node/health` | `0048` |
+| `obligation_notice`, `obligation_notice_state` | The dated-obligation notices the node has announced, each once across instances, and the first day its notice pass covers. Append-only | `0050` |
 | `identity.did_document`, `identity.key_pair` | The node's DID document and key metadata (snake_case `doc` keys, unlike the rest) | `0009` |
 
 `0001` creates the schemas, extensions and roles; `0010` holds the initial grants.
@@ -74,9 +76,9 @@ Every later migration that creates a table ships its own grant, and a test in
 Side effects that leave the node (EU registry registration, transfer notification,
 sealing, snapshot publishing, webhook delivery) are queued as outbox rows and
 delivered by drainers in `dpp-node` with retry and backoff. The two registry outboxes
-are written in the same transaction as the passport change, so a crash loses
-nothing. Seal, snapshot and webhook rows are queued just after commit; seals and
-snapshots also have a periodic sweep that queues anything missed. Outbox rows are
+and the webhook deliveries are written in the same transaction as the change that
+raises them, so a crash loses nothing. Seal and snapshot rows are queued just after
+commit, and a periodic sweep queues anything missed. Outbox rows are
 only written for backends that are configured, so no backlog builds up for a backend
 the node does not use. [DESIGN-PATTERNS.md](DESIGN-PATTERNS.md#4-outboxes) has the
 details.

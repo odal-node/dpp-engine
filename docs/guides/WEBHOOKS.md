@@ -132,7 +132,7 @@ func Verify(secret, header string, rawBody []byte, tolerance time.Duration) bool
 
 | Behaviour | Detail |
 |---|---|
-| Queueing | Deliveries are queued right after the passport change commits. If the node stops between the commit and the queueing, that event's deliveries are not sent |
+| Queueing | Deliveries are queued in the same transaction as what raises them: the passport change, the import job's result, or the obligation notice's record. A change that committed has its deliveries queued, and one that rolled back has none |
 | Retries | Any non-`2xx` answer or connection error is retried with exponential backoff (2, 4, 8 … seconds, capped at one hour, with ±25% jitter) |
 | Attempt limit | 8 attempts, after which the delivery is marked `exhausted` |
 | Duplicates | Possible, for example when the node stops after your `2xx` but before recording it. De-duplicate on `X-Odal-Delivery` |

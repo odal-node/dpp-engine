@@ -74,10 +74,8 @@ sequenceDiagram
     participant S as PassportService
     participant P as PostgreSQL
     participant B as EventBus (NATS or no-op)
-    participant W as webhook_delivery outbox
-    S->>P: commit the change
+    S->>P: commit the change and its webhook_delivery rows, in one transaction
     S->>B: publish event (errors logged at WARN, not returned)
-    S->>W: queue webhook deliveries (errors logged, not returned)
 ```
 
 - **No event without a commit.** Events are published after the database commit, so
@@ -89,8 +87,9 @@ sequenceDiagram
   message.
 - **No ordering across subjects.**
 
-Obligations that must not be lost, such as EU registry registration, do not rely on
-the event bus: they are written to an outbox inside the database transaction
+Obligations that must not be lost, such as EU registry registration and webhook
+deliveries, do not rely on the event bus: they are written to an outbox inside the
+database transaction
 ([DESIGN-PATTERNS.md](DESIGN-PATTERNS.md#4-outboxes)).
 
 ## Consumer guidelines
