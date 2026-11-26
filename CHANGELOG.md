@@ -10,6 +10,8 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-26
+
 ### Breaking
 
 - **A passport states its responsible operator, and publish refuses a product
