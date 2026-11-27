@@ -345,6 +345,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           }
@@ -406,6 +409,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -4333,6 +4339,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -12258,22 +12267,6 @@
           }
         }
       },
-      "NotFound": {
-        "description": "Resource not found within the operator's scope.",
-        "content": {
-          "application/problem+json": {
-            "schema": {
-              "$ref": "#/components/schemas/Problem"
-            },
-            "example": {
-              "type": "https://problems.odal-node.io/not-found",
-              "title": "Not Found",
-              "status": 404,
-              "detail": "DPP not found."
-            }
-          }
-        }
-      },
       "BadRequest": {
         "description": "A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a\nUUID. The request never reaches the resource, so this is distinct from `404`,\nwhich means the identifier was well-formed and nothing matched it.\n",
         "content": {
@@ -12286,6 +12279,22 @@
               "title": "Bad Request",
               "status": 400,
               "detail": "not-a-uuid is not a valid DPP id."
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found within the operator's scope.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/not-found",
+              "title": "Not Found",
+              "status": 404,
+              "detail": "DPP not found."
             }
           }
         }

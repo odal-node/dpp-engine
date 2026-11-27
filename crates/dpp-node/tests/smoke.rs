@@ -1465,6 +1465,82 @@ async fn the_quick_start_battery_sample_creates_and_publishes() {
     eprintln!("quick start sample: schema {latest}, carrier {carrier}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn creating_a_passport_with_an_unknown_predecessor_is_a_validation_error() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000094");
+    let response = reqwest::Client::new()
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "productName": "Orphan successor",
+            "manufacturer": { "name": "Test", "address": "Test address" },
+            "supersedesId": uuid::Uuid::now_v7()
+        }))
+        .send()
+        .await
+        .expect("create request failed");
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "an unknown predecessor is invalid input, not a database failure: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nul_bytes_in_database_lookup_filters_are_rejected_as_bad_requests() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000095");
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("{base}/vault/api/v1/dpps"))
+        .bearer_auth(&token)
+        .query(&[("q", "nul\0query")])
+        .send()
+        .await
+        .expect("list request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the list filter must be rejected before reaching Postgres: {body}"
+    );
+
+    let response = client
+        .get(format!("{base}/vault/api/v1/dpp/by-identity"))
+        .bearer_auth(&token)
+        .query(&[("productGroup", "battery"), ("identifier", "nul\0value")])
+        .send()
+        .await
+        .expect("identity lookup request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the identity filter must be rejected before reaching Postgres: {body}"
+    );
+
+    let response = client
+        .get(format!("{base}/vault/public/dpp/by-gtin/09506000134352"))
+        .query(&[("batch", "nul\0batch")])
+        .send()
+        .await
+        .expect("GTIN lookup request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the GTIN qualifier must be rejected before reaching Postgres: {body}"
+    );
+}
+
 /// Registers the facility and primary operator identifier a battery publish
 /// needs: a battery is in force, so publish refuses without them.
 async fn seed_battery_registry_identity(client: &reqwest::Client, base: &str, token: &str) {

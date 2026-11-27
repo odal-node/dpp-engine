@@ -295,6 +295,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/dpp/by-identity:
@@ -340,6 +342,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -3725,6 +3729,8 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/RedactedPassportResponse'
                   - $ref: '#/components/schemas/SchemaViewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
@@ -11019,17 +11025,6 @@ components:
             title: Unprocessable Entity
             status: 422
             detail: productName must not be empty.
-    NotFound:
-      description: Resource not found within the operator's scope.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-          example:
-            type: https://problems.odal-node.io/not-found
-            title: Not Found
-            status: 404
-            detail: DPP not found.
     BadRequest:
       description: |
         A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a
@@ -11044,6 +11039,17 @@ components:
             title: Bad Request
             status: 400
             detail: not-a-uuid is not a valid DPP id.
+    NotFound:
+      description: Resource not found within the operator's scope.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/not-found
+            title: Not Found
+            status: 404
+            detail: DPP not found.
     Conflict:
       description: |
         State conflict, e.g. attempting to publish an already-published DPP

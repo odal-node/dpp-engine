@@ -1,0 +1,117 @@
+name: Schemathesis nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  schemathesis:
+    name: Generated node response checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: dpp-engine
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: dpp-engine
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install just
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: just
+      - name: Create ephemeral node configuration
+        working-directory: dpp-engine
+        run: |
+          set -euo pipefail
+          {
+            printf 'DATABASE_POSTGRES_PASS=%s\n' "$(openssl rand -hex 32)"
+            printf 'DATABASE_APP_PASS=%s\n' "$(openssl rand -hex 32)"
+            printf 'KEY_STORE_PASSPHRASE=%s\n' "$(openssl rand -hex 32)"
+            printf 'ADMIN_USERNAME=schemathesis-ci\n'
+            printf 'ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+            printf 'DID_WEB_BASE_URL=http://localhost:8001\n'
+            printf 'RESOLVER_BASE_URL=http://localhost:8003\n'
+            printf 'NODE_PORT=8001\n'
+            printf 'RESOLVER_PORT=8003\n'
+            printf 'LOG_LEVEL=warn\n'
+          } > .env
+      - name: Build and start the node stack
+        working-directory: dpp-engine
+        run: just up
+      - name: Wait for the node
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8001/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose --env-file .env -f docker/docker-compose.yml logs node postgres nats
+          exit 1
+        working-directory: dpp-engine
+      - name: Bootstrap an admin API key
+        working-directory: dpp-engine
+        run: |
+          set -euo pipefail
+          output="$(just bootstrap -- --legal-name 'Schemathesis CI' --country DE --address 'CI-only address' --contact-email 'ci@example.invalid')"
+          api_key="$(printf '%s\n' "$output" | awk '/API key minted and saved to .*credentials.toml:/ { getline; sub(/^[[:space:]]+/, ""); print; exit }')"
+          if [[ ! "$api_key" =~ ^odal_sk_[A-Za-z0-9._-]+$ ]]; then
+            printf '%s\n' 'Bootstrap did not return an API key.' >&2
+            exit 1
+          fi
+          printf '::add-mask::%s\n' "$api_key"
+          printf 'SCHEMATHESIS_API_KEY=%s\n' "$api_key" >> "$GITHUB_ENV"
+      - name: Seed CI-only registry values
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X PATCH http://127.0.0.1:8001/vault/api/v1/operator \
+            -H "Authorization: Bearer $SCHEMATHESIS_API_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"responsibility":{"role":"manufacturer","basis":"marketSurveillanceArt4"}}' \
+            >/dev/null
+          curl --fail-with-body --silent --show-error \
+            -X POST http://127.0.0.1:8001/vault/api/v1/facilities \
+            -H "Authorization: Bearer $SCHEMATHESIS_API_KEY" \
+            -H "Idempotency-Key: schemathesis-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-facility" \
+            -H 'Content-Type: application/json' \
+            --data '{"name":"Schemathesis CI plant","identifierScheme":"gln","identifierValue":"4012345000009","country":"DE","isDefault":true}' \
+            >/dev/null
+          curl --fail-with-body --silent --show-error \
+            -X POST http://127.0.0.1:8001/vault/api/v1/operator-identifiers \
+            -H "Authorization: Bearer $SCHEMATHESIS_API_KEY" \
+            -H "Idempotency-Key: schemathesis-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-operator-id" \
+            -H 'Content-Type: application/json' \
+            --data '{"scheme":"lei","value":"984500ODALEXAMPLE069","isPrimary":true}' \
+            >/dev/null
+      - name: Run Schemathesis
+        working-directory: dpp-engine
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/dpp-engine/api:/api:ro" \
+            schemathesis/schemathesis:stable run /api/openapi.bundled.yaml \
+            --url http://127.0.0.1:8001 \
+            --header "Authorization: Bearer $SCHEMATHESIS_API_KEY" \
+            --include-path-regex '^/(vault/|identity/(health|ready|\.well-known/did\.json)|integrator/|\.well-known/did\.json)' \
+            --exclude-path-regex '^/vault/internal/scan-batch$' \
+            --exclude-operation-id-regex '^(readDppByCredential|testWebhook|resolverHealth)$' \
+            --experimental=openapi-3.1 \
+            --checks all \
+            --workers 1 \
+            --max-time 120 \
+            --seed "$GITHUB_RUN_NUMBER"

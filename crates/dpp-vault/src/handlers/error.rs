@@ -18,6 +18,11 @@ pub fn api_error(status: StatusCode, _code: &str, detail: &str) -> Response {
         .into_response()
 }
 
+/// 400 Bad Request for malformed query parameters.
+pub fn bad_request_error(detail: &str) -> Response {
+    api_error(StatusCode::BAD_REQUEST, "BAD_REQUEST", detail)
+}
+
 /// Log an unexpected error and return a generic RFC 9457 500.
 pub fn internal_error(e: impl std::fmt::Display) -> Response {
     tracing::error!(error = %e, "internal error processing request");

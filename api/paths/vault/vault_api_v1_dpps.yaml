@@ -43,6 +43,8 @@ get:
         minimum: 0
         default: 0
   responses:
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '200':
       description: Paginated list of DPPs.
       content:

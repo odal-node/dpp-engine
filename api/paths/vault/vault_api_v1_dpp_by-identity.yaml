@@ -34,6 +34,8 @@ get:
       schema:
         type: string
   responses:
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '200':
       description: The matching DPP record.
       content:

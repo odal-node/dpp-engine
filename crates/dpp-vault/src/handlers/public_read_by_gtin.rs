@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::public_view::signed_public_view;
 use crate::state::AppState;
 
-use super::error::{api_error, internal_error, not_found_error};
+use super::error::{api_error, bad_request_error, internal_error, not_found_error};
 use super::public_read::{PublicReadQuery, respond_public_view};
 
 /// What a printed GS1 label carries after its GTIN.
@@ -58,6 +58,18 @@ pub async fn public_read_by_gtin_handler(
             "The path segment is not a valid GTIN-14.",
         );
     };
+    if label
+        .batch
+        .as_deref()
+        .is_some_and(|value| value.contains('\0'))
+        || label
+            .serial
+            .as_deref()
+            .is_some_and(|value| value.contains('\0'))
+    {
+        return bad_request_error("Query parameters must not contain NUL bytes.");
+    }
+
     match state
         .service
         .resolve_label(gtin, label.batch.as_deref(), label.serial.as_deref())
