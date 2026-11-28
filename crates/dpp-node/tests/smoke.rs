@@ -1465,6 +1465,199 @@ async fn the_quick_start_battery_sample_creates_and_publishes() {
     eprintln!("quick start sample: schema {latest}, carrier {carrier}");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn creating_a_passport_with_an_unknown_predecessor_is_a_validation_error() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000094");
+    let response = reqwest::Client::new()
+        .post(format!("{base}/vault/api/v1/dpp"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "productName": "Orphan successor",
+            "manufacturer": { "name": "Test", "address": "Test address" },
+            "supersedesId": uuid::Uuid::now_v7()
+        }))
+        .send()
+        .await
+        .expect("create request failed");
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "an unknown predecessor is invalid input, not a database failure: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nul_bytes_in_database_lookup_filters_are_rejected_as_bad_requests() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000095");
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("{base}/vault/api/v1/dpps"))
+        .bearer_auth(&token)
+        .query(&[("q", "nul\0query")])
+        .send()
+        .await
+        .expect("list request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the list filter must be rejected before reaching Postgres: {body}"
+    );
+
+    let response = client
+        .get(format!("{base}/vault/api/v1/dpp/by-identity"))
+        .bearer_auth(&token)
+        .query(&[("productGroup", "battery"), ("identifier", "nul\0value")])
+        .send()
+        .await
+        .expect("identity lookup request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the identity filter must be rejected before reaching Postgres: {body}"
+    );
+
+    let response = client
+        .get(format!("{base}/vault/api/v1/dpp/by-identity"))
+        .bearer_auth(&token)
+        .query(&[
+            ("productGroup", "battery\0group"),
+            ("identifier", "09506000134352"),
+        ])
+        .send()
+        .await
+        .expect("identity product-group request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the product-group filter must be rejected before reaching Postgres: {body}"
+    );
+
+    let response = client
+        .get(format!("{base}/vault/public/dpp/by-gtin/09506000134352"))
+        .query(&[("batch", "nul\0batch")])
+        .send()
+        .await
+        .expect("GTIN lookup request failed");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "the GTIN qualifier must be rejected before reaching Postgres: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_as_of_query_values_are_problem_documents() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000096");
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{base}/vault/api/v1/dpp/019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f/versions?asOf=null&asOf=null"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("versions request failed");
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or_default()),
+        Some("application/problem+json")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn oversized_transfer_did_returns_a_bounded_problem_document() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000098");
+    let long_did = format!(
+        "did:web:{}",
+        "a".repeat(dpp_vault::domain::verify::MAX_DID_WEB_IDENTIFIER_LENGTH)
+    );
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{base}/vault/api/v1/dpp/019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e0f/transfer/initiate"
+        ))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "fromOperator": {
+                "did": long_did,
+                "name": "Sender",
+                "role": "manufacturer",
+                "country": "DE"
+            },
+            "toOperator": {
+                "did": "did:web:acme.example.com",
+                "name": "Receiver",
+                "role": "manufacturer",
+                "country": "DE"
+            },
+            "reason": "sale",
+            "notes": ""
+        }))
+        .send()
+        .await
+        .expect("transfer request failed");
+
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let body = response.text().await.unwrap_or_default();
+    assert!(
+        content_type.starts_with("application/problem+json"),
+        "got {content_type}"
+    );
+    assert!(!body.is_empty(), "the validation refusal must have a body");
+    assert!(
+        body.len() < 1024,
+        "the error must not echo the oversized DID"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unsupported_method_with_idempotency_key_returns_method_not_allowed() {
+    let (base, _container) = start_db_and_node().await;
+    let token = make_jwt("00000000-0000-0000-0000-000000000097");
+    for method in [reqwest::Method::PUT, reqwest::Method::TRACE] {
+        let response = reqwest::Client::new()
+            .request(method.clone(), format!("{base}/vault/api/v1/credentials"))
+            .bearer_auth(&token)
+            .header("Idempotency-Key", "schemathesis-method-probe")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("unsupported-method request failed");
+
+        assert_eq!(
+            response.status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED,
+            "{method} must be rejected by the router"
+        );
+    }
+}
+
 /// Registers the facility and primary operator identifier a battery publish
 /// needs: a battery is in force, so publish refuses without them.
 async fn seed_battery_registry_identity(client: &reqwest::Client, base: &str, token: &str) {

@@ -1,8 +1,8 @@
 //! `GET /api/v1/templates/{product group}` — serve the canonical CSV import template for a product group.
 
 use axum::{
-    extract::{Path, Query},
-    http::{HeaderMap, StatusCode, header},
+    extract::{FromRequestParts, Path, Query},
+    http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
 use dpp_common::http_problem;
@@ -163,30 +163,40 @@ pub fn template_keys() -> Vec<&'static str> {
 /// Query parameters for the template download endpoint.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TemplateQuery {
-    /// Requested format. Accepts `"csv"` (default) or `"xlsx"` (returns 501).
+    /// Requested format. Accepts `"csv"` (default); other formats return 406.
     pub format: Option<String>,
 }
 
-/// `GET /api/v1/templates/{product group}[?format=csv|xlsx]`
+impl<S> FromRequestParts<S> for TemplateQuery
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match Query::<Self>::from_request_parts(parts, state).await {
+            Ok(Query(query)) => Ok(query),
+            Err(rejection) => Err(http_problem::bad_request(rejection.body_text()).into_response()),
+        }
+    }
+}
+
+/// `GET /api/v1/templates/{product group}[?format=csv]`
 ///
 /// Returns the canonical import CSV template for the requested product group.
-/// XLSX download is not yet implemented (returns 501).
-pub async fn get_template(
-    Path(product_group): Path<String>,
-    Query(query): Query<TemplateQuery>,
-) -> Response {
+/// Other formats, including XLSX, return 406.
+pub async fn get_template(Path(product_group): Path<String>, query: TemplateQuery) -> Response {
     let format = query.format.as_deref().unwrap_or("csv");
 
     // RFC 9457, like every other error surface here. These two answered a bare
     // string with `text/plain`, while `GET /schemas/{pg}` and
     // `GET /product-groups/{pg}` — same crate, same failure class — already
     // answered `application/problem+json`.
-    if format == "xlsx" {
-        return http_problem::Problem::new(StatusCode::NOT_IMPLEMENTED, "Not Implemented")
+    if format != "csv" {
+        return http_problem::Problem::new(StatusCode::NOT_ACCEPTABLE, "Not Acceptable")
             .with_detail(
-                "XLSX template export is not yet available — download the CSV template and \
-                 open it with any spreadsheet application (Excel, LibreOffice Calc, Google \
-                 Sheets).",
+                "Only CSV template downloads are available. Omit `format` or set it to `csv`; \
+                 download the CSV and open it with a spreadsheet application if needed.",
             )
             .into_response();
     }
@@ -474,7 +484,7 @@ mod template_refusals {
     async fn an_xlsx_template_is_not_implemented_and_points_at_the_csv() {
         let problem = get_refusal(
             "/api/v1/templates/battery-ev?format=xlsx",
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::NOT_ACCEPTABLE,
         )
         .await;
 
@@ -492,7 +502,32 @@ mod template_refusals {
         // spreadsheet of nothing in particular is told about the format.
         get_refusal(
             "/api/v1/templates/no-such-group?format=xlsx",
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::NOT_ACCEPTABLE,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_unknown_template_format_is_not_acceptable() {
+        let problem = get_refusal(
+            "/api/v1/templates/battery-ev?format=pdf",
+            StatusCode::NOT_ACCEPTABLE,
+        )
+        .await;
+
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("Only CSV template downloads")),
+            "the problem explains the supported format: {problem}"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_format_parameters_are_problem_documents() {
+        get_refusal(
+            "/api/v1/templates/battery-ev?format=csv&format=csv",
+            StatusCode::BAD_REQUEST,
         )
         .await;
     }

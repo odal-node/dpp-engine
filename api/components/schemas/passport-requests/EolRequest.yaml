@@ -2,6 +2,23 @@ type: object
 required:
   - reason
 description: Request body for declaring a passport end-of-life.
+allOf:
+  - if:
+      properties:
+        reason:
+          properties:
+            kind:
+              const: destroyed
+          required:
+            - kind
+      required:
+        - reason
+    then:
+      required:
+        - unsold
+      properties:
+        unsold:
+          type: boolean
 properties:
   reason:
     $ref: ./DeactivationReason.yaml
@@ -14,6 +31,7 @@ properties:
       not record. Required with a `destroyed` reason (`422` otherwise): with the
       operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban
       reaches the product, and so whether the destruction cites a derogation.
+    example: false
   discardRecordId:
     type:
       - string

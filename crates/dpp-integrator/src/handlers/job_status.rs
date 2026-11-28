@@ -38,6 +38,17 @@ pub struct JobStatusResponse {
     pub report: serde_json::Value,
 }
 
+fn unauthorized_response() -> axum::response::Response {
+    let mut response = http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
+        .with_detail("Unauthorized.")
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::WWW_AUTHENTICATE,
+        axum::http::HeaderValue::from_static("Bearer"),
+    );
+    response
+}
+
 /// `GET /api/v1/imports/{job_id}`
 ///
 /// Returns the status and progress of an async import job. Requires the same
@@ -51,15 +62,7 @@ pub async fn get_job_status(
 ) -> impl IntoResponse {
     let token = extract_bearer_token(&headers).unwrap_or_default();
     if !state.vault_client.verify_token(&token).await {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-            Json(
-                http_problem::Problem::new(StatusCode::UNAUTHORIZED, "Unauthorized")
-                    .with_detail("Unauthorized."),
-            ),
-        )
-            .into_response();
+        return unauthorized_response();
     }
 
     let id = match job_id.parse::<Uuid>() {
@@ -98,5 +101,33 @@ pub async fn get_job_status(
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unauthorized_response;
+    use axum::http::{StatusCode, header};
+
+    #[test]
+    fn unauthorized_job_status_is_a_problem_document_with_bearer_challenge() {
+        let response = unauthorized_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default(),
+            "application/problem+json"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer")
+        );
     }
 }

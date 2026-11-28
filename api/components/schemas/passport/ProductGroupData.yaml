@@ -14,18 +14,52 @@ description: |
   compile time.
 required:
   - productGroup
+allOf:
+  - if:
+      properties:
+        productGroup:
+          const: battery
+      required:
+        - productGroup
+    then:
+      required:
+        - batteryType
+      properties:
+        batteryType:
+          type: string
+          minLength: 1
+  - if:
+      properties:
+        productGroup:
+          const: toy
+      required:
+        - productGroup
+    then:
+      required:
+        - ageGroup
+      properties:
+        ageGroup:
+          type: string
+          minLength: 1
 discriminator:
   propertyName: productGroup
 properties:
   productGroup:
     type: string
     example: battery
+  batteryType:
+    type: string
+    minLength: 1
+  ageGroup:
+    type: string
+    minLength: 1
 additionalProperties: true
 example:
   productGroup: battery
   productIdentifier:
     scheme: gs1
     gtin: '09506000134352'
+  batteryType: industrial
   batteryChemistry: LFP
   nominalVoltageV: 48
   nominalCapacityAh: 100

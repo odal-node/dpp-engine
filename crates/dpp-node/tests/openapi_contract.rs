@@ -414,6 +414,12 @@ const UNCHECKED: &[(&str, &str)] = &[
          authoritative description; duplicating them into OpenAPI would create a \
          second copy to drift",
     ),
+    (
+        "DiscardReceiverIdentifier",
+        "an externally-tagged `oneOf`; the generic object checker cannot union its \
+         EUID and other-scheme variants. `discard_receiver_identifier_variants_are_\
+         documented` serialises both core variants and checks their required keys",
+    ),
 ];
 
 fn object_cases() -> Vec<ObjectCase> {
@@ -555,6 +561,10 @@ fn object_cases() -> Vec<ObjectCase> {
         "CreateDiscardRecordRequest",
         fixtures::create_discard_record_request()
     );
+    case!("DiscardRecord", fixtures::discard_record());
+    case!("DiscardUnits", fixtures::discard_record().units);
+    case!("DiscardWeight", fixtures::discard_record().weight);
+    case!("DiscardReceiver", fixtures::discard_record().receiver);
     case!("StoredDiscardRecord", fixtures::stored_discard_record());
     case!("AttachedEvidence", fixtures::attached_evidence());
     case!("MissingEvidence", fixtures::missing_evidence());
@@ -582,6 +592,7 @@ fn object_cases() -> Vec<ObjectCase> {
     // ── dpp-types: the evidence dossier ───────────────────────────────────
     case!("SignedLayer", fixtures::signed_layer());
     case!("DossierManifest", fixtures::dossier_manifest());
+    case!("EvidenceTransferChain", fixtures::transfer_chain());
     case!("EvidenceDossier", fixtures::dossier());
     case!("EvidenceDossierRecord", fixtures::dossier_record());
     case!("EvidenceDossierSummary", fixtures::dossier_summary());
@@ -1675,6 +1686,46 @@ fn every_schema_is_covered() {
         "these names are registered here but no longer exist in the spec: {}",
         joined(&stale)
     );
+}
+
+#[test]
+fn discard_receiver_identifier_variants_are_documented() {
+    let spec = spec();
+    let schema = &schemas(&spec)["DiscardReceiverIdentifier"];
+    let variants = schema["oneOf"]
+        .as_array()
+        .expect("receiver identifier has two schema variants");
+    let values = [
+        json!({ "type": "euid", "value": "DE123456789" }),
+        json!({ "type": "other", "scheme": "DE-EORI", "value": "DE123456789" }),
+    ];
+
+    for value in values {
+        let identifier: dpp_domain::unsold_goods::LegalEntityIdentifier =
+            serde_json::from_value(value).expect("identifier variant deserialises");
+        let wire = serde_json::to_value(identifier).expect("identifier variant serialises");
+        let kind = wire["type"].as_str().expect("identifier has a type tag");
+        let branch = variants
+            .iter()
+            .find(|branch| branch["properties"]["type"]["const"] == kind)
+            .unwrap_or_else(|| panic!("the schema has no `{kind}` variant"));
+        let documented: BTreeSet<String> = branch["properties"]
+            .as_object()
+            .expect("variant has properties")
+            .keys()
+            .cloned()
+            .collect();
+        let required: BTreeSet<String> = branch["required"]
+            .as_array()
+            .expect("variant has required fields")
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+
+        assert_eq!(documented, wire_keys(&wire), "`{kind}` wire shape");
+        assert!(required.is_subset(&documented), "`{kind}` required fields");
+    }
 }
 
 // ── Documented bounds vs enforced bounds ───────────────────────────────────
@@ -3596,6 +3647,25 @@ mod fixtures {
         }
     }
 
+    pub fn discard_record() -> dpp_domain::unsold_goods::DiscardRecord {
+        serde_json::from_value(json!({
+            "discardedOn": "2026-08-01",
+            "cnCodes": ["420300"],
+            "description": "Jackets, unsold season stock",
+            "units": { "value": 1240, "estimated": false },
+            "weight": { "grams": 860500, "estimated": false },
+            "packagingIncluded": false,
+            "reason": "damagedOrContaminated",
+            "reasonLabel": "Seasonal damage",
+            "treatment": "recycling",
+            "receiver": {
+                "name": "Nord Recycling GmbH",
+                "identifier": { "type": "euid", "value": "DE123456789" }
+            }
+        }))
+        .expect("the discard-record fixture reads")
+    }
+
     pub fn stored_discard_record() -> dpp_types::StoredDiscardRecord {
         dpp_types::StoredDiscardRecord {
             id: uuid(),
@@ -3823,6 +3893,17 @@ mod fixtures {
         }
     }
 
+    pub fn transfer_chain() -> TransferChain {
+        let mut record = transfer_record();
+        record.rejected_at = None;
+        record.cancelled_at = None;
+        let mut chain = TransferChain::new(record.passport_id, record.from_operator.clone());
+        chain
+            .initiate_transfer(record)
+            .expect("the fixture record opens a valid chain");
+        chain
+    }
+
     pub fn dossier() -> DossierV1 {
         let mut did_documents = BTreeMap::new();
         did_documents.insert(
@@ -3836,20 +3917,7 @@ mod fixtures {
             public_view: signed_layer(),
             did_documents,
             audit_entries: vec![audit_entry()],
-            transfer_chain: Some({
-                // `transfer_record` sets every outcome so the schema check sees
-                // every field, and a chain refuses a record with more than one,
-                // so the chain holds the completed one.
-                let mut record = transfer_record();
-                record.rejected_at = None;
-                record.cancelled_at = None;
-                let mut chain =
-                    TransferChain::new(record.passport_id, record.from_operator.clone());
-                chain
-                    .initiate_transfer(record)
-                    .expect("the fixture record opens a valid chain");
-                chain
-            }),
+            transfer_chain: Some(transfer_chain()),
             eol_event: Some(json!({ "kind": "recycled" })),
             checkpoint: Some(json!({})),
             calc_receipts: vec![json!({})],

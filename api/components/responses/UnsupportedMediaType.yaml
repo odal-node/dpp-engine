@@ -1,0 +1,5 @@
+description: Request body must use a supported media type.
+content:
+  application/problem+json:
+    schema:
+      $ref: ../schemas/errors/Problem.yaml

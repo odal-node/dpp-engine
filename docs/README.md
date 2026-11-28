@@ -28,6 +28,7 @@ for operators and integrators are on [docs.odal-node.io](https://docs.odal-node.
 | How are routes mounted in the node? | [project/ENDPOINTS.md](project/ENDPOINTS.md) |
 | How do I set up and onboard an operator? | [guides/OPERATOR-SETUP.md](guides/OPERATOR-SETUP.md) |
 | How do I run the demonstration? | [guides/DEMO-RUNBOOK.md](guides/DEMO-RUNBOOK.md) |
+| How are generated API responses checked? | [guides/SCHEMATHESIS.md](guides/SCHEMATHESIS.md) |
 | How do outbound webhooks work? | [guides/WEBHOOKS.md](guides/WEBHOOKS.md) |
 | How do I operate this in production? | [ops/PRODUCTION-RUNBOOK.md](ops/PRODUCTION-RUNBOOK.md), [ops/METRICS-PLAN.md](ops/METRICS-PLAN.md) |
 | What are the licence terms? | [legal/LICENSING.md](legal/LICENSING.md), [legal/DPP-RETENTION.md](legal/DPP-RETENTION.md) |

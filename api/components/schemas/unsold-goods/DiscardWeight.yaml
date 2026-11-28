@@ -1,0 +1,12 @@
+type: object
+description: Weight in grams; may be estimated from an accurately determined unit count.
+required:
+  - grams
+properties:
+  grams:
+    type: integer
+    minimum: 1
+  estimated:
+    type: boolean
+    default: false
+additionalProperties: false

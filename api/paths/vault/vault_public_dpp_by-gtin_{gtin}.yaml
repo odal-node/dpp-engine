@@ -50,6 +50,9 @@ get:
       required: true
       schema:
         type: string
+        minLength: 14
+        maxLength: 14
+        pattern: '^[0-9]{14}$'
         description: GS1 GTIN-14 (14 digits, mod-10 check digit).
         example: '09506000134352'
     - name: batch
@@ -58,6 +61,7 @@ get:
       description: The label's AI 10 value, the batch or lot.
       schema:
         type: string
+        pattern: '^[^\u0000]*$'
       example: LOT-2026-A
     - name: serial
       in: query
@@ -65,6 +69,7 @@ get:
       description: The label's AI 21 value, the serial.
       schema:
         type: string
+        pattern: '^[^\u0000]*$'
       example: 3a9c1e0b7d2f4a6c8e10
     - name: schema_view
       in: query
@@ -86,8 +91,12 @@ get:
             oneOf:
               - $ref: ../../components/schemas/passport/RedactedPassportResponse.yaml
               - $ref: ../../components/schemas/passport/SchemaViewResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
+    '410':
+      $ref: ../../components/responses/Gone.yaml
     '422':
       description: >-
         The GTIN is not a valid GTIN-14, or the requested `schema_view` is
@@ -96,5 +105,3 @@ get:
         application/problem+json:
           schema:
             $ref: ../../components/schemas/errors/Problem.yaml
-    '410':
-      $ref: ../../components/responses/Gone.yaml

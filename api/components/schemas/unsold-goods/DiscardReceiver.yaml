@@ -1,0 +1,11 @@
+type: object
+description: Waste treatment operator that received the products.
+required:
+  - name
+properties:
+  name:
+    type: string
+    minLength: 1
+  identifier:
+    $ref: ./DiscardReceiverIdentifier.yaml
+additionalProperties: false

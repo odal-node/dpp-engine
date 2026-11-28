@@ -1,0 +1,15 @@
+type: object
+description: Transfer chain serialized into an evidence dossier.
+required:
+  - passportId
+  - originalOperator
+  - transfers
+properties:
+  passportId:
+    $ref: ../passport/DppId.yaml
+  originalOperator:
+    $ref: ../transfer/ResponsibleOperator.yaml
+  transfers:
+    type: array
+    items:
+      $ref: ../transfer/TransferRecord.yaml

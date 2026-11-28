@@ -2,6 +2,9 @@
 //! evidence exporter's transfer-chain counterparty lookup. Pure string
 //! transform — no I/O here, callers do their own HTTP fetch.
 
+/// Maximum accepted `did:web` identifier size, in bytes.
+pub const MAX_DID_WEB_IDENTIFIER_LENGTH: usize = 2048;
+
 /// Resolve a `did:web` DID to the URL its document is published at.
 ///
 /// `did:web:example.com` -> `https://example.com/.well-known/did.json`.
@@ -11,9 +14,15 @@
 /// # Errors
 /// A plain string reason if `did` is not a `did:web` DID at all.
 pub fn did_web_url(did: &str) -> Result<String, String> {
+    if did.len() > MAX_DID_WEB_IDENTIFIER_LENGTH {
+        return Err(format!(
+            "DID exceeds the {}-byte limit.",
+            MAX_DID_WEB_IDENTIFIER_LENGTH
+        ));
+    }
     let rest = did
         .strip_prefix("did:web:")
-        .ok_or_else(|| format!("not a did:web DID: {did}"))?;
+        .ok_or_else(|| "not a did:web DID".to_owned())?;
     let mut segments = rest.split(':');
     let host = segments
         .next()
@@ -62,5 +71,15 @@ mod tests {
     fn non_did_web_is_an_error() {
         assert!(did_web_url("did:key:z6Mk").is_err());
         assert!(did_web_url("https://example.com").is_err());
+    }
+
+    #[test]
+    fn an_overlong_did_is_refused_without_echoing_the_input() {
+        let did = format!("did:web:{}", "a".repeat(MAX_DID_WEB_IDENTIFIER_LENGTH));
+        let error = did_web_url(&did).unwrap_err();
+
+        assert!(error.contains("DID exceeds the"), "{error}");
+        assert!(error.len() < 128, "the error must stay bounded");
+        assert!(!error.contains(&did), "the error must not echo the input");
     }
 }

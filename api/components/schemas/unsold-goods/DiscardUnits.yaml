@@ -1,0 +1,12 @@
+type: object
+description: Number of units discarded; may be estimated from an accurately determined weight.
+required:
+  - value
+properties:
+  value:
+    type: integer
+    minimum: 0
+  estimated:
+    type: boolean
+    default: false
+additionalProperties: false

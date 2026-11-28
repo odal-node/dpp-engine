@@ -12,8 +12,7 @@
 //! `scripts/vocabulary-check.sh` keeps it that way.
 
 use axum::{
-    Json,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -21,6 +20,7 @@ use serde::Deserialize;
 
 use crate::{
     domain::service::{StateAt, VersionAt},
+    extract::{Json, Query},
     middleware::auth::AuthContext,
     state::AppState,
 };

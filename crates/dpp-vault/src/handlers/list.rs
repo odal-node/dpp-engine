@@ -11,7 +11,7 @@ use dpp_domain::status::PassportStatus;
 
 use crate::{middleware::auth::AuthContext, state::AppState};
 
-use super::error::internal_error;
+use super::error::{bad_request_error, internal_error};
 use crate::extract::{Json, Query};
 
 /// One page of passports, with the totals a caller needs to page through them.
@@ -55,6 +55,15 @@ pub async fn list_handler(
     Extension(_auth): Extension<AuthContext>,
     Query(query): Query<ListQuery>,
 ) -> impl IntoResponse {
+    if query.q.as_deref().is_some_and(|value| value.contains('\0'))
+        || query
+            .facility_id
+            .as_deref()
+            .is_some_and(|value| value.contains('\0'))
+    {
+        return bad_request_error("Query parameters must not contain NUL bytes.");
+    }
+
     let limit = query.limit.unwrap_or(20).min(100);
     let offset = query.skip.unwrap_or(0);
     let status = query.status;

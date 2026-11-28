@@ -3,6 +3,9 @@ in: header
 required: false
 description: |
   An opaque, client-minted string that makes this write safe to retry.
+  It must contain 1–255 printable ASCII characters and not consist only of
+  spaces; leading and trailing spaces are trimmed.
+  A malformed value is rejected with `400` before the operation runs.
 
   Send the same key with the same body and the first outcome is returned
   instead of a second resource being created. The replayed response carries
@@ -35,4 +38,4 @@ schema:
   type: string
   minLength: 1
   maxLength: 255
-example: 6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51
+  pattern: '^[ -~]*[!-~][ -~]*$'

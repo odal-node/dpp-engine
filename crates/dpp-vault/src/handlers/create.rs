@@ -50,6 +50,19 @@ pub async fn create_handler(
     if let Some(resp) = validate_create_request(&body) {
         return resp;
     }
+    if let Some(id) = body.supersedes_id {
+        match state.service.find_by_id(id).await {
+            Ok(_) => {}
+            Err(dpp_domain::DppError::NotFound(_)) => {
+                return api_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    "supersedesId must reference an existing passport.",
+                );
+            }
+            Err(e) => return internal_error(e),
+        }
+    }
     if let Some(resp) = carrier_serial_conflict(&state, &body).await {
         return resp;
     }

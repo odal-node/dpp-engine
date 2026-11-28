@@ -16,10 +16,9 @@
 //!
 //! # A key on an unkeyed route is refused
 //!
-//! [`policy_for`] returning `None` is not "ignore the header". The middleware
-//! answers `400`. Accepting and discarding the key would tell a client its
-//! retry is protected when it is not, which is the one failure mode worse than
-//! having no keys at all.
+//! [`policy_for`] returning `None` on a routed operation is not "ignore the
+//! header". The middleware answers `400`. A method not served for a keyed path
+//! is left to the router, which answers `405` instead.
 
 use axum::http::Method;
 

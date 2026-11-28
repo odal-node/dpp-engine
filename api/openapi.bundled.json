@@ -163,6 +163,7 @@
                     "scheme": "gs1",
                     "gtin": "09506000134352"
                   },
+                  "batteryType": "industrial",
                   "batteryChemistry": "LFP",
                   "nominalVoltageV": 48,
                   "nominalCapacityAh": 100,
@@ -183,6 +184,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -252,6 +256,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -295,7 +302,8 @@
             "name": "q",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
             },
             "description": "Free-text search across productName, batchId, manufacturer.name"
           },
@@ -310,26 +318,32 @@
             "name": "facilityId",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
             },
             "description": "Exact match on the facility identifier stamped on the passport (see GET /facilities)."
           },
           {
             "name": "limit",
             "in": "query",
+            "description": "Maximum results to return (default 20, capped at 100).",
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
+              "format": "int64",
+              "minimum": 0,
+              "maximum": 4294967295,
               "default": 20
             }
           },
           {
             "name": "skip",
             "in": "query",
+            "description": "Offset into the result set (default 0).",
             "schema": {
               "type": "integer",
+              "format": "int64",
               "minimum": 0,
+              "maximum": 4294967295,
               "default": 0
             }
           }
@@ -344,6 +358,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -374,6 +391,7 @@
             "required": true,
             "schema": {
               "type": "string",
+              "pattern": "^[^\\u0000]*$",
               "example": "battery"
             }
           },
@@ -384,6 +402,7 @@
             "description": "The product identifier's value under whichever EN 18219 clause 5\nscheme issued it: the 14-digit GTIN for scheme 1, the identification\nlink for scheme 2, the DID for scheme 3.\n",
             "schema": {
               "type": "string",
+              "pattern": "^[^\\u0000]*$",
               "example": "09506000134352"
             }
           },
@@ -392,7 +411,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
             }
           }
         ],
@@ -406,6 +426,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -525,6 +548,9 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -1056,6 +1082,9 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationError"
           }
@@ -1124,6 +1153,9 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "$ref": "#/components/responses/ValidationError"
           }
@@ -1191,6 +1223,9 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
           }
         }
       }
@@ -1315,6 +1350,9 @@
           "409": {
             "$ref": "#/components/responses/Conflict"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "422": {
             "description": "A declaration refused, with the passport unchanged, for one of four\nreasons, each named in the `errors` member:\n\n- `/unsold`: the request does not say whether the product was an\n  unsold consumer product;\n- `/reason/derogation`: the derogation is the free-text object\n  `{\"category\": ...}` rather than a point of Art. 2 of Delegated\n  Regulation (EU) 2026/296 by its name, and the refusal lists the\n  points;\n- `/reason/derogation`: the ESPR Art. 25(1) ban reaches the product\n  (unsold, a CN code in Annex VII, from 19 July 2026, an operator that\n  is not exempt) and no point is cited;\n- `/materialRecovery`: the value holds a number dpp-core cannot hash\n  exactly, such as an integer too large for a double to hold, so the\n  declaration could not be chained into the audit trail.\n\nA name that is not one of the points is not a derogation and fails as\nthe body is read.\n\nA `discardRecordId` is refused with the passport unchanged when the\nreason is not `destroyed`, when it names no discard record this node\nholds, or when the record and the reason do not cite the same derogation\npoint: one citing a point and the other none, or two different points.\nBoth citing none agree. Such a refusal carries no `errors` member. On\nsuccess the passport is joined to the discard record in the same\ntransaction as the destruction, and the audit entry records the citation.\n",
             "content": {
@@ -1396,6 +1434,9 @@
                 }
               }
             }
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
@@ -2426,8 +2467,9 @@
             "description": "Trailing window in days (default 30, clamped to 1..=730).",
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 730,
+              "format": "int64",
+              "minimum": -9223372036854776000,
+              "maximum": 9223372036854776000,
               "default": 30
             }
           }
@@ -2476,8 +2518,9 @@
             "description": "Trailing window in days (default 30, clamped to 1..=730).",
             "schema": {
               "type": "integer",
-              "minimum": 1,
-              "maximum": 730,
+              "format": "int64",
+              "minimum": -9223372036854776000,
+              "maximum": 9223372036854776000,
               "default": 30
             }
           }
@@ -2492,6 +2535,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2657,6 +2703,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2900,6 +2949,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -3141,6 +3193,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3694,6 +3749,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -3788,6 +3846,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -4281,6 +4342,9 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 14,
+              "maxLength": 14,
+              "pattern": "^[0-9]{14}$",
               "description": "GS1 GTIN-14 (14 digits, mod-10 check digit).",
               "example": "09506000134352"
             }
@@ -4291,7 +4355,8 @@
             "required": false,
             "description": "The label's AI 10 value, the batch or lot.",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
             },
             "example": "LOT-2026-A"
           },
@@ -4301,7 +4366,8 @@
             "required": false,
             "description": "The label's AI 21 value, the serial.",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
             },
             "example": "3a9c1e0b7d2f4a6c8e10"
           },
@@ -4333,6 +4399,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -4517,6 +4586,9 @@
         "responses": {
           "204": {
             "description": "Batch ingested."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -4714,6 +4786,9 @@
             "required": true,
             "schema": {
               "type": "string",
+              "minLength": 5,
+              "maxLength": 33,
+              "pattern": "^v?(0|[1-9][0-9]{0,9})\\.(0|[1-9][0-9]{0,9})\\.(0|[1-9][0-9]{0,9})$",
               "example": "2.6.0"
             }
           }
@@ -4756,7 +4831,7 @@
       "get": {
         "operationId": "getImportTemplate",
         "summary": "Download a CSV import template",
-        "description": "Returns the canonical CSV import template for a product group. Most product\ngroups are served under their own key; batteries are served **per category**\nas `battery-ev`, `battery-lmt` and `battery-industrial`.\n\nThe served set is deliberately **not enumerated here.** It is derived from\none table in the handler, and the `404` body lists it, so a template added\nthere is named by the refusal without anyone remembering to edit this\nsentence. That table exists because this list previously had three homes\nthat disagreed, and this description was one of them.\n\n**There is no bare `battery` template.** What a battery passport must carry\nis decided per category, and the state-of-health parameters are two disjoint\nsets under Annex VII Part A: an EV battery reports state of certified\nenergy alone, while stationary and LMT batteries report a five-parameter\nlist. One file cannot carry three obligations without offering columns some\ncategories must not fill.\n\n**Three categories, not five.** Reg. (EU) 2023/1542 defines five battery\ncategories, but Art. 77(1) gives a battery passport only to \"each LMT\nbattery, each industrial battery with a capacity greater than 2 kWh and each\nelectric vehicle battery\". Portable and SLI batteries bear no passport\nobligation, so there is no template for them. The industrial template is for\nbatteries above the 2 kWh threshold.\n\nAll three battery templates are **generated** from the same rules table the\npublish-time content gate reads, so a template cannot fall behind the\nobligation it exists to satisfy. Their rows import under the `battery`\nproduct group: the category is carried by the row's own `batteryType`\ncolumn, not by a product group of its own.\n\nStructured data points use four flat-file conventions: repeating groups\n(`cathode_1_name`, `cathode_1_weightPct`, …), nested blocks\n(`dynamicPerformance_ratedCapacityAh`, …), a two-column range\n(`notInUseTemperatureMinC`/`MaxC`), and a semicolon-delimited list\n(`componentPartNumbers`).\n\n`?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet\napp). Unauthenticated.\n",
+        "description": "Returns the canonical CSV import template for a product group. Most product\ngroups are served under their own key; batteries are served **per category**\nas `battery-ev`, `battery-lmt` and `battery-industrial`.\n\nThe served set is deliberately **not enumerated here.** It is derived from\none table in the handler, and the `404` body lists it, so a template added\nthere is named by the refusal without anyone remembering to edit this\nsentence. That table exists because this list previously had three homes\nthat disagreed, and this description was one of them.\n\n**There is no bare `battery` template.** What a battery passport must carry\nis decided per category, and the state-of-health parameters are two disjoint\nsets under Annex VII Part A: an EV battery reports state of certified\nenergy alone, while stationary and LMT batteries report a five-parameter\nlist. One file cannot carry three obligations without offering columns some\ncategories must not fill.\n\n**Three categories, not five.** Reg. (EU) 2023/1542 defines five battery\ncategories, but Art. 77(1) gives a battery passport only to \"each LMT\nbattery, each industrial battery with a capacity greater than 2 kWh and each\nelectric vehicle battery\". Portable and SLI batteries bear no passport\nobligation, so there is no template for them. The industrial template is for\nbatteries above the 2 kWh threshold.\n\nAll three battery templates are **generated** from the same rules table the\npublish-time content gate reads, so a template cannot fall behind the\nobligation it exists to satisfy. Their rows import under the `battery`\nproduct group: the category is carried by the row's own `batteryType`\ncolumn, not by a product group of its own.\n\nStructured data points use four flat-file conventions: repeating groups\n(`cathode_1_name`, `cathode_1_weightPct`, …), nested blocks\n(`dynamicPerformance_ratedCapacityAh`, …), a two-column range\n(`notInUseTemperatureMinC`/`MaxC`), and a semicolon-delimited list\n(`componentPartNumbers`).\n\nAny format other than `csv`, including `xlsx`, returns 406. Download the\nCSV and open it in a spreadsheet app if needed. Unauthenticated.\n",
         "tags": [
           "Integrator"
         ],
@@ -4775,11 +4850,11 @@
           {
             "name": "format",
             "in": "query",
+            "description": "CSV only; other formats return 406 Not Acceptable.",
             "schema": {
               "type": "string",
               "enum": [
-                "csv",
-                "xlsx"
+                "csv"
               ],
               "default": "csv"
             }
@@ -4796,6 +4871,16 @@
               }
             }
           },
+          "400": {
+            "description": "The query parameters are malformed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "404": {
             "description": "No template for this product group.",
             "content": {
@@ -4806,8 +4891,8 @@
               }
             }
           },
-          "501": {
-            "description": "XLSX export not yet implemented.",
+          "406": {
+            "description": "The requested format is unsupported; CSV is the only available format.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4859,6 +4944,7 @@
                   "file": {
                     "type": "string",
                     "format": "binary",
+                    "minLength": 1,
                     "description": "CSV or XLSX file."
                   },
                   "mode": {
@@ -6817,10 +6903,14 @@
         "properties": {
           "name": {
             "type": "string",
+            "minLength": 1,
+            "pattern": "^(?=.*\\S)(?!.*[\\u0000-\\u001F\\u007F\\u202A-\\u202E\\u2066-\\u2069]).+$",
             "example": "EcoTech GmbH"
           },
           "address": {
             "type": "string",
+            "minLength": 1,
+            "pattern": "^(?=.*\\S)(?!.*[\\u0000-\\u001F\\u007F\\u202A-\\u202E\\u2066-\\u2069]).+$",
             "example": "Hauptstraße 1, 10115 Berlin"
           },
           "registeredTradeName": {
@@ -6934,6 +7024,54 @@
         "required": [
           "productGroup"
         ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "productGroup": {
+                  "const": "battery"
+                }
+              },
+              "required": [
+                "productGroup"
+              ]
+            },
+            "then": {
+              "required": [
+                "batteryType"
+              ],
+              "properties": {
+                "batteryType": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "productGroup": {
+                  "const": "toy"
+                }
+              },
+              "required": [
+                "productGroup"
+              ]
+            },
+            "then": {
+              "required": [
+                "ageGroup"
+              ],
+              "properties": {
+                "ageGroup": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ],
         "discriminator": {
           "propertyName": "productGroup"
         },
@@ -6941,6 +7079,14 @@
           "productGroup": {
             "type": "string",
             "example": "battery"
+          },
+          "batteryType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ageGroup": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "additionalProperties": true,
@@ -6950,6 +7096,7 @@
             "scheme": "gs1",
             "gtin": "09506000134352"
           },
+          "batteryType": "industrial",
           "batteryChemistry": "LFP",
           "nominalVoltageV": 48,
           "nominalCapacityAh": 100,
@@ -7488,6 +7635,8 @@
         "properties": {
           "productName": {
             "type": "string",
+            "minLength": 1,
+            "pattern": "^(?=.*\\S)(?!.*[\\u0000-\\u001F\\u007F\\u202A-\\u202E\\u2066-\\u2069]).+$",
             "description": "Human-readable product name. Must not be blank.",
             "example": "EcoCell Pro 48V"
           },
@@ -7541,9 +7690,13 @@
             "example": "2026-03-14"
           },
           "schemaVersion": {
-            "type": "string",
-            "description": "Product group schema version. Optional, and the only accepted value is the\nproduct group's **current** version: omitting it is equivalent. Any other\nvalue is rejected with `422`.\n\nIt is not the caller's to choose: the stored version selects the\ndisclosure table the passport's public view is filtered through and\nsigned under, and an older table classifies fewer fields, defaulting\nthe rest to public. The body is validated against the current schema\nin either case, so a differing declaration is already false about the\nbody it accompanies.\n",
-            "example": "2.6.0"
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(0|[1-9][0-9]{0,9})\\.(0|[1-9][0-9]{0,9})\\.(0|[1-9][0-9]{0,9})$",
+            "description": "Product group schema version. Optional, and the only accepted value is the\nproduct group's **current** version: omitting it or sending `null` is equivalent. Any other\nvalue is rejected with `422`.\n\nIt is not the caller's to choose: the stored version selects the\ndisclosure table the passport's public view is filtered through and\nsigned under, and an older table classifies fewer fields, defaulting\nthe rest to public. The body is validated against the current schema\nin either case, so a differing declaration is already false about the\nbody it accompanies.\n",
+            "example": "2.10.0"
           },
           "derivedFrom": {
             "type": "array",
@@ -7621,6 +7774,37 @@
           "reason"
         ],
         "description": "Request body for declaring a passport end-of-life.",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "reason": {
+                  "properties": {
+                    "kind": {
+                      "const": "destroyed"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "reason"
+              ]
+            },
+            "then": {
+              "required": [
+                "unsold"
+              ],
+              "properties": {
+                "unsold": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        ],
         "properties": {
           "reason": {
             "$ref": "#/components/schemas/DeactivationReason"
@@ -7630,7 +7814,8 @@
               "boolean",
               "null"
             ],
-            "description": "Whether the product was an unsold consumer product, which a passport does not record. Required with a `destroyed` reason (`422` otherwise): with the operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban reaches the product, and so whether the destruction cites a derogation."
+            "description": "Whether the product was an unsold consumer product, which a passport does not record. Required with a `destroyed` reason (`422` otherwise): with the operator's `enterpriseSize` it decides whether the ESPR Art. 25(1) ban reaches the product, and so whether the destruction cites a derogation.",
+            "example": false
           },
           "discardRecordId": {
             "type": [
@@ -8178,6 +8363,9 @@
         "properties": {
           "did": {
             "type": "string",
+            "minLength": 9,
+            "maxLength": 2048,
+            "pattern": "^did:web:[!-~]+$",
             "example": "did:web:acme.example.com"
           },
           "name": {
@@ -8595,6 +8783,7 @@
           "didDocuments",
           "auditEntries"
         ],
+        "additionalProperties": false,
         "properties": {
           "manifest": {
             "$ref": "#/components/schemas/DossierManifest"
@@ -8622,9 +8811,13 @@
             }
           },
           "transferChain": {
-            "type": [
-              "object",
-              "null"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceTransferChain"
+              },
+              {
+                "type": "null"
+              }
             ],
             "description": "Present iff the passport has ever changed responsible operator."
           },
@@ -8644,6 +8837,7 @@
           },
           "calcReceipts": {
             "type": "array",
+            "maxItems": 0,
             "description": "Always empty in format v1: `dpp-calc` invocation is not yet wired end to end.",
             "items": {
               "type": "object"
@@ -8797,7 +8991,6 @@
               "string",
               "null"
             ],
-            "format": "date-time",
             "description": "A timestamp authority's statement of when the seal was made, read out of the token inside the CAdES and checked. `seal.sealedAt` beside it is the sealing node's own clock, which is an unattested claim by the party that bought the seal."
           },
           "archival": {
@@ -10144,15 +10337,14 @@
       },
       "CreateDiscardRecordRequest": {
         "type": "object",
-        "description": "One discard of unsold consumer products, and the passports of the units it\ndiscards.\n\n`record` is checked as sent, against dpp-core's discard-record schema, before\nit is read. A field that schema does not have is refused, not dropped. The\nschema is not restated here: dpp-core publishes it, and this description\nnames only the version the node checks against, which the response reports\nas `schemaVersion`.\n",
+        "description": "One discard of unsold consumer products, and the passports of the units it\ndiscards.\n\n`record` is checked as sent, against dpp-core's discard-record schema, before\nit is read. A field that schema does not have is refused, not dropped. The\nembedded `DiscardRecord` contract mirrors dpp-core schema v1.0.0; the response\nreports the version the node checks against as `schemaVersion`.\n",
         "required": [
           "record"
         ],
         "additionalProperties": false,
         "properties": {
           "record": {
-            "type": "object",
-            "description": "The discard, as dpp-core's discard-record schema describes it: the day it\nwas discarded, the CN codes, the units and the weight (each marked when it\nis an estimate), the derogation it relies on where one applies, the\ntreatment and the receiver.\n"
+            "$ref": "#/components/schemas/DiscardRecord"
           },
           "passportIds": {
             "type": "array",
@@ -11627,7 +11819,6 @@
           },
           "expires": {
             "type": "string",
-            "format": "date-time",
             "description": "When the archival timestamp's authority certificate expires: the date by which re-timestamping must have happened, read from before or after it depending on `state`. One value, so one name: `current` and `lapsed` are the same date seen from either side. Absent for `notArchived` and `unknown`."
           }
         }
@@ -12165,12 +12356,225 @@
                 "$ref": "#/components/schemas/DppId"
               }
             ],
+            "example": "019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e10",
             "description": "The successor, which must already be **published** and must already carry\n`supersedesId` pointing back at the passport named in the path. That link\nis set when the successor is created; this call confirms the two agree\nbefore retiring anything, and refuses with `422` if they do not.\n"
           },
           "reason": {
             "type": "string",
             "description": "Why the passport is being retired. Stored on the predecessor's audit entry\nalongside the successor's id: the same entry `amend` writes, so a reader\narriving at a retired record finds what replaced it and why, whichever\nroute retired it.\n",
             "example": "Reissued on schema 2.6.0 after the product group's lens changed"
+          }
+        }
+      },
+      "EvidenceTransferChain": {
+        "type": "object",
+        "description": "Transfer chain serialized into an evidence dossier.",
+        "required": [
+          "passportId",
+          "originalOperator",
+          "transfers"
+        ],
+        "properties": {
+          "passportId": {
+            "$ref": "#/components/schemas/DppId"
+          },
+          "originalOperator": {
+            "$ref": "#/components/schemas/ResponsibleOperator"
+          },
+          "transfers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferRecord"
+            }
+          }
+        }
+      },
+      "DiscardUnits": {
+        "type": "object",
+        "description": "Number of units discarded; may be estimated from an accurately determined weight.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimated": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "DiscardWeight": {
+        "type": "object",
+        "description": "Weight in grams; may be estimated from an accurately determined unit count.",
+        "required": [
+          "grams"
+        ],
+        "properties": {
+          "grams": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "estimated": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "DiscardReceiverIdentifier": {
+        "type": "object",
+        "description": "EUID or an identifier from a recognised Member State scheme.",
+        "oneOf": [
+          {
+            "required": [
+              "type",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "euid"
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "required": [
+              "type",
+              "scheme",
+              "value"
+            ],
+            "properties": {
+              "type": {
+                "const": "other"
+              },
+              "scheme": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "DiscardReceiver": {
+        "type": "object",
+        "description": "Waste treatment operator that received the products.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "identifier": {
+            "$ref": "#/components/schemas/DiscardReceiverIdentifier"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DiscardRecord": {
+        "type": "object",
+        "description": "Discard record under dpp-core's v1.0.0 versioned JSON Schema. This schema is validated at runtime by the node's document-schema registry.",
+        "required": [
+          "discardedOn",
+          "cnCodes",
+          "description",
+          "units",
+          "weight",
+          "packagingIncluded",
+          "treatment",
+          "receiver"
+        ],
+        "properties": {
+          "discardedOn": {
+            "type": "string",
+            "format": "date"
+          },
+          "cnCodes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^([0-9]{6}|[0-9]{8}|[0-9]{10})$"
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "units": {
+            "$ref": "#/components/schemas/DiscardUnits"
+          },
+          "weight": {
+            "$ref": "#/components/schemas/DiscardWeight"
+          },
+          "packagingIncluded": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "dangerousProduct",
+              "nonCompliantWithLaw",
+              "intellectualPropertyInfringement",
+              "licensedPeriodExpired",
+              "markingsCannotBeRemoved",
+              "damagedOrContaminated",
+              "defectiveBeyondRepair",
+              "offeredForDonationNotAccepted",
+              "donatedButNoRecipientFound",
+              "reusedButNoRecipientFound"
+            ]
+          },
+          "reasonLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "treatment": {
+            "type": "string",
+            "enum": [
+              "preparingForReuse",
+              "recycling",
+              "otherRecovery",
+              "disposal",
+              "unknown"
+            ]
+          },
+          "receiver": {
+            "$ref": "#/components/schemas/DiscardReceiver"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "discardedOn": "2026-08-01",
+          "cnCodes": [
+            "420300"
+          ],
+          "description": "Jackets, unsold season stock",
+          "units": {
+            "value": 1240
+          },
+          "weight": {
+            "grams": 860500
+          },
+          "packagingIncluded": false,
+          "treatment": "recycling",
+          "receiver": {
+            "name": "Nord Recycling GmbH"
           }
         }
       },
@@ -12200,16 +12604,32 @@
         "name": "Idempotency-Key",
         "in": "header",
         "required": false,
-        "description": "An opaque, client-minted string that makes this write safe to retry.\n\nSend the same key with the same body and the first outcome is returned\ninstead of a second resource being created. The replayed response carries\n`Idempotency-Replayed: true`, so a client can tell a replay from a first\nexecution without comparing anything.\n\nOnly the routes that document this parameter accept it. Sending it to any\nother route is a `400` rather than being ignored: a route that is idempotent\nby shape records nothing, and silently accepting the header would suggest a\nprotection that is not there.\n\n**A retry must resend byte-identical bytes.** The key is bound to a SHA-256\nof the raw request body, not of a canonicalised form, so re-serialising with\ndifferent member order or whitespace counts as a different request and is\nrefused with `422`. Use a fresh key whenever the body changes.\n\nOn a `multipart/form-data` route this includes the **boundary**: the whole\nencoded body is what is hashed. Most HTTP clients generate a fresh boundary\nper request, which makes the retry differ in bytes and be refused. Either\npin the boundary across attempts, or omit the key on multipart uploads.\n\nKeys are scoped to the authenticated caller and to this route, so the same\nkey may safely be reused across different operations, and one caller can\nnever observe another's. A key is honoured for **24 hours**; after that the\nsame key starts a new request.\n\nWhile a first attempt is still running, a duplicate receives `409` with\n`Retry-After`.\n",
+        "description": "An opaque, client-minted string that makes this write safe to retry.\nIt must contain 1–255 printable ASCII characters and not consist only of\nspaces; leading and trailing spaces are trimmed.\nA malformed value is rejected with `400` before the operation runs.\n\nSend the same key with the same body and the first outcome is returned\ninstead of a second resource being created. The replayed response carries\n`Idempotency-Replayed: true`, so a client can tell a replay from a first\nexecution without comparing anything.\n\nOnly the routes that document this parameter accept it. Sending it to any\nother route is a `400` rather than being ignored: a route that is idempotent\nby shape records nothing, and silently accepting the header would suggest a\nprotection that is not there.\n\n**A retry must resend byte-identical bytes.** The key is bound to a SHA-256\nof the raw request body, not of a canonicalised form, so re-serialising with\ndifferent member order or whitespace counts as a different request and is\nrefused with `422`. Use a fresh key whenever the body changes.\n\nOn a `multipart/form-data` route this includes the **boundary**: the whole\nencoded body is what is hashed. Most HTTP clients generate a fresh boundary\nper request, which makes the retry differ in bytes and be refused. Either\npin the boundary across attempts, or omit the key on multipart uploads.\n\nKeys are scoped to the authenticated caller and to this route, so the same\nkey may safely be reused across different operations, and one caller can\nnever observe another's. A key is honoured for **24 hours**; after that the\nsame key starts a new request.\n\nWhile a first attempt is still running, a duplicate receives `409` with\n`Retry-After`.\n",
         "schema": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 255
-        },
-        "example": "6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51"
+          "maxLength": 255,
+          "pattern": "^[ -~]*[!-~][ -~]*$"
+        }
       }
     },
     "responses": {
+      "BadRequest": {
+        "description": "A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a\nUUID. The request never reaches the resource, so this is distinct from `404`,\nwhich means the identifier was well-formed and nothing matched it.\n",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "https://problems.odal-node.io/bad-request",
+              "title": "Bad Request",
+              "status": 400,
+              "detail": "not-a-uuid is not a valid DPP id."
+            }
+          }
+        }
+      },
       "Unauthorized": {
         "description": "Missing or invalid authentication credentials.",
         "content": {
@@ -12274,22 +12694,6 @@
           }
         }
       },
-      "BadRequest": {
-        "description": "A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a\nUUID. The request never reaches the resource, so this is distinct from `404`,\nwhich means the identifier was well-formed and nothing matched it.\n",
-        "content": {
-          "application/problem+json": {
-            "schema": {
-              "$ref": "#/components/schemas/Problem"
-            },
-            "example": {
-              "type": "https://problems.odal-node.io/bad-request",
-              "title": "Bad Request",
-              "status": 400,
-              "detail": "not-a-uuid is not a valid DPP id."
-            }
-          }
-        }
-      },
       "Conflict": {
         "description": "State conflict, e.g. attempting to publish an already-published DPP\nor updating a retired DPP.\n",
         "content": {
@@ -12302,6 +12706,16 @@
               "title": "Conflict",
               "status": 409,
               "detail": "DPP is already published."
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "Request body must use a supported media type.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
             }
           }
         }
