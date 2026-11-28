@@ -50,7 +50,6 @@ properties:
       it matters.
   expires:
     type: string
-    format: date-time
     description: >-
       When the archival timestamp's authority certificate expires: the date by
       which re-timestamping must have happened, read from before or after it

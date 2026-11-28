@@ -11,7 +11,7 @@ use axum::{
 };
 
 use super::{
-    policy::{RoutePolicy, policy_for},
+    policy::{RoutePolicy, keyed_routes, policy_for},
     store::{
         Claim, ClaimToken, DEFAULT_LEASE, DEFAULT_RETENTION, IdempotencyError, IdempotencyStore,
         RequestKey, Settled, StoredResponse, fingerprint,
@@ -109,6 +109,15 @@ pub async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    // Let the router reject unsupported methods with 405 rather than treating
+    // their generated idempotency header as an invalid route use.
+    if !matches!(
+        request.method().as_str(),
+        "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS"
+    ) {
+        return next.run(request).await;
+    }
+
     let Some(raw_key) = request.headers().get(IDEMPOTENCY_KEY_HEADER).cloned() else {
         return next.run(request).await;
     };
@@ -136,6 +145,9 @@ pub async fn idempotency_middleware(
     // Refused, not ignored. Accepting the header here would tell the caller its
     // retry is protected on a route where nothing is recording it.
     let Some(policy) = policy_for(request.method(), &template) else {
+        if keyed_routes().any(|(_, path)| path == template.as_str()) {
+            return next.run(request).await;
+        }
         return problem(
             StatusCode::BAD_REQUEST,
             "Idempotency Key Not Accepted Here",

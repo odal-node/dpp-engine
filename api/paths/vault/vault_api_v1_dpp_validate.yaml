@@ -60,6 +60,8 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/passport-reports/ValidateResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '403':

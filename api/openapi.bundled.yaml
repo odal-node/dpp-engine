@@ -121,6 +121,7 @@ paths:
                 productIdentifier:
                   scheme: gs1
                   gtin: '09506000134352'
+                batteryType: industrial
                 batteryChemistry: LFP
                 nominalVoltageV: 48
                 nominalCapacityAh: 100
@@ -133,6 +134,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PassportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -230,6 +233,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -265,6 +270,7 @@ paths:
           in: query
           schema:
             type: string
+            pattern: ^[^\u0000]*$
           description: Free-text search across productName, batchId, manufacturer.name
         - name: status
           in: query
@@ -274,19 +280,25 @@ paths:
           in: query
           schema:
             type: string
+            pattern: ^[^\u0000]*$
           description: Exact match on the facility identifier stamped on the passport (see GET /facilities).
         - name: limit
           in: query
+          description: Maximum results to return (default 20, capped at 100).
           schema:
             type: integer
-            minimum: 1
-            maximum: 100
+            format: int64
+            minimum: 0
+            maximum: 4294967295
             default: 20
         - name: skip
           in: query
+          description: Offset into the result set (default 0).
           schema:
             type: integer
+            format: int64
             minimum: 0
+            maximum: 4294967295
             default: 0
       responses:
         '200':
@@ -319,6 +331,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: ^[^\u0000]*$
             example: battery
         - name: identifier
           in: query
@@ -329,12 +342,14 @@ paths:
             link for scheme 2, the DID for scheme 3.
           schema:
             type: string
+            pattern: ^[^\u0000]*$
             example: '09506000134352'
         - name: batchId
           in: query
           required: false
           schema:
             type: string
+            pattern: ^[^\u0000]*$
       responses:
         '200':
           description: The matching DPP record.
@@ -429,6 +444,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/history:
@@ -998,6 +1015,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/supersede:
@@ -1064,6 +1083,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/suspend:
@@ -1110,6 +1131,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/retire:
     post:
       operationId: retireDpp
@@ -1204,6 +1227,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           description: |
             A declaration refused, with the passport unchanged, for one of four
@@ -1295,6 +1320,8 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationError'
   /vault/api/v1/dpp/{dppId}/transfer/accept:
@@ -2237,8 +2264,9 @@ paths:
           description: Trailing window in days (default 30, clamped to 1..=730).
           schema:
             type: integer
-            minimum: 1
-            maximum: 730
+            format: int64
+            minimum: -9223372036854776000
+            maximum: 9223372036854776000
             default: 30
       responses:
         '200':
@@ -2272,8 +2300,9 @@ paths:
           description: Trailing window in days (default 30, clamped to 1..=730).
           schema:
             type: integer
-            minimum: 1
-            maximum: 730
+            format: int64
+            minimum: -9223372036854776000
+            maximum: 9223372036854776000
             default: 30
       responses:
         '200':
@@ -2282,6 +2311,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperatorScanStats'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /vault/api/v1/operator:
@@ -2400,6 +2431,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Facility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2556,6 +2589,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperatorIdentifier'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2719,6 +2754,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreatedApiKeyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3226,6 +3263,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObligationsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -3295,6 +3334,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreatedWebhookResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3697,6 +3738,9 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 14
+            maxLength: 14
+            pattern: ^[0-9]{14}$
             description: GS1 GTIN-14 (14 digits, mod-10 check digit).
             example: '09506000134352'
         - name: batch
@@ -3705,6 +3749,7 @@ paths:
           description: The label's AI 10 value, the batch or lot.
           schema:
             type: string
+            pattern: ^[^\u0000]*$
           example: LOT-2026-A
         - name: serial
           in: query
@@ -3712,6 +3757,7 @@ paths:
           description: The label's AI 21 value, the serial.
           schema:
             type: string
+            pattern: ^[^\u0000]*$
           example: 3a9c1e0b7d2f4a6c8e10
         - name: schema_view
           in: query
@@ -3962,6 +4008,8 @@ paths:
       responses:
         '204':
           description: Batch ingested.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4143,6 +4191,9 @@ paths:
           required: true
           schema:
             type: string
+            minLength: 5
+            maxLength: 33
+            pattern: ^v?(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})$
             example: 2.6.0
       responses:
         '200':
@@ -4204,8 +4255,8 @@ paths:
         (`notInUseTemperatureMinC`/`MaxC`), and a semicolon-delimited list
         (`componentPartNumbers`).
 
-        `?format=xlsx` returns 501 (download the CSV and open it in a spreadsheet
-        app). Unauthenticated.
+        Any format other than `csv`, including `xlsx`, returns 406. Download the
+        CSV and open it in a spreadsheet app if needed. Unauthenticated.
       tags:
         - Integrator
       security: []
@@ -4227,11 +4278,11 @@ paths:
             example: battery-ev
         - name: format
           in: query
+          description: CSV only; other formats return 406 Not Acceptable.
           schema:
             type: string
             enum:
               - csv
-              - xlsx
             default: csv
       responses:
         '200':
@@ -4240,14 +4291,20 @@ paths:
             text/csv:
               schema:
                 type: string
+        '400':
+          description: The query parameters are malformed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '404':
           description: No template for this product group.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-        '501':
-          description: XLSX export not yet implemented.
+        '406':
+          description: The requested format is unsupported; CSV is the only available format.
           content:
             application/problem+json:
               schema:
@@ -4302,6 +4359,7 @@ paths:
                 file:
                   type: string
                   format: binary
+                  minLength: 1
                   description: CSV or XLSX file.
                 mode:
                   type: string
@@ -6012,9 +6070,13 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
+          pattern: ^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$
           example: EcoTech GmbH
         address:
           type: string
+          minLength: 1
+          pattern: ^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$
           example: Hauptstraße 1, 10115 Berlin
         registeredTradeName:
           type:
@@ -6116,18 +6178,52 @@ components:
         compile time.
       required:
         - productGroup
+      allOf:
+        - if:
+            properties:
+              productGroup:
+                const: battery
+            required:
+              - productGroup
+          then:
+            required:
+              - batteryType
+            properties:
+              batteryType:
+                type: string
+                minLength: 1
+        - if:
+            properties:
+              productGroup:
+                const: toy
+            required:
+              - productGroup
+          then:
+            required:
+              - ageGroup
+            properties:
+              ageGroup:
+                type: string
+                minLength: 1
       discriminator:
         propertyName: productGroup
       properties:
         productGroup:
           type: string
           example: battery
+        batteryType:
+          type: string
+          minLength: 1
+        ageGroup:
+          type: string
+          minLength: 1
       additionalProperties: true
       example:
         productGroup: battery
         productIdentifier:
           scheme: gs1
           gtin: '09506000134352'
+        batteryType: industrial
         batteryChemistry: LFP
         nominalVoltageV: 48
         nominalCapacityAh: 100
@@ -6570,6 +6666,8 @@ components:
       properties:
         productName:
           type: string
+          minLength: 1
+          pattern: ^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$
           description: Human-readable product name. Must not be blank.
           example: EcoCell Pro 48V
         productGroup:
@@ -6623,10 +6721,13 @@ components:
             Art. 8 minimum recycled shares apply.
           example: '2026-03-14'
         schemaVersion:
-          type: string
+          type:
+            - string
+            - 'null'
+          pattern: ^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})$
           description: |
             Product group schema version. Optional, and the only accepted value is the
-            product group's **current** version: omitting it is equivalent. Any other
+            product group's **current** version: omitting it or sending `null` is equivalent. Any other
             value is rejected with `422`.
 
             It is not the caller's to choose: the stored version selects the
@@ -6635,7 +6736,7 @@ components:
             the rest to public. The body is validated against the current schema
             in either case, so a differing declaration is already false about the
             body it accompanies.
-          example: 2.6.0
+          example: 2.10.0
         derivedFrom:
           type: array
           items:
@@ -6744,6 +6845,23 @@ components:
       required:
         - reason
       description: Request body for declaring a passport end-of-life.
+      allOf:
+        - if:
+            properties:
+              reason:
+                properties:
+                  kind:
+                    const: destroyed
+                required:
+                  - kind
+            required:
+              - reason
+          then:
+            required:
+              - unsold
+            properties:
+              unsold:
+                type: boolean
       properties:
         reason:
           $ref: '#/components/schemas/DeactivationReason'
@@ -6752,6 +6870,7 @@ components:
             - boolean
             - 'null'
           description: 'Whether the product was an unsold consumer product, which a passport does not record. Required with a `destroyed` reason (`422` otherwise): with the operator''s `enterpriseSize` it decides whether the ESPR Art. 25(1) ban reaches the product, and so whether the destruction cites a derogation.'
+          example: false
         discardRecordId:
           type:
             - string
@@ -7195,6 +7314,9 @@ components:
       properties:
         did:
           type: string
+          minLength: 9
+          maxLength: 2048
+          pattern: ^did:web:[!-~]+$
           example: did:web:acme.example.com
         name:
           type: string
@@ -7571,6 +7693,7 @@ components:
         - publicView
         - didDocuments
         - auditEntries
+      additionalProperties: false
       properties:
         manifest:
           $ref: '#/components/schemas/DossierManifest'
@@ -7590,9 +7713,9 @@ components:
           items:
             $ref: '#/components/schemas/PassportAuditEntry'
         transferChain:
-          type:
-            - object
-            - 'null'
+          anyOf:
+            - $ref: '#/components/schemas/EvidenceTransferChain'
+            - type: 'null'
           description: Present iff the passport has ever changed responsible operator.
         eolEvent:
           type:
@@ -7606,6 +7729,7 @@ components:
           description: Always `null` in format v1, because the signed-checkpoint layer is not built yet.
         calcReceipts:
           type: array
+          maxItems: 0
           description: 'Always empty in format v1: `dpp-calc` invocation is not yet wired end to end.'
           items:
             type: object
@@ -7739,7 +7863,6 @@ components:
           type:
             - string
             - 'null'
-          format: date-time
           description: A timestamp authority's statement of when the seal was made, read out of the token inside the CAdES and checked. `seal.sealedAt` beside it is the sealing node's own clock, which is an unattested claim by the party that bought the seal.
         archival:
           $ref: '#/components/schemas/ArchivalFreshness'
@@ -8868,20 +8991,14 @@ components:
 
         `record` is checked as sent, against dpp-core's discard-record schema, before
         it is read. A field that schema does not have is refused, not dropped. The
-        schema is not restated here: dpp-core publishes it, and this description
-        names only the version the node checks against, which the response reports
-        as `schemaVersion`.
+        embedded `DiscardRecord` contract mirrors dpp-core schema v1.0.0; the response
+        reports the version the node checks against as `schemaVersion`.
       required:
         - record
       additionalProperties: false
       properties:
         record:
-          type: object
-          description: |
-            The discard, as dpp-core's discard-record schema describes it: the day it
-            was discarded, the CN codes, the units and the weight (each marked when it
-            is an estimate), the derogation it relies on where one applies, the
-            treatment and the receiver.
+          $ref: '#/components/schemas/DiscardRecord'
         passportIds:
           type: array
           description: |
@@ -10285,7 +10402,6 @@ components:
             `unknown`: an archival timestamp is present and could not be read. **Not `current`**: a token that cannot be checked is not a fresh one, and reporting it as current is how a staleness signal goes quiet at the moment it matters.
         expires:
           type: string
-          format: date-time
           description: 'When the archival timestamp''s authority certificate expires: the date by which re-timestamping must have happened, read from before or after it depending on `state`. One value, so one name: `current` and `lapsed` are the same date seen from either side. Absent for `notArchived` and `unknown`.'
     SealBinding:
       type: object
@@ -10917,6 +11033,7 @@ components:
         supersededBy:
           allOf:
             - $ref: '#/components/schemas/DppId'
+          example: 019723f4-1a2b-7c3d-8e4f-5a6b7c8d9e10
           description: |
             The successor, which must already be **published** and must already carry
             `supersedesId` pointing back at the passport named in the path. That link
@@ -10930,6 +11047,160 @@ components:
             arriving at a retired record finds what replaced it and why, whichever
             route retired it.
           example: Reissued on schema 2.6.0 after the product group's lens changed
+    EvidenceTransferChain:
+      type: object
+      description: Transfer chain serialized into an evidence dossier.
+      required:
+        - passportId
+        - originalOperator
+        - transfers
+      properties:
+        passportId:
+          $ref: '#/components/schemas/DppId'
+        originalOperator:
+          $ref: '#/components/schemas/ResponsibleOperator'
+        transfers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransferRecord'
+    DiscardUnits:
+      type: object
+      description: Number of units discarded; may be estimated from an accurately determined weight.
+      required:
+        - value
+      properties:
+        value:
+          type: integer
+          minimum: 0
+        estimated:
+          type: boolean
+          default: false
+      additionalProperties: false
+    DiscardWeight:
+      type: object
+      description: Weight in grams; may be estimated from an accurately determined unit count.
+      required:
+        - grams
+      properties:
+        grams:
+          type: integer
+          minimum: 1
+        estimated:
+          type: boolean
+          default: false
+      additionalProperties: false
+    DiscardReceiverIdentifier:
+      type: object
+      description: EUID or an identifier from a recognised Member State scheme.
+      oneOf:
+        - required:
+            - type
+            - value
+          properties:
+            type:
+              const: euid
+            value:
+              type: string
+              minLength: 1
+          additionalProperties: false
+        - required:
+            - type
+            - scheme
+            - value
+          properties:
+            type:
+              const: other
+            scheme:
+              type: string
+              minLength: 1
+            value:
+              type: string
+              minLength: 1
+          additionalProperties: false
+    DiscardReceiver:
+      type: object
+      description: Waste treatment operator that received the products.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+        identifier:
+          $ref: '#/components/schemas/DiscardReceiverIdentifier'
+      additionalProperties: false
+    DiscardRecord:
+      type: object
+      description: Discard record under dpp-core's v1.0.0 versioned JSON Schema. This schema is validated at runtime by the node's document-schema registry.
+      required:
+        - discardedOn
+        - cnCodes
+        - description
+        - units
+        - weight
+        - packagingIncluded
+        - treatment
+        - receiver
+      properties:
+        discardedOn:
+          type: string
+          format: date
+        cnCodes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            pattern: ^([0-9]{6}|[0-9]{8}|[0-9]{10})$
+        description:
+          type: string
+          minLength: 1
+        units:
+          $ref: '#/components/schemas/DiscardUnits'
+        weight:
+          $ref: '#/components/schemas/DiscardWeight'
+        packagingIncluded:
+          type: boolean
+        reason:
+          type: string
+          enum:
+            - dangerousProduct
+            - nonCompliantWithLaw
+            - intellectualPropertyInfringement
+            - licensedPeriodExpired
+            - markingsCannotBeRemoved
+            - damagedOrContaminated
+            - defectiveBeyondRepair
+            - offeredForDonationNotAccepted
+            - donatedButNoRecipientFound
+            - reusedButNoRecipientFound
+        reasonLabel:
+          type: string
+          minLength: 1
+          maxLength: 120
+        treatment:
+          type: string
+          enum:
+            - preparingForReuse
+            - recycling
+            - otherRecovery
+            - disposal
+            - unknown
+        receiver:
+          $ref: '#/components/schemas/DiscardReceiver'
+      additionalProperties: false
+      example:
+        discardedOn: '2026-08-01'
+        cnCodes:
+          - '420300'
+        description: Jackets, unsold season stock
+        units:
+          value: 1240
+        weight:
+          grams: 860500
+        packagingIncluded: false
+        treatment: recycling
+        receiver:
+          name: Nord Recycling GmbH
     RulesetReload:
       type: object
       description: The outcome of re-reading the signed compliance-ruleset channel.
@@ -10952,6 +11223,9 @@ components:
       required: false
       description: |
         An opaque, client-minted string that makes this write safe to retry.
+        It must contain 1–255 printable ASCII characters and not consist only of
+        spaces; leading and trailing spaces are trimmed.
+        A malformed value is rejected with `400` before the operation runs.
 
         Send the same key with the same body and the first outcome is returned
         instead of a second resource being created. The replayed response carries
@@ -10984,8 +11258,22 @@ components:
         type: string
         minLength: 1
         maxLength: 255
-      example: 6f2a1c40-2f6f-4b8a-9a3e-1f4c9b2d7e51
+        pattern: ^[ -~]*[!-~][ -~]*$
   responses:
+    BadRequest:
+      description: |
+        A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a
+        UUID. The request never reaches the resource, so this is distinct from `404`,
+        which means the identifier was well-formed and nothing matched it.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://problems.odal-node.io/bad-request
+            title: Bad Request
+            status: 400
+            detail: not-a-uuid is not a valid DPP id.
     Unauthorized:
       description: Missing or invalid authentication credentials.
       content:
@@ -11025,20 +11313,6 @@ components:
             title: Unprocessable Entity
             status: 422
             detail: productName must not be empty.
-    BadRequest:
-      description: |
-        A path parameter is malformed, most often a `{dppId}` or `{id}` that is not a
-        UUID. The request never reaches the resource, so this is distinct from `404`,
-        which means the identifier was well-formed and nothing matched it.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-          example:
-            type: https://problems.odal-node.io/bad-request
-            title: Bad Request
-            status: 400
-            detail: not-a-uuid is not a valid DPP id.
     NotFound:
       description: Resource not found within the operator's scope.
       content:
@@ -11063,6 +11337,12 @@ components:
             title: Conflict
             status: 409
             detail: DPP is already published.
+    UnsupportedMediaType:
+      description: Request body must use a supported media type.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     InternalServerError:
       description: |
         The request was well formed and the node failed while serving it. The body

@@ -1,0 +1,73 @@
+type: object
+description: >-
+  Discard record under dpp-core's v1.0.0 versioned JSON Schema. This schema is
+  validated at runtime by the node's document-schema registry.
+required:
+  - discardedOn
+  - cnCodes
+  - description
+  - units
+  - weight
+  - packagingIncluded
+  - treatment
+  - receiver
+properties:
+  discardedOn:
+    type: string
+    format: date
+  cnCodes:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      pattern: '^([0-9]{6}|[0-9]{8}|[0-9]{10})$'
+  description:
+    type: string
+    minLength: 1
+  units:
+    $ref: ./DiscardUnits.yaml
+  weight:
+    $ref: ./DiscardWeight.yaml
+  packagingIncluded:
+    type: boolean
+  reason:
+    type: string
+    enum:
+      - dangerousProduct
+      - nonCompliantWithLaw
+      - intellectualPropertyInfringement
+      - licensedPeriodExpired
+      - markingsCannotBeRemoved
+      - damagedOrContaminated
+      - defectiveBeyondRepair
+      - offeredForDonationNotAccepted
+      - donatedButNoRecipientFound
+      - reusedButNoRecipientFound
+  reasonLabel:
+    type: string
+    minLength: 1
+    maxLength: 120
+  treatment:
+    type: string
+    enum:
+      - preparingForReuse
+      - recycling
+      - otherRecovery
+      - disposal
+      - unknown
+  receiver:
+    $ref: ./DiscardReceiver.yaml
+additionalProperties: false
+example:
+  discardedOn: '2026-08-01'
+  cnCodes:
+    - '420300'
+  description: Jackets, unsold season stock
+  units:
+    value: 1240
+  weight:
+    grams: 860500
+  packagingIncluded: false
+  treatment: recycling
+  receiver:
+    name: Nord Recycling GmbH

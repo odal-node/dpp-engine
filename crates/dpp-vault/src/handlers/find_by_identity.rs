@@ -34,7 +34,8 @@ pub async fn find_by_identity_handler(
     Extension(_auth): Extension<AuthContext>,
     Query(query): Query<IdentityQuery>,
 ) -> impl IntoResponse {
-    if query.identifier.contains('\0')
+    if query.product_group.catalog_key().contains('\0')
+        || query.identifier.contains('\0')
         || query
             .batch_id
             .as_deref()

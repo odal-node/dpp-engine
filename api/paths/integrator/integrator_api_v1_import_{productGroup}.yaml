@@ -47,6 +47,7 @@ post:
             file:
               type: string
               format: binary
+              minLength: 1
               description: CSV or XLSX file.
             mode:
               type: string
@@ -66,15 +67,15 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/import/ImportAsyncResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '404':
       description: Unknown product group.
-    '422':
-      $ref: ../../components/responses/ValidationError.yaml
-    '400':
-      $ref: ../../components/responses/BadRequest.yaml
     '409':
       $ref: ../../components/responses/IdempotentRequestInFlight.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml
     '429':
       $ref: ../../components/responses/ImportBusy.yaml

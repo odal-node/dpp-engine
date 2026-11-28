@@ -18,8 +18,9 @@ get:
       description: Trailing window in days (default 30, clamped to 1..=730).
       schema:
         type: integer
-        minimum: 1
-        maximum: 730
+        format: int64
+        minimum: -9223372036854775808
+        maximum: 9223372036854775807
         default: 30
   responses:
     '200':
@@ -28,5 +29,7 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/telemetry/OperatorScanStats.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml

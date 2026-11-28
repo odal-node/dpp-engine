@@ -14,6 +14,7 @@ required:
   - publicView
   - didDocuments
   - auditEntries
+additionalProperties: false
 properties:
   manifest:
     $ref: ./DossierManifest.yaml
@@ -33,9 +34,9 @@ properties:
     items:
       $ref: ../passport-reports/PassportAuditEntry.yaml
   transferChain:
-    type:
-      - object
-      - 'null'
+    anyOf:
+      - $ref: ./EvidenceTransferChain.yaml
+      - type: 'null'
     description: Present iff the passport has ever changed responsible operator.
   eolEvent:
     type:
@@ -49,6 +50,7 @@ properties:
     description: Always `null` in format v1, because the signed-checkpoint layer is not built yet.
   calcReceipts:
     type: array
+    maxItems: 0
     description: >-
       Always empty in format v1: `dpp-calc` invocation is not yet wired end to
       end.

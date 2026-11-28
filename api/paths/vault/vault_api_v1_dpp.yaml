@@ -34,6 +34,7 @@ post:
             productIdentifier:
               scheme: gs1
               gtin: '09506000134352'
+            batteryType: industrial
             batteryChemistry: LFP
             nominalVoltageV: 48
             nominalCapacityAh: 100
@@ -46,10 +47,10 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/passport/PassportResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
-    '422':
-      $ref: ../../components/responses/ValidationError.yaml
     '403':
       $ref: ../../components/responses/Forbidden.yaml
     '409':
@@ -80,3 +81,5 @@ post:
         application/problem+json:
           schema:
             $ref: ../../components/schemas/errors/Problem.yaml
+    '422':
+      $ref: ../../components/responses/ValidationError.yaml

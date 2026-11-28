@@ -102,16 +102,29 @@ jobs:
         working-directory: dpp-engine
         run: |
           set -euo pipefail
+          report_dir="$RUNNER_TEMP/schemathesis-results"
+          mkdir -p "$report_dir"
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE/dpp-engine/api:/api:ro" \
-            schemathesis/schemathesis:stable run /api/openapi.bundled.yaml \
+            -v "$report_dir:/reports" \
+            schemathesis/schemathesis:4.34.4 run /api/openapi.bundled.yaml \
             --url http://127.0.0.1:8001 \
             --header "Authorization: Bearer $SCHEMATHESIS_API_KEY" \
             --include-path-regex '^/(vault/|identity/(health|ready|\.well-known/did\.json)|integrator/|\.well-known/did\.json)' \
             --exclude-path-regex '^/vault/internal/scan-batch$' \
-            --exclude-operation-id-regex '^(readDppByCredential|testWebhook|resolverHealth)$' \
-            --experimental=openapi-3.1 \
+            --exclude-operation-id-regex '^(readDppByCredential|testWebhook)$' \
             --checks all \
             --workers 1 \
             --max-time 120 \
-            --seed "$GITHUB_RUN_NUMBER"
+            --seed "$GITHUB_RUN_NUMBER" \
+            --report junit,ndjson \
+            --report-junit-path /reports/results.xml \
+            --report-ndjson-path /reports/events.ndjson
+      - name: Upload Schemathesis reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: schemathesis-results-${{ github.run_id }}
+          path: ${{ runner.temp }}/schemathesis-results/
+          if-no-files-found: warn
+          retention-days: 30

@@ -9,6 +9,8 @@ description: |
 properties:
   productName:
     type: string
+    minLength: 1
+    pattern: '^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$'
     description: Human-readable product name. Must not be blank.
     example: EcoCell Pro 48V
   productGroup:
@@ -74,10 +76,13 @@ properties:
       Art. 8 minimum recycled shares apply.
     example: '2026-03-14'
   schemaVersion:
-    type: string
+    type:
+      - string
+      - 'null'
+    pattern: '^(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})\.(0|[1-9][0-9]{0,9})$'
     description: |
       Product group schema version. Optional, and the only accepted value is the
-      product group's **current** version: omitting it is equivalent. Any other
+      product group's **current** version: omitting it or sending `null` is equivalent. Any other
       value is rejected with `422`.
 
       It is not the caller's to choose: the stored version selects the
@@ -86,7 +91,7 @@ properties:
       the rest to public. The body is validated against the current schema
       in either case, so a differing declaration is already false about the
       body it accompanies.
-    example: 2.6.0
+    example: 2.10.0
   derivedFrom:
     type: array
     items:

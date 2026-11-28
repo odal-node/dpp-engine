@@ -56,7 +56,6 @@ properties:
     type:
       - string
       - 'null'
-    format: date-time
     description: >-
       A timestamp authority's statement of when the seal was made, read out of
       the token inside the CAdES and checked. `seal.sealedAt` beside it is the

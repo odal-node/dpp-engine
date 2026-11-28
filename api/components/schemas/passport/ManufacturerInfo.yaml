@@ -5,9 +5,13 @@ required:
 properties:
   name:
     type: string
+    minLength: 1
+    pattern: '^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$'
     example: EcoTech GmbH
   address:
     type: string
+    minLength: 1
+    pattern: '^(?=.*\S)(?!.*[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]).+$'
     example: Hauptstraße 1, 10115 Berlin
   registeredTradeName:
     type:

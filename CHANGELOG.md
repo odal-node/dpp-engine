@@ -10,7 +10,7 @@ under the pre-1.0 conventions in [VERSIONING.md](docs/governance/VERSIONING.md):
 
 ## [Unreleased]
 
-- Add nightly Schemathesis response checks for node API routes and reject malformed passport lookup inputs before database access. (#637)
+- Add nightly Schemathesis checks for node routes, reject malformed lookup filters before database access, and return 406 for unsupported template formats. (#637)
 
 ## [0.17.0] - 2026-11-26
 

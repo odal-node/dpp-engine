@@ -35,8 +35,12 @@ post:
         application/json:
           schema:
             $ref: ../../components/schemas/transfer/TransferRecord.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
+    '403':
+      $ref: ../../components/responses/Forbidden.yaml
     '404':
       $ref: ../../components/responses/NotFound.yaml
     '409':
@@ -52,9 +56,7 @@ post:
         application/problem+json:
           schema:
             $ref: ../../components/schemas/errors/Problem.yaml
+    '415':
+      $ref: ../../components/responses/UnsupportedMediaType.yaml
     '422':
       $ref: ../../components/responses/ValidationError.yaml
-    '400':
-      $ref: ../../components/responses/BadRequest.yaml
-    '403':
-      $ref: ../../components/responses/Forbidden.yaml

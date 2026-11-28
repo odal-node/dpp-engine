@@ -53,6 +53,8 @@ get:
         application/json:
           schema:
             $ref: ../../components/schemas/obligations/ObligationsResponse.yaml
+    '400':
+      $ref: ../../components/responses/BadRequest.yaml
     '401':
       $ref: ../../components/responses/Unauthorized.yaml
     '422':

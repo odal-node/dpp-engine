@@ -9,7 +9,7 @@ mod reference;
 mod transfer_chain;
 mod tree;
 
-pub use did_web::did_web_url;
+pub use did_web::{MAX_DID_WEB_IDENTIFIER_LENGTH, did_web_url};
 pub use engine::{DossierParseError, verify_dossier, verify_dossier_json};
 pub use reference::{RefUnverifiable, RefVerification, fetch_public_json, verify_ref};
 pub use transfer_chain::{
